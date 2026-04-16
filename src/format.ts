@@ -53,11 +53,15 @@ export function resetHighlights(): void {
 export function formatToolCall(tool: ToolCall, phase?: LLMPhase): FormattedOutput {
   const isWrite = /^(write|edit|Write|Edit)$/i.test(tool.name)
 
-  if (isWrite && tool.path && phase) {
+  // Check for Bash cat/echo redirects to highlighted files
+  const isBashWrite = /^bash$/i.test(tool.name) && tool.detail &&
+    /(?:cat|echo)\s.*>\s*/.test(tool.detail)
+
+  if ((isWrite || isBashWrite) && phase) {
+    const pathToCheck = tool.path ?? tool.detail ?? ''
     const rules = PHASE_HIGHLIGHTS[phase] ?? []
     for (const rule of rules) {
-      if (rule.pattern.test(tool.path)) {
-        // Show each highlight label once; suppress duplicates
+      if (rule.pattern.test(pathToCheck)) {
         if (shownHighlights.has(rule.label)) {
           return { text: '', persist: false }
         }
@@ -70,12 +74,13 @@ export function formatToolCall(tool: ToolCall, phase?: LLMPhase): FormattedOutpu
     }
 
     // Silently skip phase.md writes
-    if (/phase\.md$/.test(tool.path)) {
+    if (/phase\.md/.test(pathToCheck)) {
       return { text: '', persist: false }
     }
   }
 
-  const desc = tool.detail ?? tool.path ?? ''
+  // Strip newlines from detail to prevent multi-line progress corruption
+  const desc = (tool.detail ?? tool.path ?? '').replace(/\n.*/s, '')
   return {
     text: `${DIM}  ·  ${tool.name} ${desc}${RESET}`,
     persist: false,

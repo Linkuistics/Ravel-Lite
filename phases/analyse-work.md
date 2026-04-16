@@ -70,6 +70,5 @@ changed.
 
 ## Output format
 
-After completing all writes, print only the commit message title
-(the first line of `commit-message.md`). No other commentary. Do not
-mention phase.md.
+After completing all writes, print nothing. The driver displays the
+commit message. Do not mention phase.md.
