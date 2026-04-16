@@ -22,6 +22,7 @@ export class ClaudeCodeAgent implements Agent {
     if (model) args.push('--model', model)
     if (this.dangerous) args.push('--dangerously-skip-permissions')
     args.push('--output-format', 'stream-json')
+    args.push(prompt)
 
     return new Promise((resolve, reject) => {
       const child = spawn('claude', args, {

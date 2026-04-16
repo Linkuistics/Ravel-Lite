@@ -27,7 +27,7 @@ export class PiAgent implements Agent {
   async invokeInteractive(prompt: string, ctx: PlanContext): Promise<void> {
     const systemPrompt = this.loadPromptFile('system-prompt.md', ctx)
     const memoryPrompt = this.loadPromptFile('memory-prompt.md', ctx)
-    const fullSystemPrompt = systemPrompt + '\n\n' + memoryPrompt
+    const fullSystemPrompt = systemPrompt + '\n\n' + memoryPrompt + '\n\n' + prompt
 
     const args: string[] = [
       '--no-session',
