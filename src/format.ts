@@ -221,7 +221,17 @@ export function writeLine(output: FormattedOutput): void {
   if (output.persist) {
     process.stderr.write(CLEAR_LINE + output.text + '\n')
   } else {
-    process.stderr.write(CLEAR_LINE + output.text)
+    // Truncate progress lines to terminal width to prevent wrap breaking \r overwrite
+    const cols = process.stderr.columns ?? 80
+    // Strip ANSI codes to measure visible length, then truncate the raw string
+    const visible = output.text.replace(/\x1b\[[0-9;]*m/g, '')
+    if (visible.length > cols - 1) {
+      // Truncate the visible text and re-apply DIM styling
+      const truncated = visible.slice(0, cols - 4) + '...'
+      process.stderr.write(CLEAR_LINE + `${DIM}${truncated}${RESET}`)
+    } else {
+      process.stderr.write(CLEAR_LINE + output.text)
+    }
   }
 }
 
