@@ -173,10 +173,10 @@ export function formatResultText(text: string): string {
     // Filter code fence lines (triple backticks)
     if (line.match(/^```\s*$/)) continue
 
-    // Structured action markers: [ACTION] detail
-    const actionMatch = line.match(/^\[([A-Z ]+)\]\s*(.*)$/)
+    // Structured action markers: [ACTION] detail (case-insensitive)
+    const actionMatch = line.match(/^\[([A-Za-z ]+)\]\s*(.*)$/)
     if (actionMatch) {
-      const tag = actionMatch[1]
+      const tag = actionMatch[1].toUpperCase()
       const detail = actionMatch[2]
       const style = ACTION_STYLES[tag]
       if (style) {
