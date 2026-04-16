@@ -11,7 +11,7 @@ import {
   isScriptPhase,
 } from './types.js'
 import { composePrompt } from './prompt-composer.js'
-import { PHASE_INFO } from './format.js'
+import { PHASE_INFO, resetHighlights } from './format.js'
 import { shouldDream, updateDreamBaseline } from './dream.js'
 import { gitCommitPlan, gitSaveWorkBaseline, type CommitResult } from './git.js'
 import { dispatchSubagents } from './subagent-dispatch.js'
@@ -130,9 +130,10 @@ export async function phaseLoop(
       continue
     }
 
-    // Display phase header
+    // Display phase header and reset highlight tracking
     const info = PHASE_INFO[phase]
     phaseHeader(info?.label ?? phase, info?.description ?? '', name)
+    resetHighlights()
 
     // Pre-work: save baseline for analyse-work diff
     if (phase === LLMPhase.Work) {

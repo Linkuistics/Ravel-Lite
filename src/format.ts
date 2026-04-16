@@ -42,6 +42,14 @@ const PHASE_HIGHLIGHTS: Record<string, HighlightRule[]> = {
   ],
 }
 
+/** Track which highlight labels have already been shown this phase. */
+const shownHighlights = new Set<string>()
+
+/** Call at the start of each phase to reset highlight tracking. */
+export function resetHighlights(): void {
+  shownHighlights.clear()
+}
+
 export function formatToolCall(tool: ToolCall, phase?: LLMPhase): FormattedOutput {
   const isWrite = /^(write|edit|Write|Edit)$/i.test(tool.name)
 
@@ -49,15 +57,19 @@ export function formatToolCall(tool: ToolCall, phase?: LLMPhase): FormattedOutpu
     const rules = PHASE_HIGHLIGHTS[phase] ?? []
     for (const rule of rules) {
       if (rule.pattern.test(tool.path)) {
-        const suffix = tool.editContext ? `${DIM} — ${tool.editContext}${RESET}` : ''
+        // Show each highlight label once; suppress duplicates
+        if (shownHighlights.has(rule.label)) {
+          return { text: '', persist: false }
+        }
+        shownHighlights.add(rule.label)
         return {
-          text: `  ${BOLD}${GREEN}★  ${rule.label}${RESET}${suffix}`,
+          text: `  ${BOLD}${GREEN}★  ${rule.label}${RESET}`,
           persist: true,
         }
       }
     }
 
-    // Silently skip phase.md writes (#4)
+    // Silently skip phase.md writes
     if (/phase\.md$/.test(tool.path)) {
       return { text: '', persist: false }
     }
