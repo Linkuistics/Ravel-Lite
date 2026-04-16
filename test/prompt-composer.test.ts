@@ -8,6 +8,7 @@ describe('substituteTokens', () => {
     projectDir: '/home/user/project',
     devRoot: '/home/user',
     relatedPlans: '- /home/user/other/LLM_STATE/other-plan (child)',
+    orchestratorRoot: '/home/user/LLM_CONTEXT_PI',
   }
 
   const tokens: Record<string, string> = {
@@ -40,6 +41,12 @@ describe('substituteTokens', () => {
     const input = 'Use {{TOOL_READ}} to read files and {{TOOL_BASH}} for commands'
     const result = substituteTokens(input, ctx, tokens)
     expect(result).toBe('Use Read to read files and Bash for commands')
+  })
+
+  it('substitutes ORCHESTRATOR', () => {
+    const input = '{{ORCHESTRATOR}}/fixed-memory/coding-style.md'
+    const result = substituteTokens(input, ctx, tokens)
+    expect(result).toBe('/home/user/LLM_CONTEXT_PI/fixed-memory/coding-style.md')
   })
 
   it('leaves unknown tokens unchanged', () => {

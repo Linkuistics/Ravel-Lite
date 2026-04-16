@@ -8,7 +8,7 @@ the Memory style rules.
 1. `{{PLAN}}/latest-session.md` — the current session's entry (the only
    session input reflect sees)
 2. `{{PLAN}}/memory.md` — current distilled learnings
-3. `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/memory-style.md` — the Memory
+3. `{{ORCHESTRATOR}}/fixed-memory/memory-style.md` — the Memory
    style rules
 
 ## Do NOT read

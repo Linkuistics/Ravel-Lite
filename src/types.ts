@@ -43,6 +43,7 @@ export interface PlanContext {
   projectDir: string
   devRoot: string
   relatedPlans: string
+  orchestratorRoot: string
 }
 
 export interface AgentConfig {

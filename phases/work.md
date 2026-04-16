@@ -28,14 +28,14 @@ is the triage phase's job via dispatched subagents.
 
 ## Coding style
 
-`{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/` holds universal coding-style
+`{{ORCHESTRATOR}}/fixed-memory/` holds universal coding-style
 reference material. Treat it like this:
 
 - **At the moment you are about to write or modify code**, and not
   before, check `fixed-memory/`:
-  - Always read `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/coding-style.md`
+  - Always read `{{ORCHESTRATOR}}/fixed-memory/coding-style.md`
     — it contains the universal rules that apply to any language.
-  - Also read `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/coding-style-<lang>.md`
+  - Also read `{{ORCHESTRATOR}}/fixed-memory/coding-style-<lang>.md`
     for whichever language you are about to touch, if such a file
     exists (e.g. `coding-style-rust.md` for Rust). If no file matches
     the language, there is no language-specific guidance for it —

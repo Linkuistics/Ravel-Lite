@@ -12,6 +12,7 @@ export function substituteTokens(
   result = result.replaceAll('{{PROJECT}}', ctx.projectDir)
   result = result.replaceAll('{{PLAN}}', ctx.planDir)
   result = result.replaceAll('{{RELATED_PLANS}}', ctx.relatedPlans)
+  result = result.replaceAll('{{ORCHESTRATOR}}', ctx.orchestratorRoot)
 
   for (const [key, value] of Object.entries(tokens)) {
     result = result.replaceAll(`{{${key}}}`, value)

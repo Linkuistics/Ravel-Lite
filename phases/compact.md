@@ -6,7 +6,7 @@ tighter form.
 ## Required reads
 
 1. `{{PLAN}}/memory.md` — the file to rewrite
-2. `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/memory-style.md` — the Memory
+2. `{{ORCHESTRATOR}}/fixed-memory/memory-style.md` — the Memory
    style rules
 
 ## Do NOT read
