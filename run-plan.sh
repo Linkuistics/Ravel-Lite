@@ -133,6 +133,116 @@ parse_propagation() {
 }
 
 # -----------------------------------------------------------------------------
+# list_plans_in — discover plan directories under a project's LLM_STATE/ tree.
+# -----------------------------------------------------------------------------
+
+list_plans_in() {
+    local project_root="$1"
+    if [ ! -d "$project_root/LLM_STATE" ]; then
+        return 0
+    fi
+    find "$project_root/LLM_STATE" -type f -name phase.md -print 2>/dev/null | \
+        while IFS= read -r phase_file; do
+            dirname "$phase_file"
+        done
+}
+
+# -----------------------------------------------------------------------------
+# parse_related_projects — extract entries from related-plans.md sections.
+# -----------------------------------------------------------------------------
+
+parse_related_projects() {
+    local file="$1"
+    local section="$2"
+    if [ ! -f "$file" ]; then
+        return 0
+    fi
+    awk -v section="$section" '
+        /^## / {
+            if (tolower($0) ~ tolower(section)) {
+                in_section = 1
+            } else {
+                in_section = 0
+            }
+            next
+        }
+        in_section && /^- / {
+            line = $0
+            sub(/^- /, "", line)
+            sub(/ [—-].*$/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            print line
+        }
+    ' "$file"
+}
+
+# -----------------------------------------------------------------------------
+# build_related_plans — synthesize the {{RELATED_PLANS}} block for a plan.
+# -----------------------------------------------------------------------------
+
+build_related_plans() {
+    local plan_dir="$1"
+    local project_root="$2"
+    local dev_root="$3"
+
+    local siblings=()
+    local parents=()
+    local children=()
+
+    while IFS= read -r p; do
+        if [ -n "$p" ] && [ "$p" != "$plan_dir" ]; then
+            siblings+=("$p")
+        fi
+    done < <(list_plans_in "$project_root")
+
+    local related_file="$plan_dir/related-plans.md"
+    while IFS= read -r proj_entry; do
+        if [ -z "$proj_entry" ]; then continue; fi
+        local proj_path
+        proj_path="${proj_entry//\{\{DEV_ROOT\}\}/$dev_root}"
+        while IFS= read -r p; do
+            if [ -n "$p" ]; then
+                parents+=("$p")
+            fi
+        done < <(list_plans_in "$proj_path")
+    done < <(parse_related_projects "$related_file" "Parents")
+
+    while IFS= read -r proj_entry; do
+        if [ -z "$proj_entry" ]; then continue; fi
+        local proj_path
+        proj_path="${proj_entry//\{\{DEV_ROOT\}\}/$dev_root}"
+        while IFS= read -r p; do
+            if [ -n "$p" ]; then
+                children+=("$p")
+            fi
+        done < <(list_plans_in "$proj_path")
+    done < <(parse_related_projects "$related_file" "Children")
+
+    if [ ${#siblings[@]} -eq 0 ] && [ ${#parents[@]} -eq 0 ] && [ ${#children[@]} -eq 0 ]; then
+        echo "Related plans: (none)"
+        return 0
+    fi
+
+    echo "Related plans:"
+    echo ""
+    if [ ${#siblings[@]} -gt 0 ]; then
+        echo "Siblings (same project):"
+        for p in "${siblings[@]}"; do echo "- $p"; done
+        echo ""
+    fi
+    if [ ${#parents[@]} -gt 0 ]; then
+        echo "Parents (from declared peer projects):"
+        for p in "${parents[@]}"; do echo "- $p"; done
+        echo ""
+    fi
+    if [ ${#children[@]} -gt 0 ]; then
+        echo "Children (from declared peer projects):"
+        for p in "${children[@]}"; do echo "- $p"; done
+        echo ""
+    fi
+}
+
+# -----------------------------------------------------------------------------
 # Main loop placeholder (guarded — only runs when executed directly)
 # -----------------------------------------------------------------------------
 
