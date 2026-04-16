@@ -3,7 +3,7 @@ import path from 'node:path'
 import YAML from 'yaml'
 import { LLMPhase, type SharedConfig, type AgentConfig } from './types.js'
 
-export function loadSharedConfig(projectRoot: string, cliAgent?: string): SharedConfig {
+export function loadSharedConfig(projectRoot: string, cliAgent?: string, dangerous?: boolean): SharedConfig {
   const configPath = path.join(projectRoot, 'config.yaml')
   const raw = YAML.parse(fs.readFileSync(configPath, 'utf-8')) as {
     headroom: number
@@ -12,6 +12,7 @@ export function loadSharedConfig(projectRoot: string, cliAgent?: string): Shared
   return {
     headroom: raw.headroom,
     agent: cliAgent ?? raw.agent,
+    dangerous: dangerous ?? false,
   }
 }
 

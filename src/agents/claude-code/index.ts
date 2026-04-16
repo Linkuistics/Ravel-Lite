@@ -8,16 +8,19 @@ import { formatClaudeStreamLine } from './stream-parser.js'
 export class ClaudeCodeAgent implements Agent {
   private config: AgentConfig
   private projectRoot: string
+  private dangerous: boolean
 
-  constructor(config: AgentConfig, projectRoot: string) {
+  constructor(config: AgentConfig, projectRoot: string, dangerous = false) {
     this.config = config
     this.projectRoot = projectRoot
+    this.dangerous = dangerous
   }
 
   async invokeInteractive(prompt: string, ctx: PlanContext): Promise<void> {
-    const args: string[] = []
+    const args: string[] = ['--allow-dangerously-skip-permissions']
     const model = this.config.models[LLMPhase.Work]
     if (model) args.push('--model', model)
+    if (this.dangerous) args.push('--dangerously-skip-permissions')
     args.push('--output-format', 'stream-json')
 
     return new Promise((resolve, reject) => {
@@ -33,9 +36,10 @@ export class ClaudeCodeAgent implements Agent {
   }
 
   async invokeHeadless(prompt: string, ctx: PlanContext, phase: LLMPhase): Promise<string> {
-    const args = ['-p', prompt, '--output-format', 'stream-json']
+    const args = ['--allow-dangerously-skip-permissions', '-p', prompt, '--output-format', 'stream-json']
     const model = this.config.models[phase]
     if (model) args.push('--model', model)
+    if (this.dangerous) args.push('--dangerously-skip-permissions')
 
     return new Promise((resolve, reject) => {
       const chunks: string[] = []

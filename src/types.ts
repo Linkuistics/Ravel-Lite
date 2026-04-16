@@ -55,6 +55,7 @@ export interface AgentConfig {
 export interface SharedConfig {
   headroom: number
   agent: string
+  dangerous: boolean
 }
 
 export interface SubagentDispatch {

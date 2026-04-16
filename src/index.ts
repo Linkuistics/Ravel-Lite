@@ -23,7 +23,7 @@ function buildRelatedPlans(planDir: string): string {
 }
 
 function usage(): never {
-  console.error('Usage: llm-context [--agent claude-code|pi] <plan-directory>')
+  console.error('Usage: llm-context [--agent claude-code|pi] [--dangerous] <plan-directory>')
   process.exit(1)
 }
 
@@ -31,10 +31,13 @@ async function main() {
   const args = process.argv.slice(2)
   let agentOverride: string | undefined
   let planDir: string | undefined
+  let dangerous = false
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--agent') {
       agentOverride = args[++i]
+    } else if (args[i] === '--dangerous') {
+      dangerous = true
     } else if (!args[i].startsWith('-')) {
       planDir = path.resolve(args[i])
     }
@@ -51,7 +54,7 @@ async function main() {
   const scriptDir = path.dirname(new URL(import.meta.url).pathname)
   const projectRoot = path.resolve(scriptDir, '..')
 
-  const sharedConfig = loadSharedConfig(projectRoot, agentOverride)
+  const sharedConfig = loadSharedConfig(projectRoot, agentOverride, dangerous)
   const agentConfig = loadAgentConfig(projectRoot, sharedConfig.agent)
 
   const projectDir = findProjectRoot(planDir)
@@ -66,7 +69,7 @@ async function main() {
   let agent: Agent
   switch (sharedConfig.agent) {
     case 'claude-code':
-      agent = new ClaudeCodeAgent(agentConfig, projectRoot)
+      agent = new ClaudeCodeAgent(agentConfig, projectRoot, sharedConfig.dangerous)
       break
     case 'pi':
       agent = new PiAgent(agentConfig, projectRoot)
