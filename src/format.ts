@@ -153,6 +153,8 @@ export function formatResultText(text: string): string {
     if (line.match(/phase\.md.*`git-commit-/)) continue
     // Filter lines that are just "phase.md" mentions
     if (line.match(/wrote.*phase\.md/i)) continue
+    // Filter code fence lines (triple backticks)
+    if (line.match(/^```\s*$/)) continue
 
     // Structured action markers: [ACTION] detail
     const actionMatch = line.match(/^\[([A-Z ]+)\]\s*(.*)$/)
