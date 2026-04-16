@@ -3,6 +3,7 @@ import { LLMPhase } from './types.js'
 const DIM = '\x1b[2m'
 const BOLD = '\x1b[1m'
 const GREEN = '\x1b[32m'
+const CYAN = '\x1b[36m'
 const RESET = '\x1b[0m'
 const CLEAR_LINE = '\x1b[2K\r'
 
@@ -10,11 +11,13 @@ export interface ToolCall {
   name: string
   path?: string
   detail?: string
+  /** For Edit: first heading or summary from old_string/new_string */
+  editContext?: string
 }
 
 export interface FormattedOutput {
   text: string
-  persist: boolean  // true = print with \n (stays); false = overwrite in place (progress)
+  persist: boolean
 }
 
 interface HighlightRule {
@@ -39,22 +42,24 @@ const PHASE_HIGHLIGHTS: Record<string, HighlightRule[]> = {
   ],
 }
 
-const ALWAYS_HIGHLIGHT: HighlightRule[] = [
-  { pattern: /phase\.md$/, label: 'Advancing phase' },
-]
-
 export function formatToolCall(tool: ToolCall, phase?: LLMPhase): FormattedOutput {
   const isWrite = /^(write|edit|Write|Edit)$/i.test(tool.name)
 
   if (isWrite && tool.path && phase) {
-    const rules = [...(PHASE_HIGHLIGHTS[phase] ?? []), ...ALWAYS_HIGHLIGHT]
+    const rules = PHASE_HIGHLIGHTS[phase] ?? []
     for (const rule of rules) {
       if (rule.pattern.test(tool.path)) {
+        const suffix = tool.editContext ? `${DIM} — ${tool.editContext}${RESET}` : ''
         return {
-          text: `  ${BOLD}${GREEN}★  ${rule.label}${RESET}`,
+          text: `  ${BOLD}${GREEN}★  ${rule.label}${RESET}${suffix}`,
           persist: true,
         }
       }
+    }
+
+    // Silently skip phase.md writes (#4)
+    if (/phase\.md$/.test(tool.path)) {
+      return { text: '', persist: false }
     }
   }
 
@@ -66,29 +71,62 @@ export function formatToolCall(tool: ToolCall, phase?: LLMPhase): FormattedOutpu
 }
 
 /**
- * Write a formatted line to stderr, either overwriting the current
- * progress line or persisting as a permanent line.
+ * Extract a brief context string from Edit old_string/new_string.
+ * Looks for markdown headings or first meaningful line.
  */
+export function extractEditContext(oldStr?: string, newStr?: string): string | undefined {
+  const source = newStr ?? oldStr ?? ''
+  // Look for a markdown heading
+  const headingMatch = source.match(/^#{1,4}\s+(.{1,60})/m)
+  if (headingMatch) return headingMatch[1].trim()
+  // Look for a bold item
+  const boldMatch = source.match(/\*\*(.{1,60}?)\*\*/m)
+  if (boldMatch) return boldMatch[1].trim()
+  return undefined
+}
+
+/**
+ * Format result text from a headless phase.
+ * Recognises Insight blocks and applies indentation.
+ */
+export function formatResultText(text: string): string {
+  const lines = text.split('\n')
+  const formatted: string[] = []
+  let inInsight = false
+
+  for (const line of lines) {
+    // Detect insight block opening: `★ Insight ─...`
+    if (line.match(/^`?★\s*Insight\s*─/)) {
+      inInsight = true
+      formatted.push(`  ${BOLD}${CYAN}★ Insight${RESET}`)
+      continue
+    }
+    // Detect insight block closing: `─────...`
+    if (inInsight && line.match(/^`?─{10,}`?$/)) {
+      inInsight = false
+      continue
+    }
+    // Indent insight content
+    if (inInsight) {
+      formatted.push(`  ${DIM}${line}${RESET}`)
+      continue
+    }
+    // Regular result text — indent for readability
+    formatted.push(`  ${DIM}${line}${RESET}`)
+  }
+
+  return formatted.join('\n')
+}
+
 export function writeLine(output: FormattedOutput): void {
+  if (!output.text) return  // skip empty (e.g. suppressed phase.md)
   if (output.persist) {
-    // Clear any lingering progress line, then print permanently
     process.stderr.write(CLEAR_LINE + output.text + '\n')
   } else {
-    // Overwrite in place — acts as a progress indicator
     process.stderr.write(CLEAR_LINE + output.text)
   }
 }
 
-/**
- * Write persistent text (LLM response, errors). Clears progress line first.
- */
-export function writeText(text: string): void {
-  process.stderr.write(CLEAR_LINE + text + '\n')
-}
-
-/**
- * Clear any lingering progress line (call after headless phase completes).
- */
 export function clearProgress(): void {
   process.stderr.write(CLEAR_LINE)
 }

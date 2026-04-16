@@ -1,5 +1,5 @@
 import { type LLMPhase } from '../../types.js'
-import { formatToolCall, type FormattedOutput } from '../../format.js'
+import { formatToolCall, extractEditContext, formatResultText, type FormattedOutput } from '../../format.js'
 
 export function formatPiStreamLine(line: string, phase?: LLMPhase): FormattedOutput | null {
   if (!line.trim()) return null
@@ -21,7 +21,11 @@ export function formatPiStreamLine(line: string, phase?: LLMPhase): FormattedOut
       case 'write':
         return formatToolCall({ name, path: (input.file_path ?? input.path ?? '') as string }, phase)
       case 'edit':
-        return formatToolCall({ name, path: (input.file_path ?? input.path ?? '') as string }, phase)
+        return formatToolCall({
+          name,
+          path: (input.file_path ?? input.path ?? '') as string,
+          editContext: extractEditContext(input.old_string as string, input.new_string as string),
+        }, phase)
       case 'grep':
         return formatToolCall({ name, detail: `"${input.pattern}" in ${input.path ?? '.'}` }, phase)
       case 'find':
@@ -44,7 +48,7 @@ export function formatPiStreamLine(line: string, phase?: LLMPhase): FormattedOut
         .filter(c => c.type === 'text' && c.text)
         .map(c => c.text)
         .join('\n')
-      if (text) return { text, persist: true }
+      if (text) return { text: formatResultText(text), persist: true }
     }
   }
 

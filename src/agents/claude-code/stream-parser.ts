@@ -1,5 +1,5 @@
 import { type LLMPhase } from '../../types.js'
-import { formatToolCall, type FormattedOutput } from '../../format.js'
+import { formatToolCall, extractEditContext, formatResultText, type FormattedOutput } from '../../format.js'
 
 interface ContentBlock {
   type: string
@@ -40,7 +40,11 @@ export function formatClaudeStreamLine(line: string, phase?: LLMPhase): Formatte
           case 'Write':
             return formatToolCall({ name: block.name, path: input.file_path as string }, phase)
           case 'Edit':
-            return formatToolCall({ name: block.name, path: input.file_path as string }, phase)
+            return formatToolCall({
+              name: block.name,
+              path: input.file_path as string,
+              editContext: extractEditContext(input.old_string as string, input.new_string as string),
+            }, phase)
           case 'Grep':
             return formatToolCall({ name: block.name, detail: `"${input.pattern}" in ${input.path ?? '.'}` }, phase)
           case 'Glob':
@@ -55,9 +59,9 @@ export function formatClaudeStreamLine(line: string, phase?: LLMPhase): Formatte
     return null
   }
 
-  // Final result: single source of truth for text output
+  // Final result: format with insight block recognition
   if (event.type === 'result' && event.result) {
-    return { text: event.result, persist: true }
+    return { text: formatResultText(event.result), persist: true }
   }
 
   return null
