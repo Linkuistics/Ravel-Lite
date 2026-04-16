@@ -243,6 +243,62 @@ build_related_plans() {
 }
 
 # -----------------------------------------------------------------------------
+# compose_prompt — read shared phases/<phase>.md + optional per-plan prompt,
+# substitute placeholders, concatenate, print to stdout.
+# -----------------------------------------------------------------------------
+
+compose_prompt() {
+    local phase="$1"
+    local shared="$LLM_CONTEXT_PI_DIR/phases/$phase.md"
+    local per_plan="$DIR/prompt-$phase.md"
+
+    if [ ! -f "$shared" ]; then
+        echo "Error: no phases/$phase.md in $LLM_CONTEXT_PI_DIR" >&2
+        exit 1
+    fi
+
+    local related
+    related="$(build_related_plans "$DIR" "$PROJECT" "$DEV_ROOT")"
+
+    local shared_sub
+    shared_sub="$(
+        RELATED_PLANS_VAR="$related" awk -v dev_root="$DEV_ROOT" \
+            -v project="$PROJECT" \
+            -v plan="$DIR" '
+            BEGIN { related = ENVIRON["RELATED_PLANS_VAR"] }
+            {
+                gsub(/\{\{DEV_ROOT\}\}/, dev_root)
+                gsub(/\{\{PROJECT\}\}/, project)
+                gsub(/\{\{PLAN\}\}/, plan)
+                gsub(/\{\{RELATED_PLANS\}\}/, related)
+                print
+            }
+        ' "$shared"
+    )"
+
+    if [ -f "$per_plan" ]; then
+        local per_plan_sub
+        per_plan_sub="$(
+            RELATED_PLANS_VAR="$related" awk -v dev_root="$DEV_ROOT" \
+                -v project="$PROJECT" \
+                -v plan="$DIR" '
+                BEGIN { related = ENVIRON["RELATED_PLANS_VAR"] }
+                {
+                    gsub(/\{\{DEV_ROOT\}\}/, dev_root)
+                    gsub(/\{\{PROJECT\}\}/, project)
+                    gsub(/\{\{PLAN\}\}/, plan)
+                    gsub(/\{\{RELATED_PLANS\}\}/, related)
+                    print
+                }
+            ' "$per_plan"
+        )"
+        printf '%s\n\n%s\n' "$shared_sub" "$per_plan_sub"
+    else
+        printf '%s\n' "$shared_sub"
+    fi
+}
+
+# -----------------------------------------------------------------------------
 # Main loop placeholder (guarded — only runs when executed directly)
 # -----------------------------------------------------------------------------
 
