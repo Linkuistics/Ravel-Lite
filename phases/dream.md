@@ -33,3 +33,18 @@ style rules.
 If the dream produces a bad result, it is recoverable:
 `git checkout memory.md` restores the prior version. `memory.md` is
 always tracked in git.
+
+## Output format
+
+After completing the rewrite, print a brief summary using this structure:
+
+```
+[MERGED] <heading A> + <heading B> — <result heading>
+[TIGHTENED] <heading> — <what changed>
+[REWORDED] <heading> — <old phrasing → new>
+[STATS] <before word count> → <after word count>
+```
+
+One line per significant change. Minor prose edits can be omitted.
+End with the STATS line. Do not include any other commentary. Do not
+mention phase.md.

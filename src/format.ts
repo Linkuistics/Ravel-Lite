@@ -117,19 +117,54 @@ export function extractToolDetail(input: Record<string, unknown>): string {
   return ''
 }
 
+const YELLOW = '\x1b[33m'
+const MAGENTA = '\x1b[35m'
+const RED = '\x1b[31m'
+
+/** Map structured action tags to display symbols and colours. */
+const ACTION_STYLES: Record<string, { symbol: string; colour: string }> = {
+  ADDED:         { symbol: '+', colour: GREEN },
+  SHARPENED:     { symbol: '~', colour: CYAN },
+  REPLACED:      { symbol: '↻', colour: YELLOW },
+  REMOVED:       { symbol: '−', colour: RED },
+  MERGED:        { symbol: '⊕', colour: CYAN },
+  TIGHTENED:     { symbol: '~', colour: CYAN },
+  REWORDED:      { symbol: '~', colour: DIM },
+  STATS:         { symbol: '▪', colour: DIM },
+  DELETED:       { symbol: '−', colour: RED },
+  PROMOTED:      { symbol: '↑', colour: YELLOW },
+  REPRIORITISED: { symbol: '⇅', colour: YELLOW },
+  DISPATCH:      { symbol: '→', colour: GREEN },
+  'NO DISPATCH': { symbol: '·', colour: DIM },
+}
+
 /**
  * Format result text from a headless phase.
- * Recognises Insight blocks and applies indentation.
+ * Recognises structured [ACTION] markers, Insight blocks, and filters noise.
  */
 export function formatResultText(text: string): string {
   const lines = text.split('\n')
-  const formatted: string[] = []
+  const formatted: string[] = ['']  // blank line separates progress from result
   let inInsight = false
 
   for (const line of lines) {
     // Filter out phase.md status lines
     if (line.match(/^(?:`?phase\.md`?|Phase)\s+(?:set to|written|→)/i)) continue
     if (line.match(/phase\.md.*`git-commit-/)) continue
+    // Filter lines that are just "phase.md" mentions
+    if (line.match(/wrote.*phase\.md/i)) continue
+
+    // Structured action markers: [ACTION] detail
+    const actionMatch = line.match(/^\[([A-Z ]+)\]\s*(.*)$/)
+    if (actionMatch) {
+      const tag = actionMatch[1]
+      const detail = actionMatch[2]
+      const style = ACTION_STYLES[tag]
+      if (style) {
+        formatted.push(`  ${style.colour}${BOLD}${style.symbol}${RESET}  ${style.colour}${detail}${RESET}`)
+        continue
+      }
+    }
 
     // Detect insight block opening: `★ Insight ─...`
     if (line.match(/^`?★\s*Insight\s*─/)) {
@@ -149,6 +184,11 @@ export function formatResultText(text: string): string {
     }
     // Regular result text — indent for readability
     formatted.push(`  ${DIM}${line}${RESET}`)
+  }
+
+  // Trim trailing empty lines
+  while (formatted.length > 1 && formatted[formatted.length - 1].match(/^\s*$/)) {
+    formatted.pop()
   }
 
   return formatted.join('\n')

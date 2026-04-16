@@ -45,3 +45,17 @@ the Memory style rules.
    decide whether compaction is "needed".
 
 5. Stop.
+
+## Output format
+
+After completing all writes, print a brief summary using this structure:
+
+```
+[ADDED] <heading> — <one-line description>
+[SHARPENED] <heading> — <what changed>
+[REPLACED] <heading> — <old → new>
+[REMOVED] <heading> — <why>
+```
+
+One line per memory action. Do not include any other commentary — just
+the action list. Do not mention phase.md.

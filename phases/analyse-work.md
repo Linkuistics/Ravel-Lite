@@ -67,3 +67,9 @@ changed.
 8. Write `git-commit-work` to `{{PLAN}}/phase.md`.
 
 9. Stop.
+
+## Output format
+
+After completing all writes, print only the commit message title
+(the first line of `commit-message.md`). No other commentary. Do not
+mention phase.md.
