@@ -6,6 +6,8 @@ const GREEN = '\x1b[32m'
 const CYAN = '\x1b[36m'
 const RESET = '\x1b[0m'
 const CLEAR_LINE = '\x1b[2K\r'
+const SAVE_CURSOR = '\x1b7'
+const RESTORE_CURSOR = '\x1b8'
 
 export interface ToolCall {
   name: string
@@ -45,9 +47,10 @@ const PHASE_HIGHLIGHTS: Record<string, HighlightRule[]> = {
 /** Track which highlight labels have already been shown this phase. */
 const shownHighlights = new Set<string>()
 
-/** Call at the start of each phase to reset highlight tracking. */
+/** Call at the start of each phase to reset highlight tracking and save cursor position. */
 export function resetHighlights(): void {
   shownHighlights.clear()
+  process.stderr.write(SAVE_CURSOR)
 }
 
 export function formatToolCall(tool: ToolCall, phase?: LLMPhase): FormattedOutput {
@@ -217,26 +220,23 @@ export function formatResultText(text: string): string {
 }
 
 export function writeLine(output: FormattedOutput): void {
-  if (!output.text) return  // skip empty (e.g. suppressed phase.md)
+  if (!output.text) return
   if (output.persist) {
-    process.stderr.write(CLEAR_LINE + output.text + '\n')
+    // Clear any lingering progress, print permanently
+    process.stderr.write(RESTORE_CURSOR + CLEAR_LINE + output.text + '\n')
   } else {
-    // Truncate progress lines to terminal width to prevent wrap breaking \r overwrite
+    // Restore to saved position, clear line, write progress, then save position for next restore
     const cols = process.stderr.columns ?? 80
-    // Strip ANSI codes to measure visible length, then truncate the raw string
     const visible = output.text.replace(/\x1b\[[0-9;]*m/g, '')
-    if (visible.length > cols - 1) {
-      // Truncate the visible text and re-apply DIM styling
-      const truncated = visible.slice(0, cols - 4) + '...'
-      process.stderr.write(CLEAR_LINE + `${DIM}${truncated}${RESET}`)
-    } else {
-      process.stderr.write(CLEAR_LINE + output.text)
-    }
+    const text = visible.length > cols - 1
+      ? `${DIM}${visible.slice(0, cols - 4)}...${RESET}`
+      : output.text
+    process.stderr.write(RESTORE_CURSOR + CLEAR_LINE + SAVE_CURSOR + text)
   }
 }
 
 export function clearProgress(): void {
-  process.stderr.write(CLEAR_LINE)
+  process.stderr.write(RESTORE_CURSOR + CLEAR_LINE)
 }
 
 export const PHASE_INFO: Record<string, { label: string; description: string }> = {
