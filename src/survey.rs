@@ -214,6 +214,28 @@ fn strip_code_fence(s: &str) -> &str {
 /// standard 80-column terminal with a small margin.
 const WRAP_WIDTH: usize = 78;
 
+/// Legend describing the per-plan summary table's numeric columns,
+/// emitted directly under the table. Zeros render as `-` in those
+/// columns so non-zero values stand out visually — the parenthetical
+/// in the header line documents that convention.
+const PLAN_TABLE_LEGEND: &str = "\
+Legend (numeric columns; `-` = zero):
+  UNBLOCKED  not_started tasks with no unmet dependencies
+  BLOCKED    tasks with status=blocked, or not_started with unmet deps
+  DONE       tasks with status=done
+  RECEIVED   items under `## Received` not yet promoted to numbered tasks
+";
+
+/// Convert a task-count integer into the cell-rendering form: zeros
+/// become `-` so the table's eye is drawn to non-zero values.
+fn format_count(n: usize) -> String {
+    if n == 0 {
+        "-".to_string()
+    } else {
+        n.to_string()
+    }
+}
+
 /// Render the complete survey output: top heading, the three
 /// sections, each with its own renderer. Deterministic and unit-tested.
 pub fn render_survey_output(response: &SurveyResponse) -> String {
@@ -222,6 +244,8 @@ pub fn render_survey_output(response: &SurveyResponse) -> String {
 
     out.push_str("## Per-plan summary\n\n");
     out.push_str(&render_plan_table(&response.plans));
+    out.push('\n');
+    out.push_str(PLAN_TABLE_LEGEND);
     out.push('\n');
 
     out.push_str("## Cross-project blockers\n\n");
@@ -255,10 +279,10 @@ fn render_plan_table(plans: &[PlanRow]) -> String {
                 p.project.clone(),
                 p.plan.clone(),
                 p.phase.clone(),
-                p.unblocked.to_string(),
-                p.blocked.to_string(),
-                p.done.to_string(),
-                p.received.to_string(),
+                format_count(p.unblocked),
+                format_count(p.blocked),
+                format_count(p.done),
+                format_count(p.received),
                 p.notes.clone(),
             ]
         })
@@ -305,7 +329,7 @@ fn render_blockers(blockers: &[Blocker]) -> String {
         if i > 0 {
             out.push('\n');
         }
-        let text = format!("`{}` blocked on `{}`: {}", b.blocked, b.blocker, b.rationale);
+        let text = format!("{} blocked on {}: {}", b.blocked, b.blocker, b.rationale);
         out.push_str(&render_wrapped_bullet("  - ", &text));
         out.push('\n');
     }
@@ -345,7 +369,7 @@ fn render_recommendations(recs: &[Recommendation]) -> String {
             out.push('\n');
         }
         let prefix = format!("  {}. ", i + 1);
-        let text = format!("`{}` — {}", r.plan, r.rationale);
+        let text = format!("{} — {}", r.plan, r.rationale);
         out.push_str(&render_wrapped_bullet(&prefix, &text));
         out.push('\n');
     }
@@ -884,6 +908,28 @@ parallel_streams:
     }
 
     #[test]
+    fn render_plan_table_renders_zero_counts_as_dash() {
+        let plans = vec![row("P", "x", "work", 0, 0, 0, 0, "")];
+        let table = render_plan_table(&plans);
+        // The data row should contain "-" in the numeric columns and
+        // no "0" digits (the only candidate digit source is counts).
+        let data_row = table.lines().nth(1).unwrap();
+        assert!(data_row.contains('-'));
+        assert!(!data_row.contains('0'), "unexpected zero digit: {data_row}");
+    }
+
+    #[test]
+    fn render_plan_table_preserves_nonzero_counts() {
+        let plans = vec![row("P", "x", "work", 3, 10, 5, 2, "")];
+        let table = render_plan_table(&plans);
+        let data_row = table.lines().nth(1).unwrap();
+        assert!(data_row.contains('3'));
+        assert!(data_row.contains("10"));
+        assert!(data_row.contains('5'));
+        assert!(data_row.contains('2'));
+    }
+
+    #[test]
     fn render_plan_table_has_header_row_in_all_caps() {
         let plans = vec![row("P", "x", "work", 0, 0, 0, 0, "")];
         let table = render_plan_table(&plans);
@@ -915,7 +961,7 @@ parallel_streams:
         ];
         let out = render_blockers(&blockers);
         // Blank line between the two bullet blocks.
-        assert!(out.contains("\n\n  - `P/c`"), "missing blank line separator: {out}");
+        assert!(out.contains("\n\n  - P/c"), "missing blank line separator: {out}");
     }
 
     #[test]
@@ -1053,6 +1099,51 @@ parallel_streams:
         // Empty-state fallbacks render.
         assert!(out.contains("None detected."));
         assert!(out.contains("None identified."));
+    }
+
+    #[test]
+    fn render_survey_output_includes_legend_under_per_plan_summary() {
+        let response = SurveyResponse {
+            plans: vec![row("P", "x", "work", 1, 0, 0, 0, "")],
+            cross_project_blockers: vec![],
+            parallel_streams: vec![],
+            recommended_invocation_order: vec![],
+        };
+        let out = render_survey_output(&response);
+        // Legend labels appear.
+        assert!(out.contains("UNBLOCKED"));
+        assert!(out.contains("BLOCKED"));
+        assert!(out.contains("DONE"));
+        assert!(out.contains("RECEIVED"));
+        assert!(out.contains("Legend"));
+        // Legend appears between the table and the first prose section.
+        let legend_idx = out.find("Legend").unwrap();
+        let blockers_idx = out.find("## Cross-project blockers").unwrap();
+        assert!(legend_idx < blockers_idx);
+    }
+
+    #[test]
+    fn render_blockers_does_not_wrap_plan_paths_in_backticks() {
+        let blockers = vec![Blocker {
+            blocked: "P/alpha".into(),
+            blocker: "Q/beta".into(),
+            rationale: "reason.".into(),
+        }];
+        let out = render_blockers(&blockers);
+        assert!(!out.contains('`'), "unexpected backtick in blockers: {out}");
+        assert!(out.contains("P/alpha"));
+        assert!(out.contains("Q/beta"));
+    }
+
+    #[test]
+    fn render_recommendations_does_not_wrap_plan_path_in_backticks() {
+        let recs = vec![Recommendation {
+            plan: "P/alpha".into(),
+            rationale: "go.".into(),
+        }];
+        let out = render_recommendations(&recs);
+        assert!(!out.contains('`'), "unexpected backtick in recommendations: {out}");
+        assert!(out.contains("P/alpha"));
     }
 
     // ---- wrap_at ----
