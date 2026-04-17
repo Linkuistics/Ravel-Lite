@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tokio::io::AsyncReadExt;
@@ -24,6 +25,18 @@ use super::schema::parse_survey_response;
 /// summarisation task over plain-text inputs.
 pub const DEFAULT_SURVEY_MODEL: &str = "claude-haiku-4-5";
 
+/// Default ceiling on how long the `claude` subprocess may run before
+/// survey gives up. Survey is advertised as single-shot and read-only;
+/// a hang with no feedback is a worse failure mode than a loud error
+/// that the user can retry. Five minutes is generous for any model
+/// summarising plain-text inputs and short enough to surface problems
+/// before the user walks away.
+pub const DEFAULT_SURVEY_TIMEOUT_SECS: u64 = 300;
+
+fn resolve_timeout(flag_override: Option<u64>) -> Duration {
+    Duration::from_secs(flag_override.unwrap_or(DEFAULT_SURVEY_TIMEOUT_SECS))
+}
+
 /// Resolve which model to use for the survey call. Precedence:
 ///   1. explicit `--model` flag on the CLI
 ///   2. `models.survey` in the agent's config
@@ -41,6 +54,7 @@ pub async fn run_survey(
     config_root: &Path,
     roots: &[PathBuf],
     model_override: Option<String>,
+    timeout_override_secs: Option<u64>,
 ) -> Result<()> {
     let shared = load_shared_config(config_root)?;
     if shared.agent != "claude-code" {
@@ -104,7 +118,33 @@ pub async fn run_survey(
         .take()
         .context("claude CLI stdout pipe was unexpectedly unavailable")?;
     let mut output = String::new();
-    stdout.read_to_string(&mut output).await?;
+    let timeout = resolve_timeout(timeout_override_secs);
+    let start = Instant::now();
+    let read_result = tokio::time::timeout(timeout, stdout.read_to_string(&mut output)).await;
+
+    match read_result {
+        Ok(Ok(_)) => {}
+        Ok(Err(io_err)) => {
+            let _ = child.kill().await;
+            return Err(io_err).context("failed reading stdout from claude");
+        }
+        Err(_elapsed) => {
+            let _ = child.kill().await;
+            anyhow::bail!(
+                "claude CLI did not produce a result within {}s timeout (elapsed {}s).\n\
+                 Captured {} bytes of stdout before timing out:\n{}\n\n\
+                 Try one of:\n  \
+                 * re-run the command (transient hangs sometimes clear)\n  \
+                 * swap the model with --model <other>\n  \
+                 * check network / API reachability\n  \
+                 * extend the limit with --timeout-secs <N>",
+                timeout.as_secs(),
+                start.elapsed().as_secs(),
+                output.len(),
+                output,
+            );
+        }
+    }
 
     let status = child.wait().await?;
     if !status.success() {
@@ -153,5 +193,15 @@ mod tests {
         let cfg = empty_agent_config(&[]);
         let resolved = resolve_model(&cfg, None);
         assert_eq!(resolved, DEFAULT_SURVEY_MODEL);
+    }
+
+    #[test]
+    fn resolve_timeout_uses_default_when_no_override() {
+        assert_eq!(resolve_timeout(None), Duration::from_secs(DEFAULT_SURVEY_TIMEOUT_SECS));
+    }
+
+    #[test]
+    fn resolve_timeout_honours_override() {
+        assert_eq!(resolve_timeout(Some(42)), Duration::from_secs(42));
     }
 }

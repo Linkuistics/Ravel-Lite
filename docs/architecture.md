@@ -411,10 +411,9 @@ raveloop/
 ├── Cargo.toml
 ├── defaults/                   # embedded by include_str!, written by init
 │   ├── config.yaml
-│   ├── agents/…
+│   ├── agents/…           # includes agents/pi/subagents/ (pi subagent defs)
 │   ├── phases/…
-│   ├── fixed-memory/…
-│   └── skills/…
+│   └── fixed-memory/…
 └── src/
     ├── main.rs
     ├── config.rs               # YAML config loading
@@ -449,9 +448,14 @@ Crate dependencies are defined in `Cargo.toml`.
 │   └── pi/
 │       ├── config.yaml
 │       ├── tokens.yaml
-│       └── prompts/
-│           ├── system-prompt.md
-│           └── memory-prompt.md
+│       ├── prompts/
+│       │   ├── system-prompt.md
+│       │   └── memory-prompt.md
+│       └── subagents/          # pi subagent definitions, deployed to
+│           │                   # <project>/.pi/agents at setup time
+│           ├── brainstorming.md
+│           ├── tdd.md
+│           └── writing-plans.md
 ├── phases/                     # phase prompt templates
 │   ├── work.md
 │   ├── analyse-work.md
@@ -462,10 +466,6 @@ Crate dependencies are defined in `Cargo.toml`.
 │   ├── coding-style.md
 │   ├── coding-style-rust.md
 │   └── memory-style.md
-├── skills/
-│   ├── brainstorming.md
-│   ├── tdd.md
-│   └── writing-plans.md
 ├── survey.md                   # prompt template for `survey` subcommand
 └── create-plan.md              # prompt template for `create` subcommand
 ```

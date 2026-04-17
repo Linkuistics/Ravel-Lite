@@ -31,9 +31,9 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
     EmbeddedFile { path: "fixed-memory/coding-style-bash.md", content: include_str!("../defaults/fixed-memory/coding-style-bash.md") },
     EmbeddedFile { path: "fixed-memory/coding-style-elixir.md", content: include_str!("../defaults/fixed-memory/coding-style-elixir.md") },
     EmbeddedFile { path: "fixed-memory/memory-style.md", content: include_str!("../defaults/fixed-memory/memory-style.md") },
-    EmbeddedFile { path: "skills/brainstorming.md", content: include_str!("../defaults/skills/brainstorming.md") },
-    EmbeddedFile { path: "skills/tdd.md", content: include_str!("../defaults/skills/tdd.md") },
-    EmbeddedFile { path: "skills/writing-plans.md", content: include_str!("../defaults/skills/writing-plans.md") },
+    EmbeddedFile { path: "agents/pi/subagents/brainstorming.md", content: include_str!("../defaults/agents/pi/subagents/brainstorming.md") },
+    EmbeddedFile { path: "agents/pi/subagents/tdd.md", content: include_str!("../defaults/agents/pi/subagents/tdd.md") },
+    EmbeddedFile { path: "agents/pi/subagents/writing-plans.md", content: include_str!("../defaults/agents/pi/subagents/writing-plans.md") },
     EmbeddedFile { path: "survey.md", content: include_str!("../defaults/survey.md") },
     EmbeddedFile { path: "create-plan.md", content: include_str!("../defaults/create-plan.md") },
 ];

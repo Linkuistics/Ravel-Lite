@@ -77,6 +77,22 @@ fn embedded_defaults_are_valid() {
     let pi = raveloop::config::load_agent_config(&target, "pi").unwrap();
     assert!(pi.models.contains_key("reflect"));
 
+    // Every LLM phase in every embedded agent config must declare a
+    // non-empty model string. An empty string silently delegates to
+    // whatever `claude` / `pi` pick at spawn time, which is neither
+    // auditable nor stable across releases.
+    for (agent_name, cfg) in [("claude-code", &cc), ("pi", &pi)] {
+        for phase in ["work", "analyse-work", "reflect", "dream", "triage"] {
+            let model = cfg.models.get(phase).unwrap_or_else(|| {
+                panic!("{agent_name} defaults missing model for phase {phase}")
+            });
+            assert!(
+                !model.trim().is_empty(),
+                "{agent_name} defaults have empty model for phase {phase}; pick an explicit default"
+            );
+        }
+    }
+
     for phase in ["work", "analyse-work", "reflect", "dream", "triage"] {
         let p = target.join("phases").join(format!("{phase}.md"));
         assert!(p.exists(), "missing phase file: {}", p.display());
@@ -278,4 +294,231 @@ async fn phase_loop_triage_cycle_exits_cleanly_on_no_confirm() {
     let log_str = String::from_utf8(log.stdout).unwrap();
     assert!(log_str.contains("triage"),
         "expected a triage commit, got log:\n{log_str}");
+}
+
+/// Writes per-phase files matching the prompt contract the embedded
+/// defaults describe. Exists so the integration test can swap in a
+/// "well-behaved model" and detect drift between phase prompts and the
+/// orchestrator's file-read expectations (latest-session.md,
+/// commit-message.md, memory.md/backlog.md updates, phase.md
+/// transitions).
+struct ContractMockAgent {
+    plan_dir: std::path::PathBuf,
+}
+
+#[async_trait]
+impl Agent for ContractMockAgent {
+    async fn invoke_interactive(&self, _prompt: &str, _ctx: &PlanContext) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn invoke_headless(
+        &self,
+        _prompt: &str,
+        _ctx: &PlanContext,
+        phase: LlmPhase,
+        _agent_id: &str,
+        _tx: UISender,
+    ) -> anyhow::Result<()> {
+        let plan = &self.plan_dir;
+        match phase {
+            LlmPhase::AnalyseWork => {
+                fs::write(
+                    plan.join("latest-session.md"),
+                    "### Session 1 (2026-04-18T00:00:00Z) — contract test\n\
+                     - mock analyse-work output\n",
+                )?;
+                fs::write(
+                    plan.join("commit-message.md"),
+                    "analyse-work: contract test session\n\n\
+                     Written by the ContractMockAgent to exercise the\n\
+                     phase → file-write contract.\n",
+                )?;
+                fs::write(plan.join("phase.md"), "git-commit-work")?;
+            }
+            LlmPhase::Reflect => {
+                fs::write(
+                    plan.join("memory.md"),
+                    "# Memory\n\n## Mock learning\nExercised by the contract test.\n",
+                )?;
+                fs::write(plan.join("phase.md"), "git-commit-reflect")?;
+            }
+            LlmPhase::Dream => {
+                // Not expected in this test (memory too small for headroom),
+                // but handle gracefully so a future change doesn't crash the
+                // mock.
+                fs::write(plan.join("phase.md"), "git-commit-dream")?;
+            }
+            LlmPhase::Triage => {
+                fs::write(
+                    plan.join("backlog.md"),
+                    "# Backlog\n\n## Placeholder task\nAdded by contract test.\n",
+                )?;
+                fs::write(plan.join("phase.md"), "git-commit-triage")?;
+            }
+            LlmPhase::Work => {
+                // Work is interactive in the phase loop; invoke_headless is
+                // not expected to fire for it. Fall through without writing.
+            }
+        }
+        Ok(())
+    }
+
+    async fn dispatch_subagent(
+        &self,
+        _prompt: &str,
+        _target_plan: &str,
+        _agent_id: &str,
+        _tx: UISender,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn tokens(&self) -> HashMap<String, String> {
+        // The phase prompts the orchestrator exercises headlessly
+        // (analyse-work, reflect, triage) only reference the built-in
+        // tokens (PLAN, PROJECT, ORCHESTRATOR, RELATED_PLANS). The work
+        // prompt uses {{TOOL_READ}}, but this test never enters Work —
+        // it declines the final confirm.
+        HashMap::new()
+    }
+}
+
+#[tokio::test]
+async fn phase_contract_round_trip_writes_expected_files() {
+    // Installs the real embedded defaults into a tempdir, runs a mock
+    // agent that writes the files each phase prompt instructs a
+    // well-behaved model to write, and asserts those files exist with
+    // plausible contents after the cycle. If a phase prompt drifts to
+    // a different filename, this test starts failing at the assertion
+    // for that file — before a real run does in the field.
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    init_test_repo(root);
+
+    let config_root = root.join("config");
+    raveloop::init::run_init(&config_root, false).unwrap();
+
+    let plan_dir = root.join("plans/contract-plan");
+    fs::create_dir_all(&plan_dir).unwrap();
+    // Start at analyse-work: work is interactive and not part of this
+    // test's contract (it has no file-write postcondition beyond what
+    // analyse-work checks via the diff).
+    fs::write(plan_dir.join("phase.md"), "analyse-work").unwrap();
+    fs::write(plan_dir.join("backlog.md"), "# Backlog\n").unwrap();
+    fs::write(plan_dir.join("memory.md"), "# Memory\n").unwrap();
+    // analyse-work reads work-baseline to diff against; point it at the
+    // repo's initial commit so any downstream `git diff` is well-formed.
+    let head = Command::new("git")
+        .current_dir(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    fs::write(plan_dir.join("work-baseline"), &head.stdout).unwrap();
+
+    let agent = Arc::new(ContractMockAgent { plan_dir: plan_dir.clone() });
+
+    let shared = SharedConfig {
+        agent: "mock".into(),
+        headroom: 10_000, // High: ensures dream never triggers.
+    };
+
+    let ctx = PlanContext {
+        plan_dir: plan_dir.to_string_lossy().to_string(),
+        project_dir: root.to_string_lossy().to_string(),
+        dev_root: root.parent().unwrap().to_string_lossy().to_string(),
+        related_plans: String::new(),
+        config_root: config_root.to_string_lossy().to_string(),
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = UI::new(tx);
+
+    // The phase loop asks for confirmation at two points: after
+    // git-commit-work ("Proceed to reflect phase?") and after
+    // git-commit-triage ("Proceed to next work phase?"). Approve the
+    // first so the full cycle runs, decline the second so the loop
+    // exits without entering the interactive work phase.
+    let drain = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            match msg {
+                UIMessage::Quit => break,
+                UIMessage::Confirm { message, reply } => {
+                    let approve = !message.contains("next work phase");
+                    let _ = reply.send(approve);
+                }
+                _ => {}
+            }
+        }
+    });
+
+    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    ui.quit();
+    let _ = drain.await;
+
+    assert!(result.is_ok(), "phase_loop returned error: {result:?}");
+
+    // Contract assertion 1: analyse-work produced latest-session.md.
+    let latest = fs::read_to_string(plan_dir.join("latest-session.md"))
+        .expect("latest-session.md should exist after analyse-work");
+    assert!(
+        latest.contains("### Session"),
+        "latest-session.md should contain a Session heading, got:\n{latest}"
+    );
+
+    // Contract assertion 2: commit-message.md was consumed by
+    // git-commit-work and is no longer on disk.
+    assert!(
+        !plan_dir.join("commit-message.md").exists(),
+        "commit-message.md should have been consumed by git-commit-work"
+    );
+
+    // Contract assertion 3: reflect wrote memory.md in the expected
+    // location.
+    let memory = fs::read_to_string(plan_dir.join("memory.md"))
+        .expect("memory.md should exist after reflect");
+    assert!(
+        memory.contains("Mock learning"),
+        "reflect should have written memory.md with new content, got:\n{memory}"
+    );
+
+    // Contract assertion 4: triage wrote backlog.md in the expected
+    // location.
+    let backlog = fs::read_to_string(plan_dir.join("backlog.md"))
+        .expect("backlog.md should exist after triage");
+    assert!(
+        backlog.contains("Placeholder task"),
+        "triage should have updated backlog.md, got:\n{backlog}"
+    );
+
+    // Contract assertion 5: phase.md has advanced back to the start of
+    // the next cycle.
+    let final_phase = fs::read_to_string(plan_dir.join("phase.md")).unwrap();
+    assert_eq!(
+        final_phase.trim(),
+        "work",
+        "expected phase.md to advance to 'work' after git-commit-triage"
+    );
+
+    // Contract assertion 6: each audit-trail commit was produced. The
+    // analyse-work commit message is the one the mock wrote; reflect
+    // and triage fall back to the default message shape.
+    let log = Command::new("git")
+        .current_dir(root)
+        .args(["log", "--oneline", "--all"])
+        .output()
+        .unwrap();
+    let log_str = String::from_utf8(log.stdout).unwrap();
+    assert!(
+        log_str.contains("analyse-work: contract test session"),
+        "expected analyse-work commit from custom commit-message.md, got log:\n{log_str}"
+    );
+    assert!(
+        log_str.contains("reflect"),
+        "expected a reflect commit, got log:\n{log_str}"
+    );
+    assert!(
+        log_str.contains("triage"),
+        "expected a triage commit, got log:\n{log_str}"
+    );
 }

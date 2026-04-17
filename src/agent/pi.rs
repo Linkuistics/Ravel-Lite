@@ -376,9 +376,9 @@ impl Agent for PiAgent {
             }
         }
 
-        // 4. Deploy skill files to <project_dir>/.pi/agents/.
-        let skills_dir = Path::new(&self.config_root).join("skills");
-        if !skills_dir.exists() {
+        // 4. Deploy subagent definitions to <project_dir>/.pi/agents/.
+        let subagents_src = Path::new(&self.config_root).join("agents/pi/subagents");
+        if !subagents_src.exists() {
             return Ok(());
         }
 
@@ -386,14 +386,14 @@ impl Agent for PiAgent {
         fs::create_dir_all(&dest_dir)
             .with_context(|| format!("Failed to create {}", dest_dir.display()))?;
 
-        let entries = fs::read_dir(&skills_dir)
-            .with_context(|| format!("Failed to read skills dir {}", skills_dir.display()))?;
+        let entries = fs::read_dir(&subagents_src)
+            .with_context(|| format!("Failed to read subagents dir {}", subagents_src.display()))?;
 
         for entry in entries {
             let entry = match entry {
                 Ok(e) => e,
                 Err(e) => {
-                    eprintln!("Warning: failed to read skills dir entry: {e}");
+                    eprintln!("Warning: failed to read subagents dir entry: {e}");
                     continue;
                 }
             };
@@ -448,7 +448,7 @@ impl Agent for PiAgent {
             };
 
             if let Err(e) = process() {
-                eprintln!("Warning: failed to process skill {filename}: {e}");
+                eprintln!("Warning: failed to process subagent {filename}: {e}");
             }
         }
 

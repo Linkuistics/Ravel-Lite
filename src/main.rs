@@ -106,6 +106,12 @@ enum Commands {
         /// turn overrides the DEFAULT_SURVEY_MODEL constant.
         #[arg(long)]
         model: Option<String>,
+        /// Override the timeout (in seconds) for the `claude` subprocess
+        /// call. Default is 300 seconds (5 minutes). The survey fails
+        /// with a diagnostic error and a partial-stdout dump if claude
+        /// does not produce a result within this window.
+        #[arg(long)]
+        timeout_secs: Option<u64>,
     },
 }
 
@@ -125,9 +131,9 @@ async fn main() -> Result<()> {
             let config_root = resolve_config_dir(config)?;
             create::run_create(&config_root, plan_dir).await
         }
-        Commands::Survey { config, root, model } => {
+        Commands::Survey { config, root, model, timeout_secs } => {
             let config_root = resolve_config_dir(config)?;
-            survey::run_survey(&config_root, &root, model).await
+            survey::run_survey(&config_root, &root, model, timeout_secs).await
         }
     }
 }
