@@ -317,9 +317,11 @@ fn append_table_row(out: &mut String, row: &[String; 8], widths: &[usize; 8], la
     out.push('\n');
 }
 
-/// Render the cross-project blockers section as indented bullets with
-/// a blank line between entries. Each bullet wraps at WRAP_WIDTH with
-/// continuation lines indented to align under the bullet's content.
+/// Render the cross-project blockers section. Each entry is a header
+/// line ("  - X blocked on Y") followed by an indented rationale body
+/// that wraps at WRAP_WIDTH. Splitting header from body means the
+/// body's wrap continuations can never be confused with a new logical
+/// line — within the body, every line IS a wrap.
 fn render_blockers(blockers: &[Blocker]) -> String {
     if blockers.is_empty() {
         return "  None detected.\n".to_string();
@@ -329,36 +331,47 @@ fn render_blockers(blockers: &[Blocker]) -> String {
         if i > 0 {
             out.push('\n');
         }
-        let text = format!("{} blocked on {}: {}", b.blocked, b.blocker, b.rationale);
-        out.push_str(&render_wrapped_bullet("  - ", &text));
+        out.push_str(&format!("  - {} blocked on {}\n", b.blocked, b.blocker));
+        out.push_str(&render_wrapped_bullet("      ", &b.rationale));
         out.push('\n');
     }
     out
 }
 
-/// Render parallel streams as indented bullets: each bullet contains
-/// the stream name, the comma-separated plan IDs, and the rationale,
-/// wrapped at WRAP_WIDTH with continuation indent. Blank line between
-/// entries.
+/// Render parallel streams. Each entry is a header line
+/// ("  Stream N: name") followed by two labeled sub-lines
+/// ("Plans:" and "Rationale:"), both indented under the header and
+/// wrapping with hanging indent under the label's content. Labels are
+/// padded to the same width so the content columns align across
+/// sub-lines — wraps land in that same content column, visibly deeper
+/// than the label itself, so wraps are unambiguously wraps.
 fn render_streams(streams: &[ParallelStream]) -> String {
     if streams.is_empty() {
         return "  None identified.\n".to_string();
     }
+    // Pad to the widest label so "Plans:" and "Rationale:" content
+    // columns line up.
+    const PLANS_LABEL: &str = "      Plans:     ";
+    const RATIONALE_LABEL: &str = "      Rationale: ";
     let mut out = String::new();
     for (i, stream) in streams.iter().enumerate() {
         if i > 0 {
             out.push('\n');
         }
+        out.push_str(&format!("  Stream {}: {}\n", i + 1, stream.name));
         let plans_joined = stream.plans.join(", ");
-        let text = format!("{}: {plans_joined}. {}", stream.name, stream.rationale);
-        out.push_str(&render_wrapped_bullet("  - ", &text));
+        out.push_str(&render_wrapped_bullet(PLANS_LABEL, &plans_joined));
+        out.push('\n');
+        out.push_str(&render_wrapped_bullet(RATIONALE_LABEL, &stream.rationale));
         out.push('\n');
     }
     out
 }
 
-/// Render recommended invocations as indented numbered items with
-/// blank lines between them.
+/// Render recommended invocations as numbered entries. Each entry is
+/// a header line ("  1. Plan/ID") followed by an indented rationale
+/// body. Splitting header (plan ID) from body (rationale) matches the
+/// blockers section: within the body, every line is a wrap.
 fn render_recommendations(recs: &[Recommendation]) -> String {
     if recs.is_empty() {
         return "  None available.\n".to_string();
@@ -368,9 +381,8 @@ fn render_recommendations(recs: &[Recommendation]) -> String {
         if i > 0 {
             out.push('\n');
         }
-        let prefix = format!("  {}. ", i + 1);
-        let text = format!("{} — {}", r.plan, r.rationale);
-        out.push_str(&render_wrapped_bullet(&prefix, &text));
+        out.push_str(&format!("  {}. {}\n", i + 1, r.plan));
+        out.push_str(&render_wrapped_bullet("       ", &r.rationale));
         out.push('\n');
     }
     out
@@ -960,7 +972,9 @@ parallel_streams:
             },
         ];
         let out = render_blockers(&blockers);
-        // Blank line between the two bullet blocks.
+        // Blank line between the two bullet blocks — each blocker now
+        // has a multi-line shape (header + body), so the separator is
+        // a blank line before the next header row.
         assert!(out.contains("\n\n  - P/c"), "missing blank line separator: {out}");
     }
 
@@ -982,7 +996,7 @@ parallel_streams:
     }
 
     #[test]
-    fn render_blockers_continuation_lines_indent_to_content_start() {
+    fn render_blockers_body_indent_is_distinct_from_header() {
         let blockers = vec![Blocker {
             blocked: "P/a".into(),
             blocker: "Q/b".into(),
@@ -990,13 +1004,17 @@ parallel_streams:
         }];
         let out = render_blockers(&blockers);
         let lines: Vec<&str> = out.lines().collect();
-        // First line starts with "  - "
+        // Header line uses "  - " (bullet marker at col 2).
         assert!(lines[0].starts_with("  - "));
-        // Subsequent non-empty lines start with four spaces (alignment
-        // under the "-" bullet's content, not under the "-" itself).
+        assert!(lines[0].contains("P/a blocked on Q/b"));
+        // Body lines (rationale + wraps) all use "      " (6 spaces)
+        // which is deeper than the bullet's content column (col 4).
+        // This is the structural signal that body lines are not a
+        // continuation of the header row.
         for line in &lines[1..] {
             if !line.is_empty() {
-                assert!(line.starts_with("    "), "continuation not indented: {line:?}");
+                assert!(line.starts_with("      "), "body not at 6-space indent: {line:?}");
+                assert!(!line.starts_with("  - "), "body line looks like a new header: {line:?}");
             }
         }
     }
@@ -1036,7 +1054,20 @@ parallel_streams:
             },
         ];
         let out = render_streams(&streams);
-        assert!(out.contains("\n\n  - Two"), "missing blank line separator: {out}");
+        assert!(out.contains("\n\n  Stream 2: Two"), "missing blank line separator: {out}");
+    }
+
+    #[test]
+    fn render_streams_emits_labeled_sub_lines() {
+        let streams = vec![ParallelStream {
+            name: "Critical path".into(),
+            plans: vec!["P/a".into()],
+            rationale: "Do the thing.".into(),
+        }];
+        let out = render_streams(&streams);
+        assert!(out.contains("  Stream 1: Critical path"));
+        assert!(out.contains("      Plans:"));
+        assert!(out.contains("      Rationale:"));
     }
 
     #[test]
