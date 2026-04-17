@@ -180,6 +180,12 @@ pub struct ParallelStream {
 #[derive(Debug, serde::Deserialize, PartialEq, Eq)]
 pub struct Recommendation {
     pub plan: String,
+    /// Priority rank. Multiple recommendations sharing the same `order`
+    /// are mutually parallelisable — start them in any order, they
+    /// don't block each other. Smaller numbers come before larger
+    /// numbers. Within a shared number, list position expresses a
+    /// secondary ranking (earlier entries unblock more downstream).
+    pub order: usize,
     pub rationale: String,
 }
 
@@ -380,20 +386,23 @@ fn render_streams(streams: &[ParallelStream]) -> String {
     out
 }
 
-/// Render recommended invocations as numbered entries. Each entry is
-/// a header line ("  1. Plan/ID") followed by an indented rationale
-/// body. Splitting header (plan ID) from body (rationale) matches the
-/// blockers section: within the body, every line is a wrap.
+/// Render recommended invocations as numbered entries. The visible
+/// number comes from each recommendation's `order` field — multiple
+/// recommendations can share a number to indicate they're
+/// parallelisable. A short explanatory note sits at the top so
+/// duplicated numbers don't look like a bug.
 fn render_recommendations(recs: &[Recommendation]) -> String {
     if recs.is_empty() {
         return "  None available.\n".to_string();
     }
     let mut out = String::new();
+    out.push_str("Items sharing a number can run in parallel; within a number,\n");
+    out.push_str("list order is a secondary priority (earlier entries unblock more).\n\n");
     for (i, r) in recs.iter().enumerate() {
         if i > 0 {
             out.push('\n');
         }
-        out.push_str(&format!("  {}. {}\n", i + 1, r.plan));
+        out.push_str(&format!("  {}. {}\n", r.order, r.plan));
         out.push_str(&render_wrapped_bullet("       ", &r.rationale));
         out.push('\n');
     }
@@ -794,6 +803,7 @@ cross_plan_blockers:
 
 recommended_invocation_order:
   - plan: Mnemosyne/mnemosyne-orchestrator
+    order: 1
     rationale: Dispatch Sub-C work-phase cycle.
 "#
     }
@@ -1124,24 +1134,54 @@ parallel_streams:
     }
 
     #[test]
-    fn render_recommendations_numbers_entries_in_order() {
+    fn render_recommendations_uses_order_field_for_display_number() {
         let recs = vec![
-            Recommendation { plan: "P/a".into(), rationale: "first.".into() },
-            Recommendation { plan: "P/b".into(), rationale: "second.".into() },
+            Recommendation { plan: "P/a".into(), order: 1, rationale: "first.".into() },
+            Recommendation { plan: "P/b".into(), order: 2, rationale: "second.".into() },
         ];
         let out = render_recommendations(&recs);
-        assert!(out.contains("  1. "));
-        assert!(out.contains("  2. "));
-        let one_idx = out.find("  1. ").unwrap();
-        let two_idx = out.find("  2. ").unwrap();
+        assert!(out.contains("  1. P/a"));
+        assert!(out.contains("  2. P/b"));
+        let one_idx = out.find("  1. P/a").unwrap();
+        let two_idx = out.find("  2. P/b").unwrap();
         assert!(one_idx < two_idx);
+    }
+
+    #[test]
+    fn render_recommendations_preserves_shared_order_numbers_as_parallelisable() {
+        // Two entries at order 1 (parallelisable), then one at order 2.
+        let recs = vec![
+            Recommendation { plan: "P/a".into(), order: 1, rationale: "first.".into() },
+            Recommendation { plan: "P/b".into(), order: 1, rationale: "also first.".into() },
+            Recommendation { plan: "P/c".into(), order: 2, rationale: "later.".into() },
+        ];
+        let out = render_recommendations(&recs);
+        assert!(out.contains("  1. P/a"));
+        assert!(out.contains("  1. P/b"));
+        assert!(out.contains("  2. P/c"));
+        assert_eq!(out.matches("  1. ").count(), 2, "expected two items at order 1");
+    }
+
+    #[test]
+    fn render_recommendations_includes_parallel_note_when_non_empty() {
+        let recs = vec![
+            Recommendation { plan: "P/a".into(), order: 1, rationale: "go.".into() },
+        ];
+        let out = render_recommendations(&recs);
+        assert!(out.contains("Items sharing a number can run in parallel"));
+    }
+
+    #[test]
+    fn render_recommendations_omits_parallel_note_when_empty() {
+        let out = render_recommendations(&[]);
+        assert!(!out.contains("Items sharing a number"));
     }
 
     #[test]
     fn render_recommendations_separates_entries_with_blank_lines() {
         let recs = vec![
-            Recommendation { plan: "P/a".into(), rationale: "first.".into() },
-            Recommendation { plan: "P/b".into(), rationale: "second.".into() },
+            Recommendation { plan: "P/a".into(), order: 1, rationale: "first.".into() },
+            Recommendation { plan: "P/b".into(), order: 2, rationale: "second.".into() },
         ];
         let out = render_recommendations(&recs);
         assert!(out.contains("\n\n  2. "));
@@ -1155,6 +1195,7 @@ parallel_streams:
             parallel_streams: vec![],
             recommended_invocation_order: vec![Recommendation {
                 plan: "P/x".into(),
+                order: 1,
                 rationale: "do it.".into(),
             }],
         };
@@ -1208,6 +1249,7 @@ parallel_streams:
     fn render_recommendations_does_not_wrap_plan_path_in_backticks() {
         let recs = vec![Recommendation {
             plan: "P/alpha".into(),
+            order: 1,
             rationale: "go.".into(),
         }];
         let out = render_recommendations(&recs);

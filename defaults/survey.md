@@ -51,6 +51,9 @@ parallel_streams:
 
 recommended_invocation_order:
   - plan: <project>/<plan>        # plan to invoke next via raveloop run
+    order: <int>                  # rank (1 = highest priority). Entries
+                                  # sharing an `order` are mutually
+                                  # parallelisable. See rules below.
     rationale: |                  # one or two sentences of rationale
       Why run this next, grounded in the files above.
 ```
@@ -76,7 +79,15 @@ recommended_invocation_order:
   not block each other. Every recommended plan should belong to some
   stream. Omit the key or return `[]` if all work is one linear chain.
 - `recommended_invocation_order`: up to five entries, highest priority
-  first. Priority order:
+  first. Each entry must include an integer `order` field:
+    - Entries sharing the same `order` value are mutually
+      parallelisable — running any subset concurrently is safe.
+    - Smaller `order` = higher priority. Orders usually start at 1.
+    - Numbers do NOT need to be contiguous; gaps are fine.
+    - List the entries in order of `order` (ascending), and WITHIN a
+      shared `order`, list the most-unblocking entry first (that
+      secondary ordering becomes the list position you emit).
+  Priority order for assigning `order`:
     1. Plans with unprocessed `## Received` items whose triage unblocks
        other plans on the critical path.
     2. Plans with `not_started` tasks marked `P1` and no dependencies.
