@@ -142,6 +142,8 @@ pub struct SurveyResponse {
     #[serde(default)]
     pub cross_project_blockers: Vec<Blocker>,
     #[serde(default)]
+    pub parallel_streams: Vec<ParallelStream>,
+    #[serde(default)]
     pub recommended_invocation_order: Vec<Recommendation>,
 }
 
@@ -162,6 +164,16 @@ pub struct PlanRow {
 pub struct Blocker {
     pub blocked: String,
     pub blocker: String,
+    pub rationale: String,
+}
+
+/// A group of plans whose work can proceed concurrently with other
+/// groups. Within a stream, work may still be sequential (gates,
+/// dependencies) — that's what `rationale` explains.
+#[derive(Debug, serde::Deserialize, PartialEq, Eq)]
+pub struct ParallelStream {
+    pub name: String,
+    pub plans: Vec<String>,
     pub rationale: String,
 }
 
@@ -214,6 +226,10 @@ pub fn render_survey_output(response: &SurveyResponse) -> String {
 
     out.push_str("## Cross-project blockers\n\n");
     out.push_str(&render_blockers(&response.cross_project_blockers));
+    out.push('\n');
+
+    out.push_str("## Parallel streams\n\n");
+    out.push_str(&render_streams(&response.parallel_streams));
     out.push('\n');
 
     out.push_str("## Recommended invocation order\n\n");
@@ -290,6 +306,27 @@ fn render_blockers(blockers: &[Blocker]) -> String {
             out.push('\n');
         }
         let text = format!("`{}` blocked on `{}`: {}", b.blocked, b.blocker, b.rationale);
+        out.push_str(&render_wrapped_bullet("  - ", &text));
+        out.push('\n');
+    }
+    out
+}
+
+/// Render parallel streams as indented bullets: each bullet contains
+/// the stream name, the comma-separated plan IDs, and the rationale,
+/// wrapped at WRAP_WIDTH with continuation indent. Blank line between
+/// entries.
+fn render_streams(streams: &[ParallelStream]) -> String {
+    if streams.is_empty() {
+        return "  None identified.\n".to_string();
+    }
+    let mut out = String::new();
+    for (i, stream) in streams.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let plans_joined = stream.plans.join(", ");
+        let text = format!("{}: {plans_joined}. {}", stream.name, stream.rationale);
         out.push_str(&render_wrapped_bullet("  - ", &text));
         out.push('\n');
     }
@@ -760,8 +797,40 @@ plans:
 "#;
         let resp = parse_survey_response(minimal).unwrap();
         assert!(resp.cross_project_blockers.is_empty());
+        assert!(resp.parallel_streams.is_empty());
         assert!(resp.recommended_invocation_order.is_empty());
         assert_eq!(resp.plans[0].notes, "");
+    }
+
+    #[test]
+    fn parse_survey_response_parses_parallel_streams() {
+        let yaml = r#"
+plans:
+  - project: P
+    plan: a
+    phase: work
+    unblocked: 1
+    blocked: 0
+    done: 0
+    received: 0
+
+parallel_streams:
+  - name: Critical path
+    plans:
+      - P/a
+      - P/b
+    rationale: |
+      Sequential chain within stream.
+  - name: Independent research
+    plans: [P/c]
+    rationale: No cross-project dependencies.
+"#;
+        let resp = parse_survey_response(yaml).unwrap();
+        assert_eq!(resp.parallel_streams.len(), 2);
+        assert_eq!(resp.parallel_streams[0].name, "Critical path");
+        assert_eq!(resp.parallel_streams[0].plans, vec!["P/a", "P/b"]);
+        assert!(resp.parallel_streams[0].rationale.contains("Sequential chain"));
+        assert_eq!(resp.parallel_streams[1].plans, vec!["P/c"]);
     }
 
     // ---- rendering ----
@@ -887,6 +956,59 @@ plans:
     }
 
     #[test]
+    fn render_streams_empty_yields_none_identified() {
+        let out = render_streams(&[]);
+        assert!(out.contains("None identified."));
+    }
+
+    #[test]
+    fn render_streams_includes_name_and_plans_and_rationale() {
+        let streams = vec![ParallelStream {
+            name: "Critical path".into(),
+            plans: vec!["P/a".into(), "P/b".into()],
+            rationale: "Sequential chain.".into(),
+        }];
+        let out = render_streams(&streams);
+        assert!(out.contains("Critical path"));
+        assert!(out.contains("P/a"));
+        assert!(out.contains("P/b"));
+        assert!(out.contains("Sequential chain."));
+    }
+
+    #[test]
+    fn render_streams_separates_entries_with_blank_lines() {
+        let streams = vec![
+            ParallelStream {
+                name: "One".into(),
+                plans: vec!["P/a".into()],
+                rationale: "first.".into(),
+            },
+            ParallelStream {
+                name: "Two".into(),
+                plans: vec!["P/b".into()],
+                rationale: "second.".into(),
+            },
+        ];
+        let out = render_streams(&streams);
+        assert!(out.contains("\n\n  - Two"), "missing blank line separator: {out}");
+    }
+
+    #[test]
+    fn render_streams_wraps_long_plan_lists_at_width() {
+        let streams = vec![ParallelStream {
+            name: "Big stream".into(),
+            plans: (0..10)
+                .map(|i| format!("Mnemosyne/sub-X-very-long-plan-name-{i}"))
+                .collect(),
+            rationale: "fine.".into(),
+        }];
+        let out = render_streams(&streams);
+        for line in out.lines() {
+            assert!(line.chars().count() <= WRAP_WIDTH, "line too wide: {line}");
+        }
+    }
+
+    #[test]
     fn render_recommendations_numbers_entries_in_order() {
         let recs = vec![
             Recommendation { plan: "P/a".into(), rationale: "first.".into() },
@@ -911,10 +1033,11 @@ plans:
     }
 
     #[test]
-    fn render_survey_output_contains_all_three_sections() {
+    fn render_survey_output_contains_all_four_sections_in_order() {
         let response = SurveyResponse {
             plans: vec![row("P", "x", "work", 1, 0, 0, 0, "")],
             cross_project_blockers: vec![],
+            parallel_streams: vec![],
             recommended_invocation_order: vec![Recommendation {
                 plan: "P/x".into(),
                 rationale: "do it.".into(),
@@ -922,10 +1045,14 @@ plans:
         };
         let out = render_survey_output(&response);
         assert!(out.contains("# Plan Status Survey"));
-        assert!(out.contains("## Per-plan summary"));
-        assert!(out.contains("## Cross-project blockers"));
-        assert!(out.contains("## Recommended invocation order"));
+        let summary = out.find("## Per-plan summary").unwrap();
+        let blockers = out.find("## Cross-project blockers").unwrap();
+        let streams = out.find("## Parallel streams").unwrap();
+        let recommendations = out.find("## Recommended invocation order").unwrap();
+        assert!(summary < blockers && blockers < streams && streams < recommendations);
+        // Empty-state fallbacks render.
         assert!(out.contains("None detected."));
+        assert!(out.contains("None identified."));
     }
 
     // ---- wrap_at ----

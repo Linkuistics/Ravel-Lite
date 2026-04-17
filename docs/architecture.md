@@ -519,10 +519,10 @@ fresh-context `claude` invocation alongside the prompt template at
 `<config-dir>/survey.md`.
 
 The **LLM emits YAML** matching a fixed schema (per-plan counts,
-cross-project blockers, recommended invocation order); the tool parses
-the response and renders the final output deterministically — aligned
-monospace table for the per-plan summary, indented-and-wrapped bullets
-for the two prose sections. This split means column alignment, blank-
+cross-project blockers, parallel streams, recommended invocation
+order); the tool parses the response and renders the final output
+deterministically — aligned monospace table for the per-plan summary,
+indented-and-wrapped bullets for the three prose sections. This split means column alignment, blank-
 line spacing, and wrap-width consistency are guaranteed by the tool
 rather than hoped for from the LLM. Raw stdout from claude is
 preserved in the error message when YAML parsing fails, so malformed
