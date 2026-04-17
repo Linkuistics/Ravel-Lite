@@ -83,6 +83,53 @@ fn embedded_defaults_are_valid() {
         let body = fs::read_to_string(&p).unwrap();
         assert!(!body.trim().is_empty(), "empty phase file: {}", p.display());
     }
+
+    let survey = target.join("survey.md");
+    assert!(survey.exists(), "missing survey prompt: {}", survey.display());
+    let body = fs::read_to_string(&survey).unwrap();
+    assert!(!body.trim().is_empty(), "empty survey prompt");
+    let loaded = raveloop_cli::survey::load_survey_prompt(&target).unwrap();
+    assert_eq!(loaded, body);
+}
+
+#[test]
+fn survey_plan_discovery_across_multiple_roots() {
+    // Two independent plan-root directories; each contains plans.
+    // Verifies that discover_plans labels each plan's project by root
+    // basename and render_survey_input produces a single combined
+    // document with every plan's sections intact.
+    let tmp = TempDir::new().unwrap();
+    let root_a = tmp.path().join("ProjectA-LLM_STATE");
+    let root_b = tmp.path().join("ProjectB-LLM_STATE");
+    fs::create_dir_all(&root_a).unwrap();
+    fs::create_dir_all(&root_b).unwrap();
+
+    for (root, plan_name, phase) in [
+        (&root_a, "plan-alpha", "work"),
+        (&root_a, "plan-beta", "triage"),
+        (&root_b, "plan-gamma", "reflect"),
+    ] {
+        let dir = root.join(plan_name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("phase.md"), phase).unwrap();
+        fs::write(dir.join("backlog.md"), format!("# backlog {plan_name}")).unwrap();
+    }
+
+    let plans_a = raveloop_cli::survey::discover_plans(&root_a).unwrap();
+    let plans_b = raveloop_cli::survey::discover_plans(&root_b).unwrap();
+    assert_eq!(plans_a.len(), 2);
+    assert_eq!(plans_b.len(), 1);
+
+    let mut all = Vec::new();
+    all.extend(plans_a);
+    all.extend(plans_b);
+    let rendered = raveloop_cli::survey::render_survey_input(&all);
+
+    assert!(rendered.contains("## Plan: ProjectA-LLM_STATE/plan-alpha"));
+    assert!(rendered.contains("## Plan: ProjectA-LLM_STATE/plan-beta"));
+    assert!(rendered.contains("## Plan: ProjectB-LLM_STATE/plan-gamma"));
+    assert!(rendered.contains("# backlog plan-alpha"));
+    assert!(rendered.contains("### memory.md\n(missing)"));
 }
 
 struct MockAgent {

@@ -7,6 +7,7 @@ mod init;
 mod phase_loop;
 mod prompt;
 mod subagent;
+mod survey;
 mod types;
 mod ui;
 
@@ -70,6 +71,25 @@ enum Commands {
         /// Path to the plan directory
         plan_dir: PathBuf,
     },
+    /// Produce an LLM-driven plan status overview across one or more
+    /// plan-root directories. Reads every plan's phase/backlog/memory
+    /// into a single fresh-context claude session that returns a
+    /// per-plan summary and a recommended invocation order.
+    Survey {
+        /// Path to the config directory. Overrides $RAVELOOP_CONFIG and the
+        /// default location at <dirs::config_dir()>/raveloop/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Plan root directory. Each root contributes all plans under it
+        /// (directories containing phase.md). May be repeated.
+        #[arg(long, required = true)]
+        root: Vec<PathBuf>,
+        /// Override the model used for the survey call. Overrides
+        /// `models.survey` in agents/claude-code/config.yaml, which in
+        /// turn overrides the DEFAULT_SURVEY_MODEL constant.
+        #[arg(long)]
+        model: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -83,6 +103,10 @@ async fn main() -> Result<()> {
         Commands::Run { config, dangerous, plan_dir } => {
             let config_root = resolve_config_dir(config)?;
             run_phase_loop(&config_root, &plan_dir, dangerous).await
+        }
+        Commands::Survey { config, root, model } => {
+            let config_root = resolve_config_dir(config)?;
+            survey::run_survey(&config_root, &root, model).await
         }
     }
 }

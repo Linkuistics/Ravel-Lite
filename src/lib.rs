@@ -7,5 +7,6 @@ pub mod init;
 pub mod phase_loop;
 pub mod prompt;
 pub mod subagent;
+pub mod survey;
 pub mod types;
 pub mod ui;

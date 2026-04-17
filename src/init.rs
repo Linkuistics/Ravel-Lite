@@ -29,6 +29,7 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
     EmbeddedFile { path: "skills/brainstorming.md", content: include_str!("../defaults/skills/brainstorming.md") },
     EmbeddedFile { path: "skills/tdd.md", content: include_str!("../defaults/skills/tdd.md") },
     EmbeddedFile { path: "skills/writing-plans.md", content: include_str!("../defaults/skills/writing-plans.md") },
+    EmbeddedFile { path: "survey.md", content: include_str!("../defaults/survey.md") },
 ];
 
 pub fn run_init(target_dir: &Path, force: bool) -> Result<()> {

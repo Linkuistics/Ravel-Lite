@@ -389,6 +389,7 @@ raveloop/
     ├── dream.rs                # should_dream, update_baseline
     ├── prompt.rs               # Template loading + token substitution
     ├── init.rs                 # `init` command — writes defaults
+    ├── survey.rs               # `survey` command — multi-root LLM status
     └── ui.rs                   # Ratatui TUI, UI handle, rendering
 ```
 
@@ -419,10 +420,11 @@ Crate dependencies are defined in `Cargo.toml`.
 │   ├── coding-style.md
 │   ├── coding-style-rust.md
 │   └── memory-style.md
-└── skills/
-    ├── brainstorming.md
-    ├── tdd.md
-    └── writing-plans.md
+├── skills/
+│   ├── brainstorming.md
+│   ├── tdd.md
+│   └── writing-plans.md
+└── survey.md                   # prompt template for `survey` subcommand
 ```
 
 The config directory can live inside a project repo (versioned with
@@ -485,6 +487,23 @@ that produced it.
 
 The main phase loop. Takes an optional config root (resolved via the
 discovery chain if omitted) and a plan directory.
+
+### `raveloop-cli survey [--config <dir>] --root <path> [--root <path> ...] [--model <m>]`
+
+Produces an LLM-driven multi-project plan-status overview. For each
+`--root` (a directory whose immediate subdirectories are plans),
+discovers plans by `phase.md` presence and bundles each plan's
+`phase.md`, `backlog.md`, and `memory.md` into a single fresh-context
+`claude` invocation alongside the prompt template at
+`<config-dir>/survey.md`. The LLM returns a per-plan summary, any
+cross-project blockers, and a recommended invocation order; output is
+streamed to stdout.
+
+Survey is single-shot and read-only by construction: no tool use, no
+session persistence, no file writes. Model precedence is
+`--model` flag → `models.survey` in the agent config →
+`DEFAULT_SURVEY_MODEL` (currently `claude-haiku-4-5`). Survey supports
+`claude-code` only in v1.
 
 ### Configuration
 
