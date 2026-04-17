@@ -71,6 +71,35 @@ pub fn git_save_work_baseline(plan_dir: &Path) {
     let _ = fs::write(&baseline_path, &sha);
 }
 
+/// Lines from `git status --porcelain` run from `project_dir`. Each entry
+/// is the raw porcelain line including the two-character XY status prefix
+/// — preserved so the caller can render them identically to what the user
+/// would see if they ran `git status` themselves.
+///
+/// Used by the work-phase commit boundary as a postcondition: a clean
+/// project tree after the work commit means the agent committed
+/// everything it claimed; non-empty output means something was edited
+/// but not committed (the silent-failure mode that masks lost work as
+/// "backlog empty"). Returns `Ok(vec![])` on a clean tree.
+pub fn working_tree_status(project_dir: &Path) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .current_dir(project_dir)
+        .args(["status", "--porcelain"])
+        .output()
+        .context("Failed to run git status")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git status exited {} in {}",
+            output.status,
+            project_dir.display()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect())
+}
+
 /// Find the project root by walking up from a directory to find .git.
 pub fn find_project_root(start_dir: &Path) -> Result<String> {
     let mut dir = start_dir.canonicalize().unwrap_or_else(|_| start_dir.to_path_buf());
@@ -99,5 +128,35 @@ mod tests {
     fn find_project_root_errors_on_root() {
         let result = find_project_root(Path::new("/tmp/nonexistent-asdhjkasd"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn working_tree_status_reports_dirty_paths() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = tmp.path();
+        Command::new("git").current_dir(repo).args(["init", "-q"]).output().unwrap();
+        // git init must succeed before we can stage anything; minimal config so commits work.
+        Command::new("git").current_dir(repo).args(["config", "user.email", "t@t"]).output().unwrap();
+        Command::new("git").current_dir(repo).args(["config", "user.name", "t"]).output().unwrap();
+
+        // Untracked file shows up as ?? in porcelain output.
+        fs::write(repo.join("dirty.txt"), "x").unwrap();
+        let status = working_tree_status(repo).unwrap();
+        assert!(
+            status.iter().any(|l| l.contains("dirty.txt")),
+            "expected dirty.txt in porcelain output, got: {status:?}"
+        );
+    }
+
+    #[test]
+    fn working_tree_status_empty_on_clean_tree() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = tmp.path();
+        Command::new("git").current_dir(repo).args(["init", "-q"]).output().unwrap();
+        Command::new("git").current_dir(repo).args(["config", "user.email", "t@t"]).output().unwrap();
+        Command::new("git").current_dir(repo).args(["config", "user.name", "t"]).output().unwrap();
+        // Empty repo with no untracked files — porcelain output should be empty.
+        let status = working_tree_status(repo).unwrap();
+        assert!(status.is_empty(), "expected empty status on clean tree, got: {status:?}");
     }
 }

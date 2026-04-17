@@ -25,6 +25,11 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
     EmbeddedFile { path: "phases/triage.md", content: include_str!("../defaults/phases/triage.md") },
     EmbeddedFile { path: "fixed-memory/coding-style.md", content: include_str!("../defaults/fixed-memory/coding-style.md") },
     EmbeddedFile { path: "fixed-memory/coding-style-rust.md", content: include_str!("../defaults/fixed-memory/coding-style-rust.md") },
+    EmbeddedFile { path: "fixed-memory/coding-style-swift.md", content: include_str!("../defaults/fixed-memory/coding-style-swift.md") },
+    EmbeddedFile { path: "fixed-memory/coding-style-typescript.md", content: include_str!("../defaults/fixed-memory/coding-style-typescript.md") },
+    EmbeddedFile { path: "fixed-memory/coding-style-python.md", content: include_str!("../defaults/fixed-memory/coding-style-python.md") },
+    EmbeddedFile { path: "fixed-memory/coding-style-bash.md", content: include_str!("../defaults/fixed-memory/coding-style-bash.md") },
+    EmbeddedFile { path: "fixed-memory/coding-style-elixir.md", content: include_str!("../defaults/fixed-memory/coding-style-elixir.md") },
     EmbeddedFile { path: "fixed-memory/memory-style.md", content: include_str!("../defaults/fixed-memory/memory-style.md") },
     EmbeddedFile { path: "skills/brainstorming.md", content: include_str!("../defaults/skills/brainstorming.md") },
     EmbeddedFile { path: "skills/tdd.md", content: include_str!("../defaults/skills/tdd.md") },
@@ -140,6 +145,35 @@ mod tests {
 
         let content = fs::read_to_string(target.join("config.yaml")).unwrap();
         assert_eq!(content, "custom: true\n");
+    }
+
+    #[test]
+    fn every_default_coding_style_file_is_embedded() {
+        // Drift guard: if a new defaults/fixed-memory/coding-style-*.md is
+        // added on disk but no matching EmbeddedFile is registered, the new
+        // file silently fails to ship via `init`. This test catches that.
+        let defaults_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("defaults")
+            .join("fixed-memory");
+        let on_disk: Vec<String> = fs::read_dir(&defaults_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|name| name.starts_with("coding-style-") && name.ends_with(".md"))
+            .collect();
+        assert!(!on_disk.is_empty(), "expected at least one coding-style-*.md on disk");
+
+        let embedded: std::collections::HashSet<&str> = EMBEDDED_FILES
+            .iter()
+            .map(|f| f.path)
+            .collect();
+        for name in &on_disk {
+            let expected = format!("fixed-memory/{name}");
+            assert!(
+                embedded.contains(expected.as_str()),
+                "defaults/fixed-memory/{name} is not registered in EMBEDDED_FILES"
+            );
+        }
     }
 
     #[test]

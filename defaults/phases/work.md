@@ -71,19 +71,35 @@ code you are about to change and pick from `fixed-memory/` yourself.
 
 6. Review `.gitignore`. If the work introduced generated files, build
    artifacts, secrets, or other files that should not be version-
-   controlled, add appropriate patterns to `.gitignore`. The run script
-   auto-commits all project changes after the work phase exits, so
-   anything not ignored will be committed.
+   controlled, add appropriate patterns to `.gitignore`.
 
 7. Record results on the task in `{{PLAN}}/backlog.md`: what was done,
    what worked, what didn't, what this suggests next.
 
-8. Write `analyse-work` to `{{PLAN}}/phase.md`.
+8. **Commit your source-file changes yourself.** The orchestrator's
+   `git-commit-work` step only commits the plan-state files inside
+   `{{PLAN}}/` (backlog.md, phase.md, etc.). Any edits you made to
+   source code, tests, docs, or configuration outside `{{PLAN}}/` must
+   be staged and committed by you before the work phase ends —
+   otherwise the next phase will advance with your work sitting
+   unstaged in the working tree, where it can be silently lost across
+   subsequent reflect/triage cycles.
 
-9. Stop. Do NOT pick another task. Do NOT reflect. Do NOT triage. One
-   task per work phase — fresh context for reflection is more valuable
-   than momentum.
+   Before writing `analyse-work` to `phase.md`, run `git status` from
+   the project root and confirm the working tree contains only the
+   plan-state files you intend the orchestrator to commit. If
+   `git status` shows any other modified, added, or untracked file
+   that was part of this task, commit those changes now with a
+   descriptive message. Cross-check the file list against any source
+   changes you described in the task's `Results` block — every claimed
+   path should appear in your own commit, not be left dangling.
 
-   **Do NOT write session log entries.** The analyse-work phase handles
-   session logging by examining the actual git diff — this produces a
-   more accurate record than self-reporting.
+9. Write `analyse-work` to `{{PLAN}}/phase.md`.
+
+10. Stop. Do NOT pick another task. Do NOT reflect. Do NOT triage. One
+    task per work phase — fresh context for reflection is more valuable
+    than momentum.
+
+    **Do NOT write session log entries.** The analyse-work phase handles
+    session logging by examining the actual git diff — this produces a
+    more accurate record than self-reporting.

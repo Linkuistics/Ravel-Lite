@@ -1,5 +1,5 @@
 // src/ui.rs
-use std::io;
+use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
 use crossterm::{
@@ -250,8 +250,29 @@ pub async fn run_tui(mut rx: mpsc::UnboundedReceiver<UIMessage>) -> Result<(), a
                         suspended = true;
                     }
                     Some(UIMessage::Resume) => {
+                        // The interactive child may end without a trailing
+                        // newline, leaving the cursor mid-line over its last
+                        // output. The old Terminal's cached `viewport_area`
+                        // still points at the row the inline viewport
+                        // occupied before suspend; in inline mode that row
+                        // now overlaps the child's final visible line, so
+                        // calling `terminal.clear()` (which jumps the cursor
+                        // to `viewport_area.top()` and clears below) wipes
+                        // the bottom of the child's output. Fix in two steps:
+                        //   1. Emit a newline + flush so the cursor moves
+                        //      onto a fresh row below the child's last byte.
+                        //   2. Reconstruct the Terminal so its constructor
+                        //      re-queries the cursor and places a fresh
+                        //      viewport on the new row. This avoids any
+                        //      clear() against the stale viewport_area.
+                        let _ = writeln!(io::stderr());
+                        let _ = io::stderr().flush();
                         terminal::enable_raw_mode()?;
-                        terminal.clear()?;
+                        let backend = CrosstermBackend::new(io::stderr());
+                        terminal = Terminal::with_options(
+                            backend,
+                            TerminalOptions { viewport: Viewport::Inline(VIEWPORT_HEIGHT) },
+                        )?;
                         suspended = false;
                     }
                     Some(UIMessage::Log(text)) => {

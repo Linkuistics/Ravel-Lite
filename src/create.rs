@@ -38,9 +38,13 @@ pub fn compose_create_prompt(template: &str, abs_plan_dir: &Path) -> String {
     )
 }
 
-/// Validate the target path. Returns the absolute path to the plan
-/// directory on success. Hard errors if the directory already exists
-/// or its parent is missing.
+/// Validate and prepare the target path. Returns the absolute path to the
+/// plan directory on success. Hard errors only if the target already exists
+/// or its parent path resolves to an existing file (not a directory).
+///
+/// Missing parent directories are created automatically — the user's intent
+/// is clear, and the parent must exist on disk at spawn time because
+/// `claude --add-dir <parent>` resolves the path eagerly.
 pub fn validate_target(plan_dir: &Path) -> Result<PathBuf> {
     let abs = std::path::absolute(plan_dir)
         .with_context(|| format!("Failed to resolve absolute path for {}", plan_dir.display()))?;
@@ -55,11 +59,16 @@ pub fn validate_target(plan_dir: &Path) -> Result<PathBuf> {
     let parent = abs
         .parent()
         .with_context(|| format!("Plan path {} has no parent directory", abs.display()))?;
-    if !parent.is_dir() {
+    if parent.exists() && !parent.is_dir() {
         anyhow::bail!(
-            "Parent directory {} does not exist. Create it first, then re-run raveloop create.",
+            "Parent path {} exists but is not a directory.",
             parent.display()
         );
+    }
+    if !parent.exists() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!("Failed to create parent directory {}", parent.display())
+        })?;
     }
 
     Ok(abs)
@@ -167,11 +176,29 @@ mod tests {
     }
 
     #[test]
-    fn validate_target_rejects_when_parent_missing() {
+    fn validate_target_creates_missing_parent_directories() {
         let tmp = TempDir::new().unwrap();
-        let missing_parent = tmp.path().join("does-not-exist").join("plan-name");
-        let err = validate_target(&missing_parent).unwrap_err();
-        assert!(format!("{err:#}").contains("Parent directory"));
+        let nested = tmp.path().join("a").join("b").join("c").join("plan-name");
+        let resolved = validate_target(&nested).unwrap();
+        assert!(resolved.is_absolute());
+        assert!(
+            nested.parent().unwrap().is_dir(),
+            "validate_target should have created the missing parent chain"
+        );
+        assert!(
+            !nested.exists(),
+            "validate_target must NOT create the plan directory itself"
+        );
+    }
+
+    #[test]
+    fn validate_target_rejects_when_parent_is_a_file() {
+        let tmp = TempDir::new().unwrap();
+        let file_as_parent = tmp.path().join("not-a-dir");
+        fs::write(&file_as_parent, "").unwrap();
+        let target = file_as_parent.join("plan-name");
+        let err = validate_target(&target).unwrap_err();
+        assert!(format!("{err:#}").contains("not a directory"));
     }
 
     #[test]

@@ -59,44 +59,87 @@ pub enum UIMessage {
     // ── From agents ──────────────────────────────────────
 
     /// Overwritable progress for an agent (latest tool call).
-    Progress { agent_id: String, text: String },
+    /// Carried as a `StyledLine` so the format module can attach
+    /// semantic colour intents (Added/Removed/Changed/Meta) without
+    /// reaching for ratatui types directly.
+    Progress { agent_id: String, line: StyledLine },
 
-    /// Permanent output — appended to the scrolling log.
-    Persist { agent_id: String, text: String },
+    /// Permanent styled output for an agent — highlight labels,
+    /// result text with action markers, tool errors. Inserted into
+    /// scrollback line-by-line via `Terminal::insert_before`. Side
+    /// effect: clears this agent's progress line in the live area.
+    Persist { agent_id: String, lines: Vec<StyledLine> },
 
-    /// Agent finished. Remove its progress group from the live area.
+    /// Agent finished. Removes its progress group from the live area.
     AgentDone { agent_id: String },
 
     // ── From the phase loop ──────────────────────────────
 
-    /// Permanent log entry (phase headers, commit messages, etc.)
+    /// Permanent plain-text output (phase headers, commit summaries,
+    /// orchestrator warnings). The string may contain `\n`; it's
+    /// split and inserted into scrollback line-by-line. Side effect:
+    /// clears every agent's progress line, since a phase-level log
+    /// invalidates whatever tool was reportedly in flight.
     Log(String),
 
-    /// Register an agent group in the live area with a header line.
-    RegisterAgent { agent_id: String, header: String },
+    /// Register an agent group so subsequent `Progress` events for
+    /// the same `agent_id` route to it. Carries no header — the
+    /// header line for the group is sent separately via `Log`
+    /// immediately before this message.
+    RegisterAgent { agent_id: String },
 
     /// Prompt the user for y/n. Reply via the oneshot sender.
     Confirm { message: String, reply: oneshot::Sender<bool> },
 
-    /// Suspend the TUI (leave raw mode) for interactive phase.
+    /// Suspend the TUI (leave raw mode) for the interactive work phase.
     Suspend,
 
-    /// Resume the TUI (re-enter raw mode) after interactive phase.
+    /// Resume the TUI (re-enter raw mode) after the interactive work
+    /// phase. The receiver reconstructs the `Terminal` so the inline
+    /// viewport re-anchors below whatever the child wrote.
     Resume,
+
+    /// Terminate the TUI runtime loop. Sent on a clean shutdown path.
+    Quit,
 }
 ```
 
-- `Progress` — the TUI shows only the latest one per `agent_id`,
-  indented under that agent's header in the live area.
-- `Persist` — highlight labels (`★ Updating memory`), result text with
-  action markers, tool errors. Appended to the log, never overwritten.
-- `AgentDone` — the agent's progress group is removed from the live
-  area.
-- `RegisterAgent` — creates a group in the live area with a header.
-  Subsequent `Progress` events for that `agent_id` appear indented
-  under the header.
-- `Log` — permanent output from the phase loop (not from an agent).
-- `Suspend` / `Resume` — bracket the interactive work phase.
+- `Progress` — the TUI shows only the latest one across all agents in
+  the 1-row inline viewport (`active_progress` picks the
+  most-recently-updated agent). Per-agent state is still tracked in
+  `progress_groups` so events for inactive agents aren't lost; the
+  viewport just renders one at a time.
+- `Persist` — written to scrollback via `insert_styled`; rendered with
+  the `Intent → Color` mapping in `ui::intent_color`. Always
+  permanent, never overwritten.
+- `AgentDone` — removes the agent's entry from `progress_groups`.
+  Required so the live area shrinks when concurrent subagents finish.
+- `RegisterAgent` — inserts an empty entry in `progress_groups`. The
+  group's header is whatever `Log` line preceded this message; the
+  TUI does not store the header itself.
+- `Log` — written to scrollback via `insert_plain` (no styling). Used
+  for phase headers, commit summaries, subagent completion lines, and
+  warning banners. Splits on `\n` and clears all progress lines.
+- `Confirm` — renders `▶ {message} [Y/n]` in the viewport until the
+  user presses y/n/Enter; the answer goes back through the
+  `oneshot::Sender`.
+- `Suspend` / `Resume` — bracket the interactive work phase. `Resume`
+  reconstructs the `Terminal` so the inline viewport's cached
+  `viewport_area` doesn't clobber the child's last lines on the
+  resumption clear.
+- `Quit` — breaks out of the TUI runtime loop on shutdown. The
+  receiver also exits when the channel closes (`None` from `recv`).
+
+Ordering invariants the TUI relies on:
+
+- `RegisterAgent` for an `agent_id` precedes the first `Progress` or
+  `Persist` for that id. Progress for an unregistered agent is
+  silently dropped (it won't appear in `progress_groups`).
+- `AgentDone` ends the live-area lifetime; subsequent `Progress` for
+  that id has no effect. Trailing `Persist` events are still inserted
+  into scrollback because they don't depend on `progress_groups`.
+- `Log` is the only message that clears *all* agents' progress —
+  callers use it to fence phase boundaries.
 
 ## Agent Trait
 
@@ -162,74 +205,72 @@ stdio (the TUI has been suspended, so the terminal is available).
 
 ## TUI Layout
 
-The terminal is divided into three regions via Ratatui's `Layout`:
+Native terminal scrollback holds all permanent output; ratatui owns
+only a 1-row inline viewport at the bottom for transient state. There
+is no `Vec<String>` log buffer in the application — `Log` and
+`Persist` lines are pushed into the terminal's scrollback via
+`Terminal::insert_before` and the OS handles the rest.
 
 ```
-┌──────────────────────────────────────────────────┐
-│  Scrolling log (permanent output)                │ ← fills available space
-│                                                  │
-│  ────────────────────────────────────────────     │
-│    ◆  REFLECT  ·  mnemosyne-orchestrator         │
-│    Distil session learnings into durable memory   │
-│  ────────────────────────────────────────────     │
-│    ★  Updating memory                            │
-│                                                  │
-│    ADDED      New memory entry — description      │
-│    SHARPENED  Existing entry — what changed       │
-│                                                  │
-│    ⚙  COMMIT · reflect  ·  run-plan: reflect     │
-│                                                  │
-│  ▶ Dispatching 3 subagent(s)...                  │
-│    ✓ sub-B-phase-cycle                           │
-├──────────────────────────────────────────────────┤
-│  Live progress area (per-agent groups)           │ ← sized to content
-│                                                  │
-│    → child: sub-F-phase-cycle                    │
-│        · Edit backlog.md                         │
-│    → child: sub-H-phase-cycle                    │
-│        · Read memory.md                          │
-├──────────────────────────────────────────────────┤
-│  Mnemosyne · mnemosyne-orchestrator · triage     │ ← 1 line, fixed
-│  · claude-code                                   │
-└──────────────────────────────────────────────────┘
+… native terminal scrollback (unbounded, OS-managed) …
+  ────────────────────────────────────────────────────
+    ◆  REFLECT  ·  raveloop / core
+    Distil session learnings into durable memory
+  ────────────────────────────────────────────────────
+    ★  Updating memory
+    ADDED      New memory entry — description
+    SHARPENED  Existing entry — what changed
+    ⚙  COMMIT · reflect  ·  raveloop / core  ·  run-plan: reflect
+  ▶ Dispatching 3 subagent(s)...
+    ✓ sub-B-phase-cycle
+─────────────────────────────────────────────────────  ← inline viewport (1 row)
+      · Edit backlog.md (+1.4s)                       ← latest tool call OR confirm
 ```
 
-### Log area (top)
+### Scrollback (above the viewport)
 
-A scrolling paragraph widget showing all permanent output. New entries
-are appended at the bottom and the view auto-scrolls. The log is
-stored as a `Vec<String>`.
+Phase headers, commit summaries, `Persist` styled lines, subagent
+completion messages, orchestrator warnings — everything permanent —
+goes here via `insert_before`. Scrolling the terminal or `tee`ing
+stderr to a file recovers the full history. The application does not
+buffer any of this.
 
-Phase headers, commit messages, persist events, subagent completion
-messages, and error banners all live here.
+### Inline viewport (1 row, bottom)
 
-### Live progress area (middle)
+`VIEWPORT_HEIGHT = 1`. The viewport answers a single question: "what's
+running right now?" or "what am I waiting on?". It renders one of:
 
-Sized dynamically to fit the current number of active agents. Each
-agent group has a header line (e.g. `→ child: sub-F-phase-cycle`, or
-the phase header for the main agent) and an indented progress line
-showing the latest tool call. When an agent completes, its group is
-removed and the area shrinks. When no agents are active, this area is
-zero height.
+- **Confirm prompt** — `▶ {message} [Y/n]` in bold yellow, when
+  `state.confirm_prompt` is set.
+- **Latest tool call** — the most-recently-updated agent's
+  `Progress` line (picked by `AppState::active_progress`, which
+  ranks by `progress_at` timestamp), with a dim `(+Xs)` elapsed
+  marker.
+- **Blank** — when neither is active.
+
+Per-agent state is tracked in `progress_groups`, but only ONE
+agent's progress is rendered at a time because the viewport is
+1 row. Concurrent subagents still update their entries; the viewport
+just shows whichever was most recently active.
 
 ```rust
-struct AgentProgress {
-    header: String,
-    progress: Option<String>,
+pub struct AppState {
+    pub progress_groups: IndexMap<String, AgentProgress>,
+    pub confirm_prompt: Option<ConfirmState>,
 }
 
-// Keyed by agent_id, insertion-ordered
-progress_groups: IndexMap<String, AgentProgress>,
+pub struct AgentProgress {
+    pub progress: Option<StyledLine>,
+    pub progress_at: Option<Instant>,
+}
 ```
 
 ### No status bar
 
-Earlier iterations carried a persistent status bar at the bottom of the
-viewport. It was removed in favour of a linear-scrolling model: log
-lines (phase headers, commits, persisted summaries) flow into native
-terminal scrollback, and the inline viewport is reserved for transient
-state only (current tool call, optional confirm prompt). Scrolling the
-terminal or `tee`ing to a file recovers the full history.
+Earlier iterations carried a persistent status bar at the bottom of
+the viewport. It was removed in favour of the linear-scrolling model
+above: anything worth remembering is in scrollback, and the inline
+viewport stays empty when the loop is idle.
 
 ## Phase Loop
 
