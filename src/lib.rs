@@ -1,7 +1,11 @@
+pub mod agent;
 pub mod config;
 pub mod dream;
 pub mod format;
 pub mod git;
 pub mod init;
+pub mod phase_loop;
 pub mod prompt;
+pub mod subagent;
 pub mod types;
+pub mod ui;

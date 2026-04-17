@@ -98,25 +98,29 @@ for the contract.
 
 ### Driving the cycle
 
-The cycle is driven by the TypeScript orchestrator, invoked with an
-agent flag and the plan directory:
+The cycle is driven by the `raveloop-cli` Rust binary. Each
+user-configured profile lives in its own directory (scaffolded once
+with `raveloop-cli init <config-dir>`) and contains a generated
+`raveloop` trampoline script. The trampoline records its own
+location as the config root and forwards the plan directory to the
+binary:
 
 ```bash
-# Claude Code
-./run-claude.sh ~/Development/{project}/LLM_STATE/{plan-name}
-
-# Pi
-./run-pi.sh ~/Development/{project}/LLM_STATE/{plan-name}
+<config-dir>/raveloop ~/Development/{project}/LLM_STATE/{plan-name}
 
 # Or directly:
-npx tsx src/index.ts --agent claude-code ~/Development/{project}/LLM_STATE/{plan-name}
-npx tsx src/index.ts --agent pi ~/Development/{project}/LLM_STATE/{plan-name}
+raveloop-cli run --config <config-dir> ~/Development/{project}/LLM_STATE/{plan-name}
 ```
 
-The orchestrator walks up from the plan directory to find the project
-root (`.git`), composes each phase's prompt from `phases/<phase>.md` +
-the optional `<plan>/prompt-<phase>.md`, substitutes tokens, and
-invokes the selected agent.
+The agent (Claude Code or Pi) is selected by the `agent:` key in
+`<config-dir>/config.yaml`, not by a CLI flag. Switching agents means
+either editing that key or pointing the trampoline at a different
+config directory.
+
+The binary walks up from the plan directory to find the project root
+(`.git`), composes each phase's prompt from the config directory's
+`phases/<phase>.md` plus the optional `<plan>/prompt-<phase>.md`,
+substitutes tokens, and invokes the selected agent.
 
 ### Path placeholders
 
@@ -164,5 +168,6 @@ Commit the new plan directory.
 
 ## Reference
 
-See `README.md` for the full plan format specification, phase cycle,
-task format, and related-plans contract.
+See `README.md` for the phase cycle overview, and
+`defaults/phases/*.md` for the shared phase prompts that consume
+these plan files.

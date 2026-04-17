@@ -1,0 +1,212 @@
+use std::collections::HashMap;
+use std::fs;
+use std::process::Command;
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use tempfile::TempDir;
+
+use raveloop_cli::agent::Agent;
+use raveloop_cli::phase_loop::phase_loop;
+use raveloop_cli::types::{LlmPhase, PlanContext, SharedConfig};
+use raveloop_cli::ui::{UI, UIMessage, UISender};
+
+#[test]
+fn dream_guard_integration() {
+    let dir = TempDir::new().unwrap();
+    let plan = dir.path();
+
+    assert!(!raveloop_cli::dream::should_dream(plan, 1500));
+
+    fs::write(plan.join("memory.md"), "word ".repeat(100)).unwrap();
+    raveloop_cli::dream::update_dream_baseline(plan);
+
+    fs::write(plan.join("memory.md"), "word ".repeat(200)).unwrap();
+    assert!(!raveloop_cli::dream::should_dream(plan, 1500));
+
+    fs::write(plan.join("memory.md"), "word ".repeat(2000)).unwrap();
+    assert!(raveloop_cli::dream::should_dream(plan, 1500));
+
+    raveloop_cli::dream::update_dream_baseline(plan);
+    assert!(!raveloop_cli::dream::should_dream(plan, 1500));
+}
+
+#[test]
+fn config_loading_integration() {
+    let dir = TempDir::new().unwrap();
+    let config_root = dir.path();
+
+    fs::write(config_root.join("config.yaml"), "agent: claude-code\nheadroom: 1500\n").unwrap();
+    fs::create_dir_all(config_root.join("agents/claude-code")).unwrap();
+    fs::write(
+        config_root.join("agents/claude-code/config.yaml"),
+        "models:\n  work: claude-sonnet-4-6\n  reflect: claude-haiku-4-5\nparams:\n  work:\n    dangerous: true\n",
+    ).unwrap();
+    fs::write(
+        config_root.join("agents/claude-code/tokens.yaml"),
+        "TOOL_READ: Read\n",
+    ).unwrap();
+
+    let shared = raveloop_cli::config::load_shared_config(config_root).unwrap();
+    assert_eq!(shared.agent, "claude-code");
+    assert_eq!(shared.headroom, 1500);
+
+    let agent = raveloop_cli::config::load_agent_config(config_root, "claude-code").unwrap();
+    assert_eq!(agent.models.get("work").unwrap(), "claude-sonnet-4-6");
+    assert!(agent.params.get("work").unwrap().get("dangerous").is_some());
+
+    let tokens = raveloop_cli::config::load_tokens(config_root, "claude-code").unwrap();
+    assert_eq!(tokens.get("TOOL_READ").unwrap(), "Read");
+}
+
+#[test]
+fn embedded_defaults_are_valid() {
+    // init into a temp dir, then load every config with the real loaders.
+    // Catches regressions where a default file drifts and stops parsing.
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("cfg");
+    raveloop_cli::init::run_init(&target).unwrap();
+
+    let shared = raveloop_cli::config::load_shared_config(&target).unwrap();
+    assert!(!shared.agent.is_empty());
+    assert!(shared.headroom > 0);
+
+    let cc = raveloop_cli::config::load_agent_config(&target, "claude-code").unwrap();
+    assert!(cc.models.contains_key("reflect"));
+
+    let pi = raveloop_cli::config::load_agent_config(&target, "pi").unwrap();
+    assert!(pi.models.contains_key("reflect"));
+
+    for phase in ["work", "analyse-work", "reflect", "dream", "triage"] {
+        let p = target.join("phases").join(format!("{phase}.md"));
+        assert!(p.exists(), "missing phase file: {}", p.display());
+        let body = fs::read_to_string(&p).unwrap();
+        assert!(!body.trim().is_empty(), "empty phase file: {}", p.display());
+    }
+}
+
+struct MockAgent {
+    calls: Arc<Mutex<Vec<LlmPhase>>>,
+    next_phase_after: HashMap<LlmPhase, &'static str>,
+    plan_dir: std::path::PathBuf,
+}
+
+#[async_trait]
+impl Agent for MockAgent {
+    async fn invoke_interactive(&self, _prompt: &str, _ctx: &PlanContext) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn invoke_headless(
+        &self,
+        _prompt: &str,
+        _ctx: &PlanContext,
+        phase: LlmPhase,
+        _agent_id: &str,
+        _tx: UISender,
+    ) -> anyhow::Result<()> {
+        self.calls.lock().unwrap().push(phase);
+        if let Some(next) = self.next_phase_after.get(&phase) {
+            fs::write(self.plan_dir.join("phase.md"), next)?;
+        }
+        Ok(())
+    }
+
+    async fn dispatch_subagent(
+        &self,
+        _prompt: &str,
+        _target_plan: &str,
+        _agent_id: &str,
+        _tx: UISender,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn tokens(&self) -> HashMap<String, String> {
+        HashMap::new()
+    }
+}
+
+fn init_test_repo(root: &std::path::Path) {
+    let run = |args: &[&str]| {
+        let out = Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    run(&["init", "-q", "-b", "main"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "Test"]);
+    run(&["commit", "-q", "--allow-empty", "-m", "init"]);
+}
+
+#[tokio::test]
+async fn phase_loop_triage_cycle_exits_cleanly_on_no_confirm() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    init_test_repo(root);
+
+    let plan_dir = root.join("plans/test-plan");
+    fs::create_dir_all(&plan_dir).unwrap();
+    fs::write(plan_dir.join("phase.md"), "triage").unwrap();
+
+    let config_root = root.join("config");
+    fs::create_dir_all(config_root.join("phases")).unwrap();
+    fs::write(config_root.join("phases/triage.md"), "triage on {{PLAN}}").unwrap();
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let agent = Arc::new(MockAgent {
+        calls: calls.clone(),
+        next_phase_after: HashMap::from([(LlmPhase::Triage, "git-commit-triage")]),
+        plan_dir: plan_dir.clone(),
+    });
+
+    let shared = SharedConfig {
+        agent: "mock".into(),
+        headroom: 1500,
+    };
+
+    let ctx = PlanContext {
+        plan_dir: plan_dir.to_string_lossy().to_string(),
+        project_dir: root.to_string_lossy().to_string(),
+        dev_root: root.parent().unwrap().to_string_lossy().to_string(),
+        related_plans: String::new(),
+        config_root: config_root.to_string_lossy().to_string(),
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = UI::new(tx);
+
+    // Drain the channel, auto-reply "no" to confirms (simulates user pressing N).
+    let drain = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if let UIMessage::Confirm { reply, .. } = msg {
+                let _ = reply.send(false);
+            }
+        }
+    });
+
+    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    ui.quit();
+    let _ = drain.await;
+
+    assert!(result.is_ok(), "phase_loop returned error: {result:?}");
+
+    let calls = calls.lock().unwrap();
+    assert_eq!(*calls, vec![LlmPhase::Triage]);
+
+    let final_phase = fs::read_to_string(plan_dir.join("phase.md")).unwrap();
+    assert_eq!(final_phase.trim(), "work",
+        "expected phase.md to advance to 'work' after git-commit-triage");
+
+    let log = Command::new("git")
+        .current_dir(root)
+        .args(["log", "--oneline", "--all"])
+        .output()
+        .unwrap();
+    let log_str = String::from_utf8(log.stdout).unwrap();
+    assert!(log_str.contains("triage"),
+        "expected a triage commit, got log:\n{log_str}");
+}

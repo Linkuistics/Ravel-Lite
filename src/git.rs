@@ -25,28 +25,27 @@ pub fn git_commit_plan(plan_dir: &Path, plan_name: &str, phase_name: &str) -> Re
         format!("run-plan: {phase_name} ({plan_name})")
     };
 
-    // Stage the plan directory
     Command::new("git")
-        .args(["add", &plan_dir.to_string_lossy()])
+        .current_dir(plan_dir)
+        .args(["add", "."])
         .output()
         .context("Failed to run git add")?;
 
-    // Check if there are staged changes
     let diff = Command::new("git")
+        .current_dir(plan_dir)
         .args(["diff", "--cached", "--quiet"])
         .output()
         .context("Failed to run git diff")?;
 
     if diff.status.success() {
-        // Exit code 0 means no changes
         return Ok(CommitResult {
             committed: false,
             message,
         });
     }
 
-    // Commit
     Command::new("git")
+        .current_dir(plan_dir)
         .args(["commit", "-m", &message])
         .output()
         .context("Failed to run git commit")?;
@@ -61,6 +60,7 @@ pub fn git_commit_plan(plan_dir: &Path, plan_name: &str, phase_name: &str) -> Re
 pub fn git_save_work_baseline(plan_dir: &Path) {
     let baseline_path = plan_dir.join("work-baseline");
     let sha = Command::new("git")
+        .current_dir(plan_dir)
         .args(["rev-parse", "HEAD"])
         .output()
         .ok()
