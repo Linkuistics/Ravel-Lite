@@ -77,14 +77,15 @@ Rules:
 After completing all writes, print a brief summary using this structure:
 
 ```
-[DELETED] <task title> — done, captured in memory
-[ADDED] <task title> — <why>
-[PROMOTED] <blocker title> — extracted from <parent task>
+[DONE] <task title> — completed, captured in memory
+[NEW] <task title> — <why>
+[BLOCKER] <task title> — extracted from <parent task>
 [REPRIORITISED] <task title> — <old priority → new>
-[REMOVED] <task title> — <why obsolete>
+[OBSOLETE] <task title> — <why no longer relevant>
 [DISPATCH] <kind>: <target path> — <summary>
 [NO DISPATCH] <reason>
 ```
 
-One line per action. Do not include any other commentary. Do not
-mention phase.md.
+Labels name the **state that caused the change**, not the action taken
+(e.g. OBSOLETE, not REMOVED; DONE, not DELETED). One line per entry.
+Do not include any other commentary. Do not mention phase.md.

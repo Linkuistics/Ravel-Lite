@@ -65,7 +65,7 @@ fn embedded_defaults_are_valid() {
     // Catches regressions where a default file drifts and stops parsing.
     let dir = TempDir::new().unwrap();
     let target = dir.path().join("cfg");
-    raveloop_cli::init::run_init(&target).unwrap();
+    raveloop_cli::init::run_init(&target, false).unwrap();
 
     let shared = raveloop_cli::config::load_shared_config(&target).unwrap();
     assert!(!shared.agent.is_empty());
@@ -180,10 +180,16 @@ async fn phase_loop_triage_cycle_exits_cleanly_on_no_confirm() {
     let ui = UI::new(tx);
 
     // Drain the channel, auto-reply "no" to confirms (simulates user pressing N).
+    // Mirrors run_tui's shutdown protocol: break on Quit so drain.await can complete
+    // even while the test still owns a live sender via `ui`.
     let drain = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if let UIMessage::Confirm { reply, .. } = msg {
-                let _ = reply.send(false);
+            match msg {
+                UIMessage::Quit => break,
+                UIMessage::Confirm { reply, .. } => {
+                    let _ = reply.send(false);
+                }
+                _ => {}
             }
         }
     });

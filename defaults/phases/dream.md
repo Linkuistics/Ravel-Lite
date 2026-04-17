@@ -39,12 +39,13 @@ always tracked in git.
 After completing the rewrite, print a brief summary using this structure:
 
 ```
-[MERGED] <heading A> + <heading B> — <result heading>
-[TIGHTENED] <heading> — <what changed>
-[REWORDED] <heading> — <old phrasing → new>
+[OVERLAPPING] <heading A> + <heading B> — <result heading>
+[VERBOSE] <heading> — <what was wordy and how it's now tightened>
+[AWKWARD] <heading> — <old phrasing → new>
 [STATS] <before word count> → <after word count>
 ```
 
-One line per significant change. Minor prose edits can be omitted.
-End with the STATS line. Do not include any other commentary. Do not
-mention phase.md.
+Labels name the **state that caused the change**, not the action taken
+(e.g. VERBOSE, not TIGHTENED). One line per significant change. Minor
+prose edits can be omitted. End with the STATS line. Do not include
+any other commentary. Do not mention phase.md.

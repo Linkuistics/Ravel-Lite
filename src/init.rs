@@ -1,8 +1,9 @@
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+
+use crate::config::CONFIG_ENV_VAR;
 
 struct EmbeddedFile {
     path: &'static str,
@@ -30,41 +31,72 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
     EmbeddedFile { path: "skills/writing-plans.md", content: include_str!("../defaults/skills/writing-plans.md") },
 ];
 
-const TRAMPOLINE: &str = include_str!("../defaults/raveloop.sh");
-
-pub fn run_init(target_dir: &Path) -> Result<()> {
+pub fn run_init(target_dir: &Path, force: bool) -> Result<()> {
     fs::create_dir_all(target_dir)
         .with_context(|| format!("Failed to create {}", target_dir.display()))?;
 
     let mut created = 0;
+    let mut overwritten = 0;
     let mut skipped = 0;
 
     for file in EMBEDDED_FILES {
         let dest = target_dir.join(file.path);
-        if dest.exists() {
+        let exists = dest.exists();
+        if exists && !force {
             skipped += 1;
             continue;
         }
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
+        // When forcing, only overwrite if content actually differs — keeps
+        // the audit noise proportional to what changed.
+        let should_write = if exists {
+            fs::read_to_string(&dest).ok().as_deref() != Some(file.content)
+        } else {
+            true
+        };
+        if !should_write {
+            skipped += 1;
+            continue;
+        }
         fs::write(&dest, file.content)
             .with_context(|| format!("Failed to write {}", dest.display()))?;
-        created += 1;
+        if exists {
+            overwritten += 1;
+            println!("  ↻ Overwritten: {}", file.path);
+        } else {
+            created += 1;
+        }
     }
 
-    let trampoline_path = target_dir.join("raveloop");
-    if !trampoline_path.exists() {
-        fs::write(&trampoline_path, TRAMPOLINE)?;
-        fs::set_permissions(&trampoline_path, fs::Permissions::from_mode(0o755))?;
-        created += 1;
-        println!("  ✓ Created trampoline: {}", trampoline_path.display());
+    if force {
+        println!("  ✓ Init --force complete: {created} created, {overwritten} overwritten, {skipped} unchanged");
     } else {
-        skipped += 1;
+        println!("  ✓ Init complete: {created} created, {skipped} skipped (already exist)");
     }
 
-    println!("  ✓ Init complete: {created} created, {skipped} skipped (already exist)");
+    print_discovery_guidance(target_dir);
     Ok(())
+}
+
+/// After scaffolding, tell the user how to make `raveloop-cli` find this
+/// config. Silent when the target is already the XDG default, since the
+/// binary will find it there with no setup.
+fn print_discovery_guidance(target_dir: &Path) {
+    let xdg_default = dirs::config_dir().map(|p| p.join("raveloop"));
+    let is_xdg_default = xdg_default.as_deref() == Some(target_dir);
+
+    println!();
+    if is_xdg_default {
+        println!(
+            "  Config is at the default location; raveloop-cli will discover it automatically."
+        );
+    } else {
+        println!("  To use this config as the default for raveloop-cli, set:");
+        println!("    export {CONFIG_ENV_VAR}={}", target_dir.display());
+        println!("  Or pass --config {} on each invocation.", target_dir.display());
+    }
 }
 
 #[cfg(test)]
@@ -76,27 +108,54 @@ mod tests {
     fn init_creates_all_files() {
         let dir = TempDir::new().unwrap();
         let target = dir.path().join("my-config");
-        run_init(&target).unwrap();
+        run_init(&target, false).unwrap();
 
         assert!(target.join("config.yaml").exists());
         assert!(target.join("phases/reflect.md").exists());
         assert!(target.join("agents/claude-code/config.yaml").exists());
-        assert!(target.join("raveloop").exists());
+    }
 
-        let perms = fs::metadata(target.join("raveloop")).unwrap().permissions();
-        assert!(perms.mode() & 0o111 != 0);
+    #[test]
+    fn init_does_not_write_a_trampoline() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("my-config");
+        run_init(&target, false).unwrap();
+
+        assert!(
+            !target.join("raveloop").exists(),
+            "init must not scaffold a raveloop trampoline; discovery uses env var + default location"
+        );
     }
 
     #[test]
     fn init_skips_existing_files() {
         let dir = TempDir::new().unwrap();
         let target = dir.path().join("my-config");
-        run_init(&target).unwrap();
+        run_init(&target, false).unwrap();
 
         fs::write(target.join("config.yaml"), "custom: true\n").unwrap();
-        run_init(&target).unwrap();
+        run_init(&target, false).unwrap();
 
         let content = fs::read_to_string(target.join("config.yaml")).unwrap();
         assert_eq!(content, "custom: true\n");
+    }
+
+    #[test]
+    fn init_force_overwrites_existing_files() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("my-config");
+        run_init(&target, false).unwrap();
+
+        // Simulate a user-edited phase prompt.
+        let reflect_path = target.join("phases/reflect.md");
+        fs::write(&reflect_path, "STALE CONTENT\n").unwrap();
+
+        run_init(&target, true).unwrap();
+
+        // Phase prompt restored from embedded default.
+        let content = fs::read_to_string(&reflect_path).unwrap();
+        assert_ne!(content, "STALE CONTENT\n");
+        assert!(content.contains("[NEW]") || content.contains("[IMPRECISE]"),
+            "expected new state-based labels in the refreshed prompt");
     }
 }

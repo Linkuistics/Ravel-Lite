@@ -10,7 +10,7 @@ use tokio::process::Command;
 use super::Agent;
 use crate::config::load_tokens;
 use crate::format::{
-    FormattedOutput, ToolCall, clean_tool_name, extract_edit_context,
+    FormattedOutput, ToolCall, clean_tool_name,
     extract_tool_detail, format_result_text, format_tool_call,
 };
 use crate::types::{AgentConfig, LlmPhase, PlanContext};
@@ -26,7 +26,14 @@ impl ClaudeCodeAgent {
         Self { config, config_root }
     }
 
-    fn build_headless_args(&self, prompt: &str, phase: LlmPhase) -> Vec<String> {
+    fn is_dangerous(&self, phase: &str) -> bool {
+        self.config.params.get(phase)
+            .and_then(|p| p.get("dangerous"))
+            .and_then(|v| v.as_bool())
+            == Some(true)
+    }
+
+    fn build_headless_args(&self, prompt: &str, phase: LlmPhase, plan_dir: &str) -> Vec<String> {
         let mut args = vec![
             "--strict-mcp-config".to_string(),
             "-p".to_string(),
@@ -34,6 +41,8 @@ impl ClaudeCodeAgent {
             "--verbose".to_string(),
             "--output-format".to_string(),
             "stream-json".to_string(),
+            "--add-dir".to_string(),
+            plan_dir.to_string(),
         ];
 
         if let Some(model) = self.config.models.get(phase.as_str()) {
@@ -42,10 +51,8 @@ impl ClaudeCodeAgent {
             }
         }
 
-        if let Some(params) = self.config.params.get(phase.as_str()) {
-            if params.get("dangerous").and_then(|v| v.as_bool()) == Some(true) {
-                args.push("--dangerously-skip-permissions".to_string());
-            }
+        if self.is_dangerous(phase.as_str()) {
+            args.push("--dangerously-skip-permissions".to_string());
         }
 
         args
@@ -83,22 +90,11 @@ fn parse_stream_line(
                         name: name.to_string(),
                         path: input.get("file_path").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         detail: None,
-                        edit_context: None,
                     },
-                    "Write" => ToolCall {
+                    "Write" | "Edit" => ToolCall {
                         name: name.to_string(),
                         path: input.get("file_path").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         detail: None,
-                        edit_context: extract_edit_context(None, input.get("content").and_then(|v| v.as_str())),
-                    },
-                    "Edit" => ToolCall {
-                        name: name.to_string(),
-                        path: input.get("file_path").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                        detail: None,
-                        edit_context: extract_edit_context(
-                            input.get("old_string").and_then(|v| v.as_str()),
-                            input.get("new_string").and_then(|v| v.as_str()),
-                        ),
                     },
                     "Grep" => ToolCall {
                         name: name.to_string(),
@@ -108,25 +104,21 @@ fn parse_stream_line(
                             input.get("pattern").and_then(|v| v.as_str()).unwrap_or(""),
                             input.get("path").and_then(|v| v.as_str()).unwrap_or(".")
                         )),
-                        edit_context: None,
                     },
                     "Glob" => ToolCall {
                         name: name.to_string(),
                         path: None,
                         detail: input.get("pattern").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                        edit_context: None,
                     },
                     "Bash" => ToolCall {
                         name: name.to_string(),
                         path: None,
                         detail: input.get("command").and_then(|v| v.as_str()).map(|s| s.chars().take(120).collect()),
-                        edit_context: None,
                     },
                     _ => ToolCall {
                         name: clean_tool_name(name),
                         path: None,
                         detail: Some(extract_tool_detail(&input)),
-                        edit_context: None,
                     },
                 };
 
@@ -139,7 +131,7 @@ fn parse_stream_line(
     if event_type == "result" {
         if let Some(result_text) = event.get("result").and_then(|r| r.as_str()) {
             return Some(FormattedOutput {
-                text: format_result_text(result_text),
+                lines: format_result_text(result_text),
                 persist: true,
             });
         }
@@ -155,7 +147,12 @@ impl Agent for ClaudeCodeAgent {
         prompt: &str,
         ctx: &PlanContext,
     ) -> Result<()> {
-        let mut args = vec!["--output-format".to_string(), "stream-json".to_string()];
+        let mut args = vec![
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+            "--add-dir".to_string(),
+            ctx.plan_dir.clone(),
+        ];
 
         if let Some(model) = self.config.models.get("work") {
             if !model.is_empty() {
@@ -163,10 +160,8 @@ impl Agent for ClaudeCodeAgent {
             }
         }
 
-        if let Some(params) = self.config.params.get("work") {
-            if params.get("dangerous").and_then(|v| v.as_bool()) == Some(true) {
-                args.push("--dangerously-skip-permissions".to_string());
-            }
+        if self.is_dangerous("work") {
+            args.push("--dangerously-skip-permissions".to_string());
         }
 
         args.push(prompt.to_string());
@@ -194,18 +189,36 @@ impl Agent for ClaudeCodeAgent {
         agent_id: &str,
         tx: UISender,
     ) -> Result<()> {
-        let args = self.build_headless_args(prompt, phase);
+        let args = self.build_headless_args(prompt, phase, &ctx.plan_dir);
 
         let mut child = Command::new("claude")
             .args(&args)
             .current_dir(&ctx.project_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .spawn()
             .context("Failed to spawn claude")?;
 
         let stdout = child.stdout.take().context("No stdout")?;
+        let stderr = child.stderr.take().context("No stderr")?;
+
+        // Drain stderr concurrently so it never blocks the child;
+        // retain the last ~4KB so failures can be surfaced in the error.
+        let stderr_task = tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            let mut buf = String::new();
+            while let Ok(Some(line)) = reader.next_line().await {
+                buf.push_str(&line);
+                buf.push('\n');
+                if buf.len() > 4096 {
+                    let cut = buf.len() - 4096;
+                    buf.drain(..cut);
+                }
+            }
+            buf
+        });
+
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
         let mut shown_highlights = HashSet::new();
@@ -215,18 +228,18 @@ impl Agent for ClaudeCodeAgent {
             match lines.next_line().await {
                 Ok(Some(line)) => {
                     if let Some(formatted) = parse_stream_line(&line, Some(phase), &mut shown_highlights) {
-                        if formatted.text.is_empty() {
+                        if formatted.is_empty() {
                             continue;
                         }
                         if formatted.persist {
                             let _ = tx.send(UIMessage::Persist {
                                 agent_id: agent_id.to_string(),
-                                text: formatted.text,
+                                lines: formatted.lines,
                             });
-                        } else {
+                        } else if let Some(line) = formatted.lines.into_iter().next() {
                             let _ = tx.send(UIMessage::Progress {
                                 agent_id: agent_id.to_string(),
-                                text: formatted.text,
+                                line,
                             });
                         }
                     }
@@ -240,6 +253,7 @@ impl Agent for ClaudeCodeAgent {
         }
 
         let status = child.wait().await?;
+        let stderr_tail = stderr_task.await.unwrap_or_default();
         let _ = tx.send(UIMessage::AgentDone {
             agent_id: agent_id.to_string(),
         });
@@ -249,7 +263,14 @@ impl Agent for ClaudeCodeAgent {
         }
 
         if !status.success() {
-            anyhow::bail!("claude exited with code {:?}", status.code());
+            let trimmed = stderr_tail.trim();
+            if trimmed.is_empty() {
+                anyhow::bail!("claude exited with code {:?}", status.code());
+            }
+            anyhow::bail!(
+                "claude exited with code {:?}\n--- stderr ---\n{trimmed}",
+                status.code()
+            );
         }
         Ok(())
     }
@@ -287,6 +308,13 @@ impl Agent for ClaudeCodeAgent {
 mod tests {
     use super::*;
 
+    fn flat(formatted: &FormattedOutput) -> String {
+        formatted.lines.iter()
+            .map(|l| l.0.iter().map(|s| s.text.as_str()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn parse_tool_use_read() {
         let line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/foo/bar.md"}}]}}"#;
@@ -295,8 +323,9 @@ mod tests {
         assert!(result.is_some());
         let formatted = result.unwrap();
         assert!(!formatted.persist);
-        assert!(formatted.text.contains("Read"));
-        assert!(formatted.text.contains("/foo/bar.md"));
+        let text = flat(&formatted);
+        assert!(text.contains("Read"));
+        assert!(text.contains("/foo/bar.md"));
     }
 
     #[test]
@@ -307,7 +336,7 @@ mod tests {
         assert!(result.is_some());
         let formatted = result.unwrap();
         assert!(formatted.persist);
-        assert!(formatted.text.contains("ADDED"));
+        assert!(flat(&formatted).contains("ADDED"));
     }
 
     #[test]

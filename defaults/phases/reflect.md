@@ -51,11 +51,12 @@ the Memory style rules.
 After completing all writes, print a brief summary using this structure:
 
 ```
-[ADDED] <heading> — <one-line description>
-[SHARPENED] <heading> — <what changed>
-[REPLACED] <heading> — <old → new>
-[REMOVED] <heading> — <why>
+[NEW] <heading> — <one-line description>
+[IMPRECISE] <heading> — <what was imprecise and how it's now sharpened>
+[STALE] <heading> — <what was stale: old → new>
+[OBSOLETE] <heading> — <why no longer relevant>
 ```
 
-One line per memory action. Do not include any other commentary — just
-the action list. Do not mention phase.md.
+Labels name the **state that caused the change**, not the action taken
+(e.g. OBSOLETE, not REMOVED). One line per memory entry. Do not include
+any other commentary — just the action list. Do not mention phase.md.

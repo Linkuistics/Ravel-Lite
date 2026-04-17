@@ -99,23 +99,25 @@ for the contract.
 ### Driving the cycle
 
 The cycle is driven by the `raveloop-cli` Rust binary. Each
-user-configured profile lives in its own directory (scaffolded once
-with `raveloop-cli init <config-dir>`) and contains a generated
-`raveloop` trampoline script. The trampoline records its own
-location as the config root and forwards the plan directory to the
-binary:
+user-configured profile lives in its own directory, scaffolded once
+with `raveloop-cli init <config-dir>`. Day-to-day usage points the
+binary at that config directory via the discovery chain (`--config`
+flag, then `RAVELOOP_CONFIG` env var, then the default location at
+`<dirs::config_dir()>/raveloop/`):
 
 ```bash
-<config-dir>/raveloop ~/Development/{project}/LLM_STATE/{plan-name}
+# Most common: set once, forget
+export RAVELOOP_CONFIG=<config-dir>
+raveloop-cli run ~/Development/{project}/LLM_STATE/{plan-name}
 
-# Or directly:
+# Explicit per-invocation
 raveloop-cli run --config <config-dir> ~/Development/{project}/LLM_STATE/{plan-name}
 ```
 
 The agent (Claude Code or Pi) is selected by the `agent:` key in
 `<config-dir>/config.yaml`, not by a CLI flag. Switching agents means
-either editing that key or pointing the trampoline at a different
-config directory.
+either editing that key or pointing `--config` (or `RAVELOOP_CONFIG`)
+at a different config directory.
 
 The binary walks up from the plan directory to find the project root
 (`.git`), composes each phase's prompt from the config directory's

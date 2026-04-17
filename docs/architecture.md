@@ -75,9 +75,6 @@ pub enum UIMessage {
     /// Register an agent group in the live area with a header line.
     RegisterAgent { agent_id: String, header: String },
 
-    /// Update the status bar.
-    SetStatus(StatusInfo),
-
     /// Prompt the user for y/n. Reply via the oneshot sender.
     Confirm { message: String, reply: oneshot::Sender<bool> },
 
@@ -225,22 +222,14 @@ struct AgentProgress {
 progress_groups: IndexMap<String, AgentProgress>,
 ```
 
-### Status bar (bottom)
+### No status bar
 
-A single line, always visible except during an interactive phase:
-
-```rust
-struct StatusInfo {
-    project: String,
-    plan: String,
-    phase: String,
-    agent: String,
-    cycle: Option<u32>,
-}
-```
-
-Rendered as:
-`Mnemosyne · mnemosyne-orchestrator · reflect · claude-code`
+Earlier iterations carried a persistent status bar at the bottom of the
+viewport. It was removed in favour of a linear-scrolling model: log
+lines (phase headers, commits, persisted summaries) flow into native
+terminal scrollback, and the inline viewport is reserved for transient
+state only (current tool call, optional confirm prompt). Scrolling the
+terminal or `tee`ing to a file recovers the full history.
 
 ## Phase Loop
 
@@ -256,7 +245,6 @@ pub struct UI {
 impl UI {
     pub fn log(&self, text: &str) { ... }
     pub fn register_agent(&self, agent_id: &str, header: &str) { ... }
-    pub fn set_status(&self, status: StatusInfo) { ... }
     pub async fn confirm(&self, message: &str) -> bool { ... }
     pub fn suspend(&self) { ... }
     pub fn resume(&self) { ... }
@@ -271,14 +259,15 @@ captures the keypress, and sends the response back.
 
 ```
 Work → AnalyseWork → GitCommitWork → Reflect → GitCommitReflect
-     → [Dream if should_dream, else skip] → GitCommitDream
+     → [if should_dream: Dream → GitCommitDream]
      → Triage → GitCommitTriage → Work → ...
 ```
 
 Script phases (the `GitCommit*` steps) are handled inline — no
 subprocess, just `git add` + `git commit` via `std::process::Command`.
 The dream guard (`should_dream`) runs in the `GitCommitReflect`
-handler.
+handler; when dream is skipped, `GitCommitDream` is skipped too — a
+`GitCommit*` phase only runs when its paired LLM phase produced work.
 
 ### Interactive phase handling
 
@@ -409,7 +398,6 @@ Crate dependencies are defined in `Cargo.toml`.
 
 ```
 <config-dir>/
-├── raveloop                    # trampoline script (chmod +x)
 ├── config.yaml                 # agent, headroom
 ├── agents/
 │   ├── claude-code/
@@ -462,34 +450,41 @@ directory until a `.git` is found.
 
 ## CLI and Invocation
 
-The user interacts with `raveloop-cli` directly once, to create a
-config directory. Day-to-day usage goes through the generated
-trampoline.
+The user interacts with `raveloop-cli` directly once to create a
+config directory, then drives the phase cycle with `raveloop-cli run`.
+There is no trampoline — the binary resolves its config directory via
+an explicit precedence chain.
 
 ### `raveloop-cli init <dir>`
 
-Creates the config directory at `<dir>` with the default structure and
-a `raveloop` trampoline script. Default file contents are embedded in
-the binary at compile time via `include_str!`.
+Creates the config directory at `<dir>` with the default structure.
+Default file contents are embedded in the binary at compile time via
+`include_str!`.
 
-### The `raveloop` trampoline
+After scaffolding, `init` prints guidance on how to make the binary
+find that directory: either set `RAVELOOP_CONFIG=<dir>` or pass
+`--config <dir>` on each invocation. When `<dir>` is the default
+location (`dirs::config_dir()/raveloop/`), no setup is needed.
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-exec raveloop-cli run --config "$SCRIPT_DIR" "$@"
-```
+### Config discovery
 
-Usage: `<config-dir>/raveloop <plan-directory>`
+Every `raveloop-cli` subcommand that needs config resolves the config
+directory in this order:
 
-The trampoline always knows where the config is (its own directory).
-There is no magic directory discovery.
+1. `--config <path>` CLI flag
+2. `RAVELOOP_CONFIG` environment variable
+3. Default location: `<dirs::config_dir()>/raveloop/`
+4. Hard error with a pointer to `raveloop-cli init`
 
-### `raveloop-cli run --config <dir> <plan-directory>`
+No walk-up, no registry, no implicit project root. The first source
+that resolves to an existing directory wins; if that directory doesn't
+exist, `raveloop-cli` errors with the candidate path and the source
+that produced it.
 
-The main phase loop. Takes an explicit config root (provided by the
-trampoline) and a plan directory.
+### `raveloop-cli run [--config <dir>] <plan-directory>`
+
+The main phase loop. Takes an optional config root (resolved via the
+discovery chain if omitted) and a plan directory.
 
 ### Configuration
 
@@ -524,3 +519,17 @@ Per-phase `params` maps contain agent-specific CLI flags. For
 `claude-code`, `dangerous: true` adds `--dangerously-skip-permissions`.
 This keeps the `Agent` trait generic — the orchestrator doesn't need
 to know what flags each agent supports.
+
+`raveloop-cli run --dangerous <plan_dir>` mutates the loaded
+`AgentConfig` at startup, setting `dangerous: true` for every LLM
+phase before the agent is constructed — so the agent itself still
+reads a single source of truth (`config.params`), and no parallel
+override channel is needed (claude-code only; ignored with a warning
+for other agents).
+
+All `claude-code` invocations (interactive and headless) pass
+`--add-dir <plan_dir>` so Claude's sandbox permits writes into the
+plan directory. Without it, `memory.md`, `latest-session.md`,
+`backlog.md`, and `subagent-dispatch.yaml` writes would be denied
+because `plan_dir` lives outside the project tree (`current_dir` is
+`project_dir`).

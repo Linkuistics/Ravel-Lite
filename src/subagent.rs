@@ -59,10 +59,7 @@ pub async fn dispatch_subagents(
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| dispatch.target.clone());
 
-        ui.register_agent(
-            &agent_id,
-            &format!("  → {}: {}", dispatch.kind, dispatch.target),
-        );
+        ui.register_agent(&agent_id);
         ui.log(&format!("  → {}: {}", dispatch.kind, dispatch.target));
 
         let agent = Arc::clone(&agent);

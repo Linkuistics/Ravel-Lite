@@ -14,7 +14,7 @@ use tokio::process::Command;
 use super::Agent;
 use crate::config::load_tokens;
 use crate::format::{
-    FormattedOutput, ToolCall, clean_tool_name, extract_edit_context,
+    FormattedOutput, ToolCall, clean_tool_name,
     extract_tool_detail, format_result_text, format_tool_call,
 };
 use crate::types::{AgentConfig, LlmPhase, PlanContext};
@@ -50,24 +50,12 @@ fn parse_pi_stream_line(
                 path: input.get("file_path").or(input.get("path"))
                     .and_then(|v| v.as_str()).map(|s| s.to_string()),
                 detail: None,
-                edit_context: None,
             },
-            "write" => ToolCall {
+            "write" | "edit" => ToolCall {
                 name: name.to_string(),
                 path: input.get("file_path").or(input.get("path"))
                     .and_then(|v| v.as_str()).map(|s| s.to_string()),
                 detail: None,
-                edit_context: extract_edit_context(None, input.get("content").and_then(|v| v.as_str())),
-            },
-            "edit" => ToolCall {
-                name: name.to_string(),
-                path: input.get("file_path").or(input.get("path"))
-                    .and_then(|v| v.as_str()).map(|s| s.to_string()),
-                detail: None,
-                edit_context: extract_edit_context(
-                    input.get("old_string").and_then(|v| v.as_str()),
-                    input.get("new_string").and_then(|v| v.as_str()),
-                ),
             },
             "grep" => ToolCall {
                 name: name.to_string(),
@@ -77,27 +65,23 @@ fn parse_pi_stream_line(
                     input.get("pattern").and_then(|v| v.as_str()).unwrap_or(""),
                     input.get("path").and_then(|v| v.as_str()).unwrap_or(".")
                 )),
-                edit_context: None,
             },
             "find" => ToolCall {
                 name: name.to_string(),
                 path: None,
                 detail: input.get("pattern").or(input.get("glob"))
                     .and_then(|v| v.as_str()).map(|s| s.to_string()),
-                edit_context: None,
             },
             "bash" => ToolCall {
                 name: name.to_string(),
                 path: None,
                 detail: input.get("command").and_then(|v| v.as_str())
                     .map(|s| s.chars().take(120).collect()),
-                edit_context: None,
             },
             _ => ToolCall {
                 name: clean_tool_name(name),
                 path: None,
                 detail: Some(extract_tool_detail(&input)),
-                edit_context: None,
             },
         };
         return Some(format_tool_call(&tool, phase, shown_highlights));
@@ -105,8 +89,15 @@ fn parse_pi_stream_line(
 
     if event_type == "tool_execution_end" {
         if event.get("isError").and_then(|v| v.as_bool()) == Some(true) {
+            let line = crate::format::StyledLine(vec![
+                crate::format::Span::plain("  "),
+                crate::format::Span::styled(
+                    "✗  tool error",
+                    crate::format::Style::intent(crate::format::Intent::Removed),
+                ),
+            ]);
             return Some(FormattedOutput {
-                text: "  \x1b[31m✗  tool error\x1b[0m".to_string(),
+                lines: vec![line],
                 persist: true,
             });
         }
@@ -122,7 +113,7 @@ fn parse_pi_stream_line(
                 .join("\n");
             if !text.is_empty() {
                 return Some(FormattedOutput {
-                    text: format_result_text(&text),
+                    lines: format_result_text(&text),
                     persist: true,
                 });
             }
@@ -256,18 +247,18 @@ impl Agent for PiAgent {
             match lines.next_line().await {
                 Ok(Some(line)) => {
                     if let Some(formatted) = parse_pi_stream_line(&line, Some(phase), &mut shown_highlights) {
-                        if formatted.text.is_empty() {
+                        if formatted.is_empty() {
                             continue;
                         }
                         if formatted.persist {
                             let _ = tx.send(UIMessage::Persist {
                                 agent_id: agent_id.to_string(),
-                                text: formatted.text,
+                                lines: formatted.lines,
                             });
-                        } else {
+                        } else if let Some(line) = formatted.lines.into_iter().next() {
                             let _ = tx.send(UIMessage::Progress {
                                 agent_id: agent_id.to_string(),
-                                text: formatted.text,
+                                line,
                             });
                         }
                     }
@@ -471,6 +462,13 @@ impl Agent for PiAgent {
 mod tests {
     use super::*;
 
+    fn flat(f: &FormattedOutput) -> String {
+        f.lines.iter()
+            .map(|l| l.0.iter().map(|s| s.text.as_str()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn parse_pi_tool_start() {
         let line = r#"{"type":"tool_execution_start","tool_name":"read","tool_input":{"file_path":"/foo.md"}}"#;
@@ -479,7 +477,7 @@ mod tests {
         assert!(r.is_some());
         let f = r.unwrap();
         assert!(!f.persist);
-        assert!(f.text.contains("/foo.md"));
+        assert!(flat(&f).contains("/foo.md"));
     }
 
     #[test]
@@ -490,7 +488,7 @@ mod tests {
         assert!(r.is_some());
         let f = r.unwrap();
         assert!(f.persist);
-        assert!(f.text.contains("ADDED"));
+        assert!(flat(&f).contains("ADDED"));
     }
 
     #[test]
@@ -501,7 +499,7 @@ mod tests {
         assert!(r.is_some());
         let f = r.unwrap();
         assert!(f.persist);
-        assert!(f.text.contains("tool error"));
+        assert!(flat(&f).contains("tool error"));
     }
 
     #[test]

@@ -70,8 +70,14 @@ async fn handle_script_phase(
             if should_dream(plan_dir, headroom) {
                 write_phase(plan_dir, Phase::Llm(LlmPhase::Dream));
             } else {
-                ui.log("  ⏭  Dream skipped (memory within headroom)");
-                write_phase(plan_dir, Phase::Script(ScriptPhase::GitCommitDream));
+                // Render a full DREAM header with a skip description so the
+                // absence-of-work is as legible as the other phases.
+                let info = phase_info(LlmPhase::Dream);
+                ui.log(&format!("\n{HR}"));
+                ui.log(&format!("  ◆  {}  ·  {name}", info.label));
+                ui.log("  Skipped — memory within headroom");
+                ui.log(HR);
+                write_phase(plan_dir, Phase::Llm(LlmPhase::Triage));
             }
             Ok(true)
         }
@@ -120,17 +126,6 @@ pub async fn phase_loop(
                 let agent_id = "main";
                 log_phase_header(ui, lp, &name);
 
-                ui.set_status(StatusInfo {
-                    project: Path::new(&ctx.project_dir)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default(),
-                    plan: name.clone(),
-                    phase: lp.as_str().to_string(),
-                    agent: config.agent.clone(),
-                    cycle: None,
-                });
-
                 if lp == LlmPhase::Work {
                     git_save_work_baseline(plan_dir);
                     let _ = fs::remove_file(plan_dir.join("latest-session.md"));
@@ -139,7 +134,7 @@ pub async fn phase_loop(
                 let prompt = compose_prompt(config_root, lp, ctx, &tokens)?;
                 let tx = ui.sender();
 
-                ui.register_agent(agent_id, &format!("  ◆  {}  ·  {name}", phase_info(lp).label));
+                ui.register_agent(agent_id);
 
                 if lp == LlmPhase::Work {
                     ui.suspend();

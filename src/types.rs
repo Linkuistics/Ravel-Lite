@@ -139,16 +139,6 @@ pub struct SubagentDispatch {
     pub summary: String,
 }
 
-/// Status bar information.
-#[derive(Debug, Clone)]
-pub struct StatusInfo {
-    pub project: String,
-    pub plan: String,
-    pub phase: String,
-    pub agent: String,
-    pub cycle: Option<u32>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
