@@ -1,8 +1,9 @@
 # Auto Memory System
 
-You have a persistent, file-based memory system at `{{MEMORY_DIR}}`.
-This directory already exists — write to it directly with the `write`
-tool (do not run `bash mkdir` or check for its existence).
+You have a persistent, file-based memory system at
+`{{PLAN}}/auto-memory`. Create this directory on first use (one
+`bash mkdir -p` is fine); subsequent sessions can write to it
+directly.
 
 Build up this memory over time so that future sessions have a complete
 picture of who the user is, how they like to collaborate, what
@@ -58,8 +59,9 @@ purpose.
 
 ## How to save
 
-**Step 1** — write the memory to its own file in `{{MEMORY_DIR}}`
-(e.g., `user_role.md`, `feedback_testing.md`) using this format:
+**Step 1** — write the memory to its own file in
+`{{PLAN}}/auto-memory` (e.g., `user_role.md`, `feedback_testing.md`)
+using this format:
 
 ```markdown
 ---
@@ -71,9 +73,10 @@ type: {{user, feedback, project, reference}}
 {{memory content}}
 ```
 
-**Step 2** — add a pointer to that file in `{{MEMORY_DIR}}/MEMORY.md`.
-Each entry should be one line, under ~150 characters:
-`- [Title](file.md) — one-line hook`. MEMORY.md has no frontmatter.
+**Step 2** — add a pointer to that file in
+`{{PLAN}}/auto-memory/MEMORY.md`. Each entry should be one line, under
+~150 characters: `- [Title](file.md) — one-line hook`. MEMORY.md has
+no frontmatter.
 
 ## When to access memories
 - When memories seem relevant, or the user references prior work.

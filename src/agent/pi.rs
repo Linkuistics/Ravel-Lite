@@ -135,14 +135,18 @@ impl PiAgent {
         Self { config, config_root }
     }
 
+    /// Load a pi prompt file and run it through the shared
+    /// `substitute_tokens` pipeline. Going through the pipeline (instead
+    /// of ad-hoc `str::replace`) means any unresolved `{{NAME}}` token in
+    /// the prompt fails loudly at load time — the `{{MEMORY_DIR}}` bug
+    /// originally slipped past because this file did its own string
+    /// replacement and never ran the guard regex.
     fn load_prompt_file(&self, name: &str, ctx: &PlanContext) -> Result<String> {
         let path = Path::new(&self.config_root).join("agents/pi/prompts").join(name);
-        let mut content = fs::read_to_string(&path)
+        let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read {}", path.display()))?;
-        content = content.replace("{{PROJECT}}", &ctx.project_dir);
-        content = content.replace("{{DEV_ROOT}}", &ctx.dev_root);
-        content = content.replace("{{PLAN}}", &ctx.plan_dir);
-        Ok(content)
+        crate::prompt::substitute_tokens(&content, ctx, &HashMap::new())
+            .with_context(|| format!("Failed to substitute tokens in {}", path.display()))
     }
 
     fn build_headless_args(&self, prompt: &str, phase: LlmPhase, system_prompt: &str) -> Vec<String> {
@@ -506,5 +510,86 @@ mod tests {
     fn parse_pi_ignores_blank() {
         let mut shown = HashSet::new();
         assert!(parse_pi_stream_line("", None, &mut shown).is_none());
+    }
+
+    fn agent_with_prompts(prompts: &[(&str, &str)]) -> (tempfile::TempDir, PiAgent) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let prompts_dir = dir.path().join("agents/pi/prompts");
+        fs::create_dir_all(&prompts_dir).unwrap();
+        for (name, body) in prompts {
+            fs::write(prompts_dir.join(name), body).unwrap();
+        }
+        let config = AgentConfig {
+            models: HashMap::new(),
+            thinking: HashMap::new(),
+            params: HashMap::new(),
+            provider: None,
+        };
+        let agent = PiAgent::new(config, dir.path().to_string_lossy().to_string());
+        (dir, agent)
+    }
+
+    fn test_plan_ctx() -> PlanContext {
+        PlanContext {
+            plan_dir: "/plans/my-plan".to_string(),
+            project_dir: "/project".to_string(),
+            dev_root: "/dev".to_string(),
+            related_plans: String::new(),
+            config_root: "/config".to_string(),
+        }
+    }
+
+    #[test]
+    fn load_prompt_substitutes_plan_token() {
+        let (_dir, agent) = agent_with_prompts(&[(
+            "memory-prompt.md",
+            "Memory lives at {{PLAN}}/auto-memory.",
+        )]);
+        let out = agent.load_prompt_file("memory-prompt.md", &test_plan_ctx()).unwrap();
+        assert_eq!(out, "Memory lives at /plans/my-plan/auto-memory.");
+    }
+
+    #[test]
+    fn load_prompt_fails_on_unresolved_token() {
+        // Regression guard: a new `{{X}}` slipping into a pi prompt must
+        // fail at load time. Before routing through `substitute_tokens`,
+        // the literal token reached the LLM unchanged — that is how the
+        // `{{MEMORY_DIR}}` bug went undetected.
+        let (_dir, agent) = agent_with_prompts(&[(
+            "memory-prompt.md",
+            "dangling {{MEMORY_DIR}} token",
+        )]);
+        let err = agent
+            .load_prompt_file("memory-prompt.md", &test_plan_ctx())
+            .expect_err("unresolved token should fail to load");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("{{MEMORY_DIR}}"), "error should name the token: {msg}");
+    }
+
+    #[test]
+    fn shipped_pi_prompts_have_no_dangling_tokens() {
+        // Drift guard: every on-disk defaults/agents/pi/prompts/*.md must
+        // substitute cleanly against a realistic PlanContext. A future
+        // `{{X}}` added to a prompt without a matching token source will
+        // fail here rather than at agent invocation time.
+        let prompts_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("defaults")
+            .join("agents")
+            .join("pi")
+            .join("prompts");
+        let entries: Vec<_> = fs::read_dir(&prompts_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("md"))
+            .collect();
+        assert!(!entries.is_empty(), "expected at least one pi prompt on disk");
+
+        let ctx = test_plan_ctx();
+        for entry in entries {
+            let path = entry.path();
+            let body = fs::read_to_string(&path).unwrap();
+            crate::prompt::substitute_tokens(&body, &ctx, &HashMap::new())
+                .unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
+        }
     }
 }

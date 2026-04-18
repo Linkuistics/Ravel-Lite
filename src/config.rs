@@ -58,28 +58,84 @@ fn select_config_dir(
     Ok(candidate)
 }
 
+/// Recursively merges `overlay` into `base`: scalar collisions are won
+/// by overlay, map collisions recurse key-by-key, so keys present only
+/// in `base` survive. Mirrors the shape of JSON-merge-patch for the
+/// subset of YAML we actually use (maps and scalars).
+fn merge_yaml(base: &mut serde_yaml::Value, overlay: serde_yaml::Value) {
+    use serde_yaml::Value;
+    match (base, overlay) {
+        (Value::Mapping(base_map), Value::Mapping(overlay_map)) => {
+            for (key, value) in overlay_map {
+                if let Some(existing) = base_map.get_mut(&key) {
+                    merge_yaml(existing, value);
+                } else {
+                    base_map.insert(key, value);
+                }
+            }
+        }
+        (base_slot, overlay) => {
+            *base_slot = overlay;
+        }
+    }
+}
+
+/// Load a YAML config with an optional `*.local.yaml` overlay that is
+/// deep-merged into the embedded-default base before deserialization.
+///
+/// The overlay is the single-user escape hatch for `init --force`:
+/// `init` only writes files in `EMBEDDED_FILES`, so any path ending in
+/// `.local.yaml` is untouched by `init --force`. This lets a user pin a
+/// field (e.g. `models.work: ""` to defer to Claude Code's interactive
+/// default, or `provider: openai`) without it being reset on the next
+/// `init --force` sweep.
+fn load_with_optional_overlay<T: serde::de::DeserializeOwned>(
+    base_path: &Path,
+    overlay_path: &Path,
+) -> Result<T> {
+    let base_content = std::fs::read_to_string(base_path)
+        .with_context(|| format!("Failed to read {}", base_path.display()))?;
+    let mut merged: serde_yaml::Value = serde_yaml::from_str(&base_content)
+        .with_context(|| format!("Failed to parse {}", base_path.display()))?;
+
+    if overlay_path.exists() {
+        let overlay_content = std::fs::read_to_string(overlay_path)
+            .with_context(|| format!("Failed to read {}", overlay_path.display()))?;
+        let overlay: serde_yaml::Value = serde_yaml::from_str(&overlay_content)
+            .with_context(|| format!("Failed to parse {}", overlay_path.display()))?;
+        merge_yaml(&mut merged, overlay);
+    }
+
+    serde_yaml::from_value(merged).with_context(|| {
+        format!(
+            "Failed to deserialize merged config from {} (+ optional {})",
+            base_path.display(),
+            overlay_path.display()
+        )
+    })
+}
+
 pub fn load_shared_config(config_root: &Path) -> Result<SharedConfig> {
-    let path = config_root.join("config.yaml");
-    let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
-    serde_yaml::from_str(&content)
-        .with_context(|| format!("Failed to parse {}", path.display()))
+    load_with_optional_overlay(
+        &config_root.join("config.yaml"),
+        &config_root.join("config.local.yaml"),
+    )
 }
 
 pub fn load_agent_config(config_root: &Path, agent_name: &str) -> Result<AgentConfig> {
-    let path = config_root.join("agents").join(agent_name).join("config.yaml");
-    let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
-    serde_yaml::from_str(&content)
-        .with_context(|| format!("Failed to parse {}", path.display()))
+    let agent_dir = config_root.join("agents").join(agent_name);
+    load_with_optional_overlay(
+        &agent_dir.join("config.yaml"),
+        &agent_dir.join("config.local.yaml"),
+    )
 }
 
 pub fn load_tokens(config_root: &Path, agent_name: &str) -> Result<std::collections::HashMap<String, String>> {
-    let path = config_root.join("agents").join(agent_name).join("tokens.yaml");
-    let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
-    serde_yaml::from_str(&content)
-        .with_context(|| format!("Failed to parse {}", path.display()))
+    let agent_dir = config_root.join("agents").join(agent_name);
+    load_with_optional_overlay(
+        &agent_dir.join("tokens.yaml"),
+        &agent_dir.join("tokens.local.yaml"),
+    )
 }
 
 #[cfg(test)]
@@ -212,5 +268,120 @@ mod tests {
         let err = select_config_dir(Some(file_path.clone()), None, None).unwrap_err();
         let message = format!("{err:#}");
         assert!(message.contains("not a directory") || message.contains("does not exist"));
+    }
+
+    // ---- merge_yaml / overlay loader ----
+
+    #[test]
+    fn merge_yaml_overrides_scalar_at_root() {
+        let mut base: serde_yaml::Value = serde_yaml::from_str("headroom: 1500\n").unwrap();
+        let overlay: serde_yaml::Value = serde_yaml::from_str("headroom: 9000\n").unwrap();
+        merge_yaml(&mut base, overlay);
+        assert_eq!(base["headroom"].as_u64().unwrap(), 9000);
+    }
+
+    #[test]
+    fn merge_yaml_keeps_base_keys_absent_from_overlay() {
+        let mut base: serde_yaml::Value =
+            serde_yaml::from_str("agent: claude-code\nheadroom: 1500\n").unwrap();
+        let overlay: serde_yaml::Value = serde_yaml::from_str("headroom: 3000\n").unwrap();
+        merge_yaml(&mut base, overlay);
+        assert_eq!(base["agent"].as_str().unwrap(), "claude-code");
+        assert_eq!(base["headroom"].as_u64().unwrap(), 3000);
+    }
+
+    #[test]
+    fn merge_yaml_recurses_into_nested_maps() {
+        // This is the load-bearing case: overriding `models.work` must not
+        // wipe `models.reflect` / `models.dream` etc.
+        let mut base: serde_yaml::Value = serde_yaml::from_str(
+            "models:\n  work: claude-opus-4-6\n  reflect: claude-haiku-4-5\n",
+        )
+        .unwrap();
+        let overlay: serde_yaml::Value =
+            serde_yaml::from_str("models:\n  work: \"\"\n").unwrap();
+        merge_yaml(&mut base, overlay);
+        assert_eq!(base["models"]["work"].as_str().unwrap(), "");
+        assert_eq!(
+            base["models"]["reflect"].as_str().unwrap(),
+            "claude-haiku-4-5"
+        );
+    }
+
+    #[test]
+    fn load_agent_config_without_overlay_uses_base() {
+        let dir = setup_config_dir();
+        let config = load_agent_config(dir.path(), "claude-code").unwrap();
+        assert_eq!(config.models.get("work").unwrap(), "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn load_agent_config_overlay_merges_into_base() {
+        // The operational use case: the user wants `models.work` blanked
+        // so `ClaudeCodeAgent` skips `--model` and lets Claude Code's
+        // interactive default (e.g. the 1M-context variant) win, without
+        // losing the other phase models and without fearing `init --force`
+        // stomping the edit.
+        let dir = setup_config_dir();
+        let agent_dir = dir.path().join("agents/claude-code");
+        fs::write(
+            agent_dir.join("config.local.yaml"),
+            "models:\n  work: \"\"\n",
+        )
+        .unwrap();
+
+        let config = load_agent_config(dir.path(), "claude-code").unwrap();
+        assert_eq!(config.models.get("work").unwrap(), "");
+        assert_eq!(
+            config.models.get("reflect").unwrap(),
+            "claude-haiku-4-5",
+            "keys only in the base config must survive the overlay"
+        );
+    }
+
+    #[test]
+    fn load_shared_config_overlay_overrides_agent_choice() {
+        let dir = setup_config_dir();
+        fs::write(dir.path().join("config.local.yaml"), "agent: pi\n").unwrap();
+        let config = load_shared_config(dir.path()).unwrap();
+        assert_eq!(config.agent, "pi");
+        assert_eq!(config.headroom, 1500, "unrelated base keys must survive");
+    }
+
+    #[test]
+    fn load_tokens_overlay_augments_and_overrides() {
+        let dir = setup_config_dir();
+        let agent_dir = dir.path().join("agents/claude-code");
+        fs::write(
+            agent_dir.join("tokens.local.yaml"),
+            "TOOL_READ: CustomRead\nTOOL_NEW: NewTool\n",
+        )
+        .unwrap();
+
+        let tokens = load_tokens(dir.path(), "claude-code").unwrap();
+        assert_eq!(tokens.get("TOOL_READ").unwrap(), "CustomRead");
+        assert_eq!(
+            tokens.get("TOOL_WRITE").unwrap(),
+            "Write",
+            "base tokens must survive when overlay adds siblings"
+        );
+        assert_eq!(tokens.get("TOOL_NEW").unwrap(), "NewTool");
+    }
+
+    #[test]
+    fn load_agent_config_shape_mismatched_overlay_surfaces_path_in_error() {
+        // Overlay parses as YAML but collapses `models` from a map to a
+        // scalar. Deserialization into `AgentConfig` then fails and the
+        // surfaced error must name the overlay file so the user can
+        // track the bad edit down.
+        let dir = setup_config_dir();
+        let agent_dir = dir.path().join("agents/claude-code");
+        fs::write(agent_dir.join("config.local.yaml"), "models: not_a_map\n").unwrap();
+        let err = load_agent_config(dir.path(), "claude-code").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("config.local.yaml"),
+            "error should name the overlay file: {msg}"
+        );
     }
 }

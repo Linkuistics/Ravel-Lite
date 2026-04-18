@@ -441,9 +441,11 @@ Crate dependencies are defined in `Cargo.toml`.
 ```
 <config-dir>/
 ├── config.yaml                 # agent, headroom
+├── config.local.yaml           # optional overlay; survives init --force
 ├── agents/
 │   ├── claude-code/
 │   │   ├── config.yaml         # per-phase model/param config
+│   │   ├── config.local.yaml   # optional overlay; survives init --force
 │   │   └── tokens.yaml         # template tokens
 │   └── pi/
 │       ├── config.yaml
@@ -605,6 +607,19 @@ params:
   triage:
     dangerous: true
 ```
+
+Any of the three config files (`config.yaml`,
+`agents/<name>/config.yaml`, `agents/<name>/tokens.yaml`) can have a
+sibling `*.local.yaml` overlay. When present, the overlay is deep-merged
+into the embedded base before deserialization: scalar collisions are won
+by the overlay, map keys present only in the base survive, and nested
+maps (`models`, `thinking`, `params`) recurse. `init --force` only
+rewrites files listed in `EMBEDDED_FILES`, so `*.local.yaml` files are
+never touched by scaffolding — use them for machine-local pins that must
+survive future `init --force` sweeps. Typical example: setting
+`models.work: ""` in `agents/claude-code/config.local.yaml` to suppress
+the `--model` flag and defer to Claude Code's interactive default (e.g.
+the 1M-context variant) without losing the other phase models.
 
 Per-phase `params` maps contain agent-specific CLI flags. For
 `claude-code`, `dangerous: true` adds `--dangerously-skip-permissions`.
