@@ -862,3 +862,155 @@ async fn analyse_work_receives_snapshot_and_commits_uncommitted_source() {
         "expected the plan-state commit to use commit-message.md, got log:\n{log_str}"
     );
 }
+
+/// Invariant: at the user-prompt that follows git-commit-triage, the
+/// plan tree must be fully committed. A dirty phase.md (or work-baseline,
+/// or latest-session.md) here leaks into sibling plans in multi-plan
+/// monorepos — `warn_if_project_tree_dirty` scans the whole project dir
+/// and treats the leak as "work agent forgot to commit", which is a
+/// false positive that has caused operator confusion in the field.
+#[tokio::test]
+async fn git_commit_triage_leaves_plan_tree_clean_at_user_prompt() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    init_test_repo(root);
+
+    let plan_dir = root.join("plans/clean-triage-plan");
+    fs::create_dir_all(&plan_dir).unwrap();
+    fs::write(plan_dir.join("phase.md"), "triage").unwrap();
+
+    let config_root = root.join("config");
+    fs::create_dir_all(config_root.join("phases")).unwrap();
+    fs::write(config_root.join("phases/triage.md"), "triage on {{PLAN}}").unwrap();
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let agent = Arc::new(MockAgent {
+        calls: calls.clone(),
+        next_phase_after: HashMap::from([(LlmPhase::Triage, "git-commit-triage")]),
+        plan_dir: plan_dir.clone(),
+    });
+
+    let shared = SharedConfig {
+        agent: "mock".into(),
+        headroom: 1500,
+    };
+
+    let ctx = PlanContext {
+        plan_dir: plan_dir.to_string_lossy().to_string(),
+        project_dir: root.to_string_lossy().to_string(),
+        dev_root: root.parent().unwrap().to_string_lossy().to_string(),
+        related_plans: String::new(),
+        config_root: config_root.to_string_lossy().to_string(),
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = UI::new(tx);
+
+    // Decline the "proceed to next work phase?" prompt so the loop exits
+    // at the very spot where the invariant is supposed to hold.
+    let drain = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            match msg {
+                UIMessage::Quit => break,
+                UIMessage::Confirm { reply, .. } => {
+                    let _ = reply.send(false);
+                }
+                _ => {}
+            }
+        }
+    });
+
+    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    ui.quit();
+    let _ = drain.await;
+
+    assert!(result.is_ok(), "phase_loop returned error: {result:?}");
+
+    let status = Command::new("git")
+        .current_dir(root)
+        .args(["status", "--porcelain", "--", "plans/clean-triage-plan"])
+        .output()
+        .unwrap();
+    let dirty = String::from_utf8(status.stdout).unwrap();
+    assert!(
+        dirty.is_empty(),
+        "plan tree should be clean after git-commit-triage, but porcelain shows:\n{dirty}"
+    );
+}
+
+/// Invariant: at the user-prompt that follows git-commit-work, the plan
+/// tree must be fully committed. Same rationale as the triage variant —
+/// sibling plans in the same repo should never observe a dirty plan dir
+/// at a user decision point.
+#[tokio::test]
+async fn git_commit_work_leaves_plan_tree_clean_at_user_prompt() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    init_test_repo(root);
+
+    let config_root = root.join("config");
+    raveloop::init::run_init(&config_root, false).unwrap();
+
+    let plan_dir = root.join("plans/clean-work-plan");
+    fs::create_dir_all(&plan_dir).unwrap();
+    fs::write(plan_dir.join("phase.md"), "analyse-work").unwrap();
+    fs::write(plan_dir.join("backlog.md"), "# Backlog\n").unwrap();
+    fs::write(plan_dir.join("memory.md"), "# Memory\n").unwrap();
+
+    let head = Command::new("git")
+        .current_dir(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    fs::write(plan_dir.join("work-baseline"), &head.stdout).unwrap();
+
+    let agent = Arc::new(ContractMockAgent::new(plan_dir.clone()));
+
+    let shared = SharedConfig {
+        agent: "mock".into(),
+        headroom: 10_000,
+    };
+
+    let ctx = PlanContext {
+        plan_dir: plan_dir.to_string_lossy().to_string(),
+        project_dir: root.to_string_lossy().to_string(),
+        dev_root: root.parent().unwrap().to_string_lossy().to_string(),
+        related_plans: String::new(),
+        config_root: config_root.to_string_lossy().to_string(),
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = UI::new(tx);
+
+    // Decline the "proceed to reflect phase?" prompt (the first one
+    // after analyse-work → git-commit-work). That is exactly the
+    // checkpoint where the invariant must hold.
+    let drain = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            match msg {
+                UIMessage::Quit => break,
+                UIMessage::Confirm { reply, .. } => {
+                    let _ = reply.send(false);
+                }
+                _ => {}
+            }
+        }
+    });
+
+    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    ui.quit();
+    let _ = drain.await;
+
+    assert!(result.is_ok(), "phase_loop returned error: {result:?}");
+
+    let status = Command::new("git")
+        .current_dir(root)
+        .args(["status", "--porcelain", "--", "plans/clean-work-plan"])
+        .output()
+        .unwrap();
+    let dirty = String::from_utf8(status.stdout).unwrap();
+    assert!(
+        dirty.is_empty(),
+        "plan tree should be clean after git-commit-work, but porcelain shows:\n{dirty}"
+    );
+}

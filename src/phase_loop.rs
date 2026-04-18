@@ -124,20 +124,32 @@ async fn handle_script_phase(
     let project = project_name(&project_dir.to_string_lossy());
     let scope = header_scope(&project, &name);
 
+    // Invariant: each script-phase handler advances `phase.md` BEFORE
+    // calling `git_commit_plan`, so the phase transition is captured in
+    // the same commit as that phase's other plan-state writes. Order
+    // matters — writing after the commit would leave `phase.md` dirty at
+    // the user-prompt points, which leaks into sibling plans in
+    // multi-plan monorepos (where `warn_if_project_tree_dirty` scans the
+    // whole project dir and mistakes the leak for work the agent forgot
+    // to commit).
     match phase {
         ScriptPhase::GitCommitWork => {
+            write_phase(plan_dir, Phase::Llm(LlmPhase::Reflect))?;
             let result = git_commit_plan(plan_dir, &name, "work")?;
             log_commit(ui, "work", &scope, &result);
             warn_if_project_tree_dirty(ui, project_dir);
-            write_phase(plan_dir, Phase::Llm(LlmPhase::Reflect))?;
             Ok(ui.confirm("Proceed to reflect phase?").await)
         }
         ScriptPhase::GitCommitReflect => {
+            let skip_dream = !should_dream(plan_dir, headroom);
+            if skip_dream {
+                write_phase(plan_dir, Phase::Llm(LlmPhase::Triage))?;
+            } else {
+                write_phase(plan_dir, Phase::Llm(LlmPhase::Dream))?;
+            }
             let result = git_commit_plan(plan_dir, &name, "reflect")?;
             log_commit(ui, "reflect", &scope, &result);
-            if should_dream(plan_dir, headroom) {
-                write_phase(plan_dir, Phase::Llm(LlmPhase::Dream))?;
-            } else {
+            if skip_dream {
                 // Render a full DREAM header with a skip description so the
                 // absence-of-work is as legible as the other phases.
                 let info = phase_info(LlmPhase::Dream);
@@ -145,20 +157,31 @@ async fn handle_script_phase(
                 ui.log(&format!("  ◆  {}  ·  {scope}", info.label));
                 ui.log("  Skipped — memory within headroom");
                 ui.log(HR);
-                write_phase(plan_dir, Phase::Llm(LlmPhase::Triage))?;
             }
             Ok(true)
         }
         ScriptPhase::GitCommitDream => {
+            write_phase(plan_dir, Phase::Llm(LlmPhase::Triage))?;
             let result = git_commit_plan(plan_dir, &name, "dream")?;
             log_commit(ui, "dream", &scope, &result);
-            write_phase(plan_dir, Phase::Llm(LlmPhase::Triage))?;
             Ok(true)
         }
         ScriptPhase::GitCommitTriage => {
+            // Prepare for the next work cycle as part of this commit, so
+            // `work-baseline` is also captured atomically. The
+            // `LlmPhase::Work` entry retains a first-run fallback for
+            // fresh plans that start at `work` without a preceding triage.
+            //
+            // `latest-session.md` is intentionally NOT touched here:
+            // analyse-work overwrites it next cycle (see
+            // `defaults/phases/analyse-work.md` step 8), and leaving it
+            // in place through the triage commit keeps the prior
+            // session's record available for operator inspection in the
+            // gap between cycles.
+            write_phase(plan_dir, Phase::Llm(LlmPhase::Work))?;
+            git_save_work_baseline(plan_dir);
             let result = git_commit_plan(plan_dir, &name, "triage")?;
             log_commit(ui, "triage", &scope, &result);
-            write_phase(plan_dir, Phase::Llm(LlmPhase::Work))?;
             Ok(ui.confirm("Proceed to next work phase?").await)
         }
     }
@@ -196,9 +219,13 @@ pub async fn phase_loop(
                 let agent_id = "main";
                 log_phase_header(ui, lp, &project, &name);
 
-                if lp == LlmPhase::Work {
+                // First-run fallback: in steady state, `git-commit-triage`
+                // prepares `work-baseline` as part of its atomic commit.
+                // On a brand-new plan that starts at `work` with no prior
+                // triage, `work-baseline` doesn't exist yet — seed it so
+                // analyse-work has a baseline SHA to diff against.
+                if lp == LlmPhase::Work && !plan_dir.join("work-baseline").exists() {
                     git_save_work_baseline(plan_dir);
-                    let _ = fs::remove_file(plan_dir.join("latest-session.md"));
                 }
 
                 // analyse-work needs a live snapshot of the work tree so the
