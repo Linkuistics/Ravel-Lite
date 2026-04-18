@@ -1,10 +1,13 @@
 # Memory
 
-## Pi agent has unresolved `{{MEMORY_DIR}}` token
-`substitute_tokens` now hard-errors on unresolved tokens, so pi invocation will fail loudly rather than pass the literal token through to output.
+## All prompt loading routes through `substitute_tokens`
+Ad-hoc `str::replace` bypasses the hard-error guard regex. Any prompt-loading path that does not delegate to `substitute_tokens` silently passes unresolved tokens through. Drift guards require one canonical substitution path.
 
-## Pi scope meta-task blocks all pi-specific bug work
-A meta decision task must be resolved before investing in pi bugs (stderr capture, integration tests, model update).
+## `shipped_pi_prompts_have_no_dangling_tokens` test guards pi prompts
+The test iterates every on-disk pi prompt file and asserts no unresolved tokens remain. Enforcement mechanism for the canonical-substitution-path rule.
+
+## Config overlays use deep-merge via `load_with_optional_overlay<T>()`
+`src/config.rs` implements `*.local.yaml` overlays. Deep-merge: scalar collisions go to overlay, map collisions recurse. A `models.work: ""` overlay blanks only that key without losing sibling keys.
 
 ## Pi subagent definitions live at `agents/pi/subagents/`
 `defaults/agents/pi/subagents/` holds pi subagent definitions (brainstorming, tdd, writing-plans). The former `defaults/skills/` location was a misnomer; `init.rs` embed paths and `pi.rs` reads are updated accordingly.
