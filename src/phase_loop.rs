@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use crate::agent::Agent;
 use crate::dream::{should_dream, update_dream_baseline};
 use crate::format::phase_info;
-use crate::git::{git_commit_plan, git_save_work_baseline, working_tree_status};
+use crate::git::{git_commit_plan, git_save_work_baseline, work_tree_snapshot, working_tree_status};
 use crate::prompt::compose_prompt;
 use crate::subagent::dispatch_subagents;
 use crate::types::*;
@@ -201,7 +201,26 @@ pub async fn phase_loop(
                     let _ = fs::remove_file(plan_dir.join("latest-session.md"));
                 }
 
-                let prompt = compose_prompt(config_root, lp, ctx, &tokens)?;
+                // analyse-work needs a live snapshot of the work tree so the
+                // prompt can (a) show the LLM exactly what changed since the
+                // baseline and (b) force it to commit or justify every path.
+                // Captured at prompt-compose time so any hand-edits the user
+                // made between work exit and analyse-work start are included.
+                let prompt = if lp == LlmPhase::AnalyseWork {
+                    let mut augmented = tokens.clone();
+                    let baseline_sha = fs::read_to_string(plan_dir.join("work-baseline"))
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_default();
+                    let snapshot = if baseline_sha.is_empty() {
+                        "(work-baseline missing; no snapshot available)".to_string()
+                    } else {
+                        work_tree_snapshot(project_dir, &baseline_sha)
+                    };
+                    augmented.insert("WORK_TREE_STATUS".to_string(), snapshot);
+                    compose_prompt(config_root, lp, ctx, &augmented)?
+                } else {
+                    compose_prompt(config_root, lp, ctx, &tokens)?
+                };
                 let tx = ui.sender();
 
                 ui.register_agent(agent_id);

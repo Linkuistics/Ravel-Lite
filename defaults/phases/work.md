@@ -84,23 +84,17 @@ code you are about to change and pick from `fixed-memory/` yourself.
    - **Then, write a `Results:` block** beneath the task describing what
      was done, what worked, what didn't, and what this suggests next.
 
-8. **Commit your source-file changes yourself.** The orchestrator's
-   `git-commit-work` step only commits the plan-state files inside
-   `{{PLAN}}/` (backlog.md, phase.md, etc.). Any edits you made to
-   source code, tests, docs, or configuration outside `{{PLAN}}/` must
-   be staged and committed by you before the work phase ends —
-   otherwise the next phase will advance with your work sitting
-   unstaged in the working tree, where it can be silently lost across
-   subsequent reflect/triage cycles.
+8. **Do NOT commit source-file changes yourself.** The analyse-work
+   phase that runs immediately after this one is responsible for
+   committing everything you edited (source, tests, docs, config — any
+   path outside `{{PLAN}}/`). The orchestrator captures a `git status`
+   snapshot the moment this phase exits and feeds it into the
+   analyse-work prompt as authoritative input, so anything you leave
+   uncommitted will be seen and committed (or explicitly justified).
 
-   Before writing `analyse-work` to `phase.md`, run `git status` from
-   the project root and confirm the working tree contains only the
-   plan-state files you intend the orchestrator to commit. If
-   `git status` shows any other modified, added, or untracked file
-   that was part of this task, commit those changes now with a
-   descriptive message. Cross-check the file list against any source
-   changes you described in the task's `Results` block — every claimed
-   path should appear in your own commit, not be left dangling.
+   You are free to run `git status` / `git diff` for your own
+   orientation, but do not stage or commit anything. Leaving the tree
+   dirty for analyse-work is the expected hand-off.
 
 9. Write `analyse-work` to `{{PLAN}}/phase.md`.
 

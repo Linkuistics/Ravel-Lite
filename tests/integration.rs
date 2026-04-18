@@ -332,6 +332,27 @@ async fn phase_loop_triage_cycle_exits_cleanly_on_no_confirm() {
 /// transitions).
 struct ContractMockAgent {
     plan_dir: std::path::PathBuf,
+    /// When `Some`, the mock additionally simulates the analyse-work
+    /// phase's source-commit step: it stages any path outside the plan
+    /// directory that appears in the work-tree snapshot and commits it.
+    /// This mirrors the behaviour of a well-behaved LLM following the
+    /// updated analyse-work prompt — left opt-in so tests that don't
+    /// care about commits stay fast.
+    commit_project_dir: Option<std::path::PathBuf>,
+    /// Captures the prompt text each headless phase received, keyed by
+    /// phase. Tests inspect this to verify token substitution (e.g. that
+    /// `{{WORK_TREE_STATUS}}` is replaced with real snapshot output).
+    captured_prompts: Arc<Mutex<HashMap<LlmPhase, String>>>,
+}
+
+impl ContractMockAgent {
+    fn new(plan_dir: std::path::PathBuf) -> Self {
+        Self {
+            plan_dir,
+            commit_project_dir: None,
+            captured_prompts: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
 }
 
 #[async_trait]
@@ -342,12 +363,16 @@ impl Agent for ContractMockAgent {
 
     async fn invoke_headless(
         &self,
-        _prompt: &str,
+        prompt: &str,
         _ctx: &PlanContext,
         phase: LlmPhase,
         _agent_id: &str,
         _tx: UISender,
     ) -> anyhow::Result<()> {
+        self.captured_prompts
+            .lock()
+            .unwrap()
+            .insert(phase, prompt.to_string());
         let plan = &self.plan_dir;
         match phase {
             LlmPhase::AnalyseWork => {
@@ -371,6 +396,43 @@ impl Agent for ContractMockAgent {
                     let flipped = flip_stale_task_statuses(&backlog);
                     if flipped != backlog {
                         fs::write(&backlog_path, flipped)?;
+                    }
+                }
+                // Source-commit simulation: a well-behaved model reads
+                // the WORK_TREE_STATUS snapshot in the prompt, stages
+                // every path outside the plan dir, and commits it with
+                // a descriptive message. Opt-in via commit_project_dir.
+                if let Some(project_dir) = &self.commit_project_dir {
+                    let plan_rel = plan
+                        .strip_prefix(project_dir)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    let pathspec = format!(":(exclude){plan_rel}");
+                    let add = Command::new("git")
+                        .current_dir(project_dir)
+                        .args(["add", "-A", "--", ".", &pathspec])
+                        .output()?;
+                    if !add.status.success() {
+                        anyhow::bail!(
+                            "mock git add failed: {}",
+                            String::from_utf8_lossy(&add.stderr)
+                        );
+                    }
+                    let diff = Command::new("git")
+                        .current_dir(project_dir)
+                        .args(["diff", "--cached", "--quiet"])
+                        .output()?;
+                    if !diff.status.success() {
+                        let commit = Command::new("git")
+                            .current_dir(project_dir)
+                            .args(["commit", "-m", "mock: analyse-work source commit"])
+                            .output()?;
+                        if !commit.status.success() {
+                            anyhow::bail!(
+                                "mock git commit failed: {}",
+                                String::from_utf8_lossy(&commit.stderr)
+                            );
+                        }
                     }
                 }
                 fs::write(plan.join("phase.md"), "git-commit-work")?;
@@ -455,7 +517,7 @@ async fn phase_contract_round_trip_writes_expected_files() {
         .unwrap();
     fs::write(plan_dir.join("work-baseline"), &head.stdout).unwrap();
 
-    let agent = Arc::new(ContractMockAgent { plan_dir: plan_dir.clone() });
+    let agent = Arc::new(ContractMockAgent::new(plan_dir.clone()));
 
     let shared = SharedConfig {
         agent: "mock".into(),
@@ -613,7 +675,7 @@ Placeholder for the safety-net test.
         .unwrap();
     fs::write(plan_dir.join("work-baseline"), &head.stdout).unwrap();
 
-    let agent = Arc::new(ContractMockAgent { plan_dir: plan_dir.clone() });
+    let agent = Arc::new(ContractMockAgent::new(plan_dir.clone()));
 
     let shared = SharedConfig {
         agent: "mock".into(),
@@ -659,5 +721,131 @@ Placeholder for the safety-net test.
     assert!(
         !backlog.contains("**Status:** `not_started`"),
         "analyse-work should have flipped the stale Status line away from not_started, got:\n{backlog}"
+    );
+}
+
+/// End-to-end check that the orchestrator's work-tree snapshot reaches
+/// the analyse-work prompt AND that a well-behaved model acting on the
+/// snapshot commits uncommitted source files. Mirrors the production
+/// hand-off: work phase leaves source edits in the tree, analyse-work
+/// sees them via `{{WORK_TREE_STATUS}}`, commits them.
+#[tokio::test]
+async fn analyse_work_receives_snapshot_and_commits_uncommitted_source() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    init_test_repo(root);
+
+    let config_root = root.join("config");
+    raveloop::init::run_init(&config_root, false).unwrap();
+
+    let plan_dir = root.join("plans/snapshot-plan");
+    fs::create_dir_all(&plan_dir).unwrap();
+    fs::write(plan_dir.join("phase.md"), "analyse-work").unwrap();
+    fs::write(plan_dir.join("backlog.md"), "# Backlog\n").unwrap();
+    fs::write(plan_dir.join("memory.md"), "# Memory\n").unwrap();
+
+    // Baseline captured BEFORE the simulated work-phase edits.
+    let head = Command::new("git")
+        .current_dir(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    fs::write(plan_dir.join("work-baseline"), &head.stdout).unwrap();
+
+    // Simulate the work phase leaving a source file uncommitted — the
+    // exact hand-off shape the snapshot is supposed to surface.
+    fs::write(
+        root.join("abandoned_by_work.rs"),
+        "fn added_in_work_phase() {}\n",
+    )
+    .unwrap();
+
+    let agent = Arc::new(ContractMockAgent {
+        plan_dir: plan_dir.clone(),
+        commit_project_dir: Some(root.to_path_buf()),
+        captured_prompts: Arc::new(Mutex::new(HashMap::new())),
+    });
+    let captured = agent.captured_prompts.clone();
+
+    let shared = SharedConfig {
+        agent: "mock".into(),
+        headroom: 10_000,
+    };
+
+    let ctx = PlanContext {
+        plan_dir: plan_dir.to_string_lossy().to_string(),
+        project_dir: root.to_string_lossy().to_string(),
+        dev_root: root.parent().unwrap().to_string_lossy().to_string(),
+        related_plans: String::new(),
+        config_root: config_root.to_string_lossy().to_string(),
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = UI::new(tx);
+
+    // Decline every confirm — we only care about the analyse-work →
+    // git-commit-work hand-off.
+    let drain = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            match msg {
+                UIMessage::Quit => break,
+                UIMessage::Confirm { reply, .. } => {
+                    let _ = reply.send(false);
+                }
+                _ => {}
+            }
+        }
+    });
+
+    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    ui.quit();
+    let _ = drain.await;
+
+    assert!(result.is_ok(), "phase_loop returned error: {result:?}");
+
+    // Contract 1: the analyse-work prompt actually received a
+    // substituted WORK_TREE_STATUS block — no leftover `{{...}}`
+    // placeholder, and the uncommitted file is named in it.
+    let prompts = captured.lock().unwrap();
+    let analyse_prompt = prompts
+        .get(&LlmPhase::AnalyseWork)
+        .expect("analyse-work should have been invoked");
+    assert!(
+        !analyse_prompt.contains("{{WORK_TREE_STATUS}}"),
+        "analyse-work prompt still has unsubstituted WORK_TREE_STATUS token"
+    );
+    assert!(
+        analyse_prompt.contains("abandoned_by_work.rs"),
+        "analyse-work prompt should surface the uncommitted source file in the snapshot; got prompt:\n{analyse_prompt}"
+    );
+
+    // Contract 2: the source file is no longer in the working tree as
+    // untracked — the well-behaved mock committed it.
+    let status = Command::new("git")
+        .current_dir(root)
+        .args(["status", "--porcelain"])
+        .output()
+        .unwrap();
+    let status_str = String::from_utf8(status.stdout).unwrap();
+    assert!(
+        !status_str.contains("abandoned_by_work.rs"),
+        "analyse-work mock should have committed the source file, but porcelain still lists it:\n{status_str}"
+    );
+
+    // Contract 3: git log contains a dedicated source commit separate
+    // from the plan-state commit.
+    let log = Command::new("git")
+        .current_dir(root)
+        .args(["log", "--oneline", "--all"])
+        .output()
+        .unwrap();
+    let log_str = String::from_utf8(log.stdout).unwrap();
+    assert!(
+        log_str.contains("mock: analyse-work source commit"),
+        "expected a source commit from the analyse-work mock, got log:\n{log_str}"
+    );
+    assert!(
+        log_str.contains("analyse-work: contract test session"),
+        "expected the plan-state commit to use commit-message.md, got log:\n{log_str}"
     );
 }

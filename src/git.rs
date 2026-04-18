@@ -113,6 +113,61 @@ pub fn find_project_root(start_dir: &Path) -> Result<String> {
     }
 }
 
+/// Captures the work-tree state after the work phase exits so the
+/// analyse-work prompt can inject it verbatim. Two parts:
+///
+/// 1. `git diff --stat <baseline>` — summarises every tracked-file
+///    change since the baseline, committed or not.
+/// 2. `git status --porcelain` — the raw list of uncommitted and
+///    untracked paths, which catches new files that `diff --stat`
+///    misses.
+///
+/// Soft-fails on a git error: returns a human-readable error string
+/// rather than propagating, because the analyse-work prompt needs
+/// *something* in the `WORK_TREE_STATUS` slot — an `Err` would bubble
+/// up into `compose_prompt` and wedge the whole loop.
+pub fn work_tree_snapshot(project_dir: &Path, baseline_sha: &str) -> String {
+    let diff_stat = Command::new("git")
+        .current_dir(project_dir)
+        .args(["diff", "--stat", baseline_sha])
+        .output()
+        .ok()
+        .and_then(|o| if o.status.success() {
+            Some(String::from_utf8_lossy(&o.stdout).into_owned())
+        } else {
+            None
+        });
+    let status = Command::new("git")
+        .current_dir(project_dir)
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()
+        .and_then(|o| if o.status.success() {
+            Some(String::from_utf8_lossy(&o.stdout).into_owned())
+        } else {
+            None
+        });
+
+    let diff_block = match &diff_stat {
+        Some(s) if !s.trim().is_empty() => s.trim_end().to_string(),
+        Some(_) => "(no tracked-file changes since baseline)".to_string(),
+        None => "(git diff --stat failed)".to_string(),
+    };
+    let status_block = match &status {
+        Some(s) if !s.trim().is_empty() => s.trim_end().to_string(),
+        Some(_) => "(clean — nothing uncommitted or untracked)".to_string(),
+        None => "(git status failed)".to_string(),
+    };
+
+    format!(
+        "Files changed since work baseline (git diff --stat {baseline_sha}):\n\
+         {diff_block}\n\
+         \n\
+         Currently uncommitted or untracked (git status --porcelain):\n\
+         {status_block}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +200,69 @@ mod tests {
         assert!(
             status.iter().any(|l| l.contains("dirty.txt")),
             "expected dirty.txt in porcelain output, got: {status:?}"
+        );
+    }
+
+    #[test]
+    fn work_tree_snapshot_includes_tracked_changes_and_untracked_files() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = tmp.path();
+        Command::new("git").current_dir(repo).args(["init", "-q"]).output().unwrap();
+        Command::new("git").current_dir(repo).args(["config", "user.email", "t@t"]).output().unwrap();
+        Command::new("git").current_dir(repo).args(["config", "user.name", "t"]).output().unwrap();
+
+        // Baseline commit: one tracked file.
+        fs::write(repo.join("tracked.txt"), "v1\n").unwrap();
+        Command::new("git").current_dir(repo).args(["add", "tracked.txt"]).output().unwrap();
+        Command::new("git").current_dir(repo).args(["commit", "-q", "-m", "baseline"]).output().unwrap();
+        let baseline = String::from_utf8(
+            Command::new("git").current_dir(repo).args(["rev-parse", "HEAD"]).output().unwrap().stdout
+        ).unwrap().trim().to_string();
+
+        // Simulate a work phase: edit the tracked file (uncommitted) and
+        // introduce a new untracked file.
+        fs::write(repo.join("tracked.txt"), "v2\n").unwrap();
+        fs::write(repo.join("untracked.rs"), "fn added() {}\n").unwrap();
+
+        let snapshot = work_tree_snapshot(repo, &baseline);
+        assert!(
+            snapshot.contains("tracked.txt"),
+            "diff --stat section should list edited tracked files, got:\n{snapshot}"
+        );
+        assert!(
+            snapshot.contains("untracked.rs"),
+            "status --porcelain section should list untracked files, got:\n{snapshot}"
+        );
+        assert!(
+            snapshot.contains("git diff --stat"),
+            "snapshot should label the diff section, got:\n{snapshot}"
+        );
+        assert!(
+            snapshot.contains("git status --porcelain"),
+            "snapshot should label the status section, got:\n{snapshot}"
+        );
+    }
+
+    #[test]
+    fn work_tree_snapshot_reports_clean_tree_with_no_changes() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = tmp.path();
+        Command::new("git").current_dir(repo).args(["init", "-q"]).output().unwrap();
+        Command::new("git").current_dir(repo).args(["config", "user.email", "t@t"]).output().unwrap();
+        Command::new("git").current_dir(repo).args(["config", "user.name", "t"]).output().unwrap();
+        Command::new("git").current_dir(repo).args(["commit", "-q", "--allow-empty", "-m", "empty"]).output().unwrap();
+        let baseline = String::from_utf8(
+            Command::new("git").current_dir(repo).args(["rev-parse", "HEAD"]).output().unwrap().stdout
+        ).unwrap().trim().to_string();
+
+        let snapshot = work_tree_snapshot(repo, &baseline);
+        assert!(
+            snapshot.contains("(no tracked-file changes since baseline)"),
+            "clean diff should render an explicit empty-state marker, got:\n{snapshot}"
+        );
+        assert!(
+            snapshot.contains("(clean — nothing uncommitted or untracked)"),
+            "clean status should render an explicit empty-state marker, got:\n{snapshot}"
         );
     }
 

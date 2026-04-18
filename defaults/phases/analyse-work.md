@@ -1,12 +1,24 @@
 You are running the ANALYSE-WORK phase of a multi-session backlog plan.
 This phase runs headlessly immediately after the interactive work phase
 exits. Its job is to examine the actual changes made during the work
-session and produce two outputs: a session log entry and a git commit
-message.
+session, **commit every source-file change on behalf of the session**,
+and produce a session log entry plus a git commit message for the
+plan-state files.
 
 You are analysing what happened from the ground truth (the diff), not
 from an LLM's self-report. The diff is the authoritative record of what
 changed.
+
+## Work-tree snapshot
+
+The orchestrator captured this snapshot after the work phase exited —
+treat it as authoritative. Do **not** trust your own mental model of
+what changed; use this block as the definitive list of paths to commit
+or justify.
+
+```
+{{WORK_TREE_STATUS}}
+```
 
 ## Required reads
 
@@ -42,10 +54,29 @@ changed.
    repairs that drift so triage sees the real state. If the work phase
    already flipped everything correctly, this step is a no-op.
 
-6. Determine the session number by counting existing `### Session`
+6. **Commit the source-file changes.** The work phase no longer commits
+   its own source edits — that is this phase's responsibility. Using the
+   work-tree snapshot above as ground truth:
+
+   - Stage every path outside `{{PLAN}}/` that appears in the snapshot
+     with `git add <path>` (or `git add -A -- :!{{PLAN}}` if the set is
+     large — but explicit paths are preferred).
+   - Commit with a descriptive message in the imperative mood that
+     summarises the session's code changes (not the plan-bookkeeping
+     commit, which happens separately from `commit-message.md`).
+   - If any path in the snapshot is intentionally **not** committed
+     (e.g. a user scratch file, an accidental edit that should be
+     reverted), you MUST name each such path explicitly in
+     `latest-session.md` (next step) with a one-sentence justification.
+     Unjustified uncommitted paths will trigger a TUI warning.
+
+   Do not commit files inside `{{PLAN}}/` here — those are reserved for
+   the subsequent `git-commit-work` script phase.
+
+7. Determine the session number by counting existing `### Session`
    headings in `{{PLAN}}/session-log.md` (if it exists), then add one.
 
-7. Write `{{PLAN}}/latest-session.md`, **OVERWRITING any prior content**.
+8. Write `{{PLAN}}/latest-session.md`, **OVERWRITING any prior content**.
    Use this format:
 
    ```
@@ -62,10 +93,14 @@ changed.
    Base the entry on the actual diff and the backlog results, not
    assumptions. Be specific about what files were changed and why.
 
-8. Write `{{PLAN}}/commit-message.md` with a git commit message:
+9. Write `{{PLAN}}/commit-message.md` with a git commit message for the
+   **plan-state commit** (the one `git-commit-work` will make next). This
+   is distinct from the source-file commit you made in step 6 and should
+   narrate the plan bookkeeping: safety-net status flips, backlog
+   `Results:` additions, phase.md transitions. Keep it tight:
 
    ```
-   <title — imperative mood, max 72 chars, summarises the change>
+   <title — imperative mood, max 72 chars, summarises plan-state updates>
 
    <body — what was done and why, 2-5 lines>
    ```
@@ -74,9 +109,9 @@ changed.
    Do not include plan or phase metadata in the commit message — the
    git history provides that context.
 
-9. Write `git-commit-work` to `{{PLAN}}/phase.md`.
+10. Write `git-commit-work` to `{{PLAN}}/phase.md`.
 
-10. Stop.
+11. Stop.
 
 ## Output format
 
