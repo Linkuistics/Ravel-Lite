@@ -1165,7 +1165,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "raveloop"
+name = "ravel-lite"
 version = "0.1.0"
 dependencies = [
  "anyhow",
