@@ -5,7 +5,7 @@
 ### Add integration test exercising the pi phase path
 
 **Category:** `test`
-**Status:** `not_started`
+**Status:** `done`
 **Dependencies:** none (Capture and surface pi subprocess stderr on non-zero exit — done)
 
 **Description:**
@@ -26,7 +26,49 @@ cover: prompt loading resolves every `{{…}}` token (catches
 on non-zero exit (so the stderr capture fix stays fixed), and dispatch
 invokes the right args for the target plan.
 
-**Results:** _pending_
+**Results:**
+
+Added a `pi_integration` module to `tests/integration.rs` with three
+tests. A shared `EnvOverride` helper serializes PATH/HOME mutation
+across concurrent tests via a `OnceLock<Mutex<()>>`; field-drop order
+keeps the mutex held until env restoration completes, so a panicked
+test can't leak a fake-pi PATH into the next runner.
+
+The three tests:
+
+1. `pi_phase_cycle_substitutes_tokens_and_streams_events` — full
+   `phase_loop` cycle with a real `PiAgent`. Fake pi (a shell script
+   in a tempdir) dumps its `-p` arg for inspection, writes the
+   analyse-work contract files so the cycle advances, and emits a
+   `tool_execution_start` + `message_end` pair. Asserts: zero `{{…}}`
+   in the captured prompt; the substituted prompt embeds the real PLAN
+   path; the channel saw `Progress` + `Persist` + `AgentDone`
+   variants; the audit commit landed using `commit-message.md`.
+
+2. `pi_invoke_headless_surfaces_stderr_tail_on_failure` — fake pi
+   exits 17 with stderr text. Asserts the returned error contains both
+   the stderr tail and the exit code (regression guard for the
+   `Stdio::inherit()` → buffered stderr fix).
+
+3. `pi_dispatch_subagent_invokes_pi_with_target_plan_args` — fake pi
+   dumps its argv to a file. Asserts `--no-session`,
+   `--append-system-prompt`, `--provider anthropic`, `--mode json`,
+   `-p`, and the prompt all appear in the dispatched argv.
+
+`PiAgent::setup` runs first via `phase_loop`, which would normally
+trigger `pi install` against the operator's real `~/.pi`. Test 1
+redirects HOME to a tempdir pre-seeded with a settings.json declaring
+`pi-subagent` already installed, so setup is a no-op. Tests 2 and 3
+bypass setup by calling `invoke_headless` / `dispatch_subagent`
+directly.
+
+What this suggests next: the remaining backlog item — extracting
+shared spawn/stream/dispatch boilerplate to `src/agent/common.rs` —
+now has a regression net on the pi side. Both agent types are covered
+by integration tests that exercise the real argv builder, real stream
+parser, and real stderr surfacing path; the refactor can lift duplicated
+code with confidence that drift between the two implementations would
+fail one test or the other.
 
 ---
 

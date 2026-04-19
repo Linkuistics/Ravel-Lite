@@ -1,10 +1,8 @@
-### Session 1 (2026-04-18T07:39:42Z) — Atomic phase transitions in script-phase handlers
+### Session 2 (2026-04-19T06:09:37Z) — Add pi_integration tests pinning PiAgent contract
 
-- Worked on "Commit plan-state transitions atomically with their script phases" (bugfix)
-- Fixed all four `ScriptPhase::GitCommit*` handlers in `src/phase_loop.rs` to call `write_phase(next)` before `git_commit_plan`, ensuring phase.md is captured in the same commit as other plan-state writes and the tree is clean at user-prompt points
-- `GitCommitTriage` additionally calls `git_save_work_baseline` pre-commit so work-baseline is atomically captured; `LlmPhase::Work` entry reduced to a first-run fallback that seeds work-baseline only when the file is missing
-- `latest-session.md` deletion from `LlmPhase::Work` entry was dropped: analyse-work overwrites it unconditionally, so the deletion was decorative; leaving it in place preserves the prior session log for operator inspection
-- `GitCommitReflect` restructured to hoist the `should_dream` check so the phase write happens before the commit while the skip banner still renders correctly
-- Added two integration tests in `tests/integration.rs`: `git_commit_triage_leaves_plan_tree_clean_at_user_prompt` and `git_commit_work_leaves_plan_tree_clean_at_user_prompt` — both assert `git status --porcelain -- <plan_dir>` is empty after `phase_loop` returns from a user-declined exit; both were RED before the fix and GREEN after
-- Full suite: 10/10 integration, 144/144 unit, zero new clippy warnings
-- Next: add pi agent integration test (next backlog task), or extract shared spawn/stream boilerplate to `src/agent/common.rs`
+- Attempted and completed: added `pi_integration` module to `tests/integration.rs` (407 lines) with three tests covering the real `PiAgent` spawn/stream/dispatch path — closing the gap that let the `{{MEMORY_DIR}}` regression escape undetected
+- `pi_phase_cycle_substitutes_tokens_and_streams_events`: full `phase_loop` cycle with a real `PiAgent` and fake `pi` shell script; asserts zero unresolved `{{…}}` tokens in the captured prompt, correct `UIMessage` variant fan-out (`Progress`, `Persist`, `AgentDone`), and audit commit via `commit-message.md`
+- `pi_invoke_headless_surfaces_stderr_tail_on_failure`: non-zero `pi` exit (code 17) must surface the stderr tail in the returned error — regression guard for the `Stdio::inherit` → buffered-stderr fix
+- `pi_dispatch_subagent_invokes_pi_with_target_plan_args`: pins the argv contract for `dispatch_subagent` (`--no-session`, `--append-system-prompt`, `--provider anthropic`, `--mode json`, `-p`, prompt)
+- `EnvOverride` helper serialises `PATH`/`HOME` mutation via a process-wide `OnceLock<Mutex<()>>`; struct-field drop order keeps the lock held until env restoration completes, preventing fake-pi PATH from leaking into concurrent test runners
+- What this suggests next: `Extract shared spawn/stream/dispatch boilerplate to src/agent/common.rs` now has full regression coverage on both the pi and claude-code sides; the refactor can proceed with confidence
