@@ -43,7 +43,19 @@ RELATED_PLANS and custom tokens expand first; atomic path tokens ({{DEV_ROOT}} e
 `PiAgent::invoke_headless` pipes stderr into a fixed-size rolling buffer (`STDERR_BUFFER_CAP = 4096`). Tail surfaces in error messages on failure; eliminates TUI bleed-through during headless invocation.
 
 ## `STDERR_BUFFER_CAP` and `warning_line` duplicated across pi.rs and claude_code.rs
-Both constants/helpers carry comments pointing to the unification extraction task. Extraction has not yet occurred.
+Both constants/helpers carry comments pointing to the unification extraction task. Extraction has not yet occurred. Full regression coverage now exists on both sides; refactor to `src/agent/common.rs` can proceed safely.
+
+## `pi_phase_cycle` test guards runtime token substitution
+`pi_phase_cycle_substitutes_tokens_and_streams_events` runs a full `phase_loop` cycle with a real `PiAgent` and a fake `pi` shell script; asserts zero unresolved `{{…}}` tokens in the captured prompt, correct `UIMessage` variant fan-out (`Progress`, `Persist`, `AgentDone`), and audit commit via `commit-message.md`. Closes the gap that let the `{{MEMORY_DIR}}` regression escape.
+
+## `pi_invoke_headless` test guards stderr-tail surfacing
+`pi_invoke_headless_surfaces_stderr_tail_on_failure` asserts a non-zero `pi` exit (code 17) surfaces the stderr tail in the returned error. Guards the buffered-stderr fix. See: `Pi stderr captured in 4096-byte rolling buffer`.
+
+## `pi_dispatch_subagent` test pins dispatch argv contract
+`pi_dispatch_subagent_invokes_pi_with_target_plan_args` pins the exact argv for `dispatch_subagent`: `--no-session`, `--append-system-prompt`, `--provider anthropic`, `--mode json`, `-p`, prompt.
+
+## `EnvOverride` serialises env mutation in integration tests
+`EnvOverride` holds a process-wide `OnceLock<Mutex<()>>`; struct-field drop order keeps the lock held until `PATH`/`HOME` restoration completes, preventing fake-pi `PATH` from leaking into concurrent test runners.
 
 ## `write_phase` called before `git_commit_plan` in all `GitCommit*` handlers
 All four `ScriptPhase::GitCommit*` handlers in `phase_loop.rs` call `write_phase(next)` before `git_commit_plan`. Phase.md is captured in the same commit as other plan-state writes; the plan tree is clean at every user-prompt point.
