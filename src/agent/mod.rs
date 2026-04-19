@@ -1,5 +1,6 @@
 // src/agent/mod.rs
 pub mod claude_code;
+pub mod common;
 pub mod pi;
 
 use anyhow::Result;

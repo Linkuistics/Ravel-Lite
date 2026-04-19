@@ -4,64 +4,20 @@ use std::process::Stdio;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use super::Agent;
+use super::common::{
+    STREAM_SNIPPET_BYTES, StreamLineOutcome, build_dispatch_plan_context, run_streaming_child,
+    truncate_snippet,
+};
 use crate::config::load_tokens;
 use crate::format::{
-    FormattedOutput, Intent, Span, Style, StyledLine, ToolCall, clean_tool_name,
-    extract_tool_detail, format_result_text, format_tool_call,
+    FormattedOutput, ToolCall, clean_tool_name, extract_tool_detail, format_result_text,
+    format_tool_call,
 };
 use crate::types::{AgentConfig, LlmPhase, PlanContext};
-use crate::ui::{UIMessage, UISender};
-
-/// Maximum bytes of a malformed stream line retained in the per-line
-/// warning. The full line is dropped; the snippet is enough to diagnose
-/// format drift without flooding scrollback when claude produces many
-/// bad lines in a row.
-const STREAM_SNIPPET_BYTES: usize = 200;
-
-/// Rolling cap on the stderr tail buffer. When a run exceeds this, the
-/// oldest bytes are discarded and a one-shot warning is sent so the user
-/// knows the error message they're about to see (on failure) is truncated.
-const STDERR_BUFFER_CAP: usize = 4096;
-
-/// Outcome of trying to interpret one stream-JSON line from claude.
-///
-/// Distinguishes "valid JSON but nothing to display" (Ignored) from
-/// "couldn't parse" (Malformed) so the caller can warn on the latter.
-/// The old `Option<FormattedOutput>` collapsed both into `None`, which
-/// is how claude stream-format drift becomes invisible in the TUI.
-enum StreamLineOutcome {
-    Output(FormattedOutput),
-    Ignored,
-    Malformed { snippet: String },
-}
-
-/// Truncates on a UTF-8 char boundary so a multibyte code point at the
-/// cut point never panics. Appends `…` when the input was trimmed.
-fn truncate_snippet(raw: &str, max_bytes: usize) -> String {
-    if raw.len() <= max_bytes {
-        return raw.to_string();
-    }
-    let mut cut = max_bytes;
-    while cut > 0 && !raw.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    format!("{}…", &raw[..cut])
-}
-
-/// Builds a yellow `⚠  …` warning line for the TUI scrollback. Matches
-/// the existing warning visual used by `warn_if_project_tree_dirty` in
-/// `phase_loop`, but renders through `Persist` because it's emitted from
-/// an agent rather than the phase-loop thread.
-fn warning_line(body: impl Into<String>) -> StyledLine {
-    StyledLine(vec![Span::styled(
-        format!("  ⚠  {}", body.into()),
-        Style::bold_intent(Intent::Changed),
-    )])
-}
+use crate::ui::UISender;
 
 pub struct ClaudeCodeAgent {
     config: AgentConfig,
@@ -247,7 +203,7 @@ impl Agent for ClaudeCodeAgent {
     ) -> Result<()> {
         let args = self.build_headless_args(prompt, phase, &ctx.plan_dir);
 
-        let mut child = Command::new("claude")
+        let child = Command::new("claude")
             .args(&args)
             .current_dir(&ctx.project_dir)
             .stdin(Stdio::null())
@@ -256,105 +212,7 @@ impl Agent for ClaudeCodeAgent {
             .spawn()
             .context("Failed to spawn claude")?;
 
-        let stdout = child.stdout.take().context("No stdout")?;
-        let stderr = child.stderr.take().context("No stderr")?;
-
-        // Drain stderr concurrently so it never blocks the child;
-        // retain the last STDERR_BUFFER_CAP bytes so failures can be
-        // surfaced in the error. On the first overflow, emit a one-shot
-        // Persist warning so the user knows any error tail they later
-        // see is the tail, not the head.
-        let overflow_tx = tx.clone();
-        let overflow_agent_id = agent_id.to_string();
-        let stderr_task = tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr).lines();
-            let mut buf = String::new();
-            let mut overflow_warned = false;
-            while let Ok(Some(line)) = reader.next_line().await {
-                buf.push_str(&line);
-                buf.push('\n');
-                if buf.len() > STDERR_BUFFER_CAP {
-                    let cut = buf.len() - STDERR_BUFFER_CAP;
-                    buf.drain(..cut);
-                    if !overflow_warned {
-                        overflow_warned = true;
-                        let _ = overflow_tx.send(UIMessage::Persist {
-                            agent_id: overflow_agent_id.clone(),
-                            lines: vec![warning_line(format!(
-                                "claude stderr exceeded {STDERR_BUFFER_CAP}-byte buffer — earlier lines dropped"
-                            ))],
-                        });
-                    }
-                }
-            }
-            buf
-        });
-
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-        let mut shown_highlights = HashSet::new();
-
-        let mut read_err: Option<anyhow::Error> = None;
-        loop {
-            match lines.next_line().await {
-                Ok(Some(line)) => {
-                    match parse_stream_line(&line, Some(phase), &mut shown_highlights) {
-                        StreamLineOutcome::Output(formatted) => {
-                            if formatted.is_empty() {
-                                continue;
-                            }
-                            if formatted.persist {
-                                let _ = tx.send(UIMessage::Persist {
-                                    agent_id: agent_id.to_string(),
-                                    lines: formatted.lines,
-                                });
-                            } else if let Some(line) = formatted.lines.into_iter().next() {
-                                let _ = tx.send(UIMessage::Progress {
-                                    agent_id: agent_id.to_string(),
-                                    line,
-                                });
-                            }
-                        }
-                        StreamLineOutcome::Malformed { snippet } => {
-                            let _ = tx.send(UIMessage::Persist {
-                                agent_id: agent_id.to_string(),
-                                lines: vec![warning_line(format!(
-                                    "claude stream-JSON parse failed — dropping line: {snippet}"
-                                ))],
-                            });
-                        }
-                        StreamLineOutcome::Ignored => {}
-                    }
-                }
-                Ok(None) => break,
-                Err(e) => {
-                    read_err = Some(e.into());
-                    break;
-                }
-            }
-        }
-
-        let status = child.wait().await?;
-        let stderr_tail = stderr_task.await.unwrap_or_default();
-        let _ = tx.send(UIMessage::AgentDone {
-            agent_id: agent_id.to_string(),
-        });
-
-        if let Some(e) = read_err {
-            return Err(e);
-        }
-
-        if !status.success() {
-            let trimmed = stderr_tail.trim();
-            if trimmed.is_empty() {
-                anyhow::bail!("claude exited with code {:?}", status.code());
-            }
-            anyhow::bail!(
-                "claude exited with code {:?}\n--- stderr ---\n{trimmed}",
-                status.code()
-            );
-        }
-        Ok(())
+        run_streaming_child(child, phase, agent_id, "claude", tx, parse_stream_line).await
     }
 
     async fn dispatch_subagent(
@@ -364,19 +222,7 @@ impl Agent for ClaudeCodeAgent {
         agent_id: &str,
         tx: UISender,
     ) -> Result<()> {
-        let project_dir = crate::git::find_project_root(Path::new(target_plan))?;
-
-        let ctx = PlanContext {
-            plan_dir: target_plan.to_string(),
-            project_dir,
-            dev_root: Path::new(target_plan)
-                .parent().and_then(|p| p.parent())
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            related_plans: String::new(),
-            config_root: self.config_root.clone(),
-        };
-
+        let ctx = build_dispatch_plan_context(target_plan, self.config_root.clone())?;
         self.invoke_headless(prompt, &ctx, LlmPhase::Triage, agent_id, tx).await
     }
 
@@ -468,25 +314,5 @@ mod tests {
             panic!("expected Malformed");
         };
         assert_eq!(snippet, "this is not json");
-    }
-
-    #[test]
-    fn malformed_snippet_is_bounded_and_utf8_safe() {
-        // Generate a >STREAM_SNIPPET_BYTES string containing multibyte chars
-        // at the cut point to verify we never slice mid-codepoint.
-        let mut s = String::new();
-        for _ in 0..50 {
-            s.push_str("café "); // 5 bytes each (é is 2 bytes)
-        }
-        assert!(s.len() > STREAM_SNIPPET_BYTES);
-        let truncated = truncate_snippet(&s, STREAM_SNIPPET_BYTES);
-        assert!(truncated.ends_with('…'));
-        assert!(truncated.len() <= STREAM_SNIPPET_BYTES + '…'.len_utf8());
-    }
-
-    #[test]
-    fn truncate_snippet_passes_short_inputs_unchanged() {
-        assert_eq!(truncate_snippet("short", STREAM_SNIPPET_BYTES), "short");
-        assert_eq!(truncate_snippet("", STREAM_SNIPPET_BYTES), "");
     }
 }

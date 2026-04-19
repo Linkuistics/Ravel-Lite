@@ -8,38 +8,25 @@ use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use super::Agent;
+use super::common::{
+    STREAM_SNIPPET_BYTES, StreamLineOutcome, build_dispatch_plan_context, run_streaming_child,
+    truncate_snippet,
+};
 use crate::config::load_tokens;
 use crate::format::{
     FormattedOutput, Intent, Span, Style, StyledLine, ToolCall, clean_tool_name,
     extract_tool_detail, format_result_text, format_tool_call,
 };
 use crate::types::{AgentConfig, LlmPhase, PlanContext};
-use crate::ui::{UIMessage, UISender};
+use crate::ui::UISender;
 
 // Dotall flag so `.` matches newlines in the body capture group.
 static FRONTMATTER_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?s)^---\n(.*?)\n---\n(.*)$").expect("valid frontmatter regex")
 });
-
-/// Rolling cap on the stderr tail buffer. When a run exceeds this, the
-/// oldest bytes are discarded and a one-shot warning is sent so the user
-/// knows the error message they're about to see (on failure) is truncated.
-/// Duplicated from `claude_code.rs` for now; the refactor task that
-/// extracts shared spawn/stream machinery will unify them.
-const STDERR_BUFFER_CAP: usize = 4096;
-
-/// Builds a yellow `⚠  …` warning line for the TUI scrollback. Duplicated
-/// from `claude_code.rs`; see the constant above for the extraction plan.
-fn warning_line(body: impl Into<String>) -> StyledLine {
-    StyledLine(vec![Span::styled(
-        format!("  ⚠  {}", body.into()),
-        Style::bold_intent(Intent::Changed),
-    )])
-}
 
 // ── Stream parser ─────────────────────────────────────────────────────────────
 
@@ -47,17 +34,29 @@ fn parse_pi_stream_line(
     line: &str,
     phase: Option<LlmPhase>,
     shown_highlights: &mut HashSet<String>,
-) -> Option<FormattedOutput> {
-    let line = line.trim();
-    if line.is_empty() {
-        return None;
+) -> StreamLineOutcome {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return StreamLineOutcome::Ignored;
     }
 
-    let event: serde_json::Value = serde_json::from_str(line).ok()?;
-    let event_type = event.get("type")?.as_str()?;
+    let event: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(v) => v,
+        Err(_) => {
+            return StreamLineOutcome::Malformed {
+                snippet: truncate_snippet(trimmed, STREAM_SNIPPET_BYTES),
+            };
+        }
+    };
+
+    let Some(event_type) = event.get("type").and_then(|t| t.as_str()) else {
+        return StreamLineOutcome::Ignored;
+    };
 
     if event_type == "tool_execution_start" {
-        let name = event.get("tool_name")?.as_str().unwrap_or("");
+        let Some(name) = event.get("tool_name").and_then(|v| v.as_str()) else {
+            return StreamLineOutcome::Ignored;
+        };
         let input = event.get("tool_input").cloned().unwrap_or(serde_json::Value::Null);
 
         let tool = match name {
@@ -100,24 +99,21 @@ fn parse_pi_stream_line(
                 detail: Some(extract_tool_detail(&input)),
             },
         };
-        return Some(format_tool_call(&tool, phase, shown_highlights));
+        return StreamLineOutcome::Output(format_tool_call(&tool, phase, shown_highlights));
     }
 
     if event_type == "tool_execution_end" {
         if event.get("isError").and_then(|v| v.as_bool()) == Some(true) {
-            let line = crate::format::StyledLine(vec![
-                crate::format::Span::plain("  "),
-                crate::format::Span::styled(
-                    "✗  tool error",
-                    crate::format::Style::intent(crate::format::Intent::Removed),
-                ),
+            let line = StyledLine(vec![
+                Span::plain("  "),
+                Span::styled("✗  tool error", Style::intent(Intent::Removed)),
             ]);
-            return Some(FormattedOutput {
+            return StreamLineOutcome::Output(FormattedOutput {
                 lines: vec![line],
                 persist: true,
             });
         }
-        return None;
+        return StreamLineOutcome::Ignored;
     }
 
     if event_type == "message_end" {
@@ -128,7 +124,7 @@ fn parse_pi_stream_line(
                 .collect::<Vec<_>>()
                 .join("\n");
             if !text.is_empty() {
-                return Some(FormattedOutput {
+                return StreamLineOutcome::Output(FormattedOutput {
                     lines: format_result_text(&text),
                     persist: true,
                 });
@@ -136,7 +132,7 @@ fn parse_pi_stream_line(
         }
     }
 
-    None
+    StreamLineOutcome::Ignored
 }
 
 // ── Struct + helpers ──────────────────────────────────────────────────────────
@@ -248,7 +244,7 @@ impl Agent for PiAgent {
         let system_prompt = self.load_prompt_file("system-prompt.md", ctx)?;
         let args = self.build_headless_args(prompt, phase, &system_prompt);
 
-        let mut child = Command::new("pi")
+        let child = Command::new("pi")
             .args(&args)
             .current_dir(&ctx.project_dir)
             .stdin(Stdio::null())
@@ -257,97 +253,7 @@ impl Agent for PiAgent {
             .spawn()
             .context("Failed to spawn pi")?;
 
-        let stdout = child.stdout.take().context("No stdout")?;
-        let stderr = child.stderr.take().context("No stderr")?;
-
-        // Drain stderr concurrently so it never blocks the child; retain
-        // the last STDERR_BUFFER_CAP bytes so failures can be surfaced in
-        // the error. On the first overflow, emit a one-shot Persist
-        // warning so the user knows any error tail they later see is
-        // the tail, not the head. Previously pi used `Stdio::inherit()`,
-        // which let raw stderr bleed into the terminal underneath the
-        // TUI and get overwritten by the next repaint — invisibly
-        // losing the very output the user needed to debug a failure.
-        let overflow_tx = tx.clone();
-        let overflow_agent_id = agent_id.to_string();
-        let stderr_task = tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr).lines();
-            let mut buf = String::new();
-            let mut overflow_warned = false;
-            while let Ok(Some(line)) = reader.next_line().await {
-                buf.push_str(&line);
-                buf.push('\n');
-                if buf.len() > STDERR_BUFFER_CAP {
-                    let cut = buf.len() - STDERR_BUFFER_CAP;
-                    buf.drain(..cut);
-                    if !overflow_warned {
-                        overflow_warned = true;
-                        let _ = overflow_tx.send(UIMessage::Persist {
-                            agent_id: overflow_agent_id.clone(),
-                            lines: vec![warning_line(format!(
-                                "pi stderr exceeded {STDERR_BUFFER_CAP}-byte buffer — earlier lines dropped"
-                            ))],
-                        });
-                    }
-                }
-            }
-            buf
-        });
-
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-        let mut shown_highlights = HashSet::new();
-
-        let mut read_err: Option<anyhow::Error> = None;
-        loop {
-            match lines.next_line().await {
-                Ok(Some(line)) => {
-                    if let Some(formatted) = parse_pi_stream_line(&line, Some(phase), &mut shown_highlights) {
-                        if formatted.is_empty() {
-                            continue;
-                        }
-                        if formatted.persist {
-                            let _ = tx.send(UIMessage::Persist {
-                                agent_id: agent_id.to_string(),
-                                lines: formatted.lines,
-                            });
-                        } else if let Some(line) = formatted.lines.into_iter().next() {
-                            let _ = tx.send(UIMessage::Progress {
-                                agent_id: agent_id.to_string(),
-                                line,
-                            });
-                        }
-                    }
-                }
-                Ok(None) => break,
-                Err(e) => {
-                    read_err = Some(e.into());
-                    break;
-                }
-            }
-        }
-
-        let status = child.wait().await?;
-        let stderr_tail = stderr_task.await.unwrap_or_default();
-        let _ = tx.send(UIMessage::AgentDone {
-            agent_id: agent_id.to_string(),
-        });
-
-        if let Some(e) = read_err {
-            return Err(e);
-        }
-
-        if !status.success() {
-            let trimmed = stderr_tail.trim();
-            if trimmed.is_empty() {
-                anyhow::bail!("pi exited with code {:?}", status.code());
-            }
-            anyhow::bail!(
-                "pi exited with code {:?}\n--- stderr ---\n{trimmed}",
-                status.code()
-            );
-        }
-        Ok(())
+        run_streaming_child(child, phase, agent_id, "pi", tx, parse_pi_stream_line).await
     }
 
     async fn dispatch_subagent(
@@ -357,19 +263,7 @@ impl Agent for PiAgent {
         agent_id: &str,
         tx: UISender,
     ) -> Result<()> {
-        let project_dir = crate::git::find_project_root(Path::new(target_plan))?;
-
-        let ctx = PlanContext {
-            plan_dir: target_plan.to_string(),
-            project_dir,
-            dev_root: Path::new(target_plan)
-                .parent().and_then(|p| p.parent())
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            related_plans: String::new(),
-            config_root: self.config_root.clone(),
-        };
-
+        let ctx = build_dispatch_plan_context(target_plan, self.config_root.clone())?;
         self.invoke_headless(prompt, &ctx, LlmPhase::Triage, agent_id, tx).await
     }
 
@@ -533,13 +427,21 @@ mod tests {
             .join("\n")
     }
 
+    fn expect_output(outcome: StreamLineOutcome) -> FormattedOutput {
+        match outcome {
+            StreamLineOutcome::Output(f) => f,
+            StreamLineOutcome::Ignored => panic!("expected Output, got Ignored"),
+            StreamLineOutcome::Malformed { snippet } => {
+                panic!("expected Output, got Malformed({snippet})")
+            }
+        }
+    }
+
     #[test]
     fn parse_pi_tool_start() {
         let line = r#"{"type":"tool_execution_start","tool_name":"read","tool_input":{"file_path":"/foo.md"}}"#;
         let mut shown = HashSet::new();
-        let r = parse_pi_stream_line(line, Some(LlmPhase::Reflect), &mut shown);
-        assert!(r.is_some());
-        let f = r.unwrap();
+        let f = expect_output(parse_pi_stream_line(line, Some(LlmPhase::Reflect), &mut shown));
         assert!(!f.persist);
         assert!(flat(&f).contains("/foo.md"));
     }
@@ -548,9 +450,7 @@ mod tests {
     fn parse_pi_message_end() {
         let line = r#"{"type":"message_end","content":[{"type":"text","text":"[ADDED] done"}]}"#;
         let mut shown = HashSet::new();
-        let r = parse_pi_stream_line(line, Some(LlmPhase::Reflect), &mut shown);
-        assert!(r.is_some());
-        let f = r.unwrap();
+        let f = expect_output(parse_pi_stream_line(line, Some(LlmPhase::Reflect), &mut shown));
         assert!(f.persist);
         assert!(flat(&f).contains("ADDED"));
     }
@@ -559,9 +459,7 @@ mod tests {
     fn parse_pi_tool_error() {
         let line = r#"{"type":"tool_execution_end","isError":true}"#;
         let mut shown = HashSet::new();
-        let r = parse_pi_stream_line(line, None, &mut shown);
-        assert!(r.is_some());
-        let f = r.unwrap();
+        let f = expect_output(parse_pi_stream_line(line, None, &mut shown));
         assert!(f.persist);
         assert!(flat(&f).contains("tool error"));
     }
@@ -569,7 +467,23 @@ mod tests {
     #[test]
     fn parse_pi_ignores_blank() {
         let mut shown = HashSet::new();
-        assert!(parse_pi_stream_line("", None, &mut shown).is_none());
+        assert!(matches!(
+            parse_pi_stream_line("", None, &mut shown),
+            StreamLineOutcome::Ignored
+        ));
+    }
+
+    #[test]
+    fn parse_pi_malformed_json_surfaces_snippet() {
+        // Pi used to silently drop malformed stream-JSON lines via
+        // `Option::None`; distinguishing Malformed lets the pump surface
+        // a warning so format drift doesn't hide.
+        let mut shown = HashSet::new();
+        let outcome = parse_pi_stream_line("not json at all", None, &mut shown);
+        let StreamLineOutcome::Malformed { snippet } = outcome else {
+            panic!("expected Malformed");
+        };
+        assert_eq!(snippet, "not json at all");
     }
 
     fn agent_with_prompts(prompts: &[(&str, &str)]) -> (tempfile::TempDir, PiAgent) {
