@@ -42,9 +42,6 @@ RELATED_PLANS and custom tokens expand first; atomic path tokens ({{DEV_ROOT}} e
 ## Pi stderr captured in 4096-byte rolling buffer
 `PiAgent::invoke_headless` pipes stderr into a fixed-size rolling buffer (`STDERR_BUFFER_CAP = 4096`). Tail surfaces in error messages on failure; eliminates TUI bleed-through during headless invocation.
 
-## `STDERR_BUFFER_CAP` and `warning_line` duplicated across pi.rs and claude_code.rs
-Both constants/helpers carry comments pointing to the unification extraction task. Extraction has not yet occurred. Full regression coverage now exists on both sides; refactor to `src/agent/common.rs` can proceed safely.
-
 ## `pi_phase_cycle` test guards runtime token substitution
 `pi_phase_cycle_substitutes_tokens_and_streams_events` runs a full `phase_loop` cycle with a real `PiAgent` and a fake `pi` shell script; asserts zero unresolved `{{…}}` tokens in the captured prompt, correct `UIMessage` variant fan-out (`Progress`, `Persist`, `AgentDone`), and audit commit via `commit-message.md`. Closes the gap that let the `{{MEMORY_DIR}}` regression escape.
 
