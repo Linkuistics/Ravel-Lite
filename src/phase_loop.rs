@@ -39,6 +39,20 @@ fn plan_name(plan_dir: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// Render the stack path for phase-header display: basenames joined by ` → `.
+///
+/// Single-plan stacks render as just the plan's basename (unchanged from
+/// pre-pivot Ravel-Lite behaviour). Nested stacks show every plan in the
+/// stack — `coord → sub-F → sub-F-sub1`.
+#[allow(dead_code)]
+pub fn format_breadcrumb(stack_paths: &[std::path::PathBuf]) -> String {
+    stack_paths
+        .iter()
+        .map(|p| plan_name(p))
+        .collect::<Vec<_>>()
+        .join(" → ")
+}
+
 /// Basename of the project directory, for the phase header. Many plans
 /// share generic names like "core", so the project disambiguates which
 /// session a banner belongs to in scrollback or when several sessions are up.

@@ -1788,3 +1788,31 @@ fn pivot_frame_to_context_errors_without_git_root() {
     let res = frame_to_context(&frame, "/tmp/cfg");
     assert!(res.is_err());
 }
+
+#[test]
+fn pivot_breadcrumb_single_plan() {
+    use ravel_lite::phase_loop::format_breadcrumb;
+    let s = format_breadcrumb(&[std::path::PathBuf::from("/repo/LLM_STATE/root-plan")]);
+    assert_eq!(s, "root-plan");
+}
+
+#[test]
+fn pivot_breadcrumb_nested_two_deep() {
+    use ravel_lite::phase_loop::format_breadcrumb;
+    let s = format_breadcrumb(&[
+        std::path::PathBuf::from("/repo/LLM_STATE/coord"),
+        std::path::PathBuf::from("/repo/LLM_STATE/sub-F-hierarchy"),
+    ]);
+    assert_eq!(s, "coord → sub-F-hierarchy");
+}
+
+#[test]
+fn pivot_breadcrumb_handles_three_deep() {
+    use ravel_lite::phase_loop::format_breadcrumb;
+    let s = format_breadcrumb(&[
+        std::path::PathBuf::from("/repo/coord"),
+        std::path::PathBuf::from("/repo/sub-F"),
+        std::path::PathBuf::from("/repo/sub-F-sub1"),
+    ]);
+    assert_eq!(s, "coord → sub-F → sub-F-sub1");
+}
