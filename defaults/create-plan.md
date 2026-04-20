@@ -135,7 +135,7 @@ before passing content to the agent.
 | `{{DEV_ROOT}}` | absolute path to the dev root | `/Users/antony/Development` |
 | `{{PROJECT}}` | absolute path to the project root | `/Users/antony/Development/Project` |
 | `{{PLAN}}` | absolute path to the plan directory | `/Users/antony/Development/Project/LLM_STATE/plan-name` |
-| `{{ORCHESTRATOR}}` | absolute path to this project's root | `/Users/antony/Development/LLM_CONTEXT_PI` |
+| `{{ORCHESTRATOR}}` | absolute path to this project's root | `/Users/antony/Development/Ravel-Lite` |
 | `{{RELATED_PLANS}}` | synthesized block of sibling/parent/child plan paths (computed) | (multi-line block) |
 | `{{TOOL_READ}}` | agent-specific tool name for reading files | `Read` or `read` |
 
@@ -144,7 +144,7 @@ via composition (i.e., the shared `phases/*.md` files and any
 `prompt-*.md` overrides). Do NOT use it in `related-plans.md` itself —
 that file is the input to the synthesis.
 
-**Never** use relative paths like `../LLM_CONTEXT_PI/...` in prompts or
+**Never** use relative paths like `../Ravel-Lite/...` in prompts or
 related-plans.md. Relative paths are interpreted differently depending
 on the agent's cwd resolution and tend to break for nested plans.
 
