@@ -159,9 +159,11 @@ impl Agent for ClaudeCodeAgent {
         prompt: &str,
         ctx: &PlanContext,
     ) -> Result<()> {
+        // `--output-format stream-json` only applies with `-p`/`--print`
+        // (per `claude --help`). In interactive mode it puts claude into
+        // a hybrid state where the TUI silently fails to render. Leave
+        // interactive output to claude's default TUI.
         let mut args = vec![
-            "--output-format".to_string(),
-            "stream-json".to_string(),
             "--add-dir".to_string(),
             ctx.plan_dir.clone(),
         ];
