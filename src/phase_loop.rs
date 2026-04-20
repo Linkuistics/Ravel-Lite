@@ -45,10 +45,6 @@ fn plan_name(plan_dir: &Path) -> String {
 /// Single-plan stacks render as just the plan's basename (unchanged from
 /// pre-pivot Ravel-Lite behaviour). Nested stacks show every plan in the
 /// stack — `coord → sub-F → sub-F-sub1`.
-// `main.rs` re-declares `mod phase_loop` independently of `lib.rs`, so the
-// binary crate sees this as dead until Task 10 wires it into run_stack's
-// phase-header logging. Remove the allow once the call site exists.
-#[allow(dead_code)]
 pub fn format_breadcrumb(stack_paths: &[std::path::PathBuf]) -> String {
     stack_paths
         .iter()
@@ -78,10 +74,19 @@ fn header_scope(project: &str, plan: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn log_phase_header(ui: &UI, phase: LlmPhase, project: &str, plan: &str) {
     let info = phase_info(phase);
     ui.log(&format!("\n{HR}"));
     ui.log(&format!("  ◆  {}  ·  {}", info.label, header_scope(project, plan)));
+    ui.log(&format!("  {}", info.description));
+    ui.log(HR);
+}
+
+fn log_phase_header_with_breadcrumb(ui: &UI, phase: LlmPhase, project: &str, breadcrumb: &str) {
+    let info = phase_info(phase);
+    ui.log(&format!("\n{HR}"));
+    ui.log(&format!("  ◆  {}  ·  {}", info.label, header_scope(project, breadcrumb)));
     ui.log(&format!("  {}", info.description));
     ui.log(HR);
 }
@@ -205,6 +210,7 @@ async fn handle_script_phase(
     }
 }
 
+#[allow(dead_code)]
 pub async fn phase_loop(
     agent: Arc<dyn Agent>,
     ctx: &PlanContext,
@@ -370,18 +376,12 @@ fn do_push(
 ) -> Result<()> {
     pivot::validate_push(&stack_snapshot(stack), &new_frame)?;
     let new_ctx = pivot::frame_to_context(&new_frame, &stack.last().unwrap().config_root)?;
-    let breadcrumb = format_breadcrumb(
-        &stack
-            .iter()
-            .map(|c| std::path::PathBuf::from(&c.plan_dir))
-            .collect::<Vec<_>>(),
-    );
     let target_name = plan_name(&new_frame.path);
     let reason = new_frame.reason.as_deref().unwrap_or("");
     if reason.is_empty() {
-        ui.log(&format!("\n  ↓  PIVOT  ·  {breadcrumb}  →  {target_name}"));
+        ui.log(&format!("\n▷▷ PUSH · {target_name}"));
     } else {
-        ui.log(&format!("\n  ↓  PIVOT  ·  {breadcrumb}  →  {target_name}  ·  \"{reason}\""));
+        ui.log(&format!("\n▷▷ PUSH · {target_name} · \"{reason}\""));
     }
     stack.push(new_ctx);
     pending_push.push(None);
@@ -423,10 +423,6 @@ fn build_prompt(
 /// When the running plan's work phase modifies `<root>/stack.yaml` and
 /// leaves `phase.md` at `work`, the driver short-circuits into the child
 /// plan's cycle. See docs/superpowers/specs/2026-04-20-hierarchical-pivot-design.md.
-// `main.rs` re-declares `mod phase_loop` independently of `lib.rs`, so the
-// binary crate sees run_stack as dead until Task 10 migrates the call site.
-// Remove the allow once the call site exists.
-#[allow(dead_code)]
 pub async fn run_stack(
     agent: Arc<dyn Agent>,
     root_ctx: PlanContext,
@@ -450,7 +446,6 @@ pub async fn run_stack(
         let plan_dir = std::path::PathBuf::from(&top.plan_dir);
         let project_dir = std::path::PathBuf::from(&top.project_dir);
         let config_root = std::path::PathBuf::from(&top.config_root);
-        let name = plan_name(&plan_dir);
         let depth = stack.len();
 
         match read_phase(&plan_dir)? {
@@ -460,7 +455,15 @@ pub async fn run_stack(
                 if !ok {
                     // Nested plan: user declined confirm → pop to parent and resume,
                     // keeping the stack.yaml cleanup invariant.
-                    if depth > 1 { stack.pop(); pending.pop(); sync_stack_to_disk(&stack_path, &stack)?; continue; }
+                    if depth > 1 {
+                        let popped_name = plan_name(&plan_dir);
+                        stack.pop();
+                        pending.pop();
+                        sync_stack_to_disk(&stack_path, &stack)?;
+                        let parent_name = plan_name(&std::path::PathBuf::from(&stack.last().unwrap().plan_dir));
+                        ui.log(&format!("\n◁◁ POP · {popped_name} → {parent_name}"));
+                        continue;
+                    }
                     ui.log("\nExiting.");
                     return Ok(());
                 }
@@ -469,13 +472,24 @@ pub async fn run_stack(
                     let grew = pp.is_some();
                     match pivot::decide_after_cycle(depth, grew, pp) {
                         pivot::NextAfterCycle::Continue => {}
-                        pivot::NextAfterCycle::Pop => { stack.pop(); pending.pop(); sync_stack_to_disk(&stack_path, &stack)?; }
+                        pivot::NextAfterCycle::Pop => {
+                            let popped_name = plan_name(&plan_dir);
+                            stack.pop();
+                            pending.pop();
+                            sync_stack_to_disk(&stack_path, &stack)?;
+                            let parent_name = plan_name(&std::path::PathBuf::from(&stack.last().unwrap().plan_dir));
+                            ui.log(&format!("\n◁◁ POP · {popped_name} → {parent_name}"));
+                        }
                         pivot::NextAfterCycle::Push(f) => { do_push(&mut stack, &mut pending, &stack_path, f, ui)?; }
                     }
                 }
             }
             Phase::Llm(lp) => {
-                log_phase_header(ui, lp, &project_name(&top.project_dir), &name);
+                let stack_paths: Vec<std::path::PathBuf> = stack.iter()
+                    .map(|c| std::path::PathBuf::from(&c.plan_dir))
+                    .collect();
+                let breadcrumb = format_breadcrumb(&stack_paths);
+                log_phase_header_with_breadcrumb(ui, lp, &project_name(&top.project_dir), &breadcrumb);
                 if lp == LlmPhase::Work && !plan_dir.join("work-baseline").exists() {
                     git_save_work_baseline(&plan_dir);
                 }

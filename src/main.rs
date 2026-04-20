@@ -6,10 +6,6 @@ mod format;
 mod git;
 mod init;
 mod phase_loop;
-// `main.rs` re-declares `mod pivot` independently of `lib.rs`, so the binary
-// crate sees all pivot items as dead until Task 10 wires run_stack into the
-// binary entry point. Remove the allow once the call site exists.
-#[allow(dead_code)]
 mod pivot;
 mod prompt;
 mod subagent;
@@ -206,7 +202,7 @@ async fn run_phase_loop(config_root: &Path, plan_dir: &Path, dangerous: bool) ->
 
     let tui_handle = tokio::spawn(run_tui(rx));
 
-    let result = phase_loop::phase_loop(agent, &ctx, &shared_config, &ui).await;
+    let result = phase_loop::run_stack(agent, ctx, &shared_config, &ui).await;
 
     if let Err(ref e) = result {
         // Show the error inside the TUI first so the user sees it in
