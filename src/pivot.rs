@@ -110,3 +110,56 @@ pub fn write_stack(path: &Path, stack: &Stack) -> Result<()> {
     fs::write(path, s)
         .with_context(|| format!("Failed to write stack.yaml at {}", path.display()))
 }
+
+use crate::types::LlmPhase;
+
+/// What the driver should do after a work phase finishes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NextAfterWork {
+    /// Normal case: agent advanced phase.md and did not touch stack.yaml
+    /// (or at least did not add a new top). Run analyse-work next.
+    ContinueNormalCycle,
+    /// Agent advanced phase.md AND added a new top. Run the full
+    /// coordinator cycle; push happens at end of git-commit-triage.
+    PushAfterCycle(Frame),
+    /// Agent left phase.md at `work` AND added a new top. Push immediately
+    /// and run the child's cycle; coordinator's remaining phases are
+    /// skipped for this cycle.
+    PushImmediately(Frame),
+    /// Phase did not advance and no pivot was requested. Existing
+    /// "phase did not advance" error case.
+    Error(String),
+}
+
+/// Decide what to do after a work phase ends.
+///
+/// - `phase_after`: the LLM phase read from `phase.md` after work exits.
+/// - `stack_grew`: whether `stack.yaml` gained a new top frame during work.
+/// - `new_top`: the newly-added top frame, if `stack_grew` is true.
+///
+/// Caller is responsible for validating `new_top` via `validate_push`
+/// before acting on `PushImmediately` / `PushAfterCycle`.
+pub fn decide_after_work(
+    phase_after: LlmPhase,
+    stack_grew: bool,
+    new_top: Option<Frame>,
+) -> NextAfterWork {
+    match (phase_after == LlmPhase::Work, stack_grew) {
+        (true, true) => match new_top {
+            Some(f) => NextAfterWork::PushImmediately(f),
+            None => NextAfterWork::Error(
+                "stack_grew=true but new_top=None — caller bug".into(),
+            ),
+        },
+        (true, false) => NextAfterWork::Error(
+            "phase did not advance and no pivot was requested".into(),
+        ),
+        (false, true) => match new_top {
+            Some(f) => NextAfterWork::PushAfterCycle(f),
+            None => NextAfterWork::Error(
+                "stack_grew=true but new_top=None — caller bug".into(),
+            ),
+        },
+        (false, false) => NextAfterWork::ContinueNormalCycle,
+    }
+}

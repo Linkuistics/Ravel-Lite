@@ -1631,3 +1631,62 @@ fn pivot_validate_push_rejects_path_without_phase_md() {
     assert!(format!("{err:#}").to_lowercase().contains("phase.md")
         || format!("{err:#}").to_lowercase().contains("invalid pivot"));
 }
+
+#[test]
+fn pivot_decide_after_work_normal_cycle() {
+    use ravel_lite::pivot::{decide_after_work, NextAfterWork};
+    use ravel_lite::types::LlmPhase;
+
+    let action = decide_after_work(LlmPhase::AnalyseWork, false, None);
+    assert!(matches!(action, NextAfterWork::ContinueNormalCycle));
+}
+
+#[test]
+fn pivot_decide_after_work_stateful_pivot() {
+    use ravel_lite::pivot::{decide_after_work, Frame, NextAfterWork};
+    use ravel_lite::types::LlmPhase;
+    use std::path::PathBuf;
+
+    let frame = Frame {
+        path: PathBuf::from("/some/plan"),
+        pushed_at: None,
+        reason: None,
+    };
+    let action = decide_after_work(LlmPhase::AnalyseWork, true, Some(frame.clone()));
+    match action {
+        NextAfterWork::PushAfterCycle(f) => assert_eq!(f, frame),
+        _ => panic!("expected PushAfterCycle"),
+    }
+}
+
+#[test]
+fn pivot_decide_after_work_stateless_short_circuit() {
+    use ravel_lite::pivot::{decide_after_work, Frame, NextAfterWork};
+    use ravel_lite::types::LlmPhase;
+    use std::path::PathBuf;
+
+    let frame = Frame {
+        path: PathBuf::from("/some/plan"),
+        pushed_at: None,
+        reason: None,
+    };
+    let action = decide_after_work(LlmPhase::Work, true, Some(frame.clone()));
+    match action {
+        NextAfterWork::PushImmediately(f) => assert_eq!(f, frame),
+        _ => panic!("expected PushImmediately"),
+    }
+}
+
+#[test]
+fn pivot_decide_after_work_no_advance_no_pivot_is_error() {
+    use ravel_lite::pivot::{decide_after_work, NextAfterWork};
+    use ravel_lite::types::LlmPhase;
+
+    let action = decide_after_work(LlmPhase::Work, false, None);
+    match action {
+        NextAfterWork::Error(msg) => {
+            assert!(msg.to_lowercase().contains("phase did not advance"));
+        }
+        _ => panic!("expected Error"),
+    }
+}
