@@ -366,7 +366,6 @@ fn do_push(
     pending_push: &mut Vec<Option<pivot::Frame>>,
     stack_path: &Path,
     new_frame: pivot::Frame,
-    from_name: &str,
     ui: &UI,
 ) -> Result<()> {
     pivot::validate_push(&stack_snapshot(stack), &new_frame)?;
@@ -377,7 +376,13 @@ fn do_push(
             .map(|c| std::path::PathBuf::from(&c.plan_dir))
             .collect::<Vec<_>>(),
     );
-    ui.log(&format!("\n  ↓  PIVOT  ·  {breadcrumb}  →  {from_name}"));
+    let target_name = plan_name(&new_frame.path);
+    let reason = new_frame.reason.as_deref().unwrap_or("");
+    if reason.is_empty() {
+        ui.log(&format!("\n  ↓  PIVOT  ·  {breadcrumb}  →  {target_name}"));
+    } else {
+        ui.log(&format!("\n  ↓  PIVOT  ·  {breadcrumb}  →  {target_name}  ·  \"{reason}\""));
+    }
     stack.push(new_ctx);
     pending_push.push(None);
     sync_stack_to_disk(stack_path, stack)
@@ -453,6 +458,8 @@ pub async fn run_stack(
                 let eoc = sp == ScriptPhase::GitCommitTriage;
                 let ok = handle_script_phase(sp, &plan_dir, &project_dir, config.headroom, ui).await?;
                 if !ok {
+                    // Nested plan: user declined confirm → pop to parent and resume,
+                    // keeping the stack.yaml cleanup invariant.
                     if depth > 1 { stack.pop(); pending.pop(); sync_stack_to_disk(&stack_path, &stack)?; continue; }
                     ui.log("\nExiting.");
                     return Ok(());
@@ -463,7 +470,7 @@ pub async fn run_stack(
                     match pivot::decide_after_cycle(depth, grew, pp) {
                         pivot::NextAfterCycle::Continue => {}
                         pivot::NextAfterCycle::Pop => { stack.pop(); pending.pop(); sync_stack_to_disk(&stack_path, &stack)?; }
-                        pivot::NextAfterCycle::Push(f) => { do_push(&mut stack, &mut pending, &stack_path, f, &name, ui)?; }
+                        pivot::NextAfterCycle::Push(f) => { do_push(&mut stack, &mut pending, &stack_path, f, ui)?; }
                     }
                 }
             }
@@ -489,7 +496,7 @@ pub async fn run_stack(
                     match pivot::decide_after_work(lp_after, grew, new_top) {
                         pivot::NextAfterWork::ContinueNormalCycle => {}
                         pivot::NextAfterWork::PushAfterCycle(f) => { pending[depth - 1] = Some(f); }
-                        pivot::NextAfterWork::PushImmediately(f) => { do_push(&mut stack, &mut pending, &stack_path, f, &name, ui)?; continue; }
+                        pivot::NextAfterWork::PushImmediately(f) => { do_push(&mut stack, &mut pending, &stack_path, f, ui)?; continue; }
                         pivot::NextAfterWork::Error(msg) => { ui.log(&format!("\n  ✗  {msg}. Stopping.")); return Ok(()); }
                     }
                 } else {
