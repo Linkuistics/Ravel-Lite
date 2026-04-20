@@ -203,3 +203,51 @@ pub fn decide_after_cycle(
         NextAfterCycle::Continue
     }
 }
+
+// ── Reconstruction ───────────────────────────────────────────────────────────
+
+use crate::types::PlanContext;
+
+/// Walk upwards from `plan_dir` looking for a `.git` directory. Returns
+/// the ancestor directory that contains `.git`, or an error if none found.
+fn find_project_root(plan_dir: &Path) -> Result<PathBuf> {
+    let mut cur = plan_dir.canonicalize()
+        .with_context(|| format!("Failed to canonicalize {}", plan_dir.display()))?;
+    loop {
+        if cur.join(".git").exists() {
+            return Ok(cur);
+        }
+        match cur.parent() {
+            Some(p) => cur = p.to_path_buf(),
+            None => bail!("No .git ancestor found for plan {}", plan_dir.display()),
+        }
+    }
+}
+
+/// Build a `PlanContext` for a pivoted plan, reusing the root's config_root.
+/// Looks up the target's project_dir by walking up for a `.git` ancestor,
+/// and derives dev_root as the project's parent directory.
+///
+/// `related_plans` is read from `<plan_dir>/related-plans.md` if present,
+/// matching the behaviour of `main::run_phase_loop` at startup.
+pub fn frame_to_context(frame: &Frame, config_root: &str) -> Result<PlanContext> {
+    let plan_dir = frame.path.canonicalize()
+        .with_context(|| format!("Failed to canonicalize frame path {}", frame.path.display()))?;
+
+    let project_dir = find_project_root(&plan_dir)?;
+    let dev_root = project_dir
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let related_plans = std::fs::read_to_string(plan_dir.join("related-plans.md"))
+        .unwrap_or_default();
+
+    Ok(PlanContext {
+        plan_dir: plan_dir.to_string_lossy().to_string(),
+        project_dir: project_dir.to_string_lossy().to_string(),
+        dev_root,
+        related_plans,
+        config_root: config_root.to_string(),
+    })
+}

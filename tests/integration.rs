@@ -1743,3 +1743,48 @@ fn pivot_decide_after_cycle_push_takes_precedence_over_pop() {
         _ => panic!("expected Push to take precedence"),
     }
 }
+
+#[test]
+fn pivot_frame_to_context_resolves_project_dir_by_walkup() {
+    use ravel_lite::pivot::{frame_to_context, Frame};
+    use std::path::PathBuf;
+
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    // Set up: root/.git, root/LLM_STATE/sub-F/
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let plan = root.join("LLM_STATE").join("sub-F");
+    fs::create_dir_all(&plan).unwrap();
+    fs::write(plan.join("phase.md"), "work\n").unwrap();
+
+    let frame = Frame {
+        path: plan.clone(),
+        pushed_at: None,
+        reason: None,
+    };
+    let root_config_root = "/tmp/cfg".to_string();
+    let ctx = frame_to_context(&frame, &root_config_root).unwrap();
+
+    // canonicalize expected paths to match macOS /private/var resolution
+    let canonical_plan = plan.canonicalize().unwrap();
+    let canonical_root = root.canonicalize().unwrap();
+
+    assert_eq!(PathBuf::from(&ctx.plan_dir), canonical_plan);
+    assert_eq!(PathBuf::from(&ctx.project_dir), canonical_root);
+    assert_eq!(ctx.config_root, root_config_root);
+    assert!(PathBuf::from(&ctx.dev_root) == canonical_root.parent().unwrap());
+}
+
+#[test]
+fn pivot_frame_to_context_errors_without_git_root() {
+    use ravel_lite::pivot::{frame_to_context, Frame};
+
+    let tmp = TempDir::new().unwrap();
+    let plan = tmp.path().join("lonely_plan");
+    fs::create_dir_all(&plan).unwrap();
+    fs::write(plan.join("phase.md"), "work\n").unwrap();
+
+    let frame = Frame { path: plan, pushed_at: None, reason: None };
+    let res = frame_to_context(&frame, "/tmp/cfg");
+    assert!(res.is_err());
+}
