@@ -240,6 +240,32 @@ pub async fn run_tui(mut rx: mpsc::UnboundedReceiver<UIMessage>) -> Result<(), a
             terminal.draw(|f| draw_live(f, &state))?;
         }
 
+        if suspended {
+            // While a child process (invoke_interactive) owns the terminal,
+            // we must not touch stdin/stdout — crossterm's `event::poll`
+            // races with the child for tty reads and can blank its TUI.
+            // Wait for messages only. The only events that matter here are
+            // Resume / Quit / queued Log writes (log writes are buffered
+            // into ratatui's `insert_before` area; they'll paint once we
+            // resume — writing now would corrupt the child's output).
+            match rx.recv().await {
+                Some(UIMessage::Quit) | None => break,
+                Some(UIMessage::Resume) => {
+                    let _ = writeln!(io::stderr());
+                    let _ = io::stderr().flush();
+                    terminal::enable_raw_mode()?;
+                    let backend = CrosstermBackend::new(io::stderr());
+                    terminal = Terminal::with_options(
+                        backend,
+                        TerminalOptions { viewport: Viewport::Inline(VIEWPORT_HEIGHT) },
+                    )?;
+                    suspended = false;
+                }
+                Some(msg) => state.handle_message(msg),
+            }
+            continue;
+        }
+
         tokio::select! {
             msg = rx.recv() => {
                 match msg {
