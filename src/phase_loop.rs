@@ -437,7 +437,9 @@ pub async fn run_stack(
         _ => vec![root_ctx.clone()],
     };
     let mut pending: Vec<Option<pivot::Frame>> = vec![None; stack.len()];
-    if let Err(e) = agent.setup(stack.last().unwrap()).await {
+    // Setup runs against the originally-invoked plan. On startup-resume,
+    // stack.last() would be the deepest nested frame, which is wrong for setup.
+    if let Err(e) = agent.setup(&root_ctx).await {
         ui.log(&format!("  ✗  Setup failed: {e}"));
     }
 

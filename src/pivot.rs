@@ -87,8 +87,10 @@ pub fn validate_push(stack: &Stack, new_frame: &Frame) -> Result<()> {
             new_frame.path.display()
         );
     }
+    let canonical_new = new_frame.path.canonicalize().unwrap_or_else(|_| new_frame.path.clone());
     for existing in &stack.frames {
-        if existing.path == new_frame.path {
+        let canonical_existing = existing.path.canonicalize().unwrap_or_else(|_| existing.path.clone());
+        if canonical_existing == canonical_new {
             bail!(
                 "Cycle detected: {} already in stack",
                 new_frame.path.display()

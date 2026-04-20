@@ -1634,6 +1634,46 @@ fn pivot_validate_push_rejects_path_without_phase_md() {
 }
 
 #[test]
+fn pivot_validate_push_rejects_cycle_with_mixed_path_forms() {
+    // Regression test: cycle detection must canonicalize both sides before
+    // comparing. The existing frame carries a canonical absolute path (as
+    // produced by frame_to_context → plan_dir), while the new frame comes
+    // from on_disk_new_top which deserialises whatever the agent wrote —
+    // often a path with a redundant "./" prefix. Raw PathBuf equality would
+    // fail to detect the cycle; canonicalization must bridge the gap.
+    use ravel_lite::pivot::{validate_push, Frame, Stack};
+    let tmp = TempDir::new().unwrap();
+    // Create a real plan directory so is_dir() and phase.md checks pass if
+    // the cycle guard is bypassed (they must NOT be reached — cycle wins).
+    let root_abs = _make_plan_dir(tmp.path(), "root_abs");
+    let canonical = root_abs.canonicalize().unwrap();
+
+    // Existing frame: canonical absolute path (mirrors what stack_snapshot produces).
+    let stack = Stack {
+        frames: vec![Frame {
+            path: canonical,
+            pushed_at: None,
+            reason: None,
+        }],
+    };
+
+    // New frame: same logical directory but with a "./" prefix — raw PathBuf
+    // inequality, but canonicalizes to the same path.
+    let dotslash_path = tmp.path().join("./root_abs");
+    let new_frame = Frame {
+        path: dotslash_path,
+        pushed_at: None,
+        reason: None,
+    };
+
+    let err = validate_push(&stack, &new_frame).unwrap_err();
+    assert!(
+        format!("{err:#}").to_lowercase().contains("cycle"),
+        "expected cycle error, got: {err:#}"
+    );
+}
+
+#[test]
 fn pivot_decide_after_work_normal_cycle() {
     use ravel_lite::pivot::{decide_after_work, NextAfterWork};
     use ravel_lite::types::LlmPhase;
