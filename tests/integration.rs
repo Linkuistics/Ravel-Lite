@@ -1421,3 +1421,54 @@ echo '{"type":"message_end","content":[{"type":"text","text":"done"}]}'
         }
     }
 }
+
+// ===================== pivot: types + serde =====================
+
+#[test]
+fn pivot_stack_roundtrip_minimal_frame() {
+    use ravel_lite::pivot::{Frame, Stack};
+    use std::path::PathBuf;
+
+    let s = Stack {
+        frames: vec![Frame {
+            path: PathBuf::from("LLM_STATE/ravel-orchestrator"),
+            pushed_at: None,
+            reason: None,
+        }],
+    };
+    let yaml = serde_yaml::to_string(&s).unwrap();
+    let back: Stack = serde_yaml::from_str(&yaml).unwrap();
+    assert_eq!(s, back);
+    // Minimal frames omit pushed_at/reason when serialized
+    assert!(!yaml.contains("pushed_at"));
+    assert!(!yaml.contains("reason"));
+}
+
+#[test]
+fn pivot_stack_roundtrip_full_frame() {
+    use ravel_lite::pivot::{Frame, Stack};
+    use std::path::PathBuf;
+
+    let s = Stack {
+        frames: vec![
+            Frame {
+                path: PathBuf::from("LLM_STATE/ravel-orchestrator"),
+                pushed_at: None,
+                reason: None,
+            },
+            Frame {
+                path: PathBuf::from("LLM_STATE/sub-F-hierarchy"),
+                pushed_at: Some("2026-04-20T18:32:14Z".to_string()),
+                reason: Some("sub-D/T2 landed".to_string()),
+            },
+        ],
+    };
+    let yaml = serde_yaml::to_string(&s).unwrap();
+    let back: Stack = serde_yaml::from_str(&yaml).unwrap();
+    assert_eq!(s, back);
+}
+
+#[test]
+fn pivot_max_stack_depth_constant() {
+    assert_eq!(ravel_lite::pivot::MAX_STACK_DEPTH, 5);
+}
