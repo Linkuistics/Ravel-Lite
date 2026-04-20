@@ -17,7 +17,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// Hard compile-time cap on nesting depth. Prevents runaway recursion
@@ -59,6 +59,45 @@ pub fn read_stack(path: &Path) -> Result<Option<Stack>> {
             Err(e).with_context(|| format!("Failed to read stack.yaml at {}", path.display()))
         }
     }
+}
+
+/// Reject a push attempt that would:
+/// - exceed `MAX_STACK_DEPTH` (runaway recursion guard)
+/// - revisit an already-stacked plan (cycle)
+/// - point at a path that isn't a valid plan directory
+///
+/// Path validation uses the real filesystem (existence + `phase.md` presence).
+/// Returns `Err` with a one-line diagnostic on any violation.
+pub fn validate_push(stack: &Stack, new_frame: &Frame) -> Result<()> {
+    if stack.frames.len() >= MAX_STACK_DEPTH {
+        bail!(
+            "Max stack depth {} exceeded; attempted push target: {}",
+            MAX_STACK_DEPTH,
+            new_frame.path.display()
+        );
+    }
+    for existing in &stack.frames {
+        if existing.path == new_frame.path {
+            bail!(
+                "Cycle detected: {} already in stack",
+                new_frame.path.display()
+            );
+        }
+    }
+    if !new_frame.path.is_dir() {
+        bail!(
+            "Invalid pivot target: {} does not exist or is not a directory",
+            new_frame.path.display()
+        );
+    }
+    let phase_file = new_frame.path.join("phase.md");
+    if !phase_file.exists() {
+        bail!(
+            "Invalid pivot target: {} has no phase.md",
+            new_frame.path.display()
+        );
+    }
+    Ok(())
 }
 
 /// Write `stack` to `path`, creating parent directories as needed.

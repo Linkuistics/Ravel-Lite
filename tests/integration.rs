@@ -1521,3 +1521,113 @@ fn pivot_write_stack_creates_parent_if_needed() {
     write_stack(&path, &Stack::default()).unwrap();
     assert!(path.exists());
 }
+
+// ===================== pivot: validate_push =====================
+
+fn _make_plan_dir(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let p = dir.join(name);
+    fs::create_dir_all(&p).unwrap();
+    fs::write(p.join("phase.md"), "work\n").unwrap();
+    p
+}
+
+#[test]
+fn pivot_validate_push_accepts_valid_target_below_cap() {
+    use ravel_lite::pivot::{validate_push, Frame, Stack};
+    let tmp = TempDir::new().unwrap();
+    let root = _make_plan_dir(tmp.path(), "root");
+    let child = _make_plan_dir(tmp.path(), "child");
+
+    let stack = Stack {
+        frames: vec![Frame {
+            path: root.clone(),
+            pushed_at: None,
+            reason: None,
+        }],
+    };
+    let new_frame = Frame {
+        path: child,
+        pushed_at: None,
+        reason: None,
+    };
+    validate_push(&stack, &new_frame).unwrap();
+}
+
+#[test]
+fn pivot_validate_push_rejects_depth_cap() {
+    use ravel_lite::pivot::{validate_push, Frame, Stack, MAX_STACK_DEPTH};
+    let tmp = TempDir::new().unwrap();
+
+    let mut frames = vec![];
+    for i in 0..MAX_STACK_DEPTH {
+        frames.push(Frame {
+            path: _make_plan_dir(tmp.path(), &format!("p{i}")),
+            pushed_at: None,
+            reason: None,
+        });
+    }
+    let stack = Stack { frames };
+    let new_frame = Frame {
+        path: _make_plan_dir(tmp.path(), "overflow"),
+        pushed_at: None,
+        reason: None,
+    };
+    let err = validate_push(&stack, &new_frame).unwrap_err();
+    assert!(format!("{err:#}").to_lowercase().contains("depth"));
+}
+
+#[test]
+fn pivot_validate_push_rejects_cycle() {
+    use ravel_lite::pivot::{validate_push, Frame, Stack};
+    let tmp = TempDir::new().unwrap();
+    let a = _make_plan_dir(tmp.path(), "a");
+    let b = _make_plan_dir(tmp.path(), "b");
+
+    let stack = Stack {
+        frames: vec![
+            Frame { path: a.clone(), pushed_at: None, reason: None },
+            Frame { path: b, pushed_at: None, reason: None },
+        ],
+    };
+    let dup = Frame { path: a, pushed_at: None, reason: None };
+    let err = validate_push(&stack, &dup).unwrap_err();
+    assert!(format!("{err:#}").to_lowercase().contains("cycle"));
+}
+
+#[test]
+fn pivot_validate_push_rejects_nonexistent_path() {
+    use ravel_lite::pivot::{validate_push, Frame, Stack};
+    let tmp = TempDir::new().unwrap();
+    let root = _make_plan_dir(tmp.path(), "root");
+
+    let stack = Stack {
+        frames: vec![Frame { path: root, pushed_at: None, reason: None }],
+    };
+    let bogus = Frame {
+        path: tmp.path().join("does_not_exist"),
+        pushed_at: None,
+        reason: None,
+    };
+    let err = validate_push(&stack, &bogus).unwrap_err();
+    assert!(format!("{err:#}").to_lowercase().contains("does not exist")
+        || format!("{err:#}").to_lowercase().contains("invalid pivot"));
+}
+
+#[test]
+fn pivot_validate_push_rejects_path_without_phase_md() {
+    use ravel_lite::pivot::{validate_push, Frame, Stack};
+    let tmp = TempDir::new().unwrap();
+    let root = _make_plan_dir(tmp.path(), "root");
+
+    // Create a directory that is NOT a plan (no phase.md).
+    let fake = tmp.path().join("not_a_plan");
+    fs::create_dir_all(&fake).unwrap();
+
+    let stack = Stack {
+        frames: vec![Frame { path: root, pushed_at: None, reason: None }],
+    };
+    let bogus = Frame { path: fake, pushed_at: None, reason: None };
+    let err = validate_push(&stack, &bogus).unwrap_err();
+    assert!(format!("{err:#}").to_lowercase().contains("phase.md")
+        || format!("{err:#}").to_lowercase().contains("invalid pivot"));
+}
