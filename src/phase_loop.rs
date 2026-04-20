@@ -44,6 +44,9 @@ fn plan_name(plan_dir: &Path) -> String {
 /// Single-plan stacks render as just the plan's basename (unchanged from
 /// pre-pivot Ravel-Lite behaviour). Nested stacks show every plan in the
 /// stack — `coord → sub-F → sub-F-sub1`.
+// `main.rs` re-declares `mod phase_loop` independently of `lib.rs`, so the
+// binary crate sees this as dead until Task 10 wires it into run_stack's
+// phase-header logging. Remove the allow once the call site exists.
 #[allow(dead_code)]
 pub fn format_breadcrumb(stack_paths: &[std::path::PathBuf]) -> String {
     stack_paths
