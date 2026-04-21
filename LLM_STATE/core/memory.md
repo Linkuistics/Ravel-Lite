@@ -122,3 +122,12 @@ Post-5c: `phase_loop` is a single-cycle function. The inter-cycle user prompt ("
 
 ## `push-plan`, `stack.yaml`, and `src/pivot.rs` removed
 `push-plan` CLI verb, `run_stack`, `stack.yaml`, and `src/pivot.rs` are deleted. `src/state.rs` reduced from ~230 to ~80 lines; `src/phase_loop.rs` de-pivoted. Multi-plan routing is exclusively in `src/multi_plan.rs`.
+
+## `project_root_for_plan` derives project root as `<plan>/../..`
+Pure path math; no disk walk, no `.git` requirement. Replaced `find_project_root` (`.git`-walkup) for monorepo compatibility. Contract: `<plan>` must be at least three path components deep.
+
+## Git query functions scope to project dir via pathspec
+`working_tree_status`, `paths_changed_since_baseline`, and `work_tree_snapshot` append `-- <project_dir>` pathspec. `git_commit_plan` is intentionally unscoped; it runs from `plan_dir` CWD, already limiting `git add .` to plan-state files.
+
+## Integration tests use three-level `<project>/LLM_STATE/<plan>` layout
+`tests/integration.rs` and `src/multi_plan.rs` tests construct `<project>/LLM_STATE/<plan>` directory trees matching ravel-lite convention. New integration tests must follow this layout.
