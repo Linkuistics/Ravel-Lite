@@ -43,6 +43,26 @@ triage → git-commit-triage → [continue?] → work
   reads their JSON stream output, and renders progress. It never calls
   LLM APIs directly.
 
+## Releasing
+
+Versions are cut with [`cargo-release`](https://github.com/crate-ci/cargo-release):
+
+```bash
+cargo install cargo-release   # one-time
+cargo release patch --execute  # 0.1.0 → 0.1.1, commit + tag v0.1.1
+cargo release minor --execute  # 0.1.0 → 0.2.0, commit + tag v0.2.0
+cargo release major --execute  # 0.1.0 → 1.0.0, commit + tag v1.0.0
+git push origin main --follow-tags
+```
+
+Omit `--execute` for a dry run. Push is intentionally separate so the
+release commit and tag can be inspected locally first. Configuration
+lives in `release.toml`.
+
+`ravel-lite version` and `ravel-lite --version` print the crate version
+plus `git describe --tags --always --dirty` and the UTC build timestamp,
+so a running binary always identifies the commit it was built from.
+
 ## License
 
 See [LICENSE](LICENSE).

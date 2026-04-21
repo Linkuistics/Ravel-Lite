@@ -9,6 +9,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
+use crate::dream::seed_dream_baseline_if_missing;
 use crate::pivot::{self, Frame};
 use crate::types::Phase;
 
@@ -40,7 +41,14 @@ pub fn run_set_phase(plan_dir: &Path, phase: &str) -> Result<()> {
             target.display()
         );
     }
-    atomic_write(&target, phase.as_bytes())
+    atomic_write(&target, phase.as_bytes())?;
+    // Every LLM phase transition funnels through this CLI verb, so
+    // seeding here guarantees a baseline exists on any plan the driver
+    // touches — including coordinator plans that never reach the
+    // `GitCommitReflect` handler, and plans whose baseline was lost
+    // between cycles. Idempotent no-op in steady state.
+    seed_dream_baseline_if_missing(plan_dir);
+    Ok(())
 }
 
 /// Write `bytes` to `path` via tmp-file + rename, so a concurrent reader
@@ -228,6 +236,38 @@ mod tests {
         let msg = format!("{err:#}");
         assert!(msg.contains("phase.md"), "error must name phase.md: {msg}");
         assert!(!plan.join("phase.md").exists(), "must not silently create phase.md");
+    }
+
+    #[test]
+    fn set_phase_seeds_dream_baseline_when_missing() {
+        // Defense-in-depth: any LLM phase transition must leave the
+        // plan with a baseline on disk. Coordinator plans never reach
+        // `GitCommitReflect`, so this is their only seed path.
+        let tmp = TempDir::new().unwrap();
+        let plan = tmp.path();
+        std::fs::write(plan.join("phase.md"), "work").unwrap();
+        assert!(!plan.join("dream-baseline").exists());
+
+        run_set_phase(plan, "analyse-work").unwrap();
+
+        let baseline = std::fs::read_to_string(plan.join("dream-baseline")).unwrap();
+        assert_eq!(baseline.trim(), "0");
+    }
+
+    #[test]
+    fn set_phase_preserves_existing_dream_baseline() {
+        // Idempotence: the seed must not clobber an already-written
+        // baseline. Otherwise every phase transition would reset
+        // progress toward the dream threshold.
+        let tmp = TempDir::new().unwrap();
+        let plan = tmp.path();
+        std::fs::write(plan.join("phase.md"), "work").unwrap();
+        std::fs::write(plan.join("dream-baseline"), "1234").unwrap();
+
+        run_set_phase(plan, "analyse-work").unwrap();
+
+        let baseline = std::fs::read_to_string(plan.join("dream-baseline")).unwrap();
+        assert_eq!(baseline.trim(), "1234");
     }
 
     #[test]

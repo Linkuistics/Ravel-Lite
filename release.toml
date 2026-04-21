@@ -1,0 +1,25 @@
+# cargo-release configuration.
+#
+# Usage:
+#   cargo install cargo-release          # one-time
+#   cargo release patch --execute         # 0.1.0 → 0.1.1 + tag v0.1.1
+#   cargo release minor --execute         # 0.1.0 → 0.2.0 + tag v0.2.0
+#   cargo release major --execute         # 0.1.0 → 1.0.0 + tag v1.0.0
+#
+# Omit `--execute` for a dry run. Push is not automated; after release:
+#   git push origin main --follow-tags
+
+# Not a crates.io crate — `cargo release` must skip `cargo publish`.
+publish = false
+
+# Leave the push to the operator so the release commit + tag can be
+# inspected locally before any remote side-effect.
+push = false
+
+# Tag shape `v0.1.0` matches what `git describe` emits and what the
+# --version output renders.
+tag-name = "v{{version}}"
+tag-message = "Release v{{version}}"
+
+# Single consistent commit message shape across releases.
+pre-release-commit-message = "chore: release v{{version}}"

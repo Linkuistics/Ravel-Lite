@@ -46,11 +46,26 @@ fn force_dangerous(config: &mut AgentConfig) {
     }
 }
 
+/// Version string baked in at compile time by `build.rs`. Shape:
+/// `0.1.0 (v0.1.0-2-g15c2c8c-dirty, built 2026-04-21T06:42:18Z)`.
+/// When no tag or no git data is available, the describe slot falls
+/// back to the short SHA or literal `unknown`; the timestamp slot
+/// falls back to `unknown` only if `date` is unavailable on the
+/// build host.
+const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("GIT_DESCRIBE"),
+    ", built ",
+    env!("BUILD_TIMESTAMP"),
+    ")"
+);
+
 #[derive(Parser)]
 #[command(
     name = "ravel-lite",
     about = "An orchestration loop for LLM development cycles",
-    version,
+    version = VERSION,
 )]
 struct Cli {
     #[command(subcommand)]
@@ -177,7 +192,7 @@ async fn main() -> Result<()> {
             survey::run_survey(&config_root, &roots, model, timeout_secs).await
         }
         Commands::Version => {
-            println!("ravel-lite {}", env!("CARGO_PKG_VERSION"));
+            println!("ravel-lite {VERSION}");
             Ok(())
         }
         Commands::State { command } => match command {

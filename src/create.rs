@@ -19,6 +19,7 @@ use anyhow::{Context, Result};
 use tokio::process::Command as TokioCommand;
 
 use crate::config::{load_agent_config, load_shared_config};
+use crate::dream::seed_dream_baseline_if_missing;
 
 /// Relative path to the create-plan prompt template inside a config dir.
 pub const CREATE_PLAN_PROMPT_PATH: &str = "create-plan.md";
@@ -129,6 +130,10 @@ pub async fn run_create(config_root: &Path, plan_dir: PathBuf) -> Result<()> {
     // the plan rather than, say, exiting early after conversation.
     let phase_md = abs_plan_dir.join("phase.md");
     if phase_md.exists() {
+        // Runner-owned scaffolding: any plan file that has a mechanical
+        // initial value goes here rather than in the create-plan prompt,
+        // so LLM authorship can't forget or drift.
+        seed_dream_baseline_if_missing(&abs_plan_dir);
         println!("\nPlan created at {}", abs_plan_dir.display());
     } else {
         eprintln!(

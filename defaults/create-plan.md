@@ -49,16 +49,6 @@ Produce the following files in a plan directory, per `README.md`:
 
 **phase.md** — plain text file containing just `work` (initial phase)
 
-**dream-baseline** — plain text file containing just `0`. Seeds the
-dream-phase trigger: dream fires once memory.md grows beyond
-`headroom` (config key, default 1500) words past this baseline. Must
-exist on disk; if missing, `should_dream` returns `false` and dream
-never triggers. The runtime has a fallback that seeds this to the
-current memory word count on entry to `git-commit-reflect`, but
-creating it explicitly at plan-creation time keeps the file set
-predictable and matches the `0` initial value expected for an
-empty memory.md.
-
 **related-plans.md** (optional) — only if the user declared peer-project
 relationships:
 
