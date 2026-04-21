@@ -65,3 +65,18 @@ Analyse-work overwrites `latest-session.md` unconditionally on entry; a deletion
 
 ## Plan-tree cleanliness asserted via `git status --porcelain`
 `git_commit_triage_leaves_plan_tree_clean_at_user_prompt` and `git_commit_work_leaves_plan_tree_clean_at_user_prompt` assert `git status --porcelain -- <plan_dir>` is empty after `phase_loop` returns from a user-declined exit.
+
+## `run_stack` replaces `phase_loop` as top-level entry point
+`main.rs` calls `run_stack` in `phase_loop.rs`. `run_stack` owns the `Frame`/`Stack` push/pop/continue logic across nested plan cycles; the original `phase_loop` is an internal helper called per frame.
+
+## Pivot state machines are purely functional
+`decide_after_work` and `decide_after_cycle` in `pivot.rs` take current frame state and return the next action — no I/O, no async, no side effects. The four-case matrix is fully testable in `tests/integration.rs` without a real agent.
+
+## `spawn_blocking` does not cancel cleanly in `tokio::select!`
+Use `tokio::time::sleep` for tty event polling. A `spawn_blocking` thread is not dropped when the select arm is cancelled; it races the spawned child for the tty. `tokio::time::sleep` is properly cancellable and eliminates the race.
+
+## Dream-baseline seeded in `GitCommitReflect` handler
+`seed_dream_baseline_if_missing` in `src/dream.rs` is called from the `GitCommitReflect` handler in `phase_loop.rs`. Written only when absent; no-ops on subsequent cycles.
+
+## Claude Code TUI requires `--debug-file` workaround for ≤2.1.116
+`invoke_interactive` in `src/agent/claude_code.rs` passes `--debug-file /tmp/claude-debug.log`; debug mode masks a TUI rendering failure via an unknown upstream mechanism. Root cause not found. Remove both `args.push` lines when claude is updated past 2.1.116.
