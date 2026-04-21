@@ -159,6 +159,45 @@ fn warn_if_project_tree_dirty(ui: &UI, project_dir: &Path) {
     }
 }
 
+/// Append the freshly-written `latest-session.md` entry to `session-log.md`
+/// so each cycle's narrative accumulates as a durable audit trail.
+///
+/// `latest-session.md` is overwritten by analyse-work every cycle; without
+/// this mirror write, prior sessions are lost. Runner-side on purpose —
+/// mechanical file plumbing belongs here, not in a phase prompt.
+///
+/// Idempotent: if the entry is already the tail of the log (e.g. a crash
+/// between this call and `write_phase` forced a retry of `GitCommitWork`),
+/// the second call is a no-op.
+fn append_session_log(plan_dir: &Path) -> Result<()> {
+    let latest_path = plan_dir.join("latest-session.md");
+    let log_path = plan_dir.join("session-log.md");
+
+    let entry = fs::read_to_string(&latest_path).unwrap_or_default();
+    let entry = entry.trim();
+    if entry.is_empty() {
+        return Ok(());
+    }
+
+    let existing = fs::read_to_string(&log_path)
+        .unwrap_or_else(|_| String::from("# Session Log\n"));
+
+    if existing.trim_end().ends_with(entry) {
+        return Ok(());
+    }
+
+    let mut updated = existing;
+    if !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated.push('\n');
+    updated.push_str(entry);
+    updated.push('\n');
+
+    fs::write(&log_path, updated)
+        .with_context(|| format!("Failed to append session-log.md at {}", log_path.display()))
+}
+
 async fn handle_script_phase(
     phase: ScriptPhase,
     plan_dir: &Path,
@@ -180,6 +219,7 @@ async fn handle_script_phase(
     // to commit).
     match phase {
         ScriptPhase::GitCommitWork => {
+            append_session_log(plan_dir)?;
             write_phase(plan_dir, Phase::Llm(LlmPhase::Reflect))?;
             let result = git_commit_plan(plan_dir, &name, "work")?;
             log_commit(ui, "work", &scope, &result);
