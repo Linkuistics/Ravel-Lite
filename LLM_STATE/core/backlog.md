@@ -2,81 +2,6 @@
 
 ## Tasks
 
-### Fix dream-phase bootstrap deadlock: `dream-baseline` never seeded on first run
-
-**Category:** `bug`
-**Status:** `done`
-**Dependencies:** none
-
-**Description:**
-
-User observation: the dream phase never fires in this plan. Investigation
-found a chicken-and-egg bootstrap bug:
-
-- `should_dream` returns `false` when `dream-baseline` is missing
-  (`src/dream.rs:17-19`, silent short-circuit).
-- `update_dream_baseline` is called only *after* a dream phase runs
-  (`src/phase_loop.rs:524` and `:293-295`).
-- Nothing else writes `dream-baseline` — not `init.rs`, not
-  `create-plan.md`, not any first-run fallback in `phase_loop.rs`.
-
-Net effect: any plan whose `dream-baseline` was never written
-(including every existing plan) has `should_dream` return `false`
-forever. Compare `work-baseline`, which has two seeding paths:
-atomic seed in `GitCommitTriage` plus first-run fallback on entering
-`LlmPhase::Work`. The asymmetry was an oversight, not a design.
-
-The symptom was masked in this plan by `memory.md` being below
-headroom (723 words vs. 1500 headroom), so the first-run case and the
-"never-triggers" case looked identical. Once memory grew past 1500
-words the bug would have become permanently visible.
-
-Fix (Option C per discussion): seed at both create-time and runtime.
-
-- Runtime fallback: `seed_dream_baseline_if_missing(plan_dir)` in
-  `src/dream.rs`, invoked from the `GitCommitReflect` handler before
-  `should_dream`. Seeds to current `memory.md` word count when the
-  file is missing. Mirrors the `work-baseline` first-run pattern.
-- Create-time seed: `defaults/create-plan.md` now lists
-  `dream-baseline` (content `0`) alongside `phase.md`, so new plans
-  scaffolded via `ravel-lite create` get the file from day one.
-
-**Results:**
-
-Implemented. Changes:
-
-- `src/dream.rs`: new `seed_dream_baseline_if_missing` + two unit
-  tests (seed-when-missing, no-op-when-present).
-- `src/phase_loop.rs`: call `seed_dream_baseline_if_missing` in the
-  `GitCommitReflect` handler before evaluating `should_dream`.
-- `tests/integration.rs`: new `git_commit_reflect_seeds_dream_baseline_when_missing`
-  that drives `phase_loop` from `git-commit-reflect` with no baseline
-  on disk and asserts (a) the baseline file appears with the current
-  word count and (b) the loop proceeds to triage (dream is skipped
-  because baseline == current).
-- `defaults/create-plan.md`: documents `dream-baseline` as one of
-  the files plan-creation must write.
-
-Test suite: 147 lib + 42 integration tests, all green. Clippy clean
-on touched files (pre-existing lint errors in unrelated files were
-not introduced by this change).
-
-This plan heals automatically on its next `git-commit-reflect` — the
-runtime fallback will write `dream-baseline` to `723` (current word
-count), so dream fires when memory reaches 2223 words.
-
-Followup considerations (not done, out of scope):
-
-- The fallback is silent; no UI log line. If bootstrap visibility
-  matters, a one-line `ui.log` in the fallback is trivial to add.
-- The existing integration test `dream_guard_integration` (at
-  `tests/integration.rs:15`) still encodes the pre-fix behaviour
-  (returns false when baseline missing). That's still correct for
-  `should_dream`'s contract in isolation; the new test covers the
-  phase-loop hookup separately.
-
----
-
 ### Add `ravel-lite state` subcommand so prompts mutate phase/stack via CLI
 
 **Category:** `enhancement`
@@ -194,9 +119,31 @@ could plausibly have touched. This is a defense-in-depth refinement;
 no correctness regression possible since the current check is strictly
 more noisy, never more accurate.
 
-Note: work-baseline is now seeded atomically in the triage commit
+Note: work-baseline is seeded atomically in the triage commit
 (`git_save_work_baseline` in `GitCommitTriage`), so the baseline SHA
 is reliably available when the dirty check runs.
+
+**Results:** _pending_
+
+---
+
+### Remove Claude Code `--debug-file` workaround once version exceeds 2.1.116
+
+**Category:** `maintenance`
+**Status:** `not_started`
+**Dependencies:** none
+
+**Description:**
+
+`invoke_interactive` in `src/agent/claude_code.rs` passes
+`--debug-file /tmp/claude-debug.log` as a workaround for a TUI
+rendering failure in Claude Code ≤2.1.116. The root cause was not
+found; debug mode happens to mask it via an unknown upstream mechanism.
+
+When the installed `claude` binary is updated past 2.1.116, remove both
+`args.push` lines adding `--debug-file` and `/tmp/claude-debug.log`.
+Verify that the Work phase TUI renders correctly without the flag
+before closing.
 
 **Results:** _pending_
 
