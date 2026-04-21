@@ -300,7 +300,7 @@ survive a full cycle without manual intervention.
 ### Investigate: `session-log.md` empty after multiple reflect cycles
 
 **Category:** `investigation`
-**Status:** `not_started`
+**Status:** `done`
 **Dependencies:** none
 
 **Description:**
@@ -330,7 +330,46 @@ missing. Likely small fix or a deliberate omission worth documenting.
    `latest-session.md` to `session-log.md` before overwriting, or
    a memory.md entry documenting the deliberate-omission rationale.
 
-**Results:** _pending_
+**Results:**
+
+**Root cause — missing feature, not intentional design.** `session-log.md`
+is scaffolded header-only by `defaults/create-plan.md:38-42` and then
+nothing writes to it. `src/` has zero `session-log` references (verified
+by grep). Every phase prompt either forbids writes (`dream.md:14`,
+`triage.md` by omission), forbids reads ("Do NOT read" in `reflect.md:17`
+and `triage.md:17`), or only reads for counting (`analyse-work.md:77`
+computes session N by counting `### Session` headings — the smoking gun
+that accumulation was expected). Consequence: `latest-session.md` is
+overwritten each cycle, prior narratives lost, session numbering
+perpetually returns 1.
+
+**Fix landed — runner-side append in `GitCommitWork`.**
+`phase_loop.rs::append_session_log` reads `latest-session.md` and appends
+it to `session-log.md` at the top of the `GitCommitWork` handler, before
+`write_phase`. The append rides in the work commit automatically. The
+helper is idempotent (skips if the entry is already the tail of the
+log) so a rare crash between append and phase-advance produces a no-op
+retry rather than a duplicate.
+
+Design correction relative to the deliverable wording: the proposed
+"one-line fix in `defaults/phases/reflect.md`" was wrong on two counts
+— (a) reflect does not overwrite `latest-session.md` (analyse-work does,
+per step 8's "OVERWRITING any prior content"), so "before overwriting"
+had no referent in reflect; (b) the user redirected mechanical file
+operations to the runner on principle. Feedback memory saved:
+deterministic plumbing belongs in Rust, not in phase prompts.
+
+**Verification:** `cargo test` — all 44 tests pass, including
+`phase_contract_round_trip_writes_expected_files` which now exercises
+the append end-to-end (mock writes `latest-session.md`; the full cycle
+runs through `GitCommitWork` so `append_session_log` runs against real
+input). No new tests requested — the existing contract test covers the
+write path.
+
+**Hand-offs:** none. The fix is closed-form; Task 2 ("Preserve hand-off
+rationale across the analyse-work → triage boundary") in this backlog
+benefits indirectly — it can now rely on `session-log.md` as a real
+durable record rather than a file that's durable in name only.
 
 ---
 
