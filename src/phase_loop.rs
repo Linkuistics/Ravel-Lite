@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use crate::agent::Agent;
-use crate::dream::{should_dream, update_dream_baseline};
+use crate::dream::{seed_dream_baseline_if_missing, should_dream, update_dream_baseline};
 use crate::format::phase_info;
 use crate::git::{git_commit_plan, git_save_work_baseline, work_tree_snapshot, working_tree_status};
 use crate::pivot;
@@ -164,6 +164,15 @@ async fn handle_script_phase(
             Ok(ui.confirm("Proceed to reflect phase?").await)
         }
         ScriptPhase::GitCommitReflect => {
+            // First-run fallback for plans created before `dream-baseline`
+            // was seeded by plan-creation. Without this, `should_dream`
+            // returns `false` on every cycle (missing-file short-circuit),
+            // and `update_dream_baseline` never fires (it runs only after
+            // a dream phase) — a permanent deadlock. Seeding to the
+            // current word count means the first dream triggers after
+            // memory grows by `headroom` from here, matching the
+            // post-dream steady state.
+            seed_dream_baseline_if_missing(plan_dir);
             let skip_dream = !should_dream(plan_dir, headroom);
             if skip_dream {
                 write_phase(plan_dir, Phase::Llm(LlmPhase::Triage))?;

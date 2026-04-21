@@ -32,6 +32,97 @@ fn dream_guard_integration() {
     assert!(!ravel_lite::dream::should_dream(plan, 1500));
 }
 
+/// Bootstrap regression: a plan without a `dream-baseline` file must
+/// have one seeded when the loop enters `git-commit-reflect`. Before
+/// this was wired in, `should_dream` returned `false` unconditionally
+/// on any plan whose baseline file was never created — and since
+/// `update_dream_baseline` only fires *after* a dream runs, that's a
+/// permanent deadlock that keeps dream from ever triggering.
+#[tokio::test]
+async fn git_commit_reflect_seeds_dream_baseline_when_missing() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    init_test_repo(root);
+
+    let plan_dir = root.join("plans/no-baseline-plan");
+    fs::create_dir_all(&plan_dir).unwrap();
+    // Start at git-commit-reflect; this is the script phase that gates
+    // dream and is therefore the correct seeding point.
+    fs::write(plan_dir.join("phase.md"), "git-commit-reflect").unwrap();
+    // 300-word memory: low enough that, once seeded to the current
+    // count, `should_dream` returns false (baseline == current) and
+    // the loop proceeds to triage rather than dream.
+    fs::write(plan_dir.join("memory.md"), "word ".repeat(300)).unwrap();
+    // Critical precondition: no dream-baseline on disk.
+    assert!(!plan_dir.join("dream-baseline").exists());
+
+    let config_root = root.join("config");
+    fs::create_dir_all(config_root.join("phases")).unwrap();
+    fs::write(config_root.join("phases/triage.md"), "triage on {{PLAN}}").unwrap();
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let agent = Arc::new(MockAgent {
+        calls: calls.clone(),
+        next_phase_after: HashMap::from([(LlmPhase::Triage, "git-commit-triage")]),
+        plan_dir: plan_dir.clone(),
+    });
+
+    let shared = SharedConfig {
+        agent: "mock".into(),
+        headroom: 1500,
+    };
+
+    let ctx = PlanContext {
+        plan_dir: plan_dir.to_string_lossy().to_string(),
+        project_dir: root.to_string_lossy().to_string(),
+        dev_root: root.parent().unwrap().to_string_lossy().to_string(),
+        related_plans: String::new(),
+        config_root: config_root.to_string_lossy().to_string(),
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let ui = UI::new(tx);
+
+    // Decline the "Proceed to next work phase?" confirm so the loop
+    // exits cleanly after git-commit-triage without entering a
+    // spurious work phase.
+    let drain = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            match msg {
+                UIMessage::Quit => break,
+                UIMessage::Confirm { reply, .. } => {
+                    let _ = reply.send(false);
+                }
+                _ => {}
+            }
+        }
+    });
+
+    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    ui.quit();
+    let _ = drain.await;
+
+    assert!(result.is_ok(), "phase_loop returned error: {result:?}");
+
+    // Core assertion: git-commit-reflect seeded the baseline file.
+    let baseline = fs::read_to_string(plan_dir.join("dream-baseline"))
+        .expect("dream-baseline must exist after git-commit-reflect");
+    assert_eq!(
+        baseline.trim().parse::<usize>().unwrap(),
+        300,
+        "baseline must equal the current memory.md word count at seed time"
+    );
+
+    // Secondary assertion: with baseline seeded to current count, the
+    // guard returns false and the loop skips dream → triage runs.
+    let calls = calls.lock().unwrap();
+    assert_eq!(
+        *calls,
+        vec![LlmPhase::Triage],
+        "expected loop to skip dream (baseline==current) and enter triage"
+    );
+}
+
 #[test]
 fn config_loading_integration() {
     let dir = TempDir::new().unwrap();

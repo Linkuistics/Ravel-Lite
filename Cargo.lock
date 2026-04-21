@@ -1174,7 +1174,6 @@ dependencies = [
  "crossterm",
  "dirs",
  "indexmap",
- "libc",
  "once_cell",
  "ratatui",
  "regex",

@@ -35,6 +35,22 @@ pub fn update_dream_baseline(plan_dir: &Path) {
     }
 }
 
+/// First-run fallback: seed `dream-baseline` with the current word
+/// count of `memory.md` when the file is missing. No-op otherwise.
+///
+/// `should_dream` returns `false` when the baseline file is absent, and
+/// the baseline is only written by `update_dream_baseline` *after* a
+/// dream runs — a bootstrap deadlock that would keep dream from ever
+/// triggering on plans that pre-date the baseline being part of
+/// plan-creation. Mirrors the `work-baseline` first-run fallback in
+/// `phase_loop.rs`.
+pub fn seed_dream_baseline_if_missing(plan_dir: &Path) {
+    if plan_dir.join("dream-baseline").exists() {
+        return;
+    }
+    update_dream_baseline(plan_dir);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,5 +92,37 @@ mod tests {
         update_dream_baseline(dir.path());
         let baseline = fs::read_to_string(dir.path().join("dream-baseline")).unwrap();
         assert_eq!(baseline.trim().parse::<usize>().unwrap(), 500);
+    }
+
+    #[test]
+    fn seed_writes_current_word_count_when_baseline_missing() {
+        // Bootstrap scenario: a plan whose dream-baseline was never
+        // written. The fallback must seed it so `should_dream` stops
+        // returning `false` unconditionally.
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("memory.md"), "word ".repeat(200)).unwrap();
+        assert!(!dir.path().join("dream-baseline").exists());
+
+        seed_dream_baseline_if_missing(dir.path());
+
+        let baseline = fs::read_to_string(dir.path().join("dream-baseline")).unwrap();
+        assert_eq!(baseline.trim().parse::<usize>().unwrap(), 200);
+    }
+
+    #[test]
+    fn seed_is_noop_when_baseline_already_exists() {
+        // Idempotence: on subsequent cycles, the fallback must not
+        // clobber the baseline written by update_dream_baseline or by
+        // plan-creation (which seeds `0`). Otherwise every reflect
+        // phase would re-baseline to the current count and dream could
+        // never trigger.
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("memory.md"), "word ".repeat(500)).unwrap();
+        fs::write(dir.path().join("dream-baseline"), "42").unwrap();
+
+        seed_dream_baseline_if_missing(dir.path());
+
+        let baseline = fs::read_to_string(dir.path().join("dream-baseline")).unwrap();
+        assert_eq!(baseline.trim(), "42");
     }
 }
