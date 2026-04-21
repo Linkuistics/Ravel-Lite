@@ -278,6 +278,19 @@ pub async fn run_tui(mut rx: mpsc::UnboundedReceiver<UIMessage>) -> Result<(), a
                 match msg {
                     Some(UIMessage::Quit) | None => break,
                     Some(UIMessage::Suspend { ack }) => {
+                        // Hand the terminal over to the child process cleanly.
+                        // `terminal.clear()` only clears ratatui's inline
+                        // viewport, not any residual terminal state. Emit
+                        // explicit resets so the child sees a clean tty:
+                        //   - Exit alt screen (no-op if not entered)
+                        //   - Disable bracketed paste
+                        //   - Disable mouse capture (any mode)
+                        //   - Reset SGR attributes
+                        //   - Show cursor
+                        use std::io::Write as _;
+                        let mut err = io::stderr();
+                        let _ = write!(err, "\x1b[?1049l\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[0m\x1b[?25h");
+                        let _ = err.flush();
                         terminal.clear()?;
                         terminal::disable_raw_mode()?;
                         suspended = true;
