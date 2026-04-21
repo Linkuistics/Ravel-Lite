@@ -22,19 +22,28 @@ The field is absent in LLM-emitted YAML and injected by the Rust harness post-pa
 These are the keying primitives for delta logic. `parse_survey_response` is the single entry point for both LLM stdout and `--prior` file reads.
 
 ### Noop fast path skips LLM when no plans changed
-`classification.is_noop()` carries the prior forward unchanged with no subprocess spawn. This makes every-cycle survey invocation affordable in 5c's plan loop.
+`classification.is_noop()` carries the prior forward unchanged with no subprocess spawn. This makes every-cycle survey invocation affordable in the multi-plan run loop.
 
-### `--prior` doubles as survey state file for 5c
-`run_survey` accepts `--prior <file>` for input and should write the same path as output. This single-file round-trip is the intended integration point for `run_single_plan` in `phase_loop.rs`.
+### `compute_survey_response` is the in-memory survey entry point
+`run_survey` is a thin CLI wrapper over `compute_survey_response(...)`, which returns `Result<SurveyResponse>`. Multi-plan needs the response in-memory (for `recommended_invocation_order`) and on disk (for next cycle's `--prior`).
+
+### `--survey-state` is the multi-plan state file path
+`run_multi_plan` reads and writes `--survey-state <path>` as the survey YAML across cycles. `--prior` is `run_survey`'s per-invocation input flag; `--survey-state` is the `run` subcommand's flag that threads the file path through the plan loop.
 
 ### `SurveyResponse` hierarchy requires `Clone`
 All nested structs (`PlanRow`, `SurveyResponse`, and their fields) require `#[derive(Clone)]` for the merge and noop-carry paths. Extending the hierarchy requires propagating `Clone`.
 
-### `run_single_plan` is the seam for 5c multi-plan dispatch
-`run_single_plan` in `src/phase_loop.rs` is a 9-line delegate retained intentionally. Task 5c branches on plan-count in `main::run_phase_loop`: single-plan path calls `run_single_plan` unchanged; multi-plan path adds a survey-routed dispatch loop around it.
+### Multi-plan dispatch lives in `src/multi_plan.rs`
+`run_multi_plan` is the survey→select→dispatch→re-survey loop. `dispatch_one_cycle` handles per-cycle TUI setup, `phase_loop` invocation, and teardown. `select_plan_from_response` is IO-parameterised via `BufRead`+`Write` generics for in-memory test driving.
 
-### `merge_delta` validation must be surfaced in 5c's run loop
-`merge_delta` refuses deltas that mutate plans outside the declared changed set ("expected keys == returned keys"). Task 5c's run loop should surface this error directly to the user on first occurrence rather than silently retrying — model drift is user-visible information, not a transparent retry case.
+### `phase_loop` exits after one full cycle
+`phase_loop` returns `Ok(false)` after one full cycle. `run_single_plan` wraps it in a loop and owns the inter-cycle `ui.confirm` prompt. Multi-plan uses `phase_loop` directly via `dispatch_one_cycle`, bypassing the prompt.
+
+### `Run` CLI validates plan-count against `--survey-state`
+`N==1` plan dir rejects `--survey-state`; `N>1` requires it. Validation fires before any state file is written.
+
+### `merge_delta` errors surface immediately in the run loop
+`merge_delta` refusal (delta mutates plans outside the declared changed set) propagates directly to the user rather than being silently retried. Model drift is user-visible information, not a transparent retry case.
 
 ### Six pre-existing clippy doc-formatting errors in `src/survey/schema.rs`
 `cargo clippy` reports 6 doc-formatting warnings in `src/survey/schema.rs`. These predate the survey restructure and are out of scope for this plan.
