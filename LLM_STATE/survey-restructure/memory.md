@@ -47,3 +47,6 @@ All nested structs (`PlanRow`, `SurveyResponse`, and their fields) require `#[de
 
 ### Six pre-existing clippy doc-formatting errors in `src/survey/schema.rs`
 `cargo clippy` reports 6 doc-formatting warnings in `src/survey/schema.rs`. These predate the survey restructure and are out of scope for this plan.
+
+### Per-plan task counts: deferred until core task #3 (structured backlog parser) settles
+The design doc flagged moving per-plan task-count extraction from LLM prompt to Rust as a follow-on. This is intentionally deferred: the right implementation depends on how `core/backlog.md` task #3 (structured backlog parser) resolves. Once that parser exists, task counts can be derived from it rather than inferred by the survey LLM. Do not implement until core task #3 is complete.
