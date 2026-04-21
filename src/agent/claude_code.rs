@@ -242,6 +242,14 @@ impl Agent for ClaudeCodeAgent {
             let _ = writeln!(f, "spawning claude now...");
         }
 
+        // EXPERIMENT: pure-latency hypothesis test. --debug-file masks the
+        // bug by adding tens of ms of file I/O to claude's startup. If
+        // sleeping HERE on our side (between disable_raw_mode-complete and
+        // fork) is also sufficient, the bug is timing-only and we can
+        // replace this with something less arbitrary. If not, --debug-file
+        // does more than add latency and we have a different problem.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
         let status = std::process::Command::new("claude")
             .args(&args)
             .current_dir(&ctx.project_dir)
