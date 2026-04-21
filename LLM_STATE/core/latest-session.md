@@ -1,12 +1,12 @@
-### Session 4 (2026-04-21T23:13:58Z) — Scope git queries to subtree root for monorepo support
+### Session 5 (2026-04-21T23:38:12Z) — Continuation-line rendering for dream/triage output
 
-- Implemented the "Make git operations subtree-scoped so ravel-lite can run inside a monorepo" backlog task in full.
-- Replaced `find_project_root` (`.git`-walkup) with `project_root_for_plan` — pure path derivation `<plan>/../..`, no disk walk, decoupled from `.git` location.
-- Added `-- <project_dir>` pathspec to all three git query functions: `working_tree_status`, `paths_changed_since_baseline`, and `work_tree_snapshot`. `git_commit_plan` intentionally left unchanged (its `git add .` at `plan_dir` CWD is already scoped to plan-state files).
-- Updated all four callers: `src/main.rs`, `src/multi_plan.rs`, `src/agent/common.rs`, `src/survey/discover.rs`.
-- Added a monorepo scoping integration test (`git_queries_are_scoped_to_subtree_in_monorepo`) that synthesises an outer repo with a sibling subtree and asserts all three query functions see only the ravel-lite subtree's changes.
-- Added three `project_root_for_plan` unit tests: correct derivation, shallow-path error, non-existent-path ok (pure math).
-- Updated five integration tests in `tests/integration.rs` and one in `src/multi_plan.rs` to use the three-level `<project>/LLM_STATE/<plan>` layout matching ravel-lite convention. Removed the obsolete `load_plan_errors_when_no_git_above_plan` test — the invariant no longer holds under path-math derivation.
-- Added README "Project layout" section documenting `<project>/<state-dir>/<plan>` convention and a "Monorepo subtrees" subsection covering pathspec scoping semantics and commit-message-prefix answer.
-- All 215 lib tests + 23 integration tests pass. Task marked `done` in backlog with full results, open design-question answers, and verification record.
-- What this suggests next: the "Research: expose plan-state markdown as structured data" task is now unblocked and is the natural next candidate — it depends on nothing else and its completion unblocks the task-count extraction task.
+- Implemented `→ …` continuation-line support in `format_result_text` (`src/format.rs`): lines matching `^\s*→\s*(.*)` immediately after an action marker are re-indented to the detail column and styled with the preceding action's intent. Blank lines, insight blocks, and all other non-continuation lines clear the association.
+- Added `PROMOTED` and `ARCHIVED` action tags to `ACTION_INTENTS` for triage hand-off markers that emit new backlog tasks or memory entries.
+- Updated `defaults/phases/dream.md` output-format spec to describe the new two-line entry layout (label + `→` continuation) so the dream LLM emits output the renderer can align.
+- Updated `defaults/phases/work.md` step 10 to allow multiple tasks per session when the user explicitly requests them, while preserving the single-task-per-phase default.
+- Five tests added to `src/format.rs`: `PROMOTED`/`ARCHIVED` recognition, continuation alignment, intent inheritance, orphan-arrow fallthrough, and blank-line chain-breaking.
+- The triage phase (run before this work session) deleted two tasks: the `done` monorepo subtree-scoping task (cleaned up) and the `not_started` Ravel orchestrator migration task (dropped).
+
+What worked: the `last_action_intent: Option<Option<Intent>>` state variable cleanly threads the preceding action's intent through to continuation lines without adding a new pass over the text. The double-Option encodes "no prior action" (outer None) vs "prior action with no intent" (Some(None)) unambiguously.
+
+What to try next: run the updated dream phase on a real plan to confirm the two-line entries render as intended in the TUI.
