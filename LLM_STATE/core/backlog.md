@@ -170,110 +170,7 @@ boilerplate's invariant blocks, but:
 - Modifying Ravel's out-of-repo `ravel-orchestrator/prompt-work.md`.
   That's the reference-example input, not a migration target.
 
-**Followups (out of scope for this task, worth capturing):**
-
-- `session-log.md` under `LLM_STATE/core/` is empty (header-only) even
-  though multiple reflect cycles have run. Either reflect is supposed
-  to archive prior sessions and isn't, or this is a missing feature.
-  Surfaced by the user when checking whether prior coordinator-plan
-  discussion transcripts were recoverable — they weren't, because
-  `latest-session.md` is overwritten each cycle. Investigate
-  separately; likely small.
-- `ravel-lite-config/skills/` is stale detritus from the former
-  `defaults/skills/` location (renamed to `agents/pi/subagents/`).
-  `init --force` does not delete files removed from `EMBEDDED_FILES`.
-  Either document this as expected (init never deletes) or add a
-  cleanup mode. Separate task.
-
 **Results:** _pending_
-
----
-
-### Add terminal-title OSC on phase transitions and pivots
-
-**Category:** `enhancement`
-**Status:** `done`
-**Dependencies:** none
-
-**Description:**
-
-Write `<project-root-basename> <plan-name> <phase>` to the terminal title via
-OSC escape sequences at the start of each phase handler in `phase_loop.rs` and
-at push/pop sites in `run_stack`.
-
-- Escape sequence: `\033]0;…\007` to stdout; wrap as
-  `\033Ptmux;…\033\\` when `$TMUX` is set.
-- Do not restore on exit — the next shell prompt overwrites.
-- New module `src/term_title.rs` with one public function:
-  `set_title(project: &str, plan: &str, phase: &str)`.
-- Project name: project root basename (same convention as phase-header render).
-
-Call sites:
-- Each `LlmPhase` variant arm in `phase_loop.rs` on entry.
-- `run_stack` push and pop sites.
-
-**Results:**
-
-Implemented as specified.
-
-- New module `src/term_title.rs` (registered in both `lib.rs` and `main.rs`)
-  exposes `set_title(project, plan, phase)` plus a pure
-  `format_title_escape(project, plan, phase, tmux)` helper. The pure
-  helper takes the tmux flag as a parameter rather than reading
-  `$TMUX` itself, which makes the exact byte sequence unit-testable
-  without a process-wide env override. Five unit tests cover the
-  bare-OSC and tmux-passthrough paths plus the empty-component
-  non-panic case.
-- The `$TMUX` wrapping doubles inner ESCs
-  (`\x1bPtmux;<body-with-ESCs-doubled>\x1b\\`) — without that, tmux
-  consumes the ESC and the outer emulator never sees the OSC.
-- Ratatui renders to **stderr** (`CrosstermBackend::new(io::stderr())`
-  in `src/ui.rs`), so writing OSC 0 to stdout is a clean side-channel
-  that does not interleave with rendered frames. This aligned with
-  the spec's "write to stdout" instruction.
-- Call sites wired:
-  1. Legacy `phase_loop` at the `Phase::Llm(lp)` arm entry — uses
-     `lp.as_str()` directly.
-  2. `run_stack` at the `Phase::Llm(lp)` arm entry — uses `lp.as_str()`
-     and the top-of-stack plan name (not the full breadcrumb — title
-     real estate is scarce and the spec specifies `<plan-name>`).
-  3. `do_push` after `sync_stack_to_disk` — uses the helper
-     `set_title_for_context` on the newly-pushed top.
-  4. Both pop sites in `run_stack` (the `!ok` nested-plan-decline pop
-     and the `NextAfterCycle::Pop` cycle-end pop) — each calls
-     `set_title_for_context` on the new top after the POP log line.
-- Push/pop sites can't use `LlmPhase` directly because the loop has
-  not yet dispatched the new top's phase. Added a thin
-  `raw_phase_label(plan_dir)` helper that reads `phase.md` raw and
-  tolerates a missing/malformed file without panicking, so the
-  decorative title never crashes the orchestrator.
-- End-to-end verification: the full integration-test suite runs
-  production `phase_loop` code with a mock agent, and the OSC
-  sequence tails bleed into captured stdout (the `\x1b` prefix
-  is non-printing but the `]0;<project> <plan> <phase>` body is
-  visible in `cargo test` output). Evidence includes titles at push
-  (`]0;.tmpXXXX child work` during `pivot_run_stack_short_circuit_pivot`)
-  and pop (`]0;.tmpXXXX coord work` after cycle completion), proving
-  every call site fires in real cycles.
-- Tests: `cargo test` — 44 existing integration tests still pass, 6
-  new `term_title` unit tests pass. `cargo clippy --all-targets`
-  clean.
-- Refinement: the phase segment is uppercased in the title (e.g.
-  `ravel-lite core WORK`, `ravel-lite core ANALYSE-WORK`). This
-  matches the existing phase-header banner convention in
-  `src/format.rs::phase_info` (labels `WORK`, `ANALYSE`, `REFLECT`,
-  `DREAM`, `TRIAGE`) and visually separates the phase from the
-  lowercase project/plan names. A dedicated
-  `phase_is_uppercased_for_visual_separation` test pins the
-  multi-word case (`analyse-work` → `ANALYSE-WORK`).
-
-What's next: nothing directly follow-on. The other open backlog items
-(narrowing `warn_if_project_tree_dirty` and removing the Claude
-`--debug-file` workaround) are unrelated and independently actionable.
-Potential future refinement if the OSC noise in `cargo test` output
-becomes annoying: gate `set_title` on `std::io::stdout().is_terminal()`
-or a `RAVEL_SUPPRESS_TITLE` env var. Not prioritised — noise is
-harmless and the spec didn't require suppression.
 
 ---
 
@@ -400,6 +297,43 @@ survive a full cycle without manual intervention.
 
 ---
 
+### Investigate: `session-log.md` empty after multiple reflect cycles
+
+**Category:** `investigation`
+**Status:** `not_started`
+**Dependencies:** none
+
+**Description:**
+
+`LLM_STATE/core/session-log.md` is header-only even though multiple
+reflect cycles have run. Either reflect is supposed to archive prior
+sessions into `session-log.md` and isn't doing so, or session
+archiving is a missing feature that was never implemented.
+
+Surfaced as a followup during the coordinator-plan-creation discussion
+(`2026-04-21`): the user checked whether prior coordinator-plan design
+transcripts were recoverable and found they weren't, because
+`latest-session.md` is overwritten each cycle with no accumulation in
+`session-log.md`.
+
+Investigate: read `defaults/phases/reflect.md` to determine what it
+intends for `session-log.md`. Check `src/` for any writes to
+`session-log.md` outside the plan-state init path. Determine whether
+reflect is supposed to append its `latest-session.md` content to
+`session-log.md` before overwriting, and if so, where that step is
+missing. Likely small fix or a deliberate omission worth documenting.
+
+**Deliverables:**
+
+1. Root cause identified (missing reflect step vs. intentional design).
+2. Either: a one-line fix in `defaults/phases/reflect.md` to append
+   `latest-session.md` to `session-log.md` before overwriting, or
+   a memory.md entry documenting the deliberate-omission rationale.
+
+**Results:** _pending_
+
+---
+
 ### Narrow `warn_if_project_tree_dirty` to work-agent-touched files only
 
 **Category:** `enhancement`
@@ -423,6 +357,40 @@ more noisy, never more accurate.
 Note: work-baseline is seeded atomically in the triage commit
 (`git_save_work_baseline` in `GitCommitTriage`), so the baseline SHA
 is reliably available when the dirty check runs.
+
+**Results:** _pending_
+
+---
+
+### Clean up stale `ravel-lite-config/skills/` detritus from renamed defaults location
+
+**Category:** `maintenance`
+**Status:** `not_started`
+**Dependencies:** none
+
+**Description:**
+
+`ravel-lite-config/skills/` is stale detritus from the former
+`defaults/skills/` location, which was renamed to
+`agents/pi/subagents/`. The `init --force` command does not delete
+files that have been removed from `EMBEDDED_FILES`, so the stale
+`skills/` directory persists in existing config dirs after an
+`init --force` refresh.
+
+Decision to make: either (a) document this as expected behaviour
+("init never deletes, only scaffolds") with a clear note in the
+README or init help text, or (b) add a cleanup mode to `init --force`
+that removes files no longer registered in `EMBEDDED_FILES`.
+
+Surfaced as a followup during the coordinator-plan-creation discussion
+(`2026-04-21`).
+
+**Deliverables:**
+
+1. Decision: document-only or add cleanup mode.
+2. Either: a note in README/help text about init's non-destructive
+   semantics, or a `--prune` flag implementation in `src/init.rs`
+   that removes unregistered embedded files.
 
 **Results:** _pending_
 
