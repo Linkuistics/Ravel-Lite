@@ -17,6 +17,7 @@
 //   invoke   — spawn claude, orchestrate end-to-end `run_survey`
 
 mod compose;
+mod delta;
 mod discover;
 mod invoke;
 mod render;
@@ -29,7 +30,12 @@ mod schema;
 // the bin-side `unused_imports` warning so `deny(warnings)` doesn't
 // reject the build.
 #[allow(unused_imports)]
-pub use compose::{load_survey_prompt, render_survey_input};
+pub use compose::{
+    load_survey_incremental_prompt, load_survey_prompt, render_survey_input,
+    render_survey_input_incremental,
+};
+#[allow(unused_imports)]
+pub use delta::{merge_delta, PlanClassification};
 #[allow(unused_imports)]
 pub use discover::{PlanSnapshot, load_plan};
 #[allow(unused_imports)]

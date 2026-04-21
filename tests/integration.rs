@@ -215,6 +215,21 @@ fn embedded_defaults_are_valid() {
     let loaded = ravel_lite::survey::load_survey_prompt(&target).unwrap();
     assert_eq!(loaded, body);
 
+    let survey_incremental = target.join("survey-incremental.md");
+    assert!(
+        survey_incremental.exists(),
+        "missing incremental survey prompt: {}",
+        survey_incremental.display()
+    );
+    let incremental_body = fs::read_to_string(&survey_incremental).unwrap();
+    assert!(
+        !incremental_body.trim().is_empty(),
+        "empty incremental survey prompt"
+    );
+    let loaded_incremental =
+        ravel_lite::survey::load_survey_incremental_prompt(&target).unwrap();
+    assert_eq!(loaded_incremental, incremental_body);
+
     let create_plan = target.join("create-plan.md");
     assert!(create_plan.exists(), "missing create-plan prompt: {}", create_plan.display());
     let create_body = fs::read_to_string(&create_plan).unwrap();
@@ -309,6 +324,174 @@ fn survey_yaml_emit_injects_input_hashes_and_round_trips() {
     let reparsed = ravel_lite::survey::parse_survey_response(&first_emit).unwrap();
     let second_emit = ravel_lite::survey::emit_survey_yaml(&reparsed).unwrap();
     assert_eq!(first_emit, second_emit, "round-trip must be byte-identical");
+}
+
+#[test]
+fn survey_incremental_merge_reuses_unchanged_rows_and_includes_llm_delta() {
+    // End-to-end merge: prior has two plans; one of them is mutated
+    // on disk, the other is unchanged. Classification should mark
+    // the untouched plan as unchanged (and its prior row reused),
+    // the mutated plan as changed (and the LLM's new row merged in).
+    let tmp = TempDir::new().unwrap();
+    let project = tmp.path().join("Proj");
+    fs::create_dir_all(project.join(".git")).unwrap();
+    let plan_stable = project.join("stable");
+    let plan_mutated = project.join("mutated");
+    fs::create_dir_all(&plan_stable).unwrap();
+    fs::create_dir_all(&plan_mutated).unwrap();
+    fs::write(plan_stable.join("phase.md"), "work").unwrap();
+    fs::write(plan_stable.join("backlog.md"), "# original stable backlog").unwrap();
+    fs::write(plan_mutated.join("phase.md"), "work").unwrap();
+    fs::write(plan_mutated.join("backlog.md"), "# original mutated backlog").unwrap();
+
+    let snap_stable_before = ravel_lite::survey::load_plan(&plan_stable).unwrap();
+    let snap_mutated_before = ravel_lite::survey::load_plan(&plan_mutated).unwrap();
+
+    // Construct a prior as it would appear on disk: cold-path LLM
+    // output + hash injection.
+    let llm_cold = format!(
+        "plans:\n  \
+         - project: Proj\n    plan: stable\n    phase: work\n    unblocked: 1\n    blocked: 0\n    done: 0\n    received: 0\n    notes: ''\n  \
+         - project: Proj\n    plan: mutated\n    phase: work\n    unblocked: 2\n    blocked: 0\n    done: 0\n    received: 0\n    notes: pre-mutation\n",
+    );
+    let mut prior = ravel_lite::survey::parse_survey_response(&llm_cold).unwrap();
+    let prior_hashes: std::collections::HashMap<String, String> = [
+        (ravel_lite::survey::plan_key("Proj", "stable"), snap_stable_before.input_hash.clone()),
+        (ravel_lite::survey::plan_key("Proj", "mutated"), snap_mutated_before.input_hash.clone()),
+    ]
+    .into_iter()
+    .collect();
+    ravel_lite::survey::inject_input_hashes(&mut prior, &prior_hashes).unwrap();
+
+    // Mutate the second plan's backlog on disk, re-snapshot.
+    fs::write(plan_mutated.join("backlog.md"), "# NEW mutated backlog").unwrap();
+    let snap_stable_after = ravel_lite::survey::load_plan(&plan_stable).unwrap();
+    let snap_mutated_after = ravel_lite::survey::load_plan(&plan_mutated).unwrap();
+    assert_eq!(
+        snap_stable_after.input_hash, snap_stable_before.input_hash,
+        "stable plan's hash should not have changed"
+    );
+    assert_ne!(
+        snap_mutated_after.input_hash, snap_mutated_before.input_hash,
+        "mutated plan's hash must differ"
+    );
+
+    let current = vec![snap_stable_after, snap_mutated_after];
+    let classification = ravel_lite::survey::PlanClassification::classify(&prior, &current);
+    assert_eq!(classification.unchanged_rows.len(), 1);
+    assert_eq!(classification.unchanged_rows[0].plan, "stable");
+    assert_eq!(classification.changed.len(), 1);
+    assert_eq!(classification.changed[0].plan, "mutated");
+    assert!(classification.added.is_empty());
+    assert!(classification.removed_keys.is_empty());
+    assert!(!classification.is_noop());
+
+    // Simulated LLM delta response: only the changed plan, with a
+    // refreshed note.
+    let llm_delta_yaml =
+        "plans:\n  - project: Proj\n    plan: mutated\n    phase: work\n    unblocked: 2\n    \
+         blocked: 0\n    done: 1\n    received: 0\n    notes: post-mutation\n";
+    let mut delta = ravel_lite::survey::parse_survey_response(llm_delta_yaml).unwrap();
+    let delta_hashes: std::collections::HashMap<String, String> = [(
+        ravel_lite::survey::plan_key("Proj", "mutated"),
+        current[1].input_hash.clone(),
+    )]
+    .into_iter()
+    .collect();
+    ravel_lite::survey::inject_input_hashes(&mut delta, &delta_hashes).unwrap();
+
+    let merged = ravel_lite::survey::merge_delta(classification, delta).unwrap();
+    assert_eq!(merged.plans.len(), 2, "merged must contain both plans");
+    let stable_row = merged.plans.iter().find(|p| p.plan == "stable").unwrap();
+    let mutated_row = merged.plans.iter().find(|p| p.plan == "mutated").unwrap();
+    assert_eq!(
+        stable_row.input_hash, snap_stable_before.input_hash,
+        "unchanged row's hash carries forward from prior"
+    );
+    assert_eq!(
+        mutated_row.input_hash, current[1].input_hash,
+        "changed row's hash is the freshly-computed one"
+    );
+    assert_eq!(mutated_row.done, 1, "changed row reflects LLM delta values");
+    assert_eq!(mutated_row.notes, "post-mutation");
+}
+
+#[test]
+fn survey_incremental_is_noop_when_no_files_changed() {
+    // Scenario: plan directory was never touched since the prior
+    // survey was produced. Classification should flag the whole set
+    // as noop, letting the runner carry prior forward with no LLM call.
+    let tmp = TempDir::new().unwrap();
+    let project = tmp.path().join("Proj");
+    fs::create_dir_all(project.join(".git")).unwrap();
+    let plan_dir = project.join("unchanged");
+    fs::create_dir_all(&plan_dir).unwrap();
+    fs::write(plan_dir.join("phase.md"), "work").unwrap();
+    fs::write(plan_dir.join("backlog.md"), "# original").unwrap();
+
+    let snap = ravel_lite::survey::load_plan(&plan_dir).unwrap();
+    let llm_yaml = "plans:\n  - project: Proj\n    plan: unchanged\n    phase: work\n    \
+                    unblocked: 1\n    blocked: 0\n    done: 0\n    received: 0\n    notes: ''\n";
+    let mut prior = ravel_lite::survey::parse_survey_response(llm_yaml).unwrap();
+    ravel_lite::survey::inject_input_hashes(
+        &mut prior,
+        &[(
+            ravel_lite::survey::plan_key("Proj", "unchanged"),
+            snap.input_hash.clone(),
+        )]
+        .into_iter()
+        .collect(),
+    )
+    .unwrap();
+
+    let re_snap = ravel_lite::survey::load_plan(&plan_dir).unwrap();
+    let classification =
+        ravel_lite::survey::PlanClassification::classify(&prior, std::slice::from_ref(&re_snap));
+    assert!(classification.is_noop());
+    assert_eq!(classification.unchanged_rows.len(), 1);
+}
+
+#[test]
+fn survey_incremental_rejects_llm_delta_outside_changed_set() {
+    // Validation mirror to inject_input_hashes: the LLM cannot
+    // smuggle a row for a plan it wasn't asked about.
+    let tmp = TempDir::new().unwrap();
+    let project = tmp.path().join("Proj");
+    fs::create_dir_all(project.join(".git")).unwrap();
+    let plan_a = project.join("a");
+    fs::create_dir_all(&plan_a).unwrap();
+    fs::write(plan_a.join("phase.md"), "work").unwrap();
+    fs::write(plan_a.join("backlog.md"), "# original").unwrap();
+
+    let snap_before = ravel_lite::survey::load_plan(&plan_a).unwrap();
+    let prior_yaml = "plans:\n  - project: Proj\n    plan: a\n    phase: work\n    \
+                      unblocked: 1\n    blocked: 0\n    done: 0\n    received: 0\n    notes: ''\n";
+    let mut prior = ravel_lite::survey::parse_survey_response(prior_yaml).unwrap();
+    ravel_lite::survey::inject_input_hashes(
+        &mut prior,
+        &[(
+            ravel_lite::survey::plan_key("Proj", "a"),
+            snap_before.input_hash.clone(),
+        )]
+        .into_iter()
+        .collect(),
+    )
+    .unwrap();
+
+    fs::write(plan_a.join("backlog.md"), "# changed").unwrap();
+    let snap_after = ravel_lite::survey::load_plan(&plan_a).unwrap();
+    let classification =
+        ravel_lite::survey::PlanClassification::classify(&prior, std::slice::from_ref(&snap_after));
+
+    // LLM response returns the valid row AND a hallucinated extra.
+    let bad_delta = "plans:\n  \
+                     - project: Proj\n    plan: a\n    phase: work\n    unblocked: 1\n    blocked: 0\n    done: 0\n    received: 0\n    notes: ''\n  \
+                     - project: Proj\n    plan: hallucinated\n    phase: work\n    unblocked: 9\n    blocked: 0\n    done: 0\n    received: 0\n    notes: ''\n";
+    let delta = ravel_lite::survey::parse_survey_response(bad_delta).unwrap();
+    let err = ravel_lite::survey::merge_delta(classification, delta).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(msg.contains("outside"), "expected validation error; got: {msg}");
+    assert!(msg.contains("hallucinated"), "got: {msg}");
 }
 
 #[test]

@@ -545,6 +545,7 @@ mod tests {
     #[test]
     fn render_survey_output_contains_all_four_sections_in_order() {
         let response = SurveyResponse {
+            schema_version: super::super::schema::SCHEMA_VERSION,
             plans: vec![row("P", "x", "work", 1, 0, 0, 0, "")],
             cross_plan_blockers: vec![],
             parallel_streams: vec![],
@@ -568,6 +569,7 @@ mod tests {
     #[test]
     fn render_survey_output_includes_counts_key_in_plan_summary() {
         let response = SurveyResponse {
+            schema_version: super::super::schema::SCHEMA_VERSION,
             plans: vec![row("P", "x", "work", 1, 0, 0, 0, "")],
             cross_plan_blockers: vec![],
             parallel_streams: vec![],

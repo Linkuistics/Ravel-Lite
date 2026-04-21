@@ -35,6 +35,7 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
     EmbeddedFile { path: "agents/pi/subagents/tdd.md", content: include_str!("../defaults/agents/pi/subagents/tdd.md") },
     EmbeddedFile { path: "agents/pi/subagents/writing-plans.md", content: include_str!("../defaults/agents/pi/subagents/writing-plans.md") },
     EmbeddedFile { path: "survey.md", content: include_str!("../defaults/survey.md") },
+    EmbeddedFile { path: "survey-incremental.md", content: include_str!("../defaults/survey-incremental.md") },
     EmbeddedFile { path: "create-plan.md", content: include_str!("../defaults/create-plan.md") },
 ];
 

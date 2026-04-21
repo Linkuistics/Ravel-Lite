@@ -19,10 +19,17 @@ use tokio::process::Command as TokioCommand;
 use crate::config::{load_agent_config, load_shared_config};
 use crate::types::AgentConfig;
 
-use super::compose::{load_survey_prompt, render_survey_input};
-use super::discover::load_plan;
+use super::compose::{
+    load_survey_incremental_prompt, load_survey_prompt, render_survey_input,
+    render_survey_input_incremental,
+};
+use super::delta::{merge_delta, PlanClassification};
+use super::discover::{load_plan, PlanSnapshot};
 use super::render::render_survey_output;
-use super::schema::{emit_survey_yaml, inject_input_hashes, parse_survey_response, plan_key};
+use super::schema::{
+    emit_survey_yaml, inject_input_hashes, parse_survey_response, plan_key, SurveyResponse,
+    SCHEMA_VERSION,
+};
 
 /// Fallback model when neither `--model` nor `models.survey` is
 /// configured. A cheap, fast model is appropriate: survey is a
@@ -56,6 +63,18 @@ fn resolve_model(agent_config: &AgentConfig, flag_override: Option<String>) -> S
 /// the YAML response, injects Rust-computed `input_hash` values into
 /// each row, and writes canonical YAML to stdout.
 ///
+/// With `prior = Some(path)` and `force = false` the runner uses the
+/// incremental path: it hashes each plan's state files, compares
+/// against the prior's per-row `input_hash`, and sends only the
+/// changed+added plans to the LLM. Unchanged rows are carried forward
+/// verbatim.
+///
+/// `force = true` short-circuits the hash comparison and re-analyses
+/// every plan as if no prior were supplied — but still validates the
+/// prior's `schema_version` matches the binary's `SCHEMA_VERSION`, so
+/// a schema-bumped prior fails loudly rather than silently losing
+/// fields on merge. With `prior = None`, `force` is a no-op.
+///
 /// The plan-root walk is gone: each positional argument on the CLI
 /// names exactly one plan directory (a directory containing
 /// `phase.md`). Routing responsibility stays in the caller.
@@ -64,6 +83,8 @@ pub async fn run_survey(
     plan_dirs: &[PathBuf],
     model_override: Option<String>,
     timeout_override_secs: Option<u64>,
+    prior_path: Option<&Path>,
+    force: bool,
 ) -> Result<()> {
     let shared = load_shared_config(config_root)?;
     if shared.agent != "claude-code" {
@@ -87,8 +108,44 @@ pub async fn run_survey(
     }
     all_plans.sort_by(|a, b| (&a.project, &a.plan).cmp(&(&b.project, &b.plan)));
 
+    let prior = match prior_path {
+        Some(path) => Some(load_and_validate_prior(path)?),
+        None => None,
+    };
+
+    // Incremental-eligible: prior present AND user did not force a
+    // full re-analysis.
+    if let Some(prior) = prior.as_ref() {
+        if !force {
+            return run_incremental_survey(
+                config_root,
+                &model,
+                timeout_override_secs,
+                prior,
+                all_plans,
+            )
+            .await;
+        }
+    }
+
+    // Cold path: no prior, OR `--force` overrides the incremental path.
+    run_cold_survey(
+        config_root,
+        &model,
+        timeout_override_secs,
+        &all_plans,
+    )
+    .await
+}
+
+async fn run_cold_survey(
+    config_root: &Path,
+    model: &str,
+    timeout_override_secs: Option<u64>,
+    all_plans: &[PlanSnapshot],
+) -> Result<()> {
     let survey_prompt = load_survey_prompt(config_root)?;
-    let plan_input = render_survey_input(&all_plans);
+    let plan_input = render_survey_input(all_plans);
     let full_prompt = format!("{survey_prompt}\n\n---\n{plan_input}");
 
     eprintln!(
@@ -97,11 +154,120 @@ pub async fn run_survey(
         model
     );
 
+    let output = spawn_claude_and_read(&full_prompt, model, timeout_override_secs).await?;
+    let mut response = parse_survey_response(&output)?;
+    let hashes: HashMap<String, String> = all_plans
+        .iter()
+        .map(|p| (plan_key(&p.project, &p.plan), p.input_hash.clone()))
+        .collect();
+    inject_input_hashes(&mut response, &hashes)?;
+    // Cold-path response carries whatever schema_version the LLM
+    // emitted (or the default); pin it to the binary's current value
+    // so persisted YAML is always labelled with the producer version.
+    response.schema_version = SCHEMA_VERSION;
+    print!("{}", emit_survey_yaml(&response)?);
+    Ok(())
+}
+
+async fn run_incremental_survey(
+    config_root: &Path,
+    model: &str,
+    timeout_override_secs: Option<u64>,
+    prior: &SurveyResponse,
+    all_plans: Vec<PlanSnapshot>,
+) -> Result<()> {
+    let classification = PlanClassification::classify(prior, &all_plans);
+
+    // Nothing changed relative to prior: skip the LLM call entirely
+    // and write the prior through as the new output. This is the
+    // fast-path that makes per-cycle surveying affordable.
+    if classification.is_noop() {
+        eprintln!(
+            "Incremental survey: all {} plan(s) unchanged — carrying prior forward.",
+            all_plans.len()
+        );
+        let mut carried = prior.clone();
+        carried.schema_version = SCHEMA_VERSION;
+        print!("{}", emit_survey_yaml(&carried)?);
+        return Ok(());
+    }
+
+    eprintln!(
+        "Incremental survey: {} unchanged, {} changed, {} added, {} removed — \
+         analysing {} plan(s) using model {}...",
+        classification.unchanged_rows.len(),
+        classification.changed.len(),
+        classification.added.len(),
+        classification.removed_keys.len(),
+        classification.changed.len() + classification.added.len(),
+        model,
+    );
+
+    let to_analyse = classification.plans_to_analyse();
+    let prior_yaml = emit_survey_yaml(prior)?;
+    let prompt_template = load_survey_incremental_prompt(config_root)?;
+    let plan_input =
+        render_survey_input_incremental(&to_analyse, &prior_yaml, &classification.removed_keys);
+    let full_prompt = format!("{prompt_template}\n\n---\n{plan_input}");
+
+    let output = spawn_claude_and_read(&full_prompt, model, timeout_override_secs).await?;
+    let mut delta_response = parse_survey_response(&output)?;
+
+    // Inject hashes into the delta rows before merge: the LLM doesn't
+    // emit hashes, and the merged result must carry them for the next
+    // cycle's delta classification.
+    let delta_hashes: HashMap<String, String> = classification
+        .changed
+        .iter()
+        .chain(classification.added.iter())
+        .map(|s| (plan_key(&s.project, &s.plan), s.input_hash.clone()))
+        .collect();
+    inject_input_hashes(&mut delta_response, &delta_hashes)?;
+
+    let mut merged = merge_delta(classification, delta_response)?;
+    merged.schema_version = SCHEMA_VERSION;
+    print!("{}", emit_survey_yaml(&merged)?);
+    Ok(())
+}
+
+/// Load and parse a prior survey YAML, and verify its
+/// `schema_version` matches the binary. A mismatched version is a
+/// hard error that hints at `--force` as the remediation path —
+/// `--force` bypasses hash comparison but still validates the schema,
+/// so the remediation for a genuinely incompatible prior is to
+/// re-run without `--prior`.
+fn load_and_validate_prior(path: &Path) -> Result<SurveyResponse> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read prior survey at {}", path.display()))?;
+    let prior = parse_survey_response(&content)
+        .with_context(|| format!("Failed to parse prior survey at {}", path.display()))?;
+    if prior.schema_version != SCHEMA_VERSION {
+        anyhow::bail!(
+            "prior survey at {} declares schema_version={}, but this binary \
+             speaks schema_version={}. Re-run without `--prior` to produce a \
+             fresh baseline.",
+            path.display(),
+            prior.schema_version,
+            SCHEMA_VERSION,
+        );
+    }
+    Ok(prior)
+}
+
+/// Spawn `claude -p <prompt>` headlessly, wait for stdout with the
+/// configured timeout, and return captured output. Factored out of
+/// the cold and incremental runners so both share identical spawn,
+/// timeout, and error-surfacing behaviour.
+async fn spawn_claude_and_read(
+    prompt: &str,
+    model: &str,
+    timeout_override_secs: Option<u64>,
+) -> Result<String> {
     let mut child = TokioCommand::new("claude")
         .arg("-p")
-        .arg(&full_prompt)
+        .arg(prompt)
         .arg("--model")
-        .arg(&model)
+        .arg(model)
         .arg("--strict-mcp-config")
         .arg("--setting-sources")
         .arg("project,local")
@@ -148,15 +314,7 @@ pub async fn run_survey(
     if !status.success() {
         anyhow::bail!("claude CLI exited with status {status}");
     }
-
-    let mut response = parse_survey_response(&output)?;
-    let hashes: HashMap<String, String> = all_plans
-        .iter()
-        .map(|p| (plan_key(&p.project, &p.plan), p.input_hash.clone()))
-        .collect();
-    inject_input_hashes(&mut response, &hashes)?;
-    print!("{}", emit_survey_yaml(&response)?);
-    Ok(())
+    Ok(output)
 }
 
 /// Render a saved YAML survey file as human-readable markdown on
@@ -242,6 +400,72 @@ mod tests {
         let missing = std::path::PathBuf::from("/definitely/not/a/survey/file.yaml");
         let err = run_survey_format(&missing).unwrap_err();
         assert!(format!("{err:#}").contains("Failed to read survey file"));
+    }
+
+    #[test]
+    fn load_and_validate_prior_accepts_matching_version() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("prior.yaml");
+        let yaml = format!(
+            "schema_version: {SCHEMA_VERSION}\nplans:\n  - project: P\n    plan: x\n    \
+             phase: work\n    unblocked: 0\n    blocked: 0\n    done: 0\n    received: 0\n"
+        );
+        std::fs::write(&path, yaml).unwrap();
+        let prior = load_and_validate_prior(&path).unwrap();
+        assert_eq!(prior.schema_version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn load_and_validate_prior_accepts_missing_version_field() {
+        // 5a-emitted YAML has no schema_version — the serde default
+        // should inject SCHEMA_VERSION so the validation passes. This
+        // is the one-time 5a→5b amnesty.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("prior.yaml");
+        std::fs::write(
+            &path,
+            "plans:\n  - project: P\n    plan: x\n    phase: work\n    \
+             unblocked: 0\n    blocked: 0\n    done: 0\n    received: 0\n",
+        )
+        .unwrap();
+        let prior = load_and_validate_prior(&path).unwrap();
+        assert_eq!(prior.schema_version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn load_and_validate_prior_rejects_mismatched_version_with_remediation_hint() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("prior.yaml");
+        // A future version marker that this binary doesn't speak.
+        std::fs::write(
+            &path,
+            "schema_version: 9999\nplans:\n  - project: P\n    plan: x\n    phase: work\n    \
+             unblocked: 0\n    blocked: 0\n    done: 0\n    received: 0\n",
+        )
+        .unwrap();
+        let err = load_and_validate_prior(&path).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("schema_version=9999"), "got: {msg}");
+        assert!(
+            msg.contains("Re-run without `--prior`"),
+            "error should point at the remediation path; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn load_and_validate_prior_errors_on_missing_file() {
+        let missing = std::path::PathBuf::from("/definitely/not/a/prior/survey.yaml");
+        let err = load_and_validate_prior(&missing).unwrap_err();
+        assert!(format!("{err:#}").contains("Failed to read prior survey"));
+    }
+
+    #[test]
+    fn load_and_validate_prior_errors_on_malformed_yaml() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("bad.yaml");
+        std::fs::write(&path, "not: valid: yaml: at: all:\n  - [").unwrap();
+        let err = load_and_validate_prior(&path).unwrap_err();
+        assert!(format!("{err:#}").contains("Failed to parse prior survey"));
     }
 
     #[test]

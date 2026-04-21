@@ -136,6 +136,19 @@ enum Commands {
         /// does not produce a result within this window.
         #[arg(long)]
         timeout_secs: Option<u64>,
+        /// Path to a prior survey YAML to use as the baseline for an
+        /// incremental run. Plans whose `input_hash` matches the prior
+        /// are carried forward verbatim; only changed and added plans
+        /// are sent to the LLM. Rejected schemas and unrecognised
+        /// versions produce a loud error with a remediation hint
+        /// pointing at `--force`.
+        #[arg(long)]
+        prior: Option<PathBuf>,
+        /// Re-analyse every plan regardless of whether its hash matches
+        /// the prior. Has no effect without `--prior`. Intended for
+        /// debugging and schema-bump remediation.
+        #[arg(long)]
+        force: bool,
     },
     /// Render a saved YAML survey file (as produced by `ravel-lite
     /// survey`) as human-readable markdown on stdout. Read-only; no
@@ -184,9 +197,17 @@ async fn main() -> Result<()> {
             let config_root = resolve_config_dir(config)?;
             create::run_create(&config_root, plan_dir).await
         }
-        Commands::Survey { config, plan_dirs, model, timeout_secs } => {
+        Commands::Survey { config, plan_dirs, model, timeout_secs, prior, force } => {
             let config_root = resolve_config_dir(config)?;
-            survey::run_survey(&config_root, &plan_dirs, model, timeout_secs).await
+            survey::run_survey(
+                &config_root,
+                &plan_dirs,
+                model,
+                timeout_secs,
+                prior.as_deref(),
+                force,
+            )
+            .await
         }
         Commands::SurveyFormat { file } => {
             survey::run_survey_format(&file)

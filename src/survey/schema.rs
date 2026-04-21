@@ -6,11 +6,36 @@
 
 use anyhow::{Context, Result};
 
+/// Canonical schema version for emitted and consumed YAML. Bumped only
+/// when a struct-level change would make prior YAML deserialise into a
+/// subtly-different meaning. Prior YAML with a mismatched explicit
+/// version is rejected at `--prior` load time with a remediation hint
+/// pointing at `--force`.
+///
+/// Emitted YAML always carries this value explicitly. Prior YAML
+/// missing the field (emitted before 5b landed) defaults to this same
+/// value via `default_schema_version`, giving the 5a→5b transition a
+/// one-time amnesty: pre-existing surveys are treated as v1-compatible.
+/// Once a v2 ships, the field's presence on v1-emitted YAML is what
+/// makes the mismatch detectable.
+pub const SCHEMA_VERSION: u32 = 1;
+
+fn default_schema_version() -> u32 {
+    SCHEMA_VERSION
+}
+
 /// Typed deserialisation target for the YAML document the LLM emits,
 /// and the canonical serialisation form written back to disk. The LLM
 /// does classification and reasoning; the tool owns rendering.
-#[derive(Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 pub struct SurveyResponse {
+    /// Schema version marker. `#[serde(default = "default_schema_version")]`
+    /// lets 5a-emitted YAML (which predates this field) deserialise
+    /// cleanly, treated as the current version for the one-time 5a→5b
+    /// transition. Serialisation always emits it explicitly, so future
+    /// version bumps can fail-fast on actually-stale YAML.
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     pub plans: Vec<PlanRow>,
     #[serde(default)]
     pub cross_plan_blockers: Vec<Blocker>,
@@ -20,7 +45,7 @@ pub struct SurveyResponse {
     pub recommended_invocation_order: Vec<Recommendation>,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 pub struct PlanRow {
     pub project: String,
     pub plan: String,
@@ -43,7 +68,7 @@ pub struct PlanRow {
     pub input_hash: String,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 pub struct Blocker {
     pub blocked: String,
     pub blocker: String,
@@ -53,14 +78,14 @@ pub struct Blocker {
 /// A group of plans whose work can proceed concurrently with other
 /// groups. Within a stream, work may still be sequential (gates,
 /// dependencies) — that's what `rationale` explains.
-#[derive(Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 pub struct ParallelStream {
     pub name: String,
     pub plans: Vec<String>,
     pub rationale: String,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 pub struct Recommendation {
     pub plan: String,
     /// Priority rank. Multiple recommendations sharing the same `order`
@@ -303,6 +328,57 @@ plans:
     #[test]
     fn plan_key_joins_project_and_plan_with_slash() {
         assert_eq!(plan_key("Ravel", "sub-A"), "Ravel/sub-A");
+    }
+
+    #[test]
+    fn parse_survey_response_defaults_schema_version_when_field_absent() {
+        // 5a-emitted YAML has no `schema_version` field. The one-time
+        // 5a→5b amnesty: absent field deserialises to the current
+        // SCHEMA_VERSION so pre-existing surveys load as compatible.
+        let yaml = r#"
+plans:
+  - project: P
+    plan: x
+    phase: work
+    unblocked: 0
+    blocked: 0
+    done: 0
+    received: 0
+"#;
+        let resp = parse_survey_response(yaml).unwrap();
+        assert_eq!(resp.schema_version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn parse_survey_response_preserves_explicit_schema_version() {
+        // A future v2 survey with explicit marker parses to that value,
+        // so a v1 binary can detect the mismatch at `--prior` load time.
+        let yaml = r#"
+schema_version: 2
+plans:
+  - project: P
+    plan: x
+    phase: work
+    unblocked: 0
+    blocked: 0
+    done: 0
+    received: 0
+"#;
+        let resp = parse_survey_response(yaml).unwrap();
+        assert_eq!(resp.schema_version, 2);
+    }
+
+    #[test]
+    fn emit_survey_yaml_writes_schema_version_explicitly() {
+        // Emitted YAML always carries the marker — that's what makes
+        // future-version mismatches detectable when that YAML is
+        // later fed to a binary on a different SCHEMA_VERSION.
+        let resp = parse_survey_response(sample_yaml()).unwrap();
+        let emitted = emit_survey_yaml(&resp).unwrap();
+        assert!(
+            emitted.contains(&format!("schema_version: {SCHEMA_VERSION}")),
+            "emitted YAML is missing schema_version marker:\n{emitted}"
+        );
     }
 
     #[test]
