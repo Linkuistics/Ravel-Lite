@@ -54,6 +54,9 @@ RELATED_PLANS and custom tokens expand first; atomic path tokens ({{DEV_ROOT}} e
 ## `EnvOverride` serialises env mutation in integration tests
 `EnvOverride` holds a process-wide `OnceLock<Mutex<()>>`; struct-field drop order keeps the lock held until `PATH`/`HOME` restoration completes, preventing fake-pi `PATH` from leaking into concurrent test runners.
 
+## `GitCommitWork` appends `latest-session.md` to `session-log.md`
+`append_session_log` in `phase_loop.rs` runs at the top of `GitCommitWork`, before `write_phase`. Reads `latest-session.md` and appends to `session-log.md`. Tail-check makes it idempotent; crash-retry is safe.
+
 ## `write_phase` called before `git_commit_plan` in all `GitCommit*` handlers
 All four `ScriptPhase::GitCommit*` handlers in `phase_loop.rs` call `write_phase(next)` before `git_commit_plan`. Phase.md is captured in the same commit as other plan-state writes; the plan tree is clean at every user-prompt point.
 
