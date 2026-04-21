@@ -1,13 +1,12 @@
-### Session 3 (2026-04-21T12:53:55Z) — survey-restructure sub-plan close-out: 5a–5d delivered
+### Session 4 (2026-04-21T23:13:58Z) — Scope git queries to subtree root for monorepo support
 
-- Ran the survey-restructure sub-plan through four full work cycles, delivering tasks 5a, 5b, 5c, and 5d as distinct commits against main.
-- **5a** (`5711fac`): Structured YAML output for `ravel-lite survey`; `survey-format` subcommand for human rendering; `input_hash` field seeded in Rust post-parse. `src/survey/schema.rs` gained `Serialize` derives and `schema_version` marker.
-- **5b** (`5e295f4`): Incremental survey via `--prior` and `--force`. New `src/survey/delta.rs` owns hash-comparison and delta-merge logic. `src/survey/invoke.rs` refactored into `compute_survey_response` (in-memory) + `run_survey` (CLI wrapper). `defaults/survey-incremental.md` added as the delta-path prompt template.
-- **5c** (`fdaeb02`): Multi-plan `run` mode with survey-driven routing. New `src/multi_plan.rs` (539 lines) implements `build_plan_dir_map`, `options_from_response`, `select_plan_interactive`, and `run_multi_plan`. `ravel-lite run` now accepts `1..N` plan dirs; `--survey-state` required for N > 1. Design rationale captured in `docs/survey-pivot-design.md`.
-- **5d** (`06ce874`): Removed `src/pivot.rs`, `push-plan` CLI verb, `run_stack` logic, and `stack.yaml` infrastructure. `src/state.rs` trimmed from ~230 to ~80 lines. `src/phase_loop.rs` de-pivoted.
-- Sub-plan close-out triage (`19ad808`, `7735d3f`): propagated results to core backlog and closed the survey-restructure plan. Deleted `LLM_STATE/survey-restructure/` directory in source commit `080c9e6`.
-- `tests/integration.rs` overhauled throughout (1197 lines changed) to cover the new survey/incremental/multi-plan paths and remove obsolete pivot/stack tests.
-
-What worked: linear dependency chain 5a → 5b → 5c held; sub-plan broke work into per-cycle chunks that each compiled and tested green before committing.
-
-What this suggests trying next: the "Migrate Ravel orchestrator off removed push-plan verb" task is now unblocked and urgent — the orchestrator will break on next invocation. The structured-data research task (backlog CLI verbs) is next highest value but not urgent.
+- Implemented the "Make git operations subtree-scoped so ravel-lite can run inside a monorepo" backlog task in full.
+- Replaced `find_project_root` (`.git`-walkup) with `project_root_for_plan` — pure path derivation `<plan>/../..`, no disk walk, decoupled from `.git` location.
+- Added `-- <project_dir>` pathspec to all three git query functions: `working_tree_status`, `paths_changed_since_baseline`, and `work_tree_snapshot`. `git_commit_plan` intentionally left unchanged (its `git add .` at `plan_dir` CWD is already scoped to plan-state files).
+- Updated all four callers: `src/main.rs`, `src/multi_plan.rs`, `src/agent/common.rs`, `src/survey/discover.rs`.
+- Added a monorepo scoping integration test (`git_queries_are_scoped_to_subtree_in_monorepo`) that synthesises an outer repo with a sibling subtree and asserts all three query functions see only the ravel-lite subtree's changes.
+- Added three `project_root_for_plan` unit tests: correct derivation, shallow-path error, non-existent-path ok (pure math).
+- Updated five integration tests in `tests/integration.rs` and one in `src/multi_plan.rs` to use the three-level `<project>/LLM_STATE/<plan>` layout matching ravel-lite convention. Removed the obsolete `load_plan_errors_when_no_git_above_plan` test — the invariant no longer holds under path-math derivation.
+- Added README "Project layout" section documenting `<project>/<state-dir>/<plan>` convention and a "Monorepo subtrees" subsection covering pathspec scoping semantics and commit-message-prefix answer.
+- All 215 lib tests + 23 integration tests pass. Task marked `done` in backlog with full results, open design-question answers, and verification record.
+- What this suggests next: the "Research: expose plan-state markdown as structured data" task is now unblocked and is the natural next candidate — it depends on nothing else and its completion unblocks the task-count extraction task.

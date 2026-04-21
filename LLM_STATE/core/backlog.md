@@ -325,7 +325,7 @@ before closing.
 ### Make git operations subtree-scoped so ravel-lite can run inside a monorepo
 
 **Category:** `enhancement`
-**Status:** `not_started`
+**Status:** `done`
 **Dependencies:** composes naturally with the narrowed `warn_if_project_tree_dirty` (now done) — the subtree-scoping uses the same pathspec plumbing.
 
 **Description:**
@@ -396,6 +396,68 @@ Using the plan-dir derivation separates them cleanly.
   exists somewhere up the tree; if neither monorepo nor subtree has
   one, that's a separate error path.
 
-**Results:** _pending_
+**Results:**
+
+Landed. Approach followed the 2026-04-21 simplification exactly:
+project root is derived purely from the plan-dir layout
+(`<plan>/../..`), decoupled from `.git` location.
+
+**Changes:**
+
+1. `src/git.rs`: replaced `find_project_root` with `project_root_for_plan`
+   — pure path math, no disk walk. Errors if the plan dir doesn't have
+   two parent levels. `.git` location is no longer consulted or required.
+2. `src/git.rs`: added `-- <project_dir>` pathspec to the three query
+   functions: `working_tree_status` (status --porcelain),
+   `paths_changed_since_baseline` (diff --name-only), and
+   `work_tree_snapshot` (diff --stat + status --porcelain). Baseline
+   SHAs stay repo-wide — scoping is on the query, not the anchor.
+3. Callers renamed: `src/main.rs`, `src/multi_plan.rs`,
+   `src/agent/common.rs`, `src/survey/discover.rs`.
+4. `git_commit_plan` was left as-is (`git add .` at `plan_dir` CWD is
+   already naturally scoped to plan-state files). The task description
+   floated widening this to `git add -- <project_root>` but that would
+   silently sweep in uncommitted source edits, defeating the whole
+   point of `warn_if_project_tree_dirty`. Kept the existing design's
+   alarm-loudly discipline.
+
+**Tests:**
+
+- New `git_queries_are_scoped_to_subtree_in_monorepo` in
+  `src/git.rs`: synthesises `outer-repo/{.git, sibling/, tools/ravel-lite/}`,
+  edits files in both subtrees, and asserts all three query functions
+  see only the ravel-lite subtree's changes.
+- `project_root_for_plan` unit tests: three-level derivation,
+  shallow-path error, non-existent path ok (pure path math).
+- Integration tests updated: plan layouts changed from `<project>/<plan>`
+  (2-level, incorrect by new convention) to
+  `<project>/LLM_STATE/<plan>` (3-level, matches ravel-lite convention).
+  Files touched: `tests/integration.rs` (5 tests),
+  `src/multi_plan.rs` (`build_plan_dir_map_errors_on_duplicate_key`),
+  `src/survey/discover.rs` (`load_plan_reads_phase_backlog_and_memory`;
+  obsolete `load_plan_errors_when_no_git_above_plan` removed since the
+  invariant is no longer upheld).
+
+**Verification:** `cargo test` — 215 lib tests + 23 integration tests
+all pass. No regressions. Clippy errors in `src/survey/schema.rs` are
+pre-existing (confirmed via `git stash` check) and outside this task's
+scope.
+
+**Docs:** README gained a "Project layout" section explaining the
+`<project>/<state-dir>/<plan>` convention and a "Monorepo subtrees"
+subsection covering the scoping semantics and commit-message-prefix
+answer (per-plan `commit-message.md`, not automated).
+
+**Open design-question answers:**
+
+- Commit-message prefix conventions: left unautomated. The
+  LLM-authored `commit-message.md` is the customisation point.
+  Documented in README.
+- `ravel-lite create` layout expectation: create itself accepts any
+  path, but the derivation `<plan>/../..` assumes a 3-level layout.
+  Documented in README. create doesn't enforce it at spawn time, so a
+  misshapen path will fail later when `project_root_for_plan` returns
+  an incorrect root — acceptable since `create` is driven interactively
+  by an LLM that reads the convention from `create-plan.md`.
 
 ---
