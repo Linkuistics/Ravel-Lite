@@ -178,15 +178,6 @@ impl Agent for ClaudeCodeAgent {
             args.push("--dangerously-skip-permissions".to_string());
         }
 
-        // EXPERIMENT: --debug-file /dev/null isolates debug-MODE from
-        // debug-FILE-I/O. Same flag, same fd open, same implicit --debug
-        // enable, but file writes have ~zero cost. If this works → the
-        // magic is in claude's debug-mode code path, not in file I/O
-        // timing. If this fails (but a real file path works) → it's
-        // specifically the file-write cost.
-        args.push("--debug-file".to_string());
-        args.push("/dev/null".to_string());
-
         args.push(prompt.to_string());
 
         // Temporary diagnostic — dump args + env + tty + termios state to
