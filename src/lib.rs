@@ -11,5 +11,6 @@ pub mod prompt;
 pub mod state;
 pub mod subagent;
 pub mod survey;
+pub mod term_title;
 pub mod types;
 pub mod ui;

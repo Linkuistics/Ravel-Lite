@@ -40,6 +40,29 @@ fn plan_name(plan_dir: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// Read the raw phase string from `phase.md` for title-display purposes.
+///
+/// Deliberately bypasses `Phase::parse` — a decorative read must tolerate
+/// a momentarily-absent or malformed file without panicking. Used from
+/// `run_stack` push/pop sites where the LLM arm (which carries `lp`
+/// directly) has not yet been entered for the new top-of-stack plan.
+fn raw_phase_label(plan_dir: &Path) -> String {
+    fs::read_to_string(plan_dir.join("phase.md"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Update the terminal title for a plan context. Reads `phase.md`
+/// directly — callers here don't yet know which `LlmPhase` the next
+/// iteration will dispatch, and script phases have no `LlmPhase` at all.
+fn set_title_for_context(ctx: &PlanContext) {
+    crate::term_title::set_title(
+        &project_name(&ctx.project_dir),
+        &plan_name(Path::new(&ctx.plan_dir)),
+        &raw_phase_label(Path::new(&ctx.plan_dir)),
+    );
+}
+
 /// Render the stack path for phase-header display: basenames joined by ` → `.
 ///
 /// Single-plan stacks render as just the plan's basename (unchanged from
@@ -250,6 +273,7 @@ pub async fn phase_loop(
             }
             Phase::Llm(lp) => {
                 let agent_id = "main";
+                crate::term_title::set_title(&project, &name, lp.as_str());
                 log_phase_header(ui, lp, &project, &name);
 
                 // First-run fallback: in steady state, `git-commit-triage`
@@ -384,7 +408,9 @@ fn do_push(
     }
     stack.push(new_ctx);
     pending_push.push(None);
-    sync_stack_to_disk(stack_path, stack)
+    sync_stack_to_disk(stack_path, stack)?;
+    set_title_for_context(stack.last().expect("just pushed"));
+    Ok(())
 }
 
 /// Compose the LLM prompt for a phase, injecting the work-tree snapshot for
@@ -463,6 +489,7 @@ pub async fn run_stack(
                         sync_stack_to_disk(&stack_path, &stack)?;
                         let parent_name = plan_name(&std::path::PathBuf::from(&stack.last().unwrap().plan_dir));
                         ui.log(&format!("\n◁◁ POP · {popped_name} → {parent_name}"));
+                        set_title_for_context(stack.last().expect("stack non-empty after pop"));
                         continue;
                     }
                     ui.log("\nExiting.");
@@ -480,6 +507,7 @@ pub async fn run_stack(
                             sync_stack_to_disk(&stack_path, &stack)?;
                             let parent_name = plan_name(&std::path::PathBuf::from(&stack.last().unwrap().plan_dir));
                             ui.log(&format!("\n◁◁ POP · {popped_name} → {parent_name}"));
+                            set_title_for_context(stack.last().expect("stack non-empty after pop"));
                         }
                         pivot::NextAfterCycle::Push(f) => { do_push(&mut stack, &mut pending, &stack_path, f, ui)?; }
                     }
@@ -490,6 +518,11 @@ pub async fn run_stack(
                     .map(|c| std::path::PathBuf::from(&c.plan_dir))
                     .collect();
                 let breadcrumb = format_breadcrumb(&stack_paths);
+                crate::term_title::set_title(
+                    &project_name(&top.project_dir),
+                    &plan_name(&plan_dir),
+                    lp.as_str(),
+                );
                 log_phase_header_with_breadcrumb(ui, lp, &project_name(&top.project_dir), &breadcrumb);
                 if lp == LlmPhase::Work && !plan_dir.join("work-baseline").exists() {
                     git_save_work_baseline(&plan_dir);

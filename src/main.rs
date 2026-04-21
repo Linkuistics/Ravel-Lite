@@ -11,6 +11,7 @@ mod prompt;
 mod state;
 mod subagent;
 mod survey;
+mod term_title;
 mod types;
 mod ui;
 
