@@ -174,10 +174,65 @@ boilerplate's invariant blocks, but:
 
 ---
 
+### Collapse the pre-reflect continue gate; keep only one gate per cycle
+
+**Category:** `enhancement`
+**Status:** `done`
+**Dependencies:** none
+
+The phase cycle had two interactive `ui.confirm` gates in
+`src/phase_loop.rs`. The pre-reflect gate (after `GitCommitWork`)
+added no meaningful decision point — analyse-work → reflect → dream →
+triage are headless by design — while the post-triage gate is the
+operator's real checkpoint.
+
+**Results:**
+
+Gate removed; one gate per cycle is now the contract.
+
+- `src/phase_loop.rs` — deleted `ui.confirm("Proceed to reflect phase?")`
+  at the `GitCommitWork` branch. Returns `Ok(true)` unconditionally.
+- `README.md` — phase-cycle diagram updated: `[continue?]` between
+  `git-commit-work` and `reflect` removed.
+- `tests/integration.rs` — three updates:
+  1. `ContractMockAgent::invoke_headless` for `Triage` now APPENDS to
+     `backlog.md` instead of overwriting — a more faithful model of
+     real triage, and it lets `analyse_work_flips_stale_task_status_per_safety_net`
+     keep its post-cycle assertion on the flipped Status.
+  2. Comments and drainer logic updated to describe the one-gate-per-cycle
+     semantics (no more conditional approve/decline).
+  3. Phase-prompt config seeded for all phases the cycle can reach in
+     `pivot_run_stack_short_circuit_pivot` (previously only analyse-work
+     and work were seeded — reflect/triage/dream were needed after the
+     gate was gone).
+
+**Shakes surfaced while re-running the suite:**
+
+- `pi_phase_cycle_substitutes_tokens_and_streams_events` infinite-looped.
+  Root cause: the fake `pi` script unconditionally wrote `phase.md` →
+  `git-commit-work` regardless of which phase invoked it. Pre-gate-removal,
+  the post-analyse-work confirm terminated the loop; after removal,
+  `GitCommitWork` → Reflect → fake-pi-writes-`git-commit-work` →
+  `GitCommitWork` → … ping-pong. Fixed by making the fake pi phase-aware:
+  it writes analyse-work contract files only when current phase is
+  `analyse-work` and advances reflect/triage cleanly otherwise.
+- `pivot_run_stack_short_circuit_pivot` errored on missing
+  `config/phases/reflect.md`. Before the gate removal the child cycle
+  exited before loading reflect.md; it now needs it.
+
+**Side effect kept in scope as an explicit follow-on:**
+`warn_if_project_tree_dirty` at the top of `GitCommitWork` is now
+advisory-only — no gate follows where the operator can react. If that
+is unacceptable the warning should be promoted to an error rather than
+re-added as a gate. Out of scope here; recorded in the backlog
+description of the original task.
+
+---
+
 ### Preserve hand-off rationale across the analyse-work → triage boundary
 
 **Category:** `prompt-tuning`
-**Status:** `not_started`
+**Status:** `done`
 **Dependencies:** none
 
 **Description:**
@@ -192,115 +247,56 @@ and Results-block note, then was dropped entirely by the subsequent
 triage phase. Only the terminal-title hand-off from the same session
 survived; the coordinator-plan one did not.
 
-Two mechanisms compound:
+**Results:**
 
-**1. Authoring side — `defaults/phases/analyse-work.md` has no guidance
-on how to record hand-offs.** The prompt's `latest-session.md` format
-(analyse-work.md:80-88) specifies "What was attempted / What worked /
-What to try next / Key learnings" — none of which maps cleanly to "a
-designed-but-unimplemented follow-on task." There is also no
-prescribed convention for adding notes to an existing task's Results
-block, though sessions have been doing so ad-hoc. Consequence:
-hand-offs land in whichever free-form prose section the LLM chose,
-compressed to one or two sentences, with settled design decisions
-(Q&A outcomes, chosen trade-offs, rejected alternatives) stripped.
+Implemented both sides of the convention.
 
-**2. Consuming side — `defaults/phases/triage.md` cannot see
-latest-session.md** (triage.md:17-18 explicitly lists it under `Do NOT
-read`), and it **deletes completed tasks outright** (triage.md:34-39
-step 3) without mining their Results blocks for forward-looking
-items. So any hand-off parked in a completed task's Results block is
-trashed along with the task — even if it contained the only surviving
-record of a settled design decision.
+- `defaults/phases/analyse-work.md` step 8 now documents:
+  1. An optional `## Hand-offs` section in the `latest-session.md`
+     format. Includes a sub-template for each hand-off entry with
+     the required fields (problem, decisions with rationale, reference
+     examples, dependencies).
+  2. A Hand-off convention block that specifies the two channels —
+     **preferred:** promote to a new `not_started` backlog task with
+     the settled design inlined (10–40 lines); **fallback:** record in
+     `## Hand-offs` AND add a `[HANDOFF] <title>` note to the
+     completing task's `Results:` block. The convention also
+     cross-references triage's mining step.
 
-**Fix (both prompts, coupled):**
+- `defaults/phases/triage.md` step 3 now:
+  1. Mines each `done` task's `Results:` block for `[HANDOFF]` markers
+     or a labelled `Hand-offs:` / `Followups:` section BEFORE deleting
+     the task.
+  2. Promotes concrete hand-offs to new top-level backlog tasks with
+     the inlined design content copied verbatim.
+  3. Archives strategic-but-unconcrete hand-offs to `memory.md`.
+  4. Only then deletes the completed task.
+  The summary output vocabulary (lines 80-87) gained `[PROMOTED]`
+  and `[ARCHIVED]` labels.
 
-A. **`defaults/phases/analyse-work.md`:**
+**Not implemented:**
 
-   - Add a prescribed hand-off convention. When the work session settled
-     a design for a task that isn't in scope to implement this cycle,
-     analyse-work MUST either (i) add a new standalone task to
-     `backlog.md` with status `not_started` and a description that
-     inlines the settled design (not a one-liner pointer), or
-     (ii) record the hand-off in a clearly-labelled `## Hand-offs`
-     section of `latest-session.md` AND add a `[HANDOFF]`-style note
-     to the completing task's Results block that names the hand-off
-     by title. Option (i) is preferred when design is concrete enough
-     to backlog directly; option (ii) is the fallback for partially-
-     settled designs.
+- Optional integration test (deliverable #3). The test would extend
+  `ContractMockAgent` to inject `[HANDOFF]` markers into Results
+  blocks and run a synthetic analyse-work → triage cycle. Deferred;
+  the convention is now live in the shipped prompts and the next
+  real session that produces a hand-off is the first end-to-end
+  exercise.
+- Deliverable #4 (a memory entry documenting the convention itself)
+  is left for reflect — the convention is now in prompts and the
+  reflect phase will capture it organically the next cycle that lands
+  a hand-off.
 
-   - Require hand-off notes to inline (at minimum): the problem being
-     solved, the chosen design decisions with one-sentence rationale
-     each, pointers to any reference examples (file paths, line
-     numbers), and the dependencies. Target verbosity: enough that
-     triage can decide to promote without rereading the whole diff.
-     Acceptable size: 10-40 lines per hand-off. Not a one-liner.
-
-   - Cross-reference: `defaults/phases/triage.md` step 3 mines these
-     before deletion.
-
-B. **`defaults/phases/triage.md`:**
-
-   - Before deleting a completed task (step 3), scan its Results block
-     for `[HANDOFF]` markers or a `Followups:` / `Hand-offs:` section.
-     For each, either promote to a new top-level backlog task (if
-     concrete) or move to memory.md as a design-intent entry (if
-     strategic and not yet concrete). Only AFTER this extraction is
-     the completed task safe to delete.
-
-   - Add `[HANDOFF]` and `[PROMOTED]` / `[ARCHIVED]` to the output
-     format vocabulary (triage.md:80-87) so the action shows up in
-     the triage summary.
-
-   - Keep `Do NOT read latest-session.md` — this task explicitly does
-     NOT propose lifting that restriction; cross-phase context should
-     flow through memory.md and the backlog, not through session
-     transcripts. The fix is to make those two channels carry enough
-     signal, not to widen triage's input set.
-
-**Non-goals:**
-
-- Making triage read `latest-session.md`. Rejected: the separation of
-  "durable learnings in memory.md" vs "session-local transcript in
-  latest-session.md" is load-bearing.
-- Retroactively recovering the lost coordinator-plan hand-off. That's
-  already been done out-of-band — the user quoted the transcript into
-  the current session and the task is now in backlog. This task is
-  prophylactic for future sessions.
-- Changing `reflect`'s behaviour. Reflect consumes latest-session.md
-  and writes memory.md; it already has the opportunity to capture
-  hand-off rationale if the session record includes it. This task's
-  analyse-work changes feed reflect as a side-effect — explicit
-  reflect prompt changes are out of scope unless investigation
-  reveals a separate gap.
-
-**Deliverables:**
-
-1. `defaults/phases/analyse-work.md` — new hand-off convention
-   section; latest-session.md format amended.
-2. `defaults/phases/triage.md` — pre-deletion hand-off extraction
-   step; output-format vocabulary extended.
-3. Optional: an integration test in `tests/integration.rs` that runs
-   a synthetic analyse-work → triage cycle with a hand-off planted in
-   a completing task's Results block and asserts the hand-off ends up
-   as a new `not_started` task post-triage (not deleted with the
-   completed parent). The `ContractMockAgent` pattern already used
-   by `phase_contract_round_trip_writes_expected_files` is the likely
-   starting point.
-4. Memory update: once the convention is live, add a memory.md entry
-   recording the convention so future work phases know to expect it.
-
-**Measurement:** the next settled-but-not-implemented hand-off should
-survive a full cycle without manual intervention.
-
-**Results:** _pending_
+**Measurement:** the next settled-but-not-implemented hand-off must
+survive a full analyse-work → triage → next-work cycle without manual
+intervention. Verify by instrumenting the next real hand-off.
 
 ---
 
 ### Narrow `warn_if_project_tree_dirty` to work-agent-touched files only
 
 **Category:** `enhancement`
-**Status:** `not_started`
+**Status:** `done`
 **Dependencies:** none
 
 **Description:**
@@ -310,25 +306,36 @@ survive a full cycle without manual intervention.
 multiple plans the check can still produce false positives from sibling
 plans' in-flight writes, even after the atomic phase-transition fix.
 
-Narrow the check to: compute `git diff --name-only <work_baseline>`
-(files changed since the work baseline) intersected with the current
-dirty list, so the warning only fires on files the active work agent
-could plausibly have touched. This is a defense-in-depth refinement;
-no correctness regression possible since the current check is strictly
-more noisy, never more accurate.
+**Results:**
 
-Note: work-baseline is seeded atomically in the triage commit
-(`git_save_work_baseline` in `GitCommitTriage`), so the baseline SHA
-is reliably available when the dirty check runs.
+Narrowing now intersects the dirty list with
+`git diff --name-only <work_baseline>`.
 
-**Results:** _pending_
+- `src/git.rs` — added `paths_changed_since_baseline(project_dir, baseline_sha)`
+  returning a `HashSet<String>` of paths that differ from the baseline.
+  Untracked files are explicitly excluded from the diff call (they are
+  diff-invisible by definition) — the caller treats them as an
+  always-include category.
+- `src/phase_loop.rs` — `warn_if_project_tree_dirty` now takes a
+  `plan_dir` arg, reads `work-baseline`, and filters the porcelain
+  output: untracked `??` lines are kept (new since baseline by
+  definition); other entries are kept only if the path appears in the
+  baseline-diff set. A new `parse_porcelain_path` helper extracts the
+  path from an `XY path` porcelain line with rename handling
+  (`R  old -> new` → returns the new path).
+- Soft-fail preserved: if the baseline is missing or the diff call
+  errors, the narrowing is skipped and the over-inclusive warning
+  fires — strictly less noisy, never less accurate.
+- Tests added: `parse_porcelain_path` covering modified / untracked /
+  rename / malformed cases; `paths_changed_since_baseline_returns_tracked_modifications`
+  covering the excludes-untracked / excludes-unchanged invariants.
 
 ---
 
 ### Clean up stale `ravel-lite-config/skills/` detritus from renamed defaults location
 
 **Category:** `maintenance`
-**Status:** `not_started`
+**Status:** `done`
 **Dependencies:** none
 
 **Description:**
@@ -340,22 +347,33 @@ files that have been removed from `EMBEDDED_FILES`, so the stale
 `skills/` directory persists in existing config dirs after an
 `init --force` refresh.
 
-Decision to make: either (a) document this as expected behaviour
-("init never deletes, only scaffolds") with a clear note in the
-README or init help text, or (b) add a cleanup mode to `init --force`
-that removes files no longer registered in `EMBEDDED_FILES`.
+**Results:**
 
-Surfaced as a followup during the coordinator-plan-creation discussion
-(`2026-04-21`).
+Went with option (b) — targeted prune via a `RETIRED_PATHS` list — over
+option (a) (document-only). Reasoning: option (a) would leave the
+existing drift in every user's config forever; option (b) gives the
+cleanup for free on the next `init --force`, while keeping blast radius
+narrow (no "prune everything not in `EMBEDDED_FILES`" sweep that could
+eat user-added files).
 
-**Deliverables:**
+- `src/init.rs` — added
+  `const RETIRED_PATHS: &[&str] = &["skills"]`. After the scaffold
+  loop, when `force` is true, each entry is deleted if present
+  (`remove_dir_all` for dirs, `remove_file` for files). Completion
+  banner now reports the pruned count alongside created / overwritten /
+  unchanged. Non-force init never prunes — prune is opt-in via
+  `--force` and deliberately not a separate flag (the user has already
+  declared intent to refresh by passing `--force`).
+- Tests — `init_force_prunes_retired_paths` (seeds stale `skills/`,
+  asserts it's gone after `init --force`, asserts the replacement
+  `agents/pi/subagents/` is still scaffolded) and
+  `init_without_force_does_not_prune_retired_paths` (asserts the
+  opt-in property).
 
-1. Decision: document-only or add cleanup mode.
-2. Either: a note in README/help text about init's non-destructive
-   semantics, or a `--prune` flag implementation in `src/init.rs`
-   that removes unregistered embedded files.
-
-**Results:** _pending_
+**Minor follow-on:** documenting the prune behaviour in the README's
+init section is deferred. The completion banner surfaces it at runtime,
+so it's discoverable through use; not worth a separate task unless a
+user hits confusion.
 
 ---
 
@@ -546,11 +564,10 @@ should settle which.
 
 - Memory entry `Phase prompts invoke 'ravel-lite state set-phase'`
   records the convention this task generalises.
-- The "Preserve hand-off rationale" task above (if landed first)
-  would change the shape of Results-block authorship, which feeds
-  directly into Q6. Sequence matters: this research task benefits
-  from landing after that one, so the Results-block convention is
-  stable.
+- The "Preserve hand-off rationale" task above (now done) means
+  Q6 can rely on the `[HANDOFF]` convention in Results blocks.
+  The research question is narrower as a result: the Results block
+  authorship path only needs to support the now-stable convention.
 
 **Results:** _pending_
 
@@ -573,6 +590,152 @@ When the installed `claude` binary is updated past 2.1.116, remove both
 `args.push` lines adding `--debug-file` and `/tmp/claude-debug.log`.
 Verify that the Work phase TUI renders correctly without the flag
 before closing.
+
+**Results:** _pending_
+
+---
+
+### Make `ravel-lite survey` incremental via per-plan input hashes
+
+**Category:** `enhancement`
+**Status:** `not_started`
+**Dependencies:** none — the survey design already splits structured YAML (`src/survey/schema.rs`) from human rendering (`src/survey/render.rs`), so the two-pass shape is in place.
+
+**Description:**
+
+Today `ravel-lite survey` re-reads every plan and re-asks the LLM on
+each invocation, even when nothing changed. On multi-plan config roots
+the cost scales with plan count, not with what actually moved. Make
+it incremental so subsequent runs only re-analyse changed plans and
+merge their results into the prior structured response.
+
+**Shape:**
+
+1. **Hash per plan.** `discover_plans` (`src/survey/discover.rs`)
+   computes a stable hash over the files that contribute to each
+   `PlanSnapshot` — proposed: phase + backlog + memory + related-plans
+   (explicitly NOT session-log.md, which is append-only and would
+   defeat change detection). Include the hash in `PlanRow`
+   (`src/survey/schema.rs`).
+
+2. **Persist prior structured response.** `SurveyResponse` is already
+   YAML-round-trippable; write it to a stable location on each run
+   (proposed: `<config_root>/survey-state.yaml`) so next-run can load
+   it, diff per-plan hashes, and classify plans as `unchanged` /
+   `changed` / `removed`.
+
+3. **Feed only the delta to the LLM.** `defaults/survey.md` gains two
+   new tokens: the prior structured response (context) and the
+   changed-plans input rendered by `render_survey_input`. Prompt
+   instruction: re-analyse only the listed plans, revisit cross-plan
+   blockers/streams if the changes affect them, and preserve all
+   unchanged rows verbatim.
+
+4. **Structured-first, human-render second.** The LLM always returns
+   YAML (as today). `render::render_survey_output` runs over the
+   merged structured response — not the raw LLM delta — so the
+   presentation layer stays separate from the data layer.
+
+**Open questions to settle during implementation:**
+
+- Which files contribute to a plan's hash? Proposal above (phase +
+  backlog + memory + related-plans); confirm or amend.
+- Where does the state file live — per config root or per project?
+  Multiple `--root` args suggest per-config-root.
+- Schema-version marker so a `SurveyResponse` struct change
+  invalidates old state rather than mis-parsing.
+- Merge validation: refuse to accept a delta that mutates a plan
+  outside the declared `changed` set.
+
+**Deliverables:**
+
+1. Per-plan hash in `discover.rs` and a new `input_hash` field on
+   `PlanRow`.
+2. State-file I/O in `schema.rs` (or a new `state.rs` sibling).
+3. Diff-and-prompt logic in `invoke.rs`.
+4. Extended `defaults/survey.md` prompt with new tokens and
+   instructions.
+5. Tests: unchanged-plan reuse, changed-plan re-analysis,
+   removed-plan pruning, schema-bump invalidation.
+6. `--force` flag on the CLI to bypass incremental mode when debugging.
+
+**Results:** _pending_
+
+---
+
+### Make git operations subtree-scoped so ravel-lite can run inside a monorepo
+
+**Category:** `enhancement`
+**Status:** `not_started`
+**Dependencies:** composes naturally with the narrowed `warn_if_project_tree_dirty` (now done) — the subtree-scoping uses the same pathspec plumbing.
+
+**Description:**
+
+`src/git.rs` assumes the project is its own top-level git repo. In a
+monorepo, the subtree ravel-lite orchestrates lives inside a larger
+`.git/`. `find_project_root` walks up to that outer `.git/` and returns
+the monorepo root, so every un-scoped git call (`git status --porcelain`,
+`git diff --stat <baseline>`, `git add .`) reports on or writes across
+sibling subtrees that aren't part of the plan.
+
+**Simplification the user settled in the `2026-04-21` discussion:** the
+project root is always `<plan_dir>/../..`. No config, no marker file —
+it's a pure path derivation. `find_project_root`'s current `.git`-walkup
+collapses two concepts that are only identical in the single-repo case:
+"where is `.git`?" and "where is the subtree ravel-lite controls?"
+Using the plan-dir derivation separates them cleanly.
+
+**Fix direction:**
+
+1. Replace (or narrow) `find_project_root` so it returns
+   `<plan_dir>/../..`. That path IS the subtree root; in the
+   single-repo case it also happens to be the git-repo root, so
+   existing behaviour is unchanged.
+
+2. Scope every git call in `src/git.rs` to the subtree root as a
+   pathspec:
+   - `git status --porcelain -- <project_root>`
+   - `git diff --stat <baseline> -- <project_root>`
+   - `git diff --name-only <baseline> -- <project_root>`
+     (used by the narrowed `warn_if_project_tree_dirty`)
+   - `git add -- <project_root>` in `git_commit_plan` (currently
+     `git add .` under `plan_dir` — that's already scoped to the
+     plan dir but doesn't help when the commit should also capture
+     sibling source edits inside the subtree but outside the plan).
+
+3. `work-baseline` stays a repo-wide `HEAD` SHA — the diff
+   *query* is the scoping surface, not the baseline itself.
+
+**Open design questions:**
+
+- Commit-message prefix convention — may or may not need
+  parameterisation if the monorepo has conventional-commit rules. The
+  LLM-authored `commit-message.md` is already a per-commit override,
+  so the most minimal approach is to do nothing here and let the
+  user's prompt customisation carry whatever prefix the monorepo
+  wants.
+- `ravel-lite create` scaffolds into `<path>` — the derivation
+  `<plan_dir>/../..` assumes the user passes a path two levels deep
+  under the subtree root. Verify that's what `create` produces today
+  and document the expectation if so.
+
+**Deliverables:**
+
+1. `src/git.rs` — `find_project_root` (or a replacement) derives
+   subtree root from the plan dir; every git call takes a pathspec.
+2. Integration test: synthesise an outer repo containing an inner
+   subtree with a ravel-lite plan; assert per-phase commits, baseline
+   diffs, and dirty-tree warnings are scoped to the subtree.
+3. README section on running ravel-lite inside a monorepo subtree,
+   noting the `<plan_dir>/../..` rule.
+
+**Out of scope:**
+
+- `git subtree` / `git submodule` mechanics — this task is about
+  pathspec scoping of git queries, not about the embedding strategy.
+- Initialising the outer monorepo — ravel-lite assumes a `.git`
+  exists somewhere up the tree; if neither monorepo nor subtree has
+  one, that's a separate error path.
 
 **Results:** _pending_
 
