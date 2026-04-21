@@ -20,3 +20,9 @@ These are the keying primitives for delta logic. `parse_survey_response` is the 
 
 ### `schema_version` deferred to 5b
 Adding it in 5a would couple 5a to a 5b-only concern. It is a one-line `SurveyResponse` addition deferred intentionally.
+
+### `run_single_plan` is the seam for 5c multi-plan dispatch
+`run_single_plan` in `src/phase_loop.rs` is a 9-line delegate retained intentionally. Task 5c branches on plan-count in `main::run_phase_loop`: single-plan path calls `run_single_plan` unchanged; multi-plan path adds a survey-routed dispatch loop around it.
+
+### Six pre-existing clippy doc-formatting errors in `src/survey/schema.rs`
+`cargo clippy` reports 6 doc-formatting warnings in `src/survey/schema.rs`. These predate the survey restructure and are out of scope for this plan.
