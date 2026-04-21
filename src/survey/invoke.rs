@@ -58,26 +58,11 @@ fn resolve_model(agent_config: &AgentConfig, flag_override: Option<String>) -> S
         .unwrap_or_else(|| DEFAULT_SURVEY_MODEL.to_string())
 }
 
-/// End-to-end survey runner. Loads each named plan directory,
-/// composes the prompt, invokes the `claude` CLI headlessly, parses
-/// the YAML response, injects Rust-computed `input_hash` values into
-/// each row, and writes canonical YAML to stdout.
-///
-/// With `prior = Some(path)` and `force = false` the runner uses the
-/// incremental path: it hashes each plan's state files, compares
-/// against the prior's per-row `input_hash`, and sends only the
-/// changed+added plans to the LLM. Unchanged rows are carried forward
-/// verbatim.
-///
-/// `force = true` short-circuits the hash comparison and re-analyses
-/// every plan as if no prior were supplied — but still validates the
-/// prior's `schema_version` matches the binary's `SCHEMA_VERSION`, so
-/// a schema-bumped prior fails loudly rather than silently losing
-/// fields on merge. With `prior = None`, `force` is a no-op.
-///
-/// The plan-root walk is gone: each positional argument on the CLI
-/// names exactly one plan directory (a directory containing
-/// `phase.md`). Routing responsibility stays in the caller.
+/// End-to-end survey runner for the `ravel-lite survey` CLI subcommand.
+/// Produces a canonical `SurveyResponse` (see `compute_survey_response`)
+/// and writes it to stdout as YAML. Callers that need the response
+/// in-memory — notably the multi-plan runner — should use
+/// `compute_survey_response` directly and persist the YAML themselves.
 pub async fn run_survey(
     config_root: &Path,
     plan_dirs: &[PathBuf],
@@ -86,6 +71,46 @@ pub async fn run_survey(
     prior_path: Option<&Path>,
     force: bool,
 ) -> Result<()> {
+    let response = compute_survey_response(
+        config_root,
+        plan_dirs,
+        model_override,
+        timeout_override_secs,
+        prior_path,
+        force,
+    )
+    .await?;
+    print!("{}", emit_survey_yaml(&response)?);
+    Ok(())
+}
+
+/// Core survey pipeline: loads each named plan directory, composes the
+/// prompt, invokes the `claude` CLI headlessly, parses the YAML response,
+/// injects Rust-computed `input_hash` values into each row, and returns
+/// the canonical `SurveyResponse`.
+///
+/// With `prior_path = Some(path)` and `force = false` the runner uses the
+/// incremental path: it hashes each plan's state files, compares against
+/// the prior's per-row `input_hash`, and sends only the changed+added
+/// plans to the LLM. Unchanged rows are carried forward verbatim.
+///
+/// `force = true` short-circuits the hash comparison and re-analyses
+/// every plan as if no prior were supplied — but still validates the
+/// prior's `schema_version` matches the binary's `SCHEMA_VERSION`, so
+/// a schema-bumped prior fails loudly rather than silently losing
+/// fields on merge. With `prior_path = None`, `force` is a no-op.
+///
+/// The plan-root walk is gone: each positional argument on the CLI
+/// names exactly one plan directory (a directory containing `phase.md`).
+/// Routing responsibility stays in the caller.
+pub async fn compute_survey_response(
+    config_root: &Path,
+    plan_dirs: &[PathBuf],
+    model_override: Option<String>,
+    timeout_override_secs: Option<u64>,
+    prior_path: Option<&Path>,
+    force: bool,
+) -> Result<SurveyResponse> {
     let shared = load_shared_config(config_root)?;
     if shared.agent != "claude-code" {
         anyhow::bail!(
@@ -143,7 +168,7 @@ async fn run_cold_survey(
     model: &str,
     timeout_override_secs: Option<u64>,
     all_plans: &[PlanSnapshot],
-) -> Result<()> {
+) -> Result<SurveyResponse> {
     let survey_prompt = load_survey_prompt(config_root)?;
     let plan_input = render_survey_input(all_plans);
     let full_prompt = format!("{survey_prompt}\n\n---\n{plan_input}");
@@ -165,8 +190,7 @@ async fn run_cold_survey(
     // emitted (or the default); pin it to the binary's current value
     // so persisted YAML is always labelled with the producer version.
     response.schema_version = SCHEMA_VERSION;
-    print!("{}", emit_survey_yaml(&response)?);
-    Ok(())
+    Ok(response)
 }
 
 async fn run_incremental_survey(
@@ -175,11 +199,11 @@ async fn run_incremental_survey(
     timeout_override_secs: Option<u64>,
     prior: &SurveyResponse,
     all_plans: Vec<PlanSnapshot>,
-) -> Result<()> {
+) -> Result<SurveyResponse> {
     let classification = PlanClassification::classify(prior, &all_plans);
 
     // Nothing changed relative to prior: skip the LLM call entirely
-    // and write the prior through as the new output. This is the
+    // and return the prior through as the new output. This is the
     // fast-path that makes per-cycle surveying affordable.
     if classification.is_noop() {
         eprintln!(
@@ -188,8 +212,7 @@ async fn run_incremental_survey(
         );
         let mut carried = prior.clone();
         carried.schema_version = SCHEMA_VERSION;
-        print!("{}", emit_survey_yaml(&carried)?);
-        return Ok(());
+        return Ok(carried);
     }
 
     eprintln!(
@@ -226,8 +249,7 @@ async fn run_incremental_survey(
 
     let mut merged = merge_delta(classification, delta_response)?;
     merged.schema_version = SCHEMA_VERSION;
-    print!("{}", emit_survey_yaml(&merged)?);
-    Ok(())
+    Ok(merged)
 }
 
 /// Load and parse a prior survey YAML, and verify its

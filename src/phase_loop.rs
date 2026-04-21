@@ -284,7 +284,10 @@ async fn handle_script_phase(
             git_save_work_baseline(plan_dir);
             let result = git_commit_plan(plan_dir, &name, "triage")?;
             log_commit(ui, "triage", &scope, &result);
-            Ok(ui.confirm("Proceed to next work phase?").await)
+            // Exit phase_loop after one full cycle. Whether another
+            // cycle starts — and, in multi-plan mode, which plan runs
+            // next — is the outer loop's decision, not this function's.
+            Ok(false)
         }
     }
 }
@@ -312,7 +315,9 @@ pub async fn phase_loop(
         match phase {
             Phase::Script(sp) => {
                 if !handle_script_phase(sp, plan_dir, project_dir, config.headroom, ui).await? {
-                    ui.log("\nExiting.");
+                    // Script-phase handler signalled end-of-cycle. Today
+                    // that's only `GitCommitTriage` finishing one full
+                    // phase cycle; callers decide what happens next.
                     return Ok(());
                 }
                 continue;
@@ -381,17 +386,25 @@ pub async fn phase_loop(
     }
 }
 
-/// Top-level entry point invoked by `main::run_phase_loop`. A thin
-/// delegate over `phase_loop` today; left as its own seam so the planned
-/// multi-plan runner (5c) can branch here on plan-count without
-/// re-plumbing main.
+/// Top-level entry point for single-plan `ravel-lite run`. Repeatedly
+/// invokes `phase_loop` (which now exits after one full cycle), asking
+/// the user between cycles whether to continue. The prompt used to live
+/// inside `handle_script_phase(GitCommitTriage)`; it moved out here so
+/// multi-plan mode can run one cycle and return to its own survey-based
+/// selection loop without a spurious confirm in between.
 pub async fn run_single_plan(
     agent: Arc<dyn Agent>,
     ctx: PlanContext,
     config: &SharedConfig,
     ui: &UI,
 ) -> Result<()> {
-    phase_loop(agent, &ctx, config, ui).await
+    loop {
+        phase_loop(agent.clone(), &ctx, config, ui).await?;
+        if !ui.confirm("Proceed to next work phase?").await {
+            ui.log("\nExiting.");
+            return Ok(());
+        }
+    }
 }
 
 #[cfg(test)]

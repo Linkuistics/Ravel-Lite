@@ -5,6 +5,7 @@ mod dream;
 mod format;
 mod git;
 mod init;
+mod multi_plan;
 mod phase_loop;
 mod prompt;
 mod state;
@@ -81,7 +82,16 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Run the phase loop on a plan directory
+    /// Run the phase loop on one or more plan directories. With a
+    /// single plan directory, behaviour is unchanged: the loop runs
+    /// continuously, prompting between cycles. With two or more plan
+    /// directories, multi-plan mode kicks in: every cycle starts with
+    /// a survey across all plans, the user picks one from a numbered
+    /// stdout prompt, and one phase cycle runs for the chosen plan.
+    /// `--survey-state` is required for multi-plan and rejected for
+    /// single-plan; it is read as `--prior` and rewritten at the end
+    /// of every survey, so the file is the persistent integration
+    /// point with the incremental survey path from item 5b.
     Run {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and the
         /// default location at <dirs::config_dir()>/ravel-lite/.
@@ -90,8 +100,19 @@ enum Commands {
         /// Skip Claude Code permission prompts for every phase (claude-code only).
         #[arg(long)]
         dangerous: bool,
-        /// Path to the plan directory
-        plan_dir: PathBuf,
+        /// Path to the survey state file used by multi-plan mode. The
+        /// file is both the incremental-survey `--prior` input and the
+        /// canonical YAML output written at the end of every survey.
+        /// Required when more than one plan directory is supplied;
+        /// rejected when exactly one is supplied.
+        #[arg(long)]
+        survey_state: Option<PathBuf>,
+        /// One or more plan directories. With a single directory the
+        /// behaviour is the original single-plan run loop. With two or
+        /// more, multi-plan mode dispatches one cycle per
+        /// survey-driven user selection.
+        #[arg(required = true, num_args = 1..)]
+        plan_dirs: Vec<PathBuf>,
     },
     /// Create a new plan directory via an interactive headful claude
     /// session. Loads the create-plan prompt template from
@@ -189,9 +210,37 @@ async fn main() -> Result<()> {
         Commands::Init { dir, force } => {
             init::run_init(&dir, force)
         }
-        Commands::Run { config, dangerous, plan_dir } => {
+        Commands::Run { config, dangerous, survey_state, plan_dirs } => {
             let config_root = resolve_config_dir(config)?;
-            run_phase_loop(&config_root, &plan_dir, dangerous).await
+            match plan_dirs.len() {
+                0 => unreachable!("clap requires at least one plan_dir"),
+                1 => {
+                    if survey_state.is_some() {
+                        anyhow::bail!(
+                            "--survey-state is only meaningful with multiple plan \
+                             directories; remove it or pass two or more plan_dirs."
+                        );
+                    }
+                    run_phase_loop(&config_root, &plan_dirs[0], dangerous).await
+                }
+                _ => {
+                    let state_path = survey_state.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "--survey-state <path> is required when more than one \
+                             plan directory is supplied. The file holds the survey \
+                             YAML between cycles and is read as `--prior` on each \
+                             subsequent survey."
+                        )
+                    })?;
+                    multi_plan::run_multi_plan(
+                        &config_root,
+                        &plan_dirs,
+                        &state_path,
+                        dangerous,
+                    )
+                    .await
+                }
+            }
         }
         Commands::Create { config, plan_dir } => {
             let config_root = resolve_config_dir(config)?;

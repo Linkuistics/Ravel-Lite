@@ -5,6 +5,7 @@ pub mod dream;
 pub mod format;
 pub mod git;
 pub mod init;
+pub mod multi_plan;
 pub mod phase_loop;
 pub mod prompt;
 pub mod state;

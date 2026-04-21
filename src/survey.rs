@@ -45,4 +45,4 @@ pub use schema::{
 };
 #[allow(unused_imports)]
 pub use render::render_survey_output;
-pub use invoke::{run_survey, run_survey_format};
+pub use invoke::{compute_survey_response, run_survey, run_survey_format};
