@@ -112,4 +112,13 @@ After the pre-reflect gate was removed (`2026-04-21`), `warn_if_project_tree_dir
 Post-5c: `phase_loop` is a single-cycle function. The inter-cycle user prompt ("continue / switch plan / exit") lives in `run_single_plan`, which wraps `phase_loop` in a loop. Multi-plan dispatch calls `phase_loop` directly via `dispatch_one_cycle` in `src/multi_plan.rs`.
 
 ## `src/multi_plan.rs` owns survey-driven multi-plan routing
-`src/multi_plan.rs` is the multi-plan coordinator. It reads the survey output, routes to the next plan via `dispatch_one_cycle`, and holds the dispatch loop that replaced the former LLM-authored coordinator-plan concept.
+`src/multi_plan.rs` implements `build_plan_dir_map`, `options_from_response`, `select_plan_interactive`, and `run_multi_plan`. `ravel-lite run` accepts 1..N plan dirs; `--survey-state` is required when N > 1. Routes to the next plan via `dispatch_one_cycle`; the dispatch loop replaced the former LLM-authored coordinator-plan concept.
+
+## `ravel-lite survey` emits structured YAML
+`src/survey/schema.rs` defines the output schema with `Serialize` derives and a `schema_version` marker. `input_hash` is seeded in Rust post-parse. `survey-format` subcommand renders YAML output to human-readable form.
+
+## Incremental survey splits `invoke.rs` into two functions
+`compute_survey_response` is the in-memory core; `run_survey` is the CLI wrapper. `src/survey/delta.rs` owns hash-comparison and delta-merge. `--prior` names the baseline state; `--force` skips the hash guard. `defaults/survey-incremental.md` is the prompt template for the delta path.
+
+## `push-plan`, `stack.yaml`, and `src/pivot.rs` removed
+`push-plan` CLI verb, `run_stack`, `stack.yaml`, and `src/pivot.rs` are deleted. `src/state.rs` reduced from ~230 to ~80 lines; `src/phase_loop.rs` de-pivoted. Multi-plan routing is exclusively in `src/multi_plan.rs`.
