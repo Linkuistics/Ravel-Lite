@@ -2,96 +2,26 @@
 
 ## Tasks
 
-### Integration test for `[HANDOFF]` convention in analyse-work → triage cycle
+### Add clippy `-D warnings` CI gate
 
-**Category:** `test`
-**Status:** `done`
-**Dependencies:** none — convention is live in both `defaults/phases/analyse-work.md` and `defaults/phases/triage.md`
+**Category:** `maintenance`
+**Status:** `not_started`
+**Dependencies:** none
 
 **Description:**
 
-Extend `ContractMockAgent` to inject `[HANDOFF]` markers into a Results
-block and run a synthetic analyse-work → triage cycle. Assert that triage
-correctly mines the marker and either promotes it to a new backlog task
-or archives it to `memory.md`.
+`cargo clippy --all-targets -- -D warnings` is now clean (exit 0) as of the
+`[HANDOFF]` integration test task. Two pre-existing lints (`doc_lazy_continuation`
+in `src/survey/schema.rs` and `useless_format` in `tests/integration.rs`) were
+fixed as part of that work. Currently no CI step asserts clippy cleanliness, so
+drift can re-accumulate silently.
 
-This was deferred from the "Preserve hand-off rationale" task. The
-convention is now live in shipped prompts; the next real hand-off session
-is the first end-to-end exercise, but an automated test guards the
-pipeline before that.
+Add a clippy gate to the CI pipeline (likely `.github/workflows/ci.yml` or
+equivalent) that runs `cargo clippy --all-targets -- -D warnings` and fails
+the build on any new lint. Verify the gate passes against current `main` before
+merging.
 
-**Deliverables:**
-
-1. A `ContractMockAgent::invoke_headless` injection for `AnalyseWork`
-   that emits a `[HANDOFF]` marker in a completing task's `Results:`
-   block inside `latest-session.md`.
-2. A test that runs a full analyse-work → git-commit-work cycle,
-   then a triage cycle, and asserts the hand-off survives as either
-   a new `not_started` backlog task or a new `memory.md` entry.
-
-**Results:**
-
-Implemented as two integration tests in `tests/integration.rs`:
-`handoff_marker_in_analyse_work_is_promoted_by_triage` and
-`handoff_marker_in_analyse_work_is_archived_by_triage`. Both run a full
-analyse-work → git-commit-work → reflect → git-commit-reflect → triage
-→ git-commit-triage cycle through `phase_loop`, then assert on the
-end-of-cycle state of `backlog.md`, `memory.md`, and `latest-session.md`.
-
-**What changed:**
-
-- `ContractMockAgent` gained an opt-in `handoff_injection:
-  Option<HandoffInjection>` field plus a `with_handoff_injection()`
-  builder. When `None` (every existing test), behaviour is unchanged.
-- When set, the `AnalyseWork` arm runs after the safety-net flip and
-  (a) appends a `[HANDOFF] <title>\n<body>` block to the target task's
-  `Results:` in `backlog.md`, (b) rewrites `latest-session.md` with a
-  `## Hand-offs` section mirroring the marker. Ordering matters:
-  safety-net must flip `Status: not_started → done` before the mining
-  logic looks for `done` tasks.
-- The `Triage` arm gained a parallel branch: when `handoff_injection`
-  is set, scan every block for `Status: done`, extract any `[HANDOFF]`
-  via `extract_handoff_from_block()`, either append a new
-  `Status: not_started` task (`Promote`) or add a `## <title>` entry
-  to `memory.md` (`Archive`), then drop the done task. The existing
-  placeholder-append behaviour is preserved for tests that don't set
-  an injection.
-- Two new helpers live at module scope beside `flip_stale_task_statuses`:
-  `inject_handoff_into_task_block` (analyse-work side) and
-  `extract_handoff_from_block` (triage side). Both split on the
-  existing `\n---` block separator convention used by the safety-net.
-- One pre-existing `ContractMockAgent` struct-literal call site
-  (`analyse_work_receives_snapshot_and_commits_uncommitted_source`)
-  gained an explicit `handoff_injection: None` field.
-
-**Verification:**
-
-- `cargo test --test integration handoff_marker` → both new tests pass.
-- Full integration suite: 25/25 pass; no regression in
-  `analyse_work_receives_snapshot_and_commits_uncommitted_source`,
-  `phase_contract_round_trip_writes_expected_files`, or the safety-net
-  test, all of which share the `ContractMockAgent`.
-- Full unit suite: 220/220 pass.
-- `cargo clippy --all-targets -- -D warnings` — clean (exit 0).
-  Fixed two pre-existing lints along the way at user request:
-  six `doc_lazy_continuation` violations in `src/survey/schema.rs`
-  (resolved by splitting the `input_hash` doc into paragraphs
-  separated by blank `///` lines) and one `useless_format` in
-  `tests/integration.rs:352` (replaced `format!(...)` with a literal
-  `.to_string()`). Both were on `main` before this task; confirmed
-  via `git stash` + rerun.
-
-**What this suggests next:**
-
-- The two tests are green against the current prompts, so the
-  convention is now protected by CI. The next real hand-off session
-  remains the first end-to-end exercise; if that session surfaces a
-  shape the tests don't cover (multi-block hand-offs, nested code
-  blocks in `handoff_body`), widen the helpers then.
-- Clippy is now clean under `-D warnings`; consider adding a CI gate
-  to keep it that way. The pre-existing `doc_lazy_continuation` and
-  `useless_format` drift both escaped because no test step asserts
-  clippy cleanliness — worth a future maintenance task.
+**Results:** _pending_
 
 ---
 
