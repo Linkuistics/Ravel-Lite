@@ -131,3 +131,15 @@ Pure path math; no disk walk, no `.git` requirement. Contract: `<plan>` must be 
 
 ## Integration tests use three-level `<project>/LLM_STATE/<plan>` layout
 `tests/integration.rs` and `src/multi_plan.rs` tests construct `<project>/LLM_STATE/<plan>` directory trees matching ravel-lite convention. New integration tests must follow this layout.
+
+## `format_result_text` renders `→` as continuation lines
+Lines matching `^\s*→\s*(.*)` immediately after an action marker are re-indented to the detail column and styled with the preceding action's intent. Blank lines, insight blocks, and non-continuation lines break the chain. `last_action_intent: Option<Option<Intent>>` encodes "no prior action" (outer None) vs "prior action with no intent" (Some(None)).
+
+## `PROMOTED` and `ARCHIVED` are valid action tags
+`ACTION_INTENTS` in `src/format.rs` includes `PROMOTED` and `ARCHIVED` as triage hand-off markers; they emit new backlog tasks or memory entries.
+
+## Work phase allows multiple tasks when requested
+`work.md` step 10 allows multiple tasks per session when the user explicitly requests them; the default remains single-task-per-phase.
+
+## Dream output uses label + `→` continuation format
+`defaults/phases/dream.md` specifies a two-line entry layout (label line + `→ detail` continuation) matching the continuation-line renderer in `format_result_text`.
