@@ -186,6 +186,40 @@ direction before any coordinator-work-boilerplate was authored.
 
 ---
 
+### Migrate Ravel orchestrator off removed `push-plan` verb
+
+**Category:** `maintenance`
+**Status:** `not_started`
+**Dependencies:** none — upstream stack/pivot removal has already landed
+on `main` (commit `06ce874`).
+
+**Description:**
+
+The out-of-repo Ravel orchestrator at
+`{{DEV_ROOT}}/Ravel/LLM_STATE/ravel-orchestrator/` contains logic that
+invokes `ravel-lite state push-plan`. That subcommand has been removed
+from this codebase; the orchestrator will break on next invocation.
+
+Assess what the orchestrator currently does with `push-plan` (inline
+`stack.yaml` case-analysis, lines 91-110 of its `prompt-work.md`) and
+determine the replacement approach given the current architecture:
+multi-plan routing now lives in the Rust runner (`src/multi_plan.rs`
+plus `run_single_plan`), not in a specialised coordinator prompt.
+The orchestrator may need to be retired, rewritten as a leaf plan,
+or updated to use the new multi-plan entry points.
+
+**Deliverables:**
+
+1. Inspect `{{DEV_ROOT}}/Ravel/LLM_STATE/ravel-orchestrator/` and
+   document exactly which parts depend on `push-plan` or `stack.yaml`.
+2. Decide: retire / rewrite as leaf / adapt to post-5c API.
+3. Apply the decided migration; verify orchestrator runs without
+   referencing any removed verb.
+
+**Results:** _pending_
+
+---
+
 ### Integration test for `[HANDOFF]` convention in analyse-work → triage cycle
 
 **Category:** `test`
@@ -559,40 +593,6 @@ rather than cycle-sized; (2) "incremental survey" is a precondition
 for a larger architectural shift (multi-plan routing) that this
 task alone did not capture. Current multi-plan coordinator lives
 in `src/multi_plan.rs`.
-
----
-
-### Migrate Ravel orchestrator off removed `push-plan` verb
-
-**Category:** `maintenance`
-**Status:** `not_started`
-**Dependencies:** none — upstream stack/pivot removal has already landed
-on `main` (commit `06ce874`).
-
-**Description:**
-
-The out-of-repo Ravel orchestrator at
-`{{DEV_ROOT}}/Ravel/LLM_STATE/ravel-orchestrator/` contains logic that
-invokes `ravel-lite state push-plan`. That subcommand has been removed
-from this codebase; the orchestrator will break on next invocation.
-
-Assess what the orchestrator currently does with `push-plan` (inline
-`stack.yaml` case-analysis, lines 91-110 of its `prompt-work.md`) and
-determine the replacement approach given the current architecture:
-multi-plan routing now lives in the Rust runner (`src/multi_plan.rs`
-plus `run_single_plan`), not in a specialised coordinator prompt.
-The orchestrator may need to be retired, rewritten as a leaf plan,
-or updated to use the new multi-plan entry points.
-
-**Deliverables:**
-
-1. Inspect `{{DEV_ROOT}}/Ravel/LLM_STATE/ravel-orchestrator/` and
-   document exactly which parts depend on `push-plan` or `stack.yaml`.
-2. Decide: retire / rewrite as leaf / adapt to post-5c API.
-3. Apply the decided migration; verify orchestrator runs without
-   referencing any removed verb.
-
-**Results:** _pending_
 
 ---
 
