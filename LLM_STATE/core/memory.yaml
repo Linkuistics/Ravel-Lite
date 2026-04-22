@@ -336,9 +336,9 @@ entries:
   body: |
     `run_rename` in `src/projects.rs` cascades into three places: catalog, `related-projects.yaml`, and `<config-dir>/discover-cache/<name>.yaml`. Before adding a fourth cascade point, extract into a `RenameHook` Trait registry rather than threading in ad-hoc.
 - id: find-conflicting-kind-misses-parent-of-direction-reversals
-  title: find_conflicting_kind misses parent-of direction reversals
+  title: find_conflicting_kind detects parent-of direction reversals
   body: |
-    `parent-of(A,B)` and `parent-of(B,A)` are not flagged as conflicts; both have `kind == ParentOf`, so the kind-mismatch filter passes them through. A dedicated directional check is needed.
+    Same-kind `ParentOf` edges with reversed participant order are treated as directional conflicts in `src/discover/apply.rs::find_conflicting_kind` via an OR-branch on participant order. Exact-duplicate `ParentOf` edges still route as `already_present`, not conflicts. See: `Sibling edges dedup by sorted participants; parent-of by order`.
 - id: discover-e2e-uses-a-fake-claude-bash-shim-per-stage
   title: Discover e2e uses a fake-claude bash shim per stage
   body: |
