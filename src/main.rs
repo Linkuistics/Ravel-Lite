@@ -19,7 +19,7 @@ mod ui;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use tokio::sync::mpsc;
 
@@ -210,6 +210,131 @@ enum StateCommands {
         #[command(subcommand)]
         command: ProjectsCommands,
     },
+    /// Backlog CRUD verbs. Every prompt-side mutation of backlog.yaml
+    /// goes through one of these.
+    Backlog {
+        #[command(subcommand)]
+        command: BacklogCommands,
+    },
+    /// Single-plan conversion of legacy .md files into typed .yaml
+    /// siblings. R1 scope: backlog.md only.
+    Migrate {
+        plan_dir: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+        /// Keep the .md originals on disk after migration (default).
+        #[arg(long, conflicts_with = "delete_originals")]
+        keep_originals: bool,
+        /// Delete the .md originals only after write and validation both succeed.
+        #[arg(long)]
+        delete_originals: bool,
+        /// Overwrite an existing backlog.yaml that differs from the re-migration output.
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum BacklogCommands {
+    /// Emit tasks matching the given filters.
+    List {
+        plan_dir: PathBuf,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        category: Option<String>,
+        /// Shorthand for `status=not_started AND every dep is done`.
+        #[arg(long)]
+        ready: bool,
+        /// Match tasks that carry a hand-off block.
+        #[arg(long)]
+        has_handoff: bool,
+        /// Match done tasks missing a Results block.
+        #[arg(long)]
+        missing_results: bool,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Emit a single task by id.
+    Show {
+        plan_dir: PathBuf,
+        id: String,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Append a new task.
+    Add {
+        plan_dir: PathBuf,
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        category: String,
+        #[arg(long, value_delimiter = ',')]
+        dependencies: Vec<String>,
+        /// Path to a file containing the markdown description body.
+        #[arg(long, conflicts_with = "description")]
+        description_file: Option<PathBuf>,
+        /// `-` reads stdin; any other value is taken as the description inline.
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// One-shot bulk initialisation for create-plan. Refuses a non-empty backlog.
+    Init {
+        plan_dir: PathBuf,
+        #[arg(long)]
+        body_file: PathBuf,
+    },
+    /// Update a task's status. `--reason <text>` is required when setting to `blocked`.
+    SetStatus {
+        plan_dir: PathBuf,
+        id: String,
+        status: String,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Set a task's Results block from a file or stdin.
+    SetResults {
+        plan_dir: PathBuf,
+        id: String,
+        #[arg(long, conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        #[arg(long)]
+        body: Option<String>,
+    },
+    /// Set a task's hand-off block from a file or stdin.
+    SetHandoff {
+        plan_dir: PathBuf,
+        id: String,
+        #[arg(long, conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        #[arg(long)]
+        body: Option<String>,
+    },
+    /// Clear a task's hand-off block (triage uses after promote/archive).
+    ClearHandoff {
+        plan_dir: PathBuf,
+        id: String,
+    },
+    /// Update a task's title. Id is preserved.
+    SetTitle {
+        plan_dir: PathBuf,
+        id: String,
+        new_title: String,
+    },
+    /// Move a task before or after another in the backlog list.
+    Reorder {
+        plan_dir: PathBuf,
+        id: String,
+        position: String,
+        target_id: String,
+    },
+    /// Delete a task. Refuses if the task is a dependency of another unless `--force`.
+    Delete {
+        plan_dir: PathBuf,
+        id: String,
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -317,29 +442,178 @@ async fn main() -> Result<()> {
             println!("ravel-lite {VERSION}");
             Ok(())
         }
-        Commands::State { command } => match command {
-            StateCommands::SetPhase { plan_dir, phase } => {
-                state::run_set_phase(&plan_dir, &phase)
+        Commands::State { command } => dispatch_state(command),
+    }
+}
+
+fn dispatch_state(command: StateCommands) -> Result<()> {
+    match command {
+        StateCommands::SetPhase { plan_dir, phase } => {
+            state::run_set_phase(&plan_dir, &phase)
+        }
+        StateCommands::Projects { command } => match command {
+            ProjectsCommands::List { config } => {
+                let config_root = resolve_config_dir(config)?;
+                projects::run_list(&config_root)
             }
-            StateCommands::Projects { command } => match command {
-                ProjectsCommands::List { config } => {
-                    let config_root = resolve_config_dir(config)?;
-                    projects::run_list(&config_root)
-                }
-                ProjectsCommands::Add { config, name, path } => {
-                    let config_root = resolve_config_dir(config)?;
-                    projects::run_add(&config_root, &name, &path)
-                }
-                ProjectsCommands::Remove { config, name } => {
-                    let config_root = resolve_config_dir(config)?;
-                    projects::run_remove(&config_root, &name)
-                }
-                ProjectsCommands::Rename { config, old, new } => {
-                    let config_root = resolve_config_dir(config)?;
-                    projects::run_rename(&config_root, &old, &new)
-                }
-            },
+            ProjectsCommands::Add { config, name, path } => {
+                let config_root = resolve_config_dir(config)?;
+                projects::run_add(&config_root, &name, &path)
+            }
+            ProjectsCommands::Remove { config, name } => {
+                let config_root = resolve_config_dir(config)?;
+                projects::run_remove(&config_root, &name)
+            }
+            ProjectsCommands::Rename { config, old, new } => {
+                let config_root = resolve_config_dir(config)?;
+                projects::run_rename(&config_root, &old, &new)
+            }
         },
+        StateCommands::Backlog { command } => dispatch_backlog(command),
+        StateCommands::Migrate {
+            plan_dir,
+            dry_run,
+            keep_originals: _,
+            delete_originals,
+            force,
+        } => {
+            let options = state::migrate::MigrateOptions {
+                dry_run,
+                original_policy: if delete_originals {
+                    state::migrate::OriginalPolicy::Delete
+                } else {
+                    state::migrate::OriginalPolicy::Keep
+                },
+                force,
+            };
+            state::migrate::run_migrate(&plan_dir, &options)
+        }
+    }
+}
+
+fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
+    use crate::state::backlog::{self, ListFilter, ReorderPosition, Status};
+
+    match command {
+        BacklogCommands::List {
+            plan_dir,
+            status,
+            category,
+            ready,
+            has_handoff,
+            missing_results,
+            format,
+        } => {
+            let status = status
+                .as_deref()
+                .map(|s| {
+                    Status::parse(s).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "invalid --status value {s:?}; expected one of not_started, in_progress, done, blocked"
+                        )
+                    })
+                })
+                .transpose()?;
+            let filter = ListFilter {
+                status,
+                category,
+                ready,
+                has_handoff,
+                missing_results,
+            };
+            let fmt = parse_output_format(&format)?;
+            backlog::run_list(&plan_dir, &filter, fmt)
+        }
+        BacklogCommands::Show { plan_dir, id, format } => {
+            let fmt = parse_output_format(&format)?;
+            backlog::run_show(&plan_dir, &id, fmt)
+        }
+        BacklogCommands::Add {
+            plan_dir,
+            title,
+            category,
+            dependencies,
+            description_file,
+            description,
+        } => {
+            let description_body = resolve_body(description_file, description)?;
+            let req = backlog::AddRequest {
+                title,
+                category,
+                dependencies,
+                description: description_body,
+            };
+            backlog::run_add(&plan_dir, &req)
+        }
+        BacklogCommands::Init { plan_dir, body_file } => {
+            let text = std::fs::read_to_string(&body_file)
+                .with_context(|| format!("failed to read {}", body_file.display()))?;
+            let seed: backlog::BacklogFile = serde_yaml::from_str(&text)
+                .with_context(|| format!("failed to parse {} as backlog.yaml", body_file.display()))?;
+            backlog::run_init(&plan_dir, &seed)
+        }
+        BacklogCommands::SetStatus {
+            plan_dir,
+            id,
+            status,
+            reason,
+        } => {
+            let status = Status::parse(&status)
+                .ok_or_else(|| anyhow::anyhow!("invalid status {status:?}"))?;
+            backlog::run_set_status(&plan_dir, &id, status, reason.as_deref())
+        }
+        BacklogCommands::SetResults { plan_dir, id, body_file, body } => {
+            let body = resolve_body(body_file, body)?;
+            backlog::run_set_results(&plan_dir, &id, &body)
+        }
+        BacklogCommands::SetHandoff { plan_dir, id, body_file, body } => {
+            let body = resolve_body(body_file, body)?;
+            backlog::run_set_handoff(&plan_dir, &id, &body)
+        }
+        BacklogCommands::ClearHandoff { plan_dir, id } => {
+            backlog::run_clear_handoff(&plan_dir, &id)
+        }
+        BacklogCommands::SetTitle { plan_dir, id, new_title } => {
+            backlog::run_set_title(&plan_dir, &id, &new_title)
+        }
+        BacklogCommands::Reorder { plan_dir, id, position, target_id } => {
+            let pos = ReorderPosition::parse(&position).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "invalid reorder position {position:?}; expected `before` or `after`"
+                )
+            })?;
+            backlog::run_reorder(&plan_dir, &id, pos, &target_id)
+        }
+        BacklogCommands::Delete { plan_dir, id, force } => {
+            backlog::run_delete(&plan_dir, &id, force)
+        }
+    }
+}
+
+fn parse_output_format(input: &str) -> Result<crate::state::backlog::OutputFormat> {
+    crate::state::backlog::OutputFormat::parse(input)
+        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
+}
+
+/// Resolve `--body-file <path>` vs `--body <value>` vs `--body -` (stdin).
+/// Exactly one of the two arguments must be set; if neither is set,
+/// returns an empty string (used for optional bodies like an add with no
+/// description).
+fn resolve_body(body_file: Option<PathBuf>, body: Option<String>) -> Result<String> {
+    match (body_file, body) {
+        (Some(path), None) => std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display())),
+        (None, Some(value)) if value == "-" => {
+            use std::io::Read;
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .context("failed to read body from stdin")?;
+            Ok(buf)
+        }
+        (None, Some(value)) => Ok(value),
+        (None, None) => Ok(String::new()),
+        (Some(_), Some(_)) => bail!("pass only one of --body-file or --body"),
     }
 }
 
