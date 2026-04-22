@@ -232,7 +232,8 @@ pub fn run_rename(config_root: &Path, old: &str, new: &str) -> Result<()> {
         .with_context(|| format!("no project named '{old}' in catalog"))?;
     entry.name = new.to_string();
     save_atomic(config_root, &catalog)?;
-    crate::related_projects::rename_project_in_edges(config_root, old, new)
+    crate::related_projects::rename_project_in_edges(config_root, old, new)?;
+    crate::discover::cache::rename(config_root, old, new)
 }
 
 /// Ensure `project_path` is catalogued. Pure-logic path returns the
@@ -673,6 +674,48 @@ mod tests {
 
         assert!(!cfg.join(crate::related_projects::RELATED_PROJECTS_FILE).exists(),
             "cascade must not create the file when it wasn't there to begin with");
+    }
+
+    #[test]
+    fn run_rename_cascades_into_discover_cache() {
+        use crate::discover::cache;
+        use crate::discover::schema::{SurfaceFile, SurfaceRecord, SURFACE_SCHEMA_VERSION};
+
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        let project = mk_project_dir(tmp.path(), "OldName");
+        run_add(&cfg, Some("OldName"), &project).unwrap();
+
+        let surface = SurfaceFile {
+            schema_version: SURFACE_SCHEMA_VERSION,
+            project: "OldName".to_string(),
+            tree_sha: "abc".to_string(),
+            analysed_at: "2026-04-22T00:00:00Z".to_string(),
+            surface: SurfaceRecord::default(),
+        };
+        cache::save_atomic(&cfg, &surface).unwrap();
+        assert!(cache::cache_path(&cfg, "OldName").exists());
+
+        run_rename(&cfg, "OldName", "NewName").unwrap();
+
+        assert!(!cache::cache_path(&cfg, "OldName").exists());
+        assert!(cache::cache_path(&cfg, "NewName").exists());
+    }
+
+    #[test]
+    fn run_rename_cascade_is_noop_when_no_cache_file() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        let project = mk_project_dir(tmp.path(), "Uncached");
+        run_add(&cfg, Some("Uncached"), &project).unwrap();
+
+        // No cache file: rename must still succeed.
+        run_rename(&cfg, "Uncached", "UncachedRenamed").unwrap();
+
+        assert!(!crate::discover::cache::cache_dir(&cfg).exists(),
+            "cascade must not create the cache dir when no cache file existed");
     }
 
     #[test]

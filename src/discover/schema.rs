@@ -5,7 +5,11 @@
 //! fields on `SurfaceFile` are injected by Rust post-parse so the subagent
 //! cannot claim a different project name or stale tree SHA.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+
+use crate::related_projects::EdgeKind;
 
 pub const SURFACE_SCHEMA_VERSION: u32 = 1;
 
@@ -36,6 +40,35 @@ pub struct SurfaceRecord {
     pub explicit_cross_project_mentions: Vec<String>,
     #[serde(default)]
     pub notes: String,
+}
+
+pub const PROPOSALS_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposalsFile {
+    pub schema_version: u32,
+    pub generated_at: String,
+    #[serde(default)]
+    pub source_tree_shas: BTreeMap<String, String>,
+    #[serde(default)]
+    pub proposals: Vec<ProposalRecord>,
+    #[serde(default)]
+    pub failures: Vec<Stage1Failure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposalRecord {
+    pub kind: EdgeKind,
+    pub participants: Vec<String>,
+    pub rationale: String,
+    #[serde(default)]
+    pub supporting_surface_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stage1Failure {
+    pub project: String,
+    pub error: String,
 }
 
 #[cfg(test)]
@@ -77,5 +110,32 @@ mod tests {
         assert!(parsed.external_tools_spawned.is_empty());
         assert!(parsed.explicit_cross_project_mentions.is_empty());
         assert!(parsed.notes.is_empty());
+    }
+
+    #[test]
+    fn proposals_file_round_trips_via_yaml() {
+        let original = ProposalsFile {
+            schema_version: PROPOSALS_SCHEMA_VERSION,
+            generated_at: "2026-04-22T12:05:00Z".to_string(),
+            source_tree_shas: [
+                ("Alpha".to_string(), "abc123".to_string()),
+                ("Beta".to_string(), "def456".to_string()),
+            ].into_iter().collect(),
+            proposals: vec![
+                ProposalRecord {
+                    kind: EdgeKind::Sibling,
+                    participants: vec!["Alpha".to_string(), "Beta".to_string()],
+                    rationale: "Both speak the same gRPC protocol.".to_string(),
+                    supporting_surface_fields: vec![
+                        "Alpha.surface.network_endpoints".to_string(),
+                        "Beta.surface.network_endpoints".to_string(),
+                    ],
+                },
+            ],
+            failures: vec![],
+        };
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let parsed: ProposalsFile = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed, original);
     }
 }

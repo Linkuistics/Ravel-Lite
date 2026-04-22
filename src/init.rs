@@ -37,6 +37,7 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
     EmbeddedFile { path: "survey.md", content: include_str!("../defaults/survey.md") },
     EmbeddedFile { path: "survey-incremental.md", content: include_str!("../defaults/survey-incremental.md") },
     EmbeddedFile { path: "create-plan.md", content: include_str!("../defaults/create-plan.md") },
+    EmbeddedFile { path: "discover-stage1.md", content: include_str!("../defaults/discover-stage1.md") },
 ];
 
 /// Paths that used to ship via `EMBEDDED_FILES` but have been removed

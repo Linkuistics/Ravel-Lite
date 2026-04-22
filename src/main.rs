@@ -1,6 +1,13 @@
 mod agent;
 mod config;
 mod create;
+// `discover` is declared so that `crate::discover::cache::rename` in
+// `projects.rs` resolves when compiling the binary crate. Most of the
+// module is only exercised through the library crate (and the `cli
+// discover` command will wire up more of it shortly); suppress
+// dead-code warnings until the CLI plumbing lands.
+#[allow(dead_code)]
+mod discover;
 mod dream;
 mod format;
 mod git;

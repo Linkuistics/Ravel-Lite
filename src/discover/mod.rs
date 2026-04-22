@@ -9,4 +9,7 @@
 //!
 //! Spec: `docs/r7-related-projects-discovery-design.md`.
 
+pub mod cache;
 pub mod schema;
+pub mod stage1;
+pub mod tree_sha;
