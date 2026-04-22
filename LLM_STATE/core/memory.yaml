@@ -47,6 +47,10 @@ entries:
   title: Phase contract test validates per-phase file writes
   body: |
     `phase_contract_round_trip_writes_expected_files` runs `phase_loop` from `analyse-work` via `ContractMockAgent`; 6 assertions cover latest-session.md, commit-message.md consumed, memory.md updated, backlog.md updated, phase.md ends at `work`, and git log subjects.
+- id: tool-read-token-scoped-to-work-md-only
+  title: '`{{TOOL_READ}}` token scoped to `work.md` only'
+  body: |
+    Headless phases (analyse-work, reflect, dream) must not include `{{TOOL_READ}}`; an unresolved token in a headless phase fails integration tests.
 - id: substitute-tokens-expands-content-macros-before-path-tokens
   title: '`substitute_tokens` expands content macros before path tokens'
   body: |
@@ -95,6 +99,10 @@ entries:
   title: '`spawn_blocking` does not cancel cleanly in `tokio::select!`'
   body: |
     Use `tokio::time::sleep` for tty event polling. A `spawn_blocking` thread is not dropped when the select arm is cancelled; it races the spawned child for the tty. `tokio::time::sleep` is properly cancellable and eliminates the race.
+- id: dream-word-count-sums-entry-titles-and-bodies
+  title: Dream word-count sums entry titles and bodies
+  body: |
+    `dream.rs` computes word count by summing title and body text across all parsed `MemoryEntry` values; markdown punctuation is excluded. `update_baseline_counts_entry_titles_and_bodies` regression test pins this contract. `update_dream_baseline` self-corrects after the first successful dream if a prior raw-markdown baseline drifts.
 - id: dream-baseline-seeded-from-three-call-sites
   title: '`dream-baseline` seeded from three call sites'
   body: |
@@ -103,10 +111,10 @@ entries:
   title: Claude Code TUI requires `--debug-file` workaround for ≤2.1.116
   body: |
     `invoke_interactive` in `src/agent/claude_code.rs` passes `--debug-file /tmp/claude-debug.log`; debug mode masks a TUI rendering failure via an unknown upstream mechanism. Root cause not found. Remove both `args.push` lines when claude is updated past 2.1.116.
-- id: phase-prompts-invoke-ravel-lite-state-set-phase
-  title: Phase prompts invoke `ravel-lite state set-phase`
+- id: phase-prompts-use-ravel-lite-state-cli-verbs
+  title: Phase prompts use `ravel-lite state` CLI verbs
   body: |
-    All 5 `defaults/phases/*.md` prompts use `ravel-lite state set-phase <plan-dir> <phase>` to transition phase. Direct writes to `phase.md` bypass `Phase::parse` validation; LLM phases must use the CLI. `run_set_phase` also refuses to create a plan dir that does not already exist.
+    All `defaults/phases/*.md` and `create-plan.md` use `ravel-lite state <verb>` for plan-state operations (R6 complete). Direct writes to plan-state files bypass `Phase::parse` validation; LLM phases must use the CLI. `run_set_phase` refuses to create a plan dir that does not already exist.
 - id: cli-integration-tests-use-cargo-bin-exe-ravel-lite
   title: CLI integration tests use `CARGO_BIN_EXE_ravel-lite`
   body: |
@@ -167,6 +175,10 @@ entries:
   title: '`ravel-lite survey` emits structured YAML'
   body: |
     `src/survey/schema.rs` defines the output schema with `Serialize` derives and a `schema_version` marker. `input_hash` is seeded in Rust post-parse. `task_counts` is injected by Rust via `inject_task_counts` / `collect_task_counts`; survey prompts forbid the LLM from emitting `task_counts`. `survey-format` subcommand renders YAML output to human-readable form.
+- id: survey-compose-wraps-content-in-yaml-fences
+  title: Survey compose wraps content in YAML fences
+  body: |
+    `src/survey/compose.rs` wraps backlog and memory content in ` ```yaml ` fences, labeling sections `backlog.yaml` and `memory.yaml`. `survey.md` and `survey-incremental.md` reference these labels. `PlanSnapshot::backlog` and `.memory` carry re-serialised YAML strings.
 - id: incremental-survey-splits-invoke-rs-into-two-functions
   title: Incremental survey splits `invoke.rs` into two functions
   body: |
@@ -203,6 +215,10 @@ entries:
   title: Dream output uses label + `→` continuation format
   body: |
     `defaults/phases/dream.md` specifies a two-line entry layout (label line + `→ detail` continuation) matching the continuation-line renderer in `format_result_text`.
+- id: read-related-plans-markdown-centralises-related-plans-md-access
+  title: '`read_related_plans_markdown` centralises `related-plans.md` access'
+  body: |
+    `src/related_projects.rs::read_related_plans_markdown(plan_dir)` is the single access point for plan-local `related-plans.md` prose. Both `src/main.rs` and `src/multi_plan.rs` route through it. Future swap to rendering from `related-projects.yaml` is a one-function change.
 - id: related-plans-stored-as-global-name-indexed-edge-list
   title: '`related-plans` stored as global name-indexed edge list'
   body: |
@@ -211,10 +227,10 @@ entries:
   title: Sibling edges dedup by sorted participants; parent-of by order
   body: |
     In `src/related_projects.rs`, sibling edge identity is order-insensitive (participants sorted before dedup); parent-of edge identity preserves participant order. Reversing this rule silently creates duplicate or missing edges.
-- id: yaml-plan-state-files-are-preview-data-until-r6
-  title: LLM writes land in .yaml; .md is stale legacy until R8
+- id: plan-state-md-readers-fully-migrated
+  title: Plan-state `.md` readers fully migrated
   body: |
-    Phase prompts (`work.md`, `analyse-work.md`, `reflect.md`, `dream.md`, `triage.md`, `create-plan.md`) mutate plan-state exclusively via `ravel-lite state <verb>` calls, which write only `.yaml`. The legacy `.md` siblings remain on disk because the Rust side (`src/dream.rs`, `src/survey/discover.rs`, `src/multi_plan.rs`, `src/main.rs`) still reads them for compaction, survey, and `{{RELATED_PLANS}}` synthesis. R8 completes the cutover by migrating those Rust readers to `.yaml` and running `migrate --force --delete-originals` on each plan. Until R8, `.md` is stale-but-harmless: LLMs never read it and survey/dream/related-plans still need it.
+    `src/dream.rs` and `src/survey/discover.rs` use the typed YAML API. `src/multi_plan.rs` and `src/main.rs` access only `related-plans.md` (not a `--delete-originals` target) and `phase.md`; neither breaks on original deletion. `--delete-originals` is safe to run against `LLM_STATE/core`.
 - id: state-migrate-takes-plan-dir-as-positional-argument
   title: '`state migrate` takes `PLAN_DIR` as positional argument'
   body: |
@@ -234,7 +250,7 @@ entries:
 - id: structured-plan-state-design-at-docs-structured-plan-state-design-md
   title: Structured plan-state design at `docs/structured-plan-state-design.md`
   body: |
-    Q1–Q8 design decisions for `ravel-lite state <file> <verb>` CLI. R1–R5 complete. See: `.yaml plan-state files are preview data until R6`.
+    Q1–Q8 design decisions for `ravel-lite state <file> <verb>` CLI. R1–R6 complete. See: `Four Rust readers bypass plan-state CLI`.
 - id: src-projects-rs-holds-projectscatalog
   title: '`src/projects.rs` holds `ProjectsCatalog`'
   body: |
@@ -243,10 +259,10 @@ entries:
   title: '`state projects add` rejects relative paths'
   body: |
     `add` enforces absolute paths; relative paths resolve differently from different CWDs, so the catalog is path-anchored. Rejection is a hard error at CLI entry.
-- id: state-projects-rename-is-catalog-only
-  title: '`state projects rename` is catalog-only'
+- id: state-projects-rename-cascades-into-related-projects-yaml
+  title: '`state projects rename` cascades into `related-projects.yaml`'
   body: |
-    `rename` updates the catalog name only. Cascade into `related-projects.yaml` is deferred to R6.
+    `rename` updates the catalog name and cascades via `rename_project_in_edges` in `src/related_projects.rs`.
 - id: register-projects-from-plan-dirs-runs-before-tui-startup
   title: '`register_projects_from_plan_dirs` runs before TUI startup'
   body: |
@@ -279,7 +295,7 @@ entries:
   title: '`dispatch_state` routes state subcommands'
   body: |
     `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, or `dispatch_related_projects`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
-- id: projects-run-rename-cascades-into-related-projects-yaml
-  title: projects::run_rename cascades into related-projects.yaml
+- id: r7-design-llm-driven-related-projects-discovery
+  title: 'R7 design: LLM-driven related-projects discovery'
   body: |
-    `projects::run_rename` cascades into the global edge store via `related_projects::rename_project_in_edges`. The cascade rewrites any edge participant matching `old` to `new`, preserving parent-of direction and skipping when `related-projects.yaml` is absent. Catalog uniqueness (enforced by `run_rename` before invoking the cascade) guarantees no self-loops or duplicate edges emerge from substitution, so the rewrite is mechanical — no re-canonicalisation or dedup pass is needed.
+    `state related-projects discover` fans out one subagent per project (two-stage pipeline: per-project interaction-surface extraction then global edge proposal) and writes `discover-proposals.yaml`; `discover-apply` merges after human review. Subtree-scoped git tree SHA is the cache key. Full design at `docs/r7-related-projects-discovery-design.md`; 12-task TDD plan at `docs/r7-related-projects-discovery-plan.md`.
