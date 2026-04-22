@@ -1,11 +1,10 @@
 id: session-17
-timestamp: 2026-04-22T11:26:35Z
+timestamp: 2026-04-22T11:56:19Z
 phase: work
 body: |
-  ### Session 17 (2026-04-22T11:26:35Z) — Delete legacy .md plan-state files via state migrate --delete-originals
+  ### Session 17 (2026-04-22T11:56:19Z) — R7.1 module scaffold + projects-add ergonomics
 
-  - Ran `ravel-lite state migrate --force --delete-originals LLM_STATE/core` after upgrading the installed binary to the R8 build. `--force` was required because the pre-existing `.yaml` files were stale relative to the authoritative `.md` files; re-deriving from `.md` and overwriting was the correct disposition.
-  - Manually deleted `related-plans.md` (content was `_No active sibling plans._` — zero edges to preserve). `read_related_plans_markdown` returns `""` gracefully on absence, so the `{{RELATED_PLANS}}` token in future prompts substitutes to an empty block.
-  - Verified via `ravel-lite state backlog list LLM_STATE/core` — expected tasks visible with round-trip content identical to pre-migration `.md`.
-  - No source files changed; all diff is plan-state bookkeeping (`.md` deletions, `.yaml` refreshes).
-  - What this suggests next: R7 implementation tasks (r7-1 through r7-11) are the next logical body of work; the `--delete-originals` maintenance task was the last dependency-clearing step before R7 execution.
+  - **What was attempted:** Create the `src/discover/` module with `SurfaceFile` and `SurfaceRecord` schema types as the foundation for the R7 discovery pipeline (R7.1). Alongside this, improved `projects add`: made `--name` optional (defaulting to basename) and replaced relative-path rejection with CWD-relative resolution via `std::path::absolute`.
+  - **What worked:** All deliverables shipped. `src/discover/mod.rs` and `src/discover/schema.rs` created; `pub mod discover` wired into `src/lib.rs` in alphabetical order. Two round-trip YAML tests pass. `cargo build` clean; 381 library tests pass; no regressions. For `projects add`: `run_add` now accepts `Option<&str>` for name; `basename_as_name` extracted as a shared helper used by both `auto_add` and `run_add`. Unit tests updated: old `run_add_rejects_relative_path` replaced by `run_add_canonicalises_relative_path_against_cwd`, plus two new name-defaulting tests. Integration test `state_projects_add_rejects_relative_path_via_binary` replaced by `state_projects_add_canonicalises_relative_path_via_binary` and `state_projects_add_defaults_name_to_basename_via_binary`.
+  - **What this suggests next:** R7.2 (`ProposalsFile`/`ProposalRecord` schemas) is the most natural continuation — it extends `schema.rs` with symmetric types. R7.3 (tree-SHA helper) and R7.4 (per-project cache read/write) are independent and could run in a parallel work phase. The projects-add ergonomic improvements are complete and require no follow-up.
+  - **Key learnings:** `std::path::absolute` (stabilised in Rust 1.79) does pure path math without touching the filesystem or resolving symlinks — the right primitive for recording the user's stated path anchored to their CWD, without requiring the directory to exist. `#[serde(default)]` on `SurfaceRecord` fields tolerates partial LLM emission; identity fields on `SurfaceFile` deliberately lack `default` so missing them hard-fails on load.
