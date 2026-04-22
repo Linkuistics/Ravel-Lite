@@ -22,17 +22,19 @@ or justify.
 
 ## Required reads
 
-1. `{{PLAN}}/backlog.md` — the task backlog, to understand what task
-   was being worked on and its recorded results.
+1. The task backlog — run `ravel-lite state backlog list {{PLAN}}`. You
+   need to understand what task was being worked on and its recorded
+   results.
 
 ## Do NOT read
 
-- `{{PLAN}}/memory.md` (not needed for summarisation)
-- `{{PLAN}}/related-plans.md` (not relevant here)
+- The memory (not needed for summarisation)
+- Declared peer-project relationships (not relevant here)
 
 ## Behavior
 
 1. Read `{{PLAN}}/work-baseline` to get the baseline commit SHA.
+   `work-baseline` is a plain text file, not a state-CLI-managed one.
 
 2. Run `git diff <baseline-sha> --stat` for an overview of what files
    changed.
@@ -41,18 +43,19 @@ or justify.
    large, focus on the most significant changes rather than trying to
    process everything.
 
-4. Read `{{PLAN}}/backlog.md` to understand what task was being worked
-   on and what results were recorded.
+4. Inspect the backlog (from step 1's required read) to understand what
+   task was being worked on and what results were recorded.
 
 5. **Safety-net: mark completed tasks as `done`.** Scan the backlog for
    every task whose `Results:` block is non-empty (anything other than
-   `_pending_` or an empty marker) while its `Status:` line is still
-   `not_started` or `in_progress`. For each such task, flip the
-   `Status:` line to `done` and save the file. This is a post-condition
-   check, not a judgement call — the diff is authoritative; if the work
-   phase wrote a results block but forgot to flip the status, this step
-   repairs that drift so triage sees the real state. If the work phase
-   already flipped everything correctly, this step is a no-op.
+   `_pending_` or an empty marker) while its status is still
+   `not_started` or `in_progress`. For each such task, run
+   `ravel-lite state backlog set-status {{PLAN}} <task-id> done`. This
+   is a post-condition check, not a judgement call — the diff is
+   authoritative; if the work phase wrote a results block but forgot to
+   flip the status, this step repairs that drift so triage sees the
+   real state. If the work phase already flipped everything correctly,
+   this step is a no-op.
 
 6. **Commit the source-file changes.** The work phase no longer commits
    its own source edits — that is this phase's responsibility. Using the
@@ -66,18 +69,24 @@ or justify.
      commit, which happens separately from `commit-message.md`).
    - If any path in the snapshot is intentionally **not** committed
      (e.g. a user scratch file, an accidental edit that should be
-     reverted), you MUST name each such path explicitly in
-     `latest-session.md` (next step) with a one-sentence justification.
-     Unjustified uncommitted paths will trigger a TUI warning.
+     reverted), you MUST name each such path explicitly in the session
+     record (next step) with a one-sentence justification. Unjustified
+     uncommitted paths will trigger a TUI warning.
 
    Do not commit files inside `{{PLAN}}/` here — those are reserved for
    the subsequent `git-commit-work` script phase.
 
-7. Determine the session number by counting existing `### Session`
-   headings in `{{PLAN}}/session-log.md` (if it exists), then add one.
+7. Determine the session number by counting records returned from
+   `ravel-lite state session-log list {{PLAN}}`, then add one. Record
+   IDs themselves are free-form; sequential numbering in the entry body
+   is the convention.
 
-8. Write `{{PLAN}}/latest-session.md`, **OVERWRITING any prior content**.
-   Use this format:
+8. Write the session record via
+   `ravel-lite state session-log set-latest {{PLAN}} --id <session-id> --timestamp <ts> --phase work --body-file <path>`
+   where `<session-id>` is a short slug like `session-N`,
+   `<ts>` is ISO 8601 UTC with seconds precision
+   (`date -u '+%Y-%m-%dT%H:%M:%SZ'`), and `<path>` is a temp file whose
+   content follows this layout:
 
    ```
    ### Session N (YYYY-MM-DDTHH:MM:SSZ) — brief title
@@ -95,9 +104,6 @@ or justify.
    - Dependencies
    ```
 
-   The timestamp is ISO 8601 UTC with seconds precision. Obtain with:
-   `date -u '+%Y-%m-%dT%H:%M:%SZ'`
-
    Base the entry on the actual diff and the backlog results, not
    assumptions. Be specific about what files were changed and why.
 
@@ -110,25 +116,29 @@ or justify.
 
    - **Preferred: promote directly to a new backlog task.** When the
      design is concrete enough to be picked up by a future work
-     cycle, add a new task to `{{PLAN}}/backlog.md` with
-     `Status: not_started` and a description that **inlines** the
-     settled design — not a one-liner pointer. Include: the problem
-     being solved, each decision with a one-sentence rationale,
-     reference examples (file paths, line numbers), and dependencies.
-     Target 10–40 lines; enough that triage can promote without
-     rereading the whole diff.
+     cycle, run
+     `ravel-lite state backlog add {{PLAN}} --title "<title>" --category <cat> --description-file <path>`
+     with `Status: not_started` (the default) and a description that
+     **inlines** the settled design — not a one-liner pointer.
+     Include: the problem being solved, each decision with a
+     one-sentence rationale, reference examples (file paths, line
+     numbers), and dependencies. Target 10–40 lines; enough that
+     triage can promote without rereading the whole diff.
 
-   - **Fallback: record in the `## Hand-offs` section above AND add a
-     `[HANDOFF] <title>` note to the completing task's `Results:`
-     block.** Use this when the design is only partially settled.
-     Triage mines `[HANDOFF]` markers from completed tasks before
-     deleting them (see `defaults/phases/triage.md` step 3).
+   - **Fallback: record in the `## Hand-offs` section above AND write
+     a `[HANDOFF] <title>` hand-off block on the completing task
+     via `ravel-lite state backlog set-handoff {{PLAN}} <task-id> --body-file <path>`.**
+     Use this when the design is only partially settled. Triage mines
+     hand-off blocks from completed tasks before deleting them (see
+     `defaults/phases/triage.md` step 3).
 
 9. Write `{{PLAN}}/commit-message.md` with a git commit message for the
-   **plan-state commit** (the one `git-commit-work` will make next). This
-   is distinct from the source-file commit you made in step 6 and should
-   narrate the plan bookkeeping: safety-net status flips, backlog
-   `Results:` additions, phase.md transitions. Keep it tight:
+   **plan-state commit** (the one `git-commit-work` will make next).
+   `commit-message.md` is a one-shot scratch file, not a
+   state-CLI-managed one, so write it directly. This is distinct from
+   the source-file commit you made in step 6 and should narrate the
+   plan bookkeeping: safety-net status flips, backlog `Results:`
+   additions, phase transitions. Keep it tight:
 
    ```
    <title — imperative mood, max 72 chars, summarises plan-state updates>
@@ -147,4 +157,4 @@ or justify.
 ## Output format
 
 After completing all writes, print nothing. The driver displays the
-commit message. Do not mention phase.md.
+commit message.

@@ -25,32 +25,42 @@ clear. Don't ask all questions at once; one at a time.
 
 ### 2. Draft the plan
 
-Produce the following files in a plan directory, per `README.md`:
+Produce the plan directory as follows. Every state file is initialised
+via its CLI verb rather than by writing raw Markdown, so the typed YAML
+is the source of truth from the first commit.
 
-**backlog.md** — the task backlog:
-- Initial tasks from the conversation, each with:
-  - Title and category tag
-  - Status (usually `not_started`)
-  - Dependencies (if known)
-  - Description (what and why)
-  - Results placeholder (`_pending_`)
+**phase.md** — plain text file containing just `work` (initial phase).
+Create with the {{TOOL_READ}}-equivalent write tool — `state set-phase`
+refuses when `phase.md` does not already exist. Example:
 
-**session-log.md** — empty, with a header only:
-
-```markdown
-# Session Log
+```bash
+echo work > {{PLAN}}/phase.md
 ```
 
-**memory.md** — empty, with a header only:
+**backlog.yaml** — seeded via the CLI's bulk initialiser. Write a
+markdown file containing the initial task blocks (one per task) with
+the legacy backlog format — title (`### …`), `Category:`, `Status:`,
+`Dependencies:`, description, `Results: _pending_` — then run:
 
-```markdown
-# Memory
+```bash
+ravel-lite state backlog init {{PLAN}} --body-file <path-to-seed.md>
 ```
 
-**phase.md** — plain text file containing just `work` (initial phase)
+`init` refuses a non-empty backlog, so this runs exactly once at
+scaffolding time. Delete the seed file after the call succeeds.
+
+**memory.yaml** — seeded via `ravel-lite state memory init {{PLAN}} --body-file <path>`
+if you have initial memory entries (rare for a new plan). Otherwise
+skip this step; memory starts empty.
+
+**session-log.yaml** — does not need explicit initialisation; the first
+`session-log append` creates it.
 
 **related-plans.md** (optional) — only if the user declared peer-project
-relationships:
+relationships. Write the markdown body and then let the first
+`ravel-lite run` (or an explicit
+`ravel-lite state migrate-related-projects {{PLAN}}`) fold it into the
+global edge store. Example body:
 
 ```markdown
 # Related Plans
@@ -150,9 +160,11 @@ on the agent's cwd resolution and tend to break for nested plans.
 
 ### 3. Review with the user
 
-Show the draft `backlog.md` and any optional files (`related-plans.md`,
+Show the draft backlog (run `ravel-lite state backlog list {{PLAN}}`
+after seeding) and any optional files (`related-plans.md`,
 `prompt-work.md`, `pre-work.sh`) and ask if they look right. Adjust as
-needed.
+needed via `ravel-lite state backlog set-title`, `set-status`,
+`delete`, or `add`.
 
 ### 4. Write the files
 

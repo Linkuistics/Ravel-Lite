@@ -234,6 +234,36 @@ pub fn run_add_edge(
     save_atomic(config_root, &file)
 }
 
+/// Cascade of `projects::run_rename`: any edge referencing `old` is
+/// rewritten to reference `new` instead. No-op when the file is absent
+/// (a catalog without any related-projects.yaml is a valid state — the
+/// rename on the catalog side must still succeed).
+///
+/// Callers must already hold the invariant that `new` is not already
+/// catalogued; `run_rename` checks this before invoking the cascade.
+/// Under that invariant no edge self-loop or duplicate can emerge from
+/// the substitution, so the rewrite is mechanical.
+pub fn rename_project_in_edges(config_root: &Path, old: &str, new: &str) -> Result<()> {
+    let path = config_root.join(RELATED_PROJECTS_FILE);
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut file = load_or_empty(config_root)?;
+    let mut changed = false;
+    for edge in &mut file.edges {
+        for participant in &mut edge.participants {
+            if participant == old {
+                *participant = new.to_string();
+                changed = true;
+            }
+        }
+    }
+    if !changed {
+        return Ok(());
+    }
+    save_atomic(config_root, &file)
+}
+
 pub fn run_remove_edge(
     config_root: &Path,
     kind: EdgeKind,

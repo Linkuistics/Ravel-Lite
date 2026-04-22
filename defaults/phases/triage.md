@@ -5,8 +5,8 @@ to propagate learnings to related plans when warranted.
 
 ## Required reads
 
-1. `{{PLAN}}/backlog.md` — the task backlog
-2. `{{PLAN}}/memory.md` — distilled learnings
+1. The task backlog — run `ravel-lite state backlog list {{PLAN}}`.
+2. Distilled memory — run `ravel-lite state memory list {{PLAN}}`.
 
 ## Related plans
 
@@ -14,8 +14,8 @@ to propagate learnings to related plans when warranted.
 
 ## Do NOT read
 
-- `{{PLAN}}/session-log.md`
-- `{{PLAN}}/latest-session.md`
+- The session log history
+- The latest-session record
 - **Any file under a sibling, parent, or child plan directory.** Cross-plan
   awareness comes from the Related plans block above (paths only) and from
   dispatched subagents — never from direct reads of foreign plan content.
@@ -24,49 +24,66 @@ to propagate learnings to related plans when warranted.
 
 ### Local triage
 
-1. Review each task in `backlog.md`:
+1. Review each task in the backlog:
    - Still relevant?
    - Priority changed?
    - Needs splitting?
 
-2. Add new tasks implied by learnings in `memory.md`.
+   Apply changes via the appropriate verb:
+   - `ravel-lite state backlog set-title {{PLAN}} <id> "<new title>"`
+   - `ravel-lite state backlog set-status {{PLAN}} <id> <status>` (or
+     `blocked --reason "<reason>"`)
+   - `ravel-lite state backlog reorder {{PLAN}} <id> --before <other-id>`
+     or `--after <other-id>` to reprioritise.
 
-3. **Mine completed tasks for hand-offs, then delete them.** For each
-   task with `Status: done`, scan its `Results:` block for `[HANDOFF]`
-   markers or a labelled `Hand-offs:` / `Followups:` section. For each
-   hand-off found:
+2. Add new tasks implied by learnings in memory via
+   `ravel-lite state backlog add {{PLAN}} --title "<title>" --category <cat> --description-file <path>`
+   (optionally `--dependencies <id1,id2>`).
+
+3. **Mine completed tasks for hand-offs, then delete them.** List
+   candidates with `ravel-lite state backlog list {{PLAN}} --has-handoff`
+   (tasks carrying an explicit hand-off block) and inspect each done
+   task's `Results:` body for `[HANDOFF]` markers or labelled
+   `Hand-offs:` / `Followups:` sections. For each hand-off found:
 
    - **Promote to a new top-level backlog task** when the settled
-     design is concrete — copy the inlined decision content verbatim
-     into the new task's description, set `Status: not_started`, and
-     emit `[PROMOTED] <hand-off title>` in the triage summary.
-   - **Archive to `memory.md`** when the design is strategic but not
-     yet concrete enough to be a standalone task — write a durable
-     memory entry capturing the design intent and rationale, and emit
+     design is concrete — run
+     `ravel-lite state backlog add {{PLAN}} --title "<title>" --category <cat> --description-file <path>`
+     with the inlined decision content verbatim in the description,
+     and emit `[PROMOTED] <hand-off title>` in the triage summary.
+   - **Archive to memory** when the design is strategic but not yet
+     concrete enough to be a standalone task — run
+     `ravel-lite state memory add {{PLAN}} --title "<heading>" --body-file <path>`
+     capturing the design intent and rationale, and emit
      `[ARCHIVED] <hand-off title>` in the summary.
 
-   Only after every hand-off is extracted is the completed task safe
-   to delete. Then remove any task with status `done`, and clear any
-   "Completed Tasks" section entirely — heading and all. Reflect has
-   already run and anything worth keeping is now in `memory.md`; the
-   session-log entry is the durable record of what happened. The
+   After every hand-off is extracted, clear the hand-off block with
+   `ravel-lite state backlog clear-handoff {{PLAN}} <task-id>`, then
+   delete the task with `ravel-lite state backlog delete {{PLAN}} <task-id>`
+   (use `--force` if the task is referenced as a dependency elsewhere).
+   Reflect has already run and anything worth keeping is now in memory;
+   the session-log entry is the durable record of what happened. The
    backlog is for work that still needs doing, and must never carry
    a standing "Completed" holding area between cycles.
 
 4. Remove tasks that are no longer relevant (dependencies met, approach
-   changed, out of scope).
+   changed, out of scope) via `ravel-lite state backlog delete`.
 
-5. Reprioritize based on what the cycle revealed.
+5. Reprioritize based on what the cycle revealed using
+   `ravel-lite state backlog reorder`.
 
 6. **Scan task descriptions for embedded blockers.** A spike, validation
    step, or shared dependency buried inside one task's description is
    invisible to future work phases until that task runs — even when it
    could run in parallel today. Promote any such blocker to its own
-   top-level task so it surfaces as executable work.
+   top-level task (via `state backlog add`) so it surfaces as
+   executable work.
 
 ## Cross-plan subagent dispatch
 
-For each related plan where learnings warrant propagation, **write** `{{PLAN}}/subagent-dispatch.yaml` containing one entry per target:
+For each related plan where learnings warrant propagation, **write**
+`{{PLAN}}/subagent-dispatch.yaml` directly (this is a one-shot scratch
+file, not a state-CLI-managed one) containing one entry per target:
 
 ```yaml
 dispatches:
@@ -95,7 +112,7 @@ After completing all writes, print a brief summary using this structure:
 [DONE] <task title> — completed, captured in memory
 [NEW] <task title> — <why>
 [PROMOTED] <hand-off title> — from <completed task title>
-[ARCHIVED] <hand-off title> — to memory.md, from <completed task title>
+[ARCHIVED] <hand-off title> — to memory, from <completed task title>
 [BLOCKER] <task title> — extracted from <parent task>
 [REPRIORITISED] <task title> — <old priority → new>
 [OBSOLETE] <task title> — <why no longer relevant>
@@ -105,4 +122,4 @@ After completing all writes, print a brief summary using this structure:
 
 Labels name the **state that caused the change**, not the action taken
 (e.g. OBSOLETE, not REMOVED; DONE, not DELETED). One line per entry.
-Do not include any other commentary. Do not mention phase.md.
+Do not include any other commentary.

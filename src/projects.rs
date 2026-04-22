@@ -217,7 +217,8 @@ pub fn run_rename(config_root: &Path, old: &str, new: &str) -> Result<()> {
         .find(|p| p.name == old)
         .with_context(|| format!("no project named '{old}' in catalog"))?;
     entry.name = new.to_string();
-    save_atomic(config_root, &catalog)
+    save_atomic(config_root, &catalog)?;
+    crate::related_projects::rename_project_in_edges(config_root, old, new)
 }
 
 /// Ensure `project_path` is catalogued. Pure-logic path returns the
@@ -523,6 +524,99 @@ mod tests {
         assert_eq!(loaded.projects.len(), 2);
         assert!(loaded.find_by_name("a").is_some());
         assert!(loaded.find_by_name("b").is_some());
+    }
+
+    #[test]
+    fn run_rename_cascades_into_sibling_edges() {
+        use crate::related_projects::{self, Edge, EdgeKind};
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        let a = mk_project_dir(tmp.path(), "OldName");
+        let b = mk_project_dir(tmp.path(), "Other");
+        run_add(&cfg, "OldName", &a).unwrap();
+        run_add(&cfg, "Other", &b).unwrap();
+
+        let mut file = related_projects::RelatedProjectsFile::default();
+        file.add_edge(Edge::sibling("OldName", "Other")).unwrap();
+        related_projects::save_atomic(&cfg, &file).unwrap();
+
+        run_rename(&cfg, "OldName", "NewName").unwrap();
+
+        let loaded = related_projects::load_or_empty(&cfg).unwrap();
+        assert_eq!(loaded.edges.len(), 1);
+        assert_eq!(loaded.edges[0].kind, EdgeKind::Sibling);
+        assert!(loaded.edges[0].participants.contains(&"NewName".to_string()));
+        assert!(loaded.edges[0].participants.contains(&"Other".to_string()));
+        assert!(!loaded.edges[0].participants.contains(&"OldName".to_string()));
+    }
+
+    #[test]
+    fn run_rename_cascade_preserves_parent_of_direction() {
+        use crate::related_projects::{self, Edge, EdgeKind};
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        let parent = mk_project_dir(tmp.path(), "Parent");
+        let child = mk_project_dir(tmp.path(), "Child");
+        run_add(&cfg, "Parent", &parent).unwrap();
+        run_add(&cfg, "Child", &child).unwrap();
+
+        let mut file = related_projects::RelatedProjectsFile::default();
+        // Parent is first in participants; direction is semantic.
+        file.add_edge(Edge::parent_of("Parent", "Child")).unwrap();
+        related_projects::save_atomic(&cfg, &file).unwrap();
+
+        run_rename(&cfg, "Parent", "NewParent").unwrap();
+
+        let loaded = related_projects::load_or_empty(&cfg).unwrap();
+        assert_eq!(loaded.edges.len(), 1);
+        assert_eq!(loaded.edges[0].kind, EdgeKind::ParentOf);
+        assert_eq!(
+            loaded.edges[0].participants,
+            vec!["NewParent".to_string(), "Child".to_string()],
+            "parent-of order must be preserved across rename"
+        );
+    }
+
+    #[test]
+    fn run_rename_cascade_leaves_uninvolved_edges_untouched() {
+        use crate::related_projects::{self, Edge};
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        let a = mk_project_dir(tmp.path(), "Alpha");
+        let b = mk_project_dir(tmp.path(), "Beta");
+        let c = mk_project_dir(tmp.path(), "Gamma");
+        run_add(&cfg, "Alpha", &a).unwrap();
+        run_add(&cfg, "Beta", &b).unwrap();
+        run_add(&cfg, "Gamma", &c).unwrap();
+
+        let mut file = related_projects::RelatedProjectsFile::default();
+        file.add_edge(Edge::sibling("Beta", "Gamma")).unwrap();
+        related_projects::save_atomic(&cfg, &file).unwrap();
+
+        run_rename(&cfg, "Alpha", "AlphaRenamed").unwrap();
+
+        let loaded = related_projects::load_or_empty(&cfg).unwrap();
+        assert_eq!(loaded.edges.len(), 1);
+        assert!(loaded.edges[0].participants.contains(&"Beta".to_string()));
+        assert!(loaded.edges[0].participants.contains(&"Gamma".to_string()));
+    }
+
+    #[test]
+    fn run_rename_cascade_is_noop_when_yaml_absent() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        let a = mk_project_dir(tmp.path(), "Solo");
+        run_add(&cfg, "Solo", &a).unwrap();
+
+        // No related-projects.yaml at all: rename must succeed.
+        run_rename(&cfg, "Solo", "SoloRenamed").unwrap();
+
+        assert!(!cfg.join(crate::related_projects::RELATED_PROJECTS_FILE).exists(),
+            "cascade must not create the file when it wasn't there to begin with");
     }
 
     #[test]

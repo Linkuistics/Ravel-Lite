@@ -4,19 +4,21 @@ implement the chosen task, and record results.
 
 ## Required reads
 
-Read the following files in order:
+Read the following in order:
 
 1. `{{PROJECT}}/README.md` — project conventions, architecture, build/test
-   commands, and gotchas.
-2. `{{PLAN}}/backlog.md` — the current task backlog
-3. `{{PLAN}}/memory.md` — distilled learnings from prior sessions
-4. `{{PLAN}}/related-plans.md` — declared peer-project relationships
-   (only if the file exists)
+   commands, and gotchas. Use the `{{TOOL_READ}}` tool.
+2. The current task backlog — run `ravel-lite state backlog list {{PLAN}}`.
+3. Distilled memory — run `ravel-lite state memory list {{PLAN}}`.
+4. Declared peer-project relationships — run
+   `ravel-lite state related-projects list --plan {{PLAN}}` (empty output
+   is fine — it means this plan has no declared peers).
 
-**Placeholder note:** any file you {{TOOL_READ}} inside this project (READMEs,
-backlog files, etc.) may contain literal `{{PROJECT}}`, `{{DEV_ROOT}}`,
-or `{{PLAN}}` placeholder tokens. Substitute them mentally with the
-absolute paths from this prompt before passing the path to the {{TOOL_READ}} tool.
+**Placeholder note:** any file you {{TOOL_READ}} inside this project
+(READMEs, etc.) may contain literal `{{PROJECT}}`, `{{DEV_ROOT}}`, or
+`{{PLAN}}` placeholder tokens. Substitute them mentally with the
+absolute paths from this prompt before passing the path to the
+{{TOOL_READ}} tool.
 
 ## Related plans
 
@@ -52,7 +54,8 @@ code you are about to change and pick from `fixed-memory/` yourself.
 
 1. Display a summary of the current backlog. For each task, show title,
    status (`not_started` / `in_progress` / `done` / `blocked`), and
-   priority.
+   priority. The backlog YAML from step 2 carries every field you need —
+   do not re-read `backlog.md`.
 
 2. Ask the user: "Any input on which task to work on next? If yes, name
    it; otherwise I'll pick the best next task." Wait for their response.
@@ -73,16 +76,19 @@ code you are about to change and pick from `fixed-memory/` yourself.
    artifacts, secrets, or other files that should not be version-
    controlled, add appropriate patterns to `.gitignore`.
 
-7. Update the task's status and record results in `{{PLAN}}/backlog.md`.
-   This has two required parts — do both, in this order:
+7. Update the task's status and record results in the backlog. This has
+   two required parts — do both, in this order:
 
-   - **First, flip the `Status:` line.** Change the task's `Status:` line
-     from `not_started` or `in_progress` to `done` (or to `blocked` with
-     a brief reason in the status value). This step is required, not
-     optional — a stale `Status:` line misleads triage into treating a
-     finished task as still open, causing duplicate work.
-   - **Then, write a `Results:` block** beneath the task describing what
-     was done, what worked, what didn't, and what this suggests next.
+   - **First, flip the status.** Run
+     `ravel-lite state backlog set-status {{PLAN}} <task-id> done` (or
+     `blocked --reason "<short reason>"`). This step is required, not
+     optional — a stale status misleads triage into treating a finished
+     task as still open, causing duplicate work.
+   - **Then, write a `Results:` block.** Run
+     `ravel-lite state backlog set-results {{PLAN}} <task-id> --body-file <path>`
+     where `<path>` is a temp file containing the markdown body, or pipe
+     the body via stdin with `--body -`. The body describes what was
+     done, what worked, what didn't, and what this suggests next.
 
 8. **Do NOT commit source-file changes yourself.** The analyse-work
    phase that runs immediately after this one is responsible for
