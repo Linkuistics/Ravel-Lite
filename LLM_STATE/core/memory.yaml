@@ -319,3 +319,15 @@ entries:
   title: 'Discover schema: serde(default) on data fields only'
   body: |
     In `SurfaceRecord`, data fields carry `#[serde(default)]` to tolerate partial LLM emission; identity fields on `SurfaceFile` deliberately omit `default` so a missing identity field hard-fails on deserialise.
+- id: macos-tempdir-path-needs-canonicalize-before-strip-prefix
+  title: macOS TempDir path needs canonicalize before strip_prefix
+  body: |
+    `git rev-parse --show-toplevel` resolves through macOS's `/var → /private/var` symlink; `TempDir` paths do not. Call `std::fs::canonicalize` on both sides before `strip_prefix` or the prefix check silently fails.
+- id: display-only-timestamps-avoid-chrono-dep
+  title: Display-only timestamps avoid chrono dep
+  body: |
+    `format_unix_utc` in `src/discover/stage1.rs` hand-rolls proleptic-Gregorian formatting for the `analysed_at` field. When a timestamp is display-only (never parsed back), a small tested helper avoids the `chrono` dependency entirely.
+- id: multi-stage-llm-pipeline-uses-run-config-outcome-submodule-shape
+  title: Multi-stage LLM pipeline uses run/Config/Outcome submodule shape
+  body: |
+    Each stage in `src/discover/` exposes `run_<stage>`, `<Stage>Config`, and `<Stage>Outcome`. This is the reusable template for adding new stages to multi-stage LLM pipelines in this codebase.
