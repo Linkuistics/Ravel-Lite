@@ -26,9 +26,10 @@ Below (after the horizontal rule) you will find, in order:
    disappear from the merged survey (the tool handles that). Any
    blocker, stream, or recommendation that referenced a removed plan
    must be dropped or rewritten in your annotation sections.
-3. **Changed or added plans** — full `phase.md`, `backlog.md`, and
-   `memory.md` contents for every plan you must analyse. For each
-   listed plan, emit exactly one row in your `plans:` array.
+3. **Changed or added plans** — full `phase.md`, `backlog.yaml`, and
+   `memory.yaml` contents for every plan you must analyse. YAML
+   content is rendered inside a ```yaml code fence. For each listed
+   plan, emit exactly one row in your `plans:` array.
 
 ## Your output
 
@@ -85,10 +86,10 @@ recommended_invocation_order:
   the delta inputs; combine both to produce an up-to-date annotation
   set. Drop any reference to a plan listed under "Plans removed
   since prior".
-- A plan with `backlog.md` missing: counts are all 0,
-  `notes: backlog.md missing`.
+- A plan with `backlog.yaml` missing: counts are all 0,
+  `notes: backlog.yaml missing`.
 - `notes` is terse (one short phrase). Use it to flag things like
-  "2 unprocessed dispatches", "backlog.md missing", or "stale
+  "2 unprocessed dispatches", "backlog.yaml missing", or "stale
   pre-pivot framing". Leave it as an empty string if there's nothing
   specific to note.
 - `recommended_invocation_order`: up to five entries, highest

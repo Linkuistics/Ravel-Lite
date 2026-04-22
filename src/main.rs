@@ -1031,8 +1031,7 @@ async fn run_phase_loop(config_root: &Path, plan_dir: &Path, dangerous: bool) ->
             .parent()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default(),
-        related_plans: std::fs::read_to_string(plan_dir.join("related-plans.md"))
-            .unwrap_or_default(),
+        related_plans: related_projects::read_related_plans_markdown(plan_dir),
         config_root: config_root.to_string_lossy().to_string(),
     };
 

@@ -81,12 +81,18 @@ fn render_plan_blocks<'a>(plans: impl Iterator<Item = &'a PlanSnapshot>) -> Stri
             plan.project, plan.plan, plan.phase
         ));
         match &plan.backlog {
-            Some(b) => out.push_str(&format!("### backlog.md\n{b}\n\n")),
-            None => out.push_str("### backlog.md\n(missing)\n\n"),
+            Some(b) => out.push_str(&format!(
+                "### backlog.yaml\n```yaml\n{}\n```\n\n",
+                b.trim_end()
+            )),
+            None => out.push_str("### backlog.yaml\n(missing)\n\n"),
         }
         match &plan.memory {
-            Some(m) => out.push_str(&format!("### memory.md\n{m}\n\n")),
-            None => out.push_str("### memory.md\n(missing)\n\n"),
+            Some(m) => out.push_str(&format!(
+                "### memory.yaml\n```yaml\n{}\n```\n\n",
+                m.trim_end()
+            )),
+            None => out.push_str("### memory.yaml\n(missing)\n\n"),
         }
         out.push_str("---\n");
     }
@@ -134,20 +140,32 @@ mod tests {
 
     #[test]
     fn render_survey_input_includes_project_and_plan_names() {
-        let plans = vec![snap("Ravel", "sub-A", "work", Some("# backlog"), Some("# memory"))];
+        let plans = vec![snap(
+            "Ravel",
+            "sub-A",
+            "work",
+            Some("tasks: []\n"),
+            Some("entries: []\n"),
+        )];
         let out = render_survey_input(&plans);
         assert!(out.contains("## Plan: Ravel/sub-A"));
         assert!(out.contains("### phase\nwork"));
-        assert!(out.contains("### backlog.md\n# backlog"));
-        assert!(out.contains("### memory.md\n# memory"));
+        assert!(
+            out.contains("### backlog.yaml\n```yaml\ntasks: []\n```"),
+            "backlog must render inside a yaml code fence: {out}"
+        );
+        assert!(
+            out.contains("### memory.yaml\n```yaml\nentries: []\n```"),
+            "memory must render inside a yaml code fence: {out}"
+        );
     }
 
     #[test]
     fn render_survey_input_marks_missing_files_explicitly() {
         let plans = vec![snap("P", "x", "work", None, None)];
         let out = render_survey_input(&plans);
-        assert!(out.contains("### backlog.md\n(missing)"));
-        assert!(out.contains("### memory.md\n(missing)"));
+        assert!(out.contains("### backlog.yaml\n(missing)"));
+        assert!(out.contains("### memory.yaml\n(missing)"));
     }
 
     #[test]

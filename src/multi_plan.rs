@@ -24,6 +24,7 @@ use crate::agent::Agent;
 use crate::config::{load_agent_config, load_shared_config};
 use crate::git::project_root_for_plan;
 use crate::phase_loop;
+use crate::related_projects::read_related_plans_markdown;
 use crate::survey::{
     compute_survey_response, emit_survey_yaml, load_plan, plan_key, SurveyResponse,
 };
@@ -248,7 +249,7 @@ async fn dispatch_one_cycle(
             .parent()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default(),
-        related_plans: fs::read_to_string(plan_dir.join("related-plans.md")).unwrap_or_default(),
+        related_plans: read_related_plans_markdown(plan_dir),
         config_root: config_root.to_string_lossy().to_string(),
     };
 

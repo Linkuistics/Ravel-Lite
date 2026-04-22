@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
@@ -8,8 +9,54 @@ use tempfile::TempDir;
 
 use ravel_lite::agent::Agent;
 use ravel_lite::phase_loop::phase_loop;
+use ravel_lite::state::backlog::schema::{BacklogFile, Status, Task};
+use ravel_lite::state::backlog::write_backlog;
+use ravel_lite::state::memory::schema::{MemoryEntry, MemoryFile};
+use ravel_lite::state::memory::write_memory;
 use ravel_lite::types::{LlmPhase, PlanContext, SharedConfig};
 use ravel_lite::ui::{UI, UIMessage, UISender};
+
+/// Seed `memory.yaml` so that `dream`'s word counter sees exactly
+/// `target_words` words of content (one entry, empty title, body of
+/// that many tokens). Lets tests focus on threshold behaviour without
+/// wiring up the whole memory schema by hand.
+fn write_memory_yaml_with_word_count(plan: &Path, target_words: usize) {
+    let body = if target_words == 0 {
+        String::new()
+    } else {
+        vec!["word"; target_words].join(" ")
+    };
+    let memory = MemoryFile {
+        entries: vec![MemoryEntry {
+            id: "test-entry".into(),
+            title: String::new(),
+            body,
+        }],
+        extra: Default::default(),
+    };
+    write_memory(plan, &memory).unwrap();
+}
+
+/// Seed `backlog.yaml` with a single task whose title embeds `marker`.
+/// The marker surfaces in the serialised YAML so tests can assert on
+/// rendered survey output.
+fn write_backlog_yaml_with_marker(plan: &Path, marker: &str) {
+    let backlog = BacklogFile {
+        tasks: vec![Task {
+            id: "marker-task".into(),
+            title: marker.into(),
+            category: "maintenance".into(),
+            status: Status::NotStarted,
+            blocked_reason: None,
+            dependencies: vec![],
+            description: "Marker body.\n".into(),
+            results: None,
+            handoff: None,
+        }],
+        extra: Default::default(),
+    };
+    write_backlog(plan, &backlog).unwrap();
+}
 
 #[test]
 fn dream_guard_integration() {
@@ -18,13 +65,13 @@ fn dream_guard_integration() {
 
     assert!(!ravel_lite::dream::should_dream(plan, 1500));
 
-    fs::write(plan.join("memory.md"), "word ".repeat(100)).unwrap();
+    write_memory_yaml_with_word_count(plan, 100);
     ravel_lite::dream::update_dream_baseline(plan);
 
-    fs::write(plan.join("memory.md"), "word ".repeat(200)).unwrap();
+    write_memory_yaml_with_word_count(plan, 200);
     assert!(!ravel_lite::dream::should_dream(plan, 1500));
 
-    fs::write(plan.join("memory.md"), "word ".repeat(2000)).unwrap();
+    write_memory_yaml_with_word_count(plan, 2000);
     assert!(ravel_lite::dream::should_dream(plan, 1500));
 
     ravel_lite::dream::update_dream_baseline(plan);
@@ -54,7 +101,7 @@ async fn git_commit_reflect_seeds_dream_baseline_when_missing() {
     // 300-word memory: well below headroom (1500), so with baseline
     // seeded to 0 the guard still returns false (300 > 0 + 1500 is
     // false) and the loop proceeds to triage rather than dream.
-    fs::write(plan_dir.join("memory.md"), "word ".repeat(300)).unwrap();
+    write_memory_yaml_with_word_count(&plan_dir, 300);
     // Critical precondition: no dream-baseline on disk.
     assert!(!plan_dir.join("dream-baseline").exists());
 
@@ -258,7 +305,7 @@ fn survey_loads_plans_from_multiple_projects_individually_named() {
     ] {
         fs::create_dir_all(plan_dir).unwrap();
         fs::write(plan_dir.join("phase.md"), phase).unwrap();
-        fs::write(plan_dir.join("backlog.md"), format!("# backlog {plan_name}")).unwrap();
+        write_backlog_yaml_with_marker(plan_dir, &format!("backlog-marker-{plan_name}"));
     }
 
     let alpha = ravel_lite::survey::load_plan(&plan_alpha).unwrap();
@@ -278,8 +325,11 @@ fn survey_loads_plans_from_multiple_projects_individually_named() {
     assert!(rendered.contains("## Plan: ProjectA/plan-alpha"));
     assert!(rendered.contains("## Plan: ProjectA/plan-beta"));
     assert!(rendered.contains("## Plan: ProjectB/plan-gamma"));
-    assert!(rendered.contains("# backlog plan-alpha"));
-    assert!(rendered.contains("### memory.md\n(missing)"));
+    assert!(
+        rendered.contains("backlog-marker-plan-alpha"),
+        "alpha's backlog marker must surface in the rendered survey: {rendered}"
+    );
+    assert!(rendered.contains("### memory.yaml\n(missing)"));
 }
 
 #[test]
@@ -296,9 +346,9 @@ fn survey_yaml_emit_injects_input_hashes_and_round_trips() {
     fs::create_dir_all(&plan_a).unwrap();
     fs::create_dir_all(&plan_b).unwrap();
     fs::write(plan_a.join("phase.md"), "work").unwrap();
-    fs::write(plan_a.join("backlog.md"), "# a").unwrap();
+    write_backlog_yaml_with_marker(&plan_a, "plan-a-backlog");
     fs::write(plan_b.join("phase.md"), "triage").unwrap();
-    fs::write(plan_b.join("backlog.md"), "# b").unwrap();
+    write_backlog_yaml_with_marker(&plan_b, "plan-b-backlog");
 
     let snapshot_a = ravel_lite::survey::load_plan(&plan_a).unwrap();
     let snapshot_b = ravel_lite::survey::load_plan(&plan_b).unwrap();
@@ -340,9 +390,9 @@ fn survey_incremental_merge_reuses_unchanged_rows_and_includes_llm_delta() {
     fs::create_dir_all(&plan_stable).unwrap();
     fs::create_dir_all(&plan_mutated).unwrap();
     fs::write(plan_stable.join("phase.md"), "work").unwrap();
-    fs::write(plan_stable.join("backlog.md"), "# original stable backlog").unwrap();
+    write_backlog_yaml_with_marker(&plan_stable, "original-stable-backlog");
     fs::write(plan_mutated.join("phase.md"), "work").unwrap();
-    fs::write(plan_mutated.join("backlog.md"), "# original mutated backlog").unwrap();
+    write_backlog_yaml_with_marker(&plan_mutated, "original-mutated-backlog");
 
     let snap_stable_before = ravel_lite::survey::load_plan(&plan_stable).unwrap();
     let snap_mutated_before = ravel_lite::survey::load_plan(&plan_mutated).unwrap();
@@ -363,7 +413,7 @@ fn survey_incremental_merge_reuses_unchanged_rows_and_includes_llm_delta() {
     ravel_lite::survey::inject_input_hashes(&mut prior, &prior_hashes).unwrap();
 
     // Mutate the second plan's backlog on disk, re-snapshot.
-    fs::write(plan_mutated.join("backlog.md"), "# NEW mutated backlog").unwrap();
+    write_backlog_yaml_with_marker(&plan_mutated, "NEW-mutated-backlog");
     let snap_stable_after = ravel_lite::survey::load_plan(&plan_stable).unwrap();
     let snap_mutated_after = ravel_lite::survey::load_plan(&plan_mutated).unwrap();
     assert_eq!(
@@ -426,7 +476,7 @@ fn survey_incremental_is_noop_when_no_files_changed() {
     let plan_dir = project.join("LLM_STATE").join("unchanged");
     fs::create_dir_all(&plan_dir).unwrap();
     fs::write(plan_dir.join("phase.md"), "work").unwrap();
-    fs::write(plan_dir.join("backlog.md"), "# original").unwrap();
+    write_backlog_yaml_with_marker(&plan_dir, "original");
 
     let snap = ravel_lite::survey::load_plan(&plan_dir).unwrap();
     let llm_yaml = "plans:\n  - project: Proj\n    plan: unchanged\n    phase: work\n    \
@@ -460,7 +510,7 @@ fn survey_incremental_rejects_llm_delta_outside_changed_set() {
     let plan_a = project.join("LLM_STATE").join("a");
     fs::create_dir_all(&plan_a).unwrap();
     fs::write(plan_a.join("phase.md"), "work").unwrap();
-    fs::write(plan_a.join("backlog.md"), "# original").unwrap();
+    write_backlog_yaml_with_marker(&plan_a, "original");
 
     let snap_before = ravel_lite::survey::load_plan(&plan_a).unwrap();
     let prior_yaml = "plans:\n  - project: Proj\n    plan: a\n    phase: work\n    \
@@ -477,7 +527,7 @@ fn survey_incremental_rejects_llm_delta_outside_changed_set() {
     )
     .unwrap();
 
-    fs::write(plan_a.join("backlog.md"), "# changed").unwrap();
+    write_backlog_yaml_with_marker(&plan_a, "changed");
     let snap_after = ravel_lite::survey::load_plan(&plan_a).unwrap();
     let classification =
         ravel_lite::survey::PlanClassification::classify(&prior, std::slice::from_ref(&snap_after));

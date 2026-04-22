@@ -12,27 +12,33 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
 use crate::git::project_root_for_plan;
-use crate::state::backlog::{parse_backlog_markdown, TaskCounts};
+use crate::state::backlog::{read_backlog, TaskCounts};
+use crate::state::memory::read_memory;
 
 /// A single plan's state, bundled for inclusion in the survey prompt.
 /// `input_hash` is a SHA-256 over the four state files
-/// (`phase.md` + `backlog.md` + `memory.md` + `related-plans.md`),
+/// (`phase.md` + `backlog.yaml` + `memory.yaml` + `related-plans.md`),
 /// computed at load time and injected into the survey response's
-/// `PlanRow` post-parse. `session-log.md` is deliberately excluded:
+/// `PlanRow` post-parse. `session-log.yaml` is deliberately excluded:
 /// it's append-only and would defeat change detection.
 #[derive(Debug)]
 pub struct PlanSnapshot {
     pub project: String,
     pub plan: String,
     pub phase: String,
+    /// Serialised `backlog.yaml` content, inlined verbatim into the
+    /// survey prompt. `None` when `backlog.yaml` is missing or fails
+    /// to parse — surfaces to the LLM as `(missing)` rather than
+    /// taking the whole survey down.
     pub backlog: Option<String>,
+    /// Serialised `memory.yaml` content, same semantics as `backlog`.
     pub memory: Option<String>,
     pub input_hash: String,
-    /// Per-status task tally computed from the plan's `backlog.md`
-    /// via `parse_backlog_markdown` + `BacklogFile::task_counts`.
-    /// `None` when the file is absent or the strict markdown parser
-    /// rejects it; callers inject this into the survey's `PlanRow`
-    /// so the LLM never has to count tasks itself.
+    /// Per-status task tally computed from the plan's parsed
+    /// `backlog.yaml` via `BacklogFile::task_counts`. `None` when the
+    /// file is absent or the YAML parser rejects it; callers inject
+    /// this into the survey's `PlanRow` so the LLM never has to count
+    /// tasks itself.
     pub task_counts: Option<TaskCounts>,
 }
 
@@ -55,6 +61,11 @@ fn project_name_for_plan(plan_path: &Path) -> Result<String> {
 /// name is the basename of the nearest ancestor containing `.git`, so
 /// plans from different repos are labelled correctly even when
 /// co-located on the CLI.
+///
+/// Structured plan-state (backlog, memory) is routed through the typed
+/// YAML API — `read_backlog` / `read_memory` — so `load_plan` cannot
+/// be silently bypassed by deleting the legacy `.md` originals via
+/// `state migrate --delete-originals`.
 pub fn load_plan(plan_dir: &Path) -> Result<PlanSnapshot> {
     let phase_file = plan_dir.join("phase.md");
     if !phase_file.exists() {
@@ -73,8 +84,29 @@ pub fn load_plan(plan_dir: &Path) -> Result<PlanSnapshot> {
     let phase_raw = fs::read_to_string(&phase_file)
         .with_context(|| format!("Failed to read {}", phase_file.display()))?;
     let phase = phase_raw.trim().to_string();
-    let backlog = fs::read_to_string(plan_dir.join("backlog.md")).ok();
-    let memory = fs::read_to_string(plan_dir.join("memory.md")).ok();
+
+    let backlog_file = if plan_dir.join("backlog.yaml").exists() {
+        read_backlog(plan_dir).ok()
+    } else {
+        None
+    };
+    let memory_file = if plan_dir.join("memory.yaml").exists() {
+        read_memory(plan_dir).ok()
+    } else {
+        None
+    };
+
+    let backlog = backlog_file
+        .as_ref()
+        .map(serde_yaml::to_string)
+        .transpose()
+        .with_context(|| "failed to re-serialise backlog.yaml for survey input")?;
+    let memory = memory_file
+        .as_ref()
+        .map(serde_yaml::to_string)
+        .transpose()
+        .with_context(|| "failed to re-serialise memory.yaml for survey input")?;
+
     let related_plans = fs::read_to_string(plan_dir.join("related-plans.md")).ok();
 
     let input_hash = compute_input_hash(
@@ -84,9 +116,7 @@ pub fn load_plan(plan_dir: &Path) -> Result<PlanSnapshot> {
         related_plans.as_deref(),
     );
 
-    let task_counts = backlog
-        .as_deref()
-        .and_then(|raw| parse_backlog_markdown(raw).ok().map(|b| b.task_counts()));
+    let task_counts = backlog_file.as_ref().map(|bf| bf.task_counts());
 
     Ok(PlanSnapshot {
         project,
@@ -99,7 +129,7 @@ pub fn load_plan(plan_dir: &Path) -> Result<PlanSnapshot> {
     })
 }
 
-/// SHA-256 hex digest over the four plan-state files whose contents
+/// SHA-256 hex digest over the four plan-state sections whose contents
 /// define the survey input. The hash uses length-prefixed sections so
 /// that a byte swap between two files cannot produce a hash collision
 /// with a different file layout. `None` is encoded as a distinct
@@ -147,6 +177,10 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::backlog::schema::{BacklogFile, Status, Task};
+    use crate::state::backlog::write_backlog;
+    use crate::state::memory::schema::{MemoryEntry, MemoryFile};
+    use crate::state::memory::write_memory;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -158,41 +192,92 @@ mod tests {
         fs::create_dir_all(project_dir.join(".git")).unwrap();
     }
 
-    fn write_plan_files(
-        plan_dir: &Path,
-        phase: &str,
-        backlog: Option<&str>,
-        memory: Option<&str>,
-        related_plans: Option<&str>,
-    ) {
+    /// Test fixture: a one-task backlog whose identity varies with the
+    /// provided title. Keeps call sites terse when the actual field
+    /// values aren't what the test is asserting on.
+    fn one_task_backlog(title: &str) -> BacklogFile {
+        BacklogFile {
+            tasks: vec![Task {
+                id: "fixture-task".into(),
+                title: title.into(),
+                category: "maintenance".into(),
+                status: Status::NotStarted,
+                blocked_reason: None,
+                dependencies: vec![],
+                description: "Fixture body.\n".into(),
+                results: None,
+                handoff: None,
+            }],
+            extra: Default::default(),
+        }
+    }
+
+    /// Test fixture: one memory entry with the given title. Body is a
+    /// constant so identity still tracks title changes.
+    fn one_entry_memory(title: &str) -> MemoryFile {
+        MemoryFile {
+            entries: vec![MemoryEntry {
+                id: "fixture-entry".into(),
+                title: title.into(),
+                body: "Fixture body.\n".into(),
+            }],
+            extra: Default::default(),
+        }
+    }
+
+    struct PlanOptions<'a> {
+        phase: &'a str,
+        backlog: Option<&'a BacklogFile>,
+        memory: Option<&'a MemoryFile>,
+        related_plans: Option<&'a str>,
+    }
+
+    fn write_plan(plan_dir: &Path, options: &PlanOptions) {
         fs::create_dir_all(plan_dir).unwrap();
-        fs::write(plan_dir.join("phase.md"), phase).unwrap();
-        if let Some(b) = backlog {
-            fs::write(plan_dir.join("backlog.md"), b).unwrap();
+        fs::write(plan_dir.join("phase.md"), options.phase).unwrap();
+        if let Some(backlog) = options.backlog {
+            write_backlog(plan_dir, backlog).unwrap();
         }
-        if let Some(m) = memory {
-            fs::write(plan_dir.join("memory.md"), m).unwrap();
+        if let Some(memory) = options.memory {
+            write_memory(plan_dir, memory).unwrap();
         }
-        if let Some(r) = related_plans {
-            fs::write(plan_dir.join("related-plans.md"), r).unwrap();
+        if let Some(related_plans) = options.related_plans {
+            fs::write(plan_dir.join("related-plans.md"), related_plans).unwrap();
         }
     }
 
     #[test]
     fn load_plan_reads_phase_backlog_and_memory() {
-        // Layout matches the ravel-lite convention: <project>/<state-dir>/<plan>.
         let tmp = TempDir::new().unwrap();
         let project = tmp.path().join("p");
         let plan_dir = project.join("LLM_STATE").join("plan-a");
         mark_as_git_project(&project);
-        write_plan_files(&plan_dir, "work\n", Some("# b\n"), Some("# m\n"), None);
+        let backlog = one_task_backlog("Plan-a task");
+        let memory = one_entry_memory("Plan-a entry");
+        write_plan(
+            &plan_dir,
+            &PlanOptions {
+                phase: "work\n",
+                backlog: Some(&backlog),
+                memory: Some(&memory),
+                related_plans: None,
+            },
+        );
 
         let snapshot = load_plan(&plan_dir).unwrap();
         assert_eq!(snapshot.project, "p");
         assert_eq!(snapshot.plan, "plan-a");
         assert_eq!(snapshot.phase, "work");
-        assert_eq!(snapshot.backlog.as_deref(), Some("# b\n"));
-        assert_eq!(snapshot.memory.as_deref(), Some("# m\n"));
+        let backlog_yaml = snapshot.backlog.as_deref().expect("backlog surfaced");
+        assert!(
+            backlog_yaml.contains("Plan-a task"),
+            "serialised backlog must contain the task title: {backlog_yaml}"
+        );
+        let memory_yaml = snapshot.memory.as_deref().expect("memory surfaced");
+        assert!(
+            memory_yaml.contains("Plan-a entry"),
+            "serialised memory must contain the entry title: {memory_yaml}"
+        );
     }
 
     #[test]
@@ -205,7 +290,15 @@ mod tests {
         let project = tmp.path().join("my-project");
         let plan_dir = project.join("LLM_STATE").join("plan-x");
         mark_as_git_project(&project);
-        write_plan_files(&plan_dir, "work\n", None, None, None);
+        write_plan(
+            &plan_dir,
+            &PlanOptions {
+                phase: "work\n",
+                backlog: None,
+                memory: None,
+                related_plans: None,
+            },
+        );
 
         let snapshot = load_plan(&plan_dir).unwrap();
         assert_eq!(snapshot.project, "my-project");
@@ -226,7 +319,15 @@ mod tests {
         let project = tmp.path().join("p");
         let plan_dir = project.join("plan-a");
         mark_as_git_project(&project);
-        write_plan_files(&plan_dir, "  \n work \n\n", None, None, None);
+        write_plan(
+            &plan_dir,
+            &PlanOptions {
+                phase: "  \n work \n\n",
+                backlog: None,
+                memory: None,
+                related_plans: None,
+            },
+        );
         let snapshot = load_plan(&plan_dir).unwrap();
         assert_eq!(snapshot.phase, "work");
     }
@@ -237,7 +338,15 @@ mod tests {
         let project = tmp.path().join("p");
         let plan_dir = project.join("plan-a");
         mark_as_git_project(&project);
-        write_plan_files(&plan_dir, "work\n", None, None, None);
+        write_plan(
+            &plan_dir,
+            &PlanOptions {
+                phase: "work\n",
+                backlog: None,
+                memory: None,
+                related_plans: None,
+            },
+        );
         let snapshot = load_plan(&plan_dir).unwrap();
         assert!(snapshot.backlog.is_none());
         assert!(snapshot.memory.is_none());
@@ -256,8 +365,19 @@ mod tests {
         mark_as_git_project(&project);
         let plan_a = project.join("plan-a");
         let plan_b = project.join("plan-b");
-        write_plan_files(&plan_a, "work\n", Some("# b\n"), Some("# m\n"), Some("# r\n"));
-        write_plan_files(&plan_b, "work\n", Some("# b\n"), Some("# m\n"), Some("# r\n"));
+        let backlog = one_task_backlog("Shared task");
+        let memory = one_entry_memory("Shared entry");
+        for plan_dir in [&plan_a, &plan_b] {
+            write_plan(
+                plan_dir,
+                &PlanOptions {
+                    phase: "work\n",
+                    backlog: Some(&backlog),
+                    memory: Some(&memory),
+                    related_plans: Some("# r\n"),
+                },
+            );
+        }
 
         let hash_a = load_plan(&plan_a).unwrap().input_hash;
         let hash_b = load_plan(&plan_b).unwrap().input_hash;
@@ -272,26 +392,38 @@ mod tests {
         mark_as_git_project(&project);
         let plan_dir = project.join("plan-a");
 
-        write_plan_files(&plan_dir, "work\n", Some("# b\n"), Some("# m\n"), Some("# r\n"));
+        let backlog_initial = one_task_backlog("Initial task");
+        let memory_initial = one_entry_memory("Initial entry");
+        write_plan(
+            &plan_dir,
+            &PlanOptions {
+                phase: "work\n",
+                backlog: Some(&backlog_initial),
+                memory: Some(&memory_initial),
+                related_plans: Some("# r\n"),
+            },
+        );
         let hash_initial = load_plan(&plan_dir).unwrap().input_hash;
 
-        // Mutate each file in turn — each mutation must produce a
+        // Mutate each section in turn — each mutation must produce a
         // different hash from the initial state.
         fs::write(plan_dir.join("phase.md"), "triage\n").unwrap();
         let hash_phase = load_plan(&plan_dir).unwrap().input_hash;
         assert_ne!(hash_initial, hash_phase);
 
         fs::write(plan_dir.join("phase.md"), "work\n").unwrap();
-        fs::write(plan_dir.join("backlog.md"), "# b2\n").unwrap();
+        let backlog_mutated = one_task_backlog("Mutated task");
+        write_backlog(&plan_dir, &backlog_mutated).unwrap();
         let hash_backlog = load_plan(&plan_dir).unwrap().input_hash;
         assert_ne!(hash_initial, hash_backlog);
 
-        fs::write(plan_dir.join("backlog.md"), "# b\n").unwrap();
-        fs::write(plan_dir.join("memory.md"), "# m2\n").unwrap();
+        write_backlog(&plan_dir, &backlog_initial).unwrap();
+        let memory_mutated = one_entry_memory("Mutated entry");
+        write_memory(&plan_dir, &memory_mutated).unwrap();
         let hash_memory = load_plan(&plan_dir).unwrap().input_hash;
         assert_ne!(hash_initial, hash_memory);
 
-        fs::write(plan_dir.join("memory.md"), "# m\n").unwrap();
+        write_memory(&plan_dir, &memory_initial).unwrap();
         fs::write(plan_dir.join("related-plans.md"), "# r2\n").unwrap();
         let hash_related = load_plan(&plan_dir).unwrap().input_hash;
         assert_ne!(hash_initial, hash_related);
@@ -305,10 +437,27 @@ mod tests {
         let plan_absent = project.join("absent");
         let plan_empty = project.join("empty");
 
-        // Absent: no backlog.md file.
-        write_plan_files(&plan_absent, "work\n", None, None, None);
-        // Empty: backlog.md exists but is empty.
-        write_plan_files(&plan_empty, "work\n", Some(""), None, None);
+        // Absent: no backlog.yaml file.
+        write_plan(
+            &plan_absent,
+            &PlanOptions {
+                phase: "work\n",
+                backlog: None,
+                memory: None,
+                related_plans: None,
+            },
+        );
+        // Empty: backlog.yaml exists but has an empty tasks list.
+        let empty_backlog = BacklogFile::default();
+        write_plan(
+            &plan_empty,
+            &PlanOptions {
+                phase: "work\n",
+                backlog: Some(&empty_backlog),
+                memory: None,
+                related_plans: None,
+            },
+        );
 
         let hash_absent = load_plan(&plan_absent).unwrap().input_hash;
         let hash_empty = load_plan(&plan_empty).unwrap().input_hash;
@@ -319,74 +468,54 @@ mod tests {
     }
 
     #[test]
-    fn load_plan_populates_task_counts_from_parseable_backlog_md() {
-        // A backlog.md with one task in each status. `load_plan`'s
-        // Rust-side parse must populate `task_counts` so the survey
+    fn load_plan_populates_task_counts_from_parseable_backlog_yaml() {
+        // One task in each status. `load_plan`'s Rust-side parse via
+        // `read_backlog` must populate `task_counts` so the survey
         // prompt no longer has to tally them.
+        fn task(id: &str, status: Status) -> Task {
+            Task {
+                id: id.into(),
+                title: id.into(),
+                category: "maintenance".into(),
+                status,
+                blocked_reason: if status == Status::Blocked {
+                    Some("upstream".into())
+                } else {
+                    None
+                },
+                dependencies: vec![],
+                description: "Body.\n".into(),
+                results: if status == Status::Done {
+                    Some("Done successfully.\n".into())
+                } else {
+                    None
+                },
+                handoff: None,
+            }
+        }
+        let backlog = BacklogFile {
+            tasks: vec![
+                task("not-started-task", Status::NotStarted),
+                task("in-progress-task", Status::InProgress),
+                task("done-task", Status::Done),
+                task("blocked-task", Status::Blocked),
+            ],
+            extra: Default::default(),
+        };
+
         let tmp = TempDir::new().unwrap();
         let project = tmp.path().join("p");
         mark_as_git_project(&project);
         let plan_dir = project.join("plan-a");
-        let backlog_md = "\
-### Not started task
-
-**Category:** `maintenance`
-**Status:** `not_started`
-**Dependencies:** none
-
-**Description:**
-
-Body.
-
-**Results:** _pending_
-
----
-
-### In progress task
-
-**Category:** `maintenance`
-**Status:** `in_progress`
-**Dependencies:** none
-
-**Description:**
-
-Body.
-
-**Results:** _pending_
-
----
-
-### Done task
-
-**Category:** `maintenance`
-**Status:** `done`
-**Dependencies:** none
-
-**Description:**
-
-Body.
-
-**Results:**
-
-Done successfully.
-
----
-
-### Blocked task
-
-**Category:** `maintenance`
-**Status:** `blocked (reason: upstream)`
-**Dependencies:** none
-
-**Description:**
-
-Body.
-
-**Results:** _pending_
-
----
-";
-        write_plan_files(&plan_dir, "work\n", Some(backlog_md), None, None);
+        write_plan(
+            &plan_dir,
+            &PlanOptions {
+                phase: "work\n",
+                backlog: Some(&backlog),
+                memory: None,
+                related_plans: None,
+            },
+        );
 
         let snapshot = load_plan(&plan_dir).unwrap();
         let counts = snapshot.task_counts.expect("backlog parsed; counts populated");
@@ -398,43 +527,46 @@ Body.
     }
 
     #[test]
-    fn load_plan_leaves_task_counts_none_when_backlog_md_absent() {
+    fn load_plan_leaves_task_counts_none_when_backlog_yaml_absent() {
         let tmp = TempDir::new().unwrap();
         let project = tmp.path().join("p");
         mark_as_git_project(&project);
         let plan_dir = project.join("plan-a");
-        write_plan_files(&plan_dir, "work\n", None, None, None);
+        write_plan(
+            &plan_dir,
+            &PlanOptions {
+                phase: "work\n",
+                backlog: None,
+                memory: None,
+                related_plans: None,
+            },
+        );
         let snapshot = load_plan(&plan_dir).unwrap();
         assert!(snapshot.task_counts.is_none());
     }
 
     #[test]
-    fn load_plan_leaves_task_counts_none_when_backlog_md_is_unparseable() {
+    fn load_plan_leaves_task_counts_none_when_backlog_yaml_is_unparseable() {
         // Not a hard error — survey carries on with `task_counts: None`
-        // so a malformed backlog.md doesn't take the whole survey down.
-        // The strict parser rejects a task block that omits the required
-        // `**Category:**` field.
+        // and `backlog: None` so a malformed backlog.yaml doesn't take
+        // the whole survey down. The content field collapses to None
+        // alongside the counts, which shows the user `(missing)` in
+        // the prompt rather than content that failed validation.
         let tmp = TempDir::new().unwrap();
         let project = tmp.path().join("p");
         mark_as_git_project(&project);
         let plan_dir = project.join("plan-a");
-        let malformed = "\
-### Task with no category
+        fs::create_dir_all(&plan_dir).unwrap();
+        fs::write(plan_dir.join("phase.md"), "work\n").unwrap();
+        fs::write(
+            plan_dir.join("backlog.yaml"),
+            "tasks:\n  - id: bad\n    status: not_a_real_status\n",
+        )
+        .unwrap();
 
-**Status:** `not_started`
-**Dependencies:** none
-
-**Description:**
-
-Body.
-
-**Results:** _pending_
-
----
-";
-        write_plan_files(&plan_dir, "work\n", Some(malformed), None, None);
         let snapshot = load_plan(&plan_dir).unwrap();
         assert!(snapshot.task_counts.is_none());
+        assert!(snapshot.backlog.is_none());
     }
 
     #[test]
@@ -443,13 +575,27 @@ Body.
         let project = tmp.path().join("p");
         mark_as_git_project(&project);
         let plan_dir = project.join("plan-a");
-        write_plan_files(&plan_dir, "work\n", Some("# b\n"), None, None);
+        let backlog = one_task_backlog("Base task");
+        write_plan(
+            &plan_dir,
+            &PlanOptions {
+                phase: "work\n",
+                backlog: Some(&backlog),
+                memory: None,
+                related_plans: None,
+            },
+        );
         let hash_initial = load_plan(&plan_dir).unwrap().input_hash;
 
-        // Writing session-log.md must NOT affect the hash — it's
-        // append-only and would otherwise invalidate the hash every cycle.
+        // Writing a session log (either .md legacy or .yaml structured)
+        // must NOT affect the hash — session logs are append-only and
+        // would otherwise invalidate the hash every cycle.
         fs::write(plan_dir.join("session-log.md"), "many words\n").unwrap();
-        let hash_after_log = load_plan(&plan_dir).unwrap().input_hash;
-        assert_eq!(hash_initial, hash_after_log);
+        let hash_after_md_log = load_plan(&plan_dir).unwrap().input_hash;
+        assert_eq!(hash_initial, hash_after_md_log);
+
+        fs::write(plan_dir.join("session-log.yaml"), "sessions: []\n").unwrap();
+        let hash_after_yaml_log = load_plan(&plan_dir).unwrap().input_hash;
+        assert_eq!(hash_initial, hash_after_yaml_log);
     }
 }

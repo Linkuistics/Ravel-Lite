@@ -178,6 +178,22 @@ pub fn save_atomic(config_root: &Path, file: &RelatedProjectsFile) -> Result<()>
     Ok(())
 }
 
+// ---------- Plan-local legacy access ----------
+
+/// Canonical read of a plan's `related-plans.md` prose, used by the
+/// phase-loop entry points in `main.rs` and `multi_plan.rs` to seed
+/// `PlanContext::related_plans` (which in turn expands the
+/// `{{RELATED_PLANS}}` prompt macro).
+///
+/// Returns an empty string when the file is absent — the graceful
+/// default callers have relied on since before R5. Centralising the
+/// read here means the two entry points share one access point, so
+/// swapping this over to rendering from `related-projects.yaml` later
+/// is a one-function change.
+pub fn read_related_plans_markdown(plan_dir: &Path) -> String {
+    std::fs::read_to_string(plan_dir.join("related-plans.md")).unwrap_or_default()
+}
+
 // ---------- CLI handlers ----------
 
 /// Emit the file as YAML. When `plan_dir` is supplied, filter to edges

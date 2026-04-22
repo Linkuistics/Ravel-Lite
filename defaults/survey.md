@@ -3,8 +3,8 @@
 You are producing a multi-project plan status overview for a developer
 who wants to know which plan to run through `ravel-lite run` next.
 Plans follow the Ravel-Lite convention: a directory is a plan iff it
-contains `phase.md`; siblings `backlog.md` and `memory.md` hold task
-state and distilled learnings.
+contains `phase.md`; siblings `backlog.yaml` and `memory.yaml` hold
+task state and distilled learnings as typed YAML documents.
 
 Below (after the horizontal rule) are all discovered plans. For each
 plan you have:
@@ -12,8 +12,10 @@ plan you have:
 - project (basename of the nearest ancestor directory containing `.git`)
 - plan (plan directory basename)
 - phase (contents of `phase.md`)
-- backlog (contents of `backlog.md`, or `(missing)` if absent)
-- memory (contents of `memory.md`, or `(missing)` if absent)
+- backlog (contents of `backlog.yaml` inside a ```yaml fence, or
+  `(missing)` if absent or malformed)
+- memory (contents of `memory.yaml` inside a ```yaml fence, or
+  `(missing)` if absent or malformed)
 
 ## Your output
 
@@ -35,7 +37,7 @@ plans:
     # done / blocked) is populated by the calling tool in Rust after
     # your response is parsed. You do NOT need to tally those raw
     # per-status totals yourself — the tool fills them in from each
-    # plan's parsed `backlog.md`. Do not emit `task_counts` in your
+    # plan's parsed `backlog.yaml`. Do not emit `task_counts` in your
     # response; the tool injects it post-parse.
 
 cross_plan_blockers:
@@ -69,10 +71,10 @@ recommended_invocation_order:
 - Include EVERY discovered plan in the `plans` list. Do not omit any.
 - Sort `plans` by project, then plan name.
 - `notes` is terse (one short phrase). Use it to flag things like
-  "2 unprocessed dispatches", "backlog.md missing", or "stale
+  "2 unprocessed dispatches", "backlog.yaml missing", or "stale
   pre-pivot framing". Leave it as an empty string if there's nothing
   specific to note.
-- A plan with `backlog.md` missing: counts are all 0, `notes: backlog.md missing`.
+- A plan with `backlog.yaml` missing: counts are all 0, `notes: backlog.yaml missing`.
 - `cross_plan_blockers`: entries where blocker and blocked are
   DIFFERENT plans. Include both same-project and cross-project
   dependencies — the survey is the place to see them all at once.
