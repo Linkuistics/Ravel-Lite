@@ -216,8 +216,14 @@ enum StateCommands {
         #[command(subcommand)]
         command: BacklogCommands,
     },
+    /// Memory CRUD verbs. Dream rewrites memory.yaml per-entry through
+    /// these verbs rather than bulk-swapping the file.
+    Memory {
+        #[command(subcommand)]
+        command: MemoryCommands,
+    },
     /// Single-plan conversion of legacy .md files into typed .yaml
-    /// siblings. R1 scope: backlog.md only.
+    /// siblings. Covers backlog.md and memory.md (both written when present).
     Migrate {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -334,6 +340,61 @@ enum BacklogCommands {
         id: String,
         #[arg(long)]
         force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum MemoryCommands {
+    /// Emit every memory entry.
+    List {
+        plan_dir: PathBuf,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Emit a single memory entry by id.
+    Show {
+        plan_dir: PathBuf,
+        id: String,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Append a new memory entry.
+    Add {
+        plan_dir: PathBuf,
+        #[arg(long)]
+        title: String,
+        /// Path to a file containing the markdown body.
+        #[arg(long, conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        /// `-` reads stdin; any other value is taken as the body inline.
+        #[arg(long)]
+        body: Option<String>,
+    },
+    /// One-shot bulk initialisation for create-plan. Refuses a non-empty memory.
+    Init {
+        plan_dir: PathBuf,
+        #[arg(long)]
+        body_file: PathBuf,
+    },
+    /// Rewrite an entry's body from a file or stdin.
+    SetBody {
+        plan_dir: PathBuf,
+        id: String,
+        #[arg(long, conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        #[arg(long)]
+        body: Option<String>,
+    },
+    /// Update an entry's title. Id is preserved.
+    SetTitle {
+        plan_dir: PathBuf,
+        id: String,
+        new_title: String,
+    },
+    /// Delete an entry by id.
+    Delete {
+        plan_dir: PathBuf,
+        id: String,
     },
 }
 
@@ -470,6 +531,7 @@ fn dispatch_state(command: StateCommands) -> Result<()> {
             }
         },
         StateCommands::Backlog { command } => dispatch_backlog(command),
+        StateCommands::Memory { command } => dispatch_memory(command),
         StateCommands::Migrate {
             plan_dir,
             dry_run,
@@ -593,6 +655,53 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
 fn parse_output_format(input: &str) -> Result<crate::state::backlog::OutputFormat> {
     crate::state::backlog::OutputFormat::parse(input)
         .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
+}
+
+fn parse_memory_format(input: &str) -> Result<crate::state::memory::OutputFormat> {
+    crate::state::memory::OutputFormat::parse(input)
+        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
+}
+
+fn dispatch_memory(command: MemoryCommands) -> Result<()> {
+    use crate::state::memory;
+
+    match command {
+        MemoryCommands::List { plan_dir, format } => {
+            let fmt = parse_memory_format(&format)?;
+            memory::run_list(&plan_dir, fmt)
+        }
+        MemoryCommands::Show { plan_dir, id, format } => {
+            let fmt = parse_memory_format(&format)?;
+            memory::run_show(&plan_dir, &id, fmt)
+        }
+        MemoryCommands::Add {
+            plan_dir,
+            title,
+            body_file,
+            body,
+        } => {
+            let body = resolve_body(body_file, body)?;
+            let req = memory::AddRequest { title, body };
+            memory::run_add(&plan_dir, &req)
+        }
+        MemoryCommands::Init { plan_dir, body_file } => {
+            let text = std::fs::read_to_string(&body_file)
+                .with_context(|| format!("failed to read {}", body_file.display()))?;
+            let seed: memory::MemoryFile = serde_yaml::from_str(&text)
+                .with_context(|| format!("failed to parse {} as memory.yaml", body_file.display()))?;
+            memory::run_init(&plan_dir, &seed)
+        }
+        MemoryCommands::SetBody { plan_dir, id, body_file, body } => {
+            let body = resolve_body(body_file, body)?;
+            memory::run_set_body(&plan_dir, &id, &body)
+        }
+        MemoryCommands::SetTitle { plan_dir, id, new_title } => {
+            memory::run_set_title(&plan_dir, &id, &new_title)
+        }
+        MemoryCommands::Delete { plan_dir, id } => {
+            memory::run_delete(&plan_dir, &id)
+        }
+    }
 }
 
 /// Resolve `--body-file <path>` vs `--body <value>` vs `--body -` (stdin).

@@ -1,17 +1,22 @@
 //! `state migrate <plan-dir>` — single-plan conversion of legacy .md
 //! files into typed .yaml siblings.
 //!
-//! R1 scope: backlog.md only. Future rollouts (R2–R3) extend this verb
-//! in place to cover memory, session-log, latest-session, and phase.
+//! Each supported file has its own atomic migration pathway (backlog,
+//! memory). The top-level verb runs every migrator that has a source
+//! file, parses all source files first, then writes all targets second:
+//! a parse failure on any file aborts before any write touches disk.
 //! Does not touch related-plans.md (handled by the separate
 //! migrate-related-projects verb when R5 lands).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
 use crate::state::backlog::{
     parse_backlog_markdown, read_backlog, write_backlog, BacklogFile,
+};
+use crate::state::memory::{
+    parse_memory_markdown, read_memory, write_memory, MemoryFile,
 };
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -37,15 +42,134 @@ impl Default for MigrateOptions {
     }
 }
 
+/// One parsed-but-not-yet-written migration candidate. Holds the source
+/// and target paths, the parsed-in-memory value, and whether writing is
+/// actually required (skipped when target already matches).
+enum PendingMigration {
+    Backlog {
+        source: PathBuf,
+        target: PathBuf,
+        parsed: BacklogFile,
+        needs_write: bool,
+    },
+    Memory {
+        source: PathBuf,
+        target: PathBuf,
+        parsed: MemoryFile,
+        needs_write: bool,
+    },
+}
+
+impl PendingMigration {
+    fn source(&self) -> &Path {
+        match self {
+            PendingMigration::Backlog { source, .. } => source,
+            PendingMigration::Memory { source, .. } => source,
+        }
+    }
+
+    fn target(&self) -> &Path {
+        match self {
+            PendingMigration::Backlog { target, .. } => target,
+            PendingMigration::Memory { target, .. } => target,
+        }
+    }
+
+    fn needs_write(&self) -> bool {
+        match self {
+            PendingMigration::Backlog { needs_write, .. } => *needs_write,
+            PendingMigration::Memory { needs_write, .. } => *needs_write,
+        }
+    }
+
+    fn record_count(&self) -> usize {
+        match self {
+            PendingMigration::Backlog { parsed, .. } => parsed.tasks.len(),
+            PendingMigration::Memory { parsed, .. } => parsed.entries.len(),
+        }
+    }
+}
+
 pub fn run_migrate(plan_dir: &Path, options: &MigrateOptions) -> Result<()> {
+    let mut pending: Vec<PendingMigration> = Vec::new();
+
+    if let Some(mig) = plan_backlog_migration(plan_dir, options)? {
+        pending.push(mig);
+    }
+    if let Some(mig) = plan_memory_migration(plan_dir, options)? {
+        pending.push(mig);
+    }
+
+    if pending.is_empty() {
+        bail!(
+            "no migratable .md files found at {}. Either the plan has no state to migrate or migration has already run.",
+            plan_dir.display()
+        );
+    }
+
+    if options.dry_run {
+        for mig in &pending {
+            println!(
+                "dry-run: would write {} ({} records)",
+                mig.target().display(),
+                mig.record_count()
+            );
+            if matches!(options.original_policy, OriginalPolicy::Delete) {
+                println!("dry-run: would delete {}", mig.source().display());
+            }
+        }
+        return Ok(());
+    }
+
+    for mig in &pending {
+        if !mig.needs_write() {
+            // Idempotent no-op: source parse equals existing target.
+            continue;
+        }
+        match mig {
+            PendingMigration::Backlog { parsed, .. } => {
+                write_backlog(plan_dir, parsed)?;
+                let validated = read_backlog(plan_dir)
+                    .with_context(|| "validation round-trip read failed after backlog write")?;
+                if !backlogs_equivalent(&validated, parsed) {
+                    bail!(
+                        "validation mismatch: backlog.yaml re-read does not match parse result."
+                    );
+                }
+            }
+            PendingMigration::Memory { parsed, .. } => {
+                write_memory(plan_dir, parsed)?;
+                let validated = read_memory(plan_dir)
+                    .with_context(|| "validation round-trip read failed after memory write")?;
+                if !memories_equivalent(&validated, parsed) {
+                    bail!(
+                        "validation mismatch: memory.yaml re-read does not match parse result."
+                    );
+                }
+            }
+        }
+    }
+
+    if matches!(options.original_policy, OriginalPolicy::Delete) {
+        for mig in &pending {
+            let source = mig.source();
+            if source.exists() {
+                std::fs::remove_file(source)
+                    .with_context(|| format!("failed to delete {}", source.display()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn plan_backlog_migration(
+    plan_dir: &Path,
+    options: &MigrateOptions,
+) -> Result<Option<PendingMigration>> {
     let source = plan_dir.join("backlog.md");
     let target = plan_dir.join("backlog.yaml");
-
     if !source.exists() {
-        bail!(
-            "no backlog.md to migrate at {}. Either the plan has no backlog or migration has already run.",
-            source.display()
-        );
+        return Ok(None);
     }
 
     let text = std::fs::read_to_string(&source)
@@ -53,56 +177,71 @@ pub fn run_migrate(plan_dir: &Path, options: &MigrateOptions) -> Result<()> {
     let parsed = parse_backlog_markdown(&text)
         .with_context(|| format!("failed to parse {} as legacy backlog markdown", source.display()))?;
 
-    // Idempotency: if the target exists, require the re-migration output
-    // to match the current file content (modulo canonical serialisation).
-    if target.exists() {
+    let needs_write = if target.exists() {
         let existing = read_backlog(plan_dir)
             .with_context(|| "failed to read existing backlog.yaml for idempotency check")?;
         if backlogs_equivalent(&existing, &parsed) {
-            if matches!(options.original_policy, OriginalPolicy::Delete) && !options.dry_run {
-                std::fs::remove_file(&source)
-                    .with_context(|| format!("failed to delete {}", source.display()))?;
-            }
-            return Ok(()); // no-op
-        }
-        if !options.force {
+            false
+        } else if options.force {
+            true
+        } else {
             bail!(
                 "{} already exists and differs from the re-migration output. Rerun with --force to overwrite.",
                 target.display()
             );
         }
-    }
+    } else {
+        true
+    };
 
-    if options.dry_run {
-        println!("dry-run: would write {} ({} tasks)", target.display(), parsed.tasks.len());
-        if matches!(options.original_policy, OriginalPolicy::Delete) {
-            println!("dry-run: would delete {}", source.display());
-        }
-        return Ok(());
-    }
-
-    write_backlog(plan_dir, &parsed)?;
-
-    // Validation round-trip: re-parse the file we just wrote and assert
-    // it round-trips to the same BacklogFile content.
-    let validated = read_backlog(plan_dir)
-        .with_context(|| "validation round-trip read failed after write")?;
-    if !backlogs_equivalent(&validated, &parsed) {
-        bail!(
-            "validation mismatch: backlog.yaml re-read does not match the parse result. Aborting without deleting the original."
-        );
-    }
-
-    if matches!(options.original_policy, OriginalPolicy::Delete) {
-        std::fs::remove_file(&source)
-            .with_context(|| format!("failed to delete {}", source.display()))?;
-    }
-    Ok(())
+    Ok(Some(PendingMigration::Backlog {
+        source,
+        target,
+        parsed,
+        needs_write,
+    }))
 }
 
-/// Structural equivalence for idempotency / validation checks. Ignores
-/// the `extra` IndexMap because a re-migration always emits empty extra
-/// (no unknown top-level keys in a legacy-markdown parse).
+fn plan_memory_migration(
+    plan_dir: &Path,
+    options: &MigrateOptions,
+) -> Result<Option<PendingMigration>> {
+    let source = plan_dir.join("memory.md");
+    let target = plan_dir.join("memory.yaml");
+    if !source.exists() {
+        return Ok(None);
+    }
+
+    let text = std::fs::read_to_string(&source)
+        .with_context(|| format!("failed to read {}", source.display()))?;
+    let parsed = parse_memory_markdown(&text)
+        .with_context(|| format!("failed to parse {} as legacy memory markdown", source.display()))?;
+
+    let needs_write = if target.exists() {
+        let existing = read_memory(plan_dir)
+            .with_context(|| "failed to read existing memory.yaml for idempotency check")?;
+        if memories_equivalent(&existing, &parsed) {
+            false
+        } else if options.force {
+            true
+        } else {
+            bail!(
+                "{} already exists and differs from the re-migration output. Rerun with --force to overwrite.",
+                target.display()
+            );
+        }
+    } else {
+        true
+    };
+
+    Ok(Some(PendingMigration::Memory {
+        source,
+        target,
+        parsed,
+        needs_write,
+    }))
+}
+
 fn backlogs_equivalent(a: &BacklogFile, b: &BacklogFile) -> bool {
     if a.tasks.len() != b.tasks.len() {
         return false;
@@ -117,6 +256,21 @@ fn backlogs_equivalent(a: &BacklogFile, b: &BacklogFile) -> bool {
             || task_a.description != task_b.description
             || task_a.results != task_b.results
             || task_a.handoff != task_b.handoff
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn memories_equivalent(a: &MemoryFile, b: &MemoryFile) -> bool {
+    if a.entries.len() != b.entries.len() {
+        return false;
+    }
+    for (entry_a, entry_b) in a.entries.iter().zip(b.entries.iter()) {
+        if entry_a.id != entry_b.id
+            || entry_a.title != entry_b.title
+            || entry_a.body != entry_b.body
         {
             return false;
         }
@@ -161,14 +315,30 @@ Done and dusted.
 ---
 ";
 
-    fn write_md(plan: &Path, content: &str) {
+    const TWO_ENTRY_MEMORY: &str = "\
+# Memory
+
+## Alpha entry
+Alpha body with `code`.
+
+## Beta entry
+Beta body.
+
+Multi-paragraph.
+";
+
+    fn write_backlog_md(plan: &Path, content: &str) {
         std::fs::write(plan.join("backlog.md"), content).unwrap();
+    }
+
+    fn write_memory_md(plan: &Path, content: &str) {
+        std::fs::write(plan.join("memory.md"), content).unwrap();
     }
 
     #[test]
     fn migrate_writes_backlog_yaml_and_keeps_md_by_default() {
         let tmp = TempDir::new().unwrap();
-        write_md(tmp.path(), TWO_TASK_MARKDOWN);
+        write_backlog_md(tmp.path(), TWO_TASK_MARKDOWN);
 
         run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
 
@@ -180,9 +350,37 @@ Done and dusted.
     }
 
     #[test]
-    fn migrate_with_delete_originals_removes_md_after_success() {
+    fn migrate_writes_memory_yaml_when_only_memory_md_present() {
         let tmp = TempDir::new().unwrap();
-        write_md(tmp.path(), TWO_TASK_MARKDOWN);
+        write_memory_md(tmp.path(), TWO_ENTRY_MEMORY);
+
+        run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
+
+        assert!(tmp.path().join("memory.yaml").exists());
+        assert!(tmp.path().join("memory.md").exists());
+
+        let memory = read_memory(tmp.path()).unwrap();
+        assert_eq!(memory.entries.len(), 2);
+        assert_eq!(memory.entries[0].title, "Alpha entry");
+    }
+
+    #[test]
+    fn migrate_converts_both_files_in_one_run() {
+        let tmp = TempDir::new().unwrap();
+        write_backlog_md(tmp.path(), TWO_TASK_MARKDOWN);
+        write_memory_md(tmp.path(), TWO_ENTRY_MEMORY);
+
+        run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
+
+        assert_eq!(read_backlog(tmp.path()).unwrap().tasks.len(), 2);
+        assert_eq!(read_memory(tmp.path()).unwrap().entries.len(), 2);
+    }
+
+    #[test]
+    fn migrate_with_delete_originals_removes_both_md_files() {
+        let tmp = TempDir::new().unwrap();
+        write_backlog_md(tmp.path(), TWO_TASK_MARKDOWN);
+        write_memory_md(tmp.path(), TWO_ENTRY_MEMORY);
 
         let opts = MigrateOptions {
             original_policy: OriginalPolicy::Delete,
@@ -190,14 +388,15 @@ Done and dusted.
         };
         run_migrate(tmp.path(), &opts).unwrap();
 
-        assert!(tmp.path().join("backlog.yaml").exists());
-        assert!(!tmp.path().join("backlog.md").exists(), "md must be deleted on success");
+        assert!(!tmp.path().join("backlog.md").exists());
+        assert!(!tmp.path().join("memory.md").exists());
     }
 
     #[test]
     fn migrate_dry_run_writes_nothing() {
         let tmp = TempDir::new().unwrap();
-        write_md(tmp.path(), TWO_TASK_MARKDOWN);
+        write_backlog_md(tmp.path(), TWO_TASK_MARKDOWN);
+        write_memory_md(tmp.path(), TWO_ENTRY_MEMORY);
 
         let opts = MigrateOptions {
             dry_run: true,
@@ -205,54 +404,73 @@ Done and dusted.
         };
         run_migrate(tmp.path(), &opts).unwrap();
 
-        assert!(!tmp.path().join("backlog.yaml").exists(), "dry-run must not write");
-        assert!(tmp.path().join("backlog.md").exists());
+        assert!(!tmp.path().join("backlog.yaml").exists());
+        assert!(!tmp.path().join("memory.yaml").exists());
     }
 
     #[test]
-    fn migrate_is_idempotent_on_second_run() {
+    fn migrate_is_idempotent_on_second_run_with_both_files() {
         let tmp = TempDir::new().unwrap();
-        write_md(tmp.path(), TWO_TASK_MARKDOWN);
+        write_backlog_md(tmp.path(), TWO_TASK_MARKDOWN);
+        write_memory_md(tmp.path(), TWO_ENTRY_MEMORY);
 
         run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
-        // Second run must no-op — no error, no changes.
         run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
 
-        let backlog = read_backlog(tmp.path()).unwrap();
-        assert_eq!(backlog.tasks.len(), 2);
+        assert_eq!(read_backlog(tmp.path()).unwrap().tasks.len(), 2);
+        assert_eq!(read_memory(tmp.path()).unwrap().entries.len(), 2);
     }
 
     #[test]
-    fn migrate_refuses_overwrite_on_diverged_yaml_without_force() {
+    fn migrate_refuses_overwrite_on_diverged_memory_yaml_without_force() {
         let tmp = TempDir::new().unwrap();
-        write_md(tmp.path(), TWO_TASK_MARKDOWN);
+        write_memory_md(tmp.path(), TWO_ENTRY_MEMORY);
         run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
 
-        // Tamper with the yaml so it diverges from the markdown.
-        let mut backlog = read_backlog(tmp.path()).unwrap();
-        backlog.tasks[0].title = "Tampered title".into();
-        write_backlog(tmp.path(), &backlog).unwrap();
+        let mut memory = read_memory(tmp.path()).unwrap();
+        memory.entries[0].title = "Tampered".into();
+        write_memory(tmp.path(), &memory).unwrap();
 
         let err = run_migrate(tmp.path(), &MigrateOptions::default()).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("already exists"), "error must mention existence: {msg}");
         assert!(msg.contains("--force"), "error must cite --force: {msg}");
 
-        // With --force, the tampered yaml is overwritten.
         let opts = MigrateOptions { force: true, ..MigrateOptions::default() };
         run_migrate(tmp.path(), &opts).unwrap();
-        let backlog = read_backlog(tmp.path()).unwrap();
-        assert_eq!(backlog.tasks[0].title, "First task");
+        let memory = read_memory(tmp.path()).unwrap();
+        assert_eq!(memory.entries[0].title, "Alpha entry");
     }
 
     #[test]
-    fn migrate_parse_failure_leaves_filesystem_untouched() {
+    fn migrate_parse_failure_on_one_file_leaves_everything_untouched() {
         let tmp = TempDir::new().unwrap();
-        write_md(tmp.path(), "### Malformed task\n\nno category or status\n");
+        // Valid backlog, malformed memory — the whole run must abort before
+        // writing backlog.yaml, honouring the parse-all-then-write-all contract.
+        write_backlog_md(tmp.path(), TWO_TASK_MARKDOWN);
+        write_memory_md(tmp.path(), "## Empty body entry\n\n## Another\n\n");
 
         let err = run_migrate(tmp.path(), &MigrateOptions::default()).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("Category") || msg.contains("Status"), "error must name the missing field: {msg}");
-        assert!(!tmp.path().join("backlog.yaml").exists(), "partial writes forbidden on parse failure");
+        assert!(
+            msg.contains("memory") || msg.contains("no body"),
+            "error must name the memory failure: {msg}"
+        );
+        assert!(
+            !tmp.path().join("backlog.yaml").exists(),
+            "no write must occur when any parse fails"
+        );
+        assert!(
+            !tmp.path().join("memory.yaml").exists(),
+            "no write must occur when any parse fails"
+        );
+    }
+
+    #[test]
+    fn migrate_errors_when_no_md_files_exist() {
+        let tmp = TempDir::new().unwrap();
+        let err = run_migrate(tmp.path(), &MigrateOptions::default()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("no migratable"), "error must explain the empty-plan case: {msg}");
     }
 }
