@@ -221,3 +221,6 @@ Called in `Commands::Run` before Ratatui alternate-screen takeover so any `NameC
 
 ## `dispatch_state` routes state subcommands
 `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, or `dispatch_related_projects`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
+
+## R7 design: LLM-driven related-projects discovery
+`state related-projects discover` fans out one subagent per project (two-stage pipeline: per-project interaction-surface extraction then global edge proposal) and writes `discover-proposals.yaml`; `discover-apply` merges after human review. Subtree-scoped git tree SHA is the cache key. Full design at `docs/r7-related-projects-discovery-design.md`; 12-task TDD plan at `docs/r7-related-projects-discovery-plan.md`.
