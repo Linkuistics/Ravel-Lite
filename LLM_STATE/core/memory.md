@@ -75,6 +75,9 @@ Analyse-work overwrites `latest-session.yaml` unconditionally on entry; a deleti
 ## `spawn_blocking` does not cancel cleanly in `tokio::select!`
 Use `tokio::time::sleep` for tty event polling. A `spawn_blocking` thread is not dropped when the select arm is cancelled; it races the spawned child for the tty. `tokio::time::sleep` is properly cancellable and eliminates the race.
 
+## Dream word-count sums entry titles and bodies
+`dream.rs` computes word count by summing title and body text across all parsed `MemoryEntry` values; markdown punctuation is excluded. `update_baseline_counts_entry_titles_and_bodies` regression test pins this contract. `update_dream_baseline` self-corrects after the first successful dream if a prior raw-markdown baseline drifts.
+
 ## `dream-baseline` seeded from three call sites
 `seed_dream_baseline_if_missing` in `src/dream.rs` is called from `run_create` (post-session scaffolding), `run_set_phase` (every LLM phase transition including coordinators), and `GitCommitReflect`. Seeds to 0 ("never dreamed"), not current word count; seeding to current count silently delays the first dream by `headroom` words on populated plans.
 
@@ -129,6 +132,9 @@ The fake-pi script in `pi_phase_cycle` uses a case statement on the current phas
 ## `ravel-lite survey` emits structured YAML
 `src/survey/schema.rs` defines the output schema with `Serialize` derives and a `schema_version` marker. `input_hash` is seeded in Rust post-parse. `task_counts` is injected by Rust via `inject_task_counts` / `collect_task_counts`; survey prompts forbid the LLM from emitting `task_counts`. `survey-format` subcommand renders YAML output to human-readable form.
 
+## Survey compose wraps content in YAML fences
+`src/survey/compose.rs` wraps backlog and memory content in ` ```yaml ` fences, labeling sections `backlog.yaml` and `memory.yaml`. `survey.md` and `survey-incremental.md` reference these labels. `PlanSnapshot::backlog` and `.memory` carry re-serialised YAML strings.
+
 ## Incremental survey splits `invoke.rs` into two functions
 `compute_survey_response` is the in-memory core; `run_survey` is the CLI wrapper. `src/survey/delta.rs` owns hash-comparison and delta-merge. `--prior` names the baseline state; `--force` skips the hash guard. `defaults/survey-incremental.md` is the prompt template for the delta path.
 
@@ -156,14 +162,17 @@ Lines matching `^\s*→\s*(.*)` immediately after an action marker are re-indent
 ## Dream output uses label + `→` continuation format
 `defaults/phases/dream.md` specifies a two-line entry layout (label line + `→ detail` continuation) matching the continuation-line renderer in `format_result_text`.
 
+## `read_related_plans_markdown` centralises `related-plans.md` access
+`src/related_projects.rs::read_related_plans_markdown(plan_dir)` is the single access point for plan-local `related-plans.md` prose. Both `src/main.rs` and `src/multi_plan.rs` route through it. Future swap to rendering from `related-projects.yaml` is a one-function change.
+
 ## `related-plans` stored as global name-indexed edge list
 Implemented in `src/related_projects.rs`. Edge kinds: `sibling` and `parent-of`. Project-level (not plan-level), keyed by plan name; shareable across all plans in a project. Full CRUD, `Edge::validate` (rejects self-loops and non-pair counts), and `run_migrate_related_projects` (parses legacy `related-plans.md`, merges derived edges idempotently on re-run).
 
 ## Sibling edges dedup by sorted participants; parent-of by order
 In `src/related_projects.rs`, sibling edge identity is order-insensitive (participants sorted before dedup); parent-of edge identity preserves participant order. Reversing this rule silently creates duplicate or missing edges.
 
-## Four Rust readers bypass plan-state CLI
-`src/dream.rs`, `src/survey/discover.rs`, `src/multi_plan.rs`, and `src/main.rs` still read `.md` plan-state files directly; `--delete-originals` was deferred until R8 migrates these readers and can atomically delete `.md` originals.
+## Plan-state `.md` readers fully migrated
+`src/dream.rs` and `src/survey/discover.rs` use the typed YAML API. `src/multi_plan.rs` and `src/main.rs` access only `related-plans.md` (not a `--delete-originals` target) and `phase.md`; neither breaks on original deletion. `--delete-originals` is safe to run against `LLM_STATE/core`.
 
 ## `state migrate` takes `PLAN_DIR` as positional argument
 `--plan-dir` is not a valid flag; the CLI expects `PLAN_DIR` positionally. Correct usage: `ravel-lite state migrate <PLAN_DIR>`. Task deliverable documentation incorrectly described it as `--plan-dir`.
