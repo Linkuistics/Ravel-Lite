@@ -7,6 +7,7 @@ mod git;
 mod init;
 mod multi_plan;
 mod phase_loop;
+mod projects;
 mod prompt;
 mod state;
 mod subagent;
@@ -200,6 +201,56 @@ enum StateCommands {
         /// Phase name to write (e.g. `analyse-work`, `git-commit-work`).
         phase: String,
     },
+    /// Manage the per-user projects catalog (`<config-dir>/projects.yaml`)
+    /// that maps project names to absolute paths. Shared-between-users
+    /// related-projects edge lists reference projects by name; this
+    /// catalog is the per-user resolver. Auto-populated on
+    /// `ravel-lite run` when a new project is encountered.
+    Projects {
+        #[command(subcommand)]
+        command: ProjectsCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProjectsCommands {
+    /// Emit the catalog as YAML on stdout (empty catalog is valid output).
+    List {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and the
+        /// default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// Add an entry mapping `--name` to an absolute `--path`. Rejects
+    /// duplicate names and duplicate paths.
+    Add {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and the
+        /// default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        path: PathBuf,
+    },
+    /// Remove the entry for the given name. Errors if no such entry exists.
+    Remove {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and the
+        /// default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        name: String,
+    },
+    /// Rename an existing entry. Does not cascade into
+    /// `related-projects.yaml` yet (R5 adds that cascade).
+    Rename {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and the
+        /// default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        old: String,
+        new: String,
+    },
 }
 
 #[tokio::main]
@@ -212,6 +263,7 @@ async fn main() -> Result<()> {
         }
         Commands::Run { config, dangerous, survey_state, plan_dirs } => {
             let config_root = resolve_config_dir(config)?;
+            register_projects_from_plan_dirs(&config_root, &plan_dirs)?;
             match plan_dirs.len() {
                 0 => unreachable!("clap requires at least one plan_dir"),
                 1 => {
@@ -269,8 +321,55 @@ async fn main() -> Result<()> {
             StateCommands::SetPhase { plan_dir, phase } => {
                 state::run_set_phase(&plan_dir, &phase)
             }
+            StateCommands::Projects { command } => match command {
+                ProjectsCommands::List { config } => {
+                    let config_root = resolve_config_dir(config)?;
+                    projects::run_list(&config_root)
+                }
+                ProjectsCommands::Add { config, name, path } => {
+                    let config_root = resolve_config_dir(config)?;
+                    projects::run_add(&config_root, &name, &path)
+                }
+                ProjectsCommands::Remove { config, name } => {
+                    let config_root = resolve_config_dir(config)?;
+                    projects::run_remove(&config_root, &name)
+                }
+                ProjectsCommands::Rename { config, old, new } => {
+                    let config_root = resolve_config_dir(config)?;
+                    projects::run_rename(&config_root, &old, &new)
+                }
+            },
         },
     }
+}
+
+/// Ensure every distinct project implied by the requested plan dirs is
+/// present in the catalog before the TUI takes over stdio. Runs the
+/// collision-prompt interactively against the real stdin/stderr.
+/// Keeping this in main.rs (rather than inside `run_phase_loop`)
+/// guarantees the prompt happens while stdin is still a plain tty and
+/// errors surface before any agent spawn.
+fn register_projects_from_plan_dirs(config_root: &Path, plan_dirs: &[PathBuf]) -> Result<()> {
+    use std::collections::BTreeSet;
+
+    let mut project_paths: BTreeSet<PathBuf> = BTreeSet::new();
+    for plan_dir in plan_dirs {
+        let project = project_root_for_plan(plan_dir)?;
+        project_paths.insert(PathBuf::from(project));
+    }
+    let stdin = std::io::stdin();
+    let mut stdin_lock = stdin.lock();
+    let stderr = std::io::stderr();
+    let mut stderr_lock = stderr.lock();
+    for project_path in project_paths {
+        projects::ensure_in_catalog_interactive(
+            config_root,
+            &project_path,
+            &mut stderr_lock,
+            &mut stdin_lock,
+        )?;
+    }
+    Ok(())
 }
 
 async fn run_phase_loop(config_root: &Path, plan_dir: &Path, dangerous: bool) -> Result<()> {
