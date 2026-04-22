@@ -156,8 +156,11 @@ Lines matching `^\s*→\s*(.*)` immediately after an action marker are re-indent
 ## `related-plans` stored as global name-indexed edge list
 Project-level (not plan-level) edge list, keyed by plan name. Plans reference each other by name; the global list is shareable across all plans in a project.
 
-## Plan-state files use structured YAML
-Structured YAML replaces prose plan-state files, accessed via `ravel-lite state <file> <verb>`. R1 (`state backlog`), R2 (`state memory`), and R3 (`state session-log`) are complete.
+## `.yaml` plan-state files are preview data until R6
+Phase prompts still read and write `.md` files; `.yaml` files produced by `state migrate` are frozen at migration-time and diverge as `.md` changes. R6 must re-migrate (with `--force --delete-originals`) before rewriting phase prompts to use CLI verbs. R1 (`state backlog`), R2 (`state memory`), and R3 (`state session-log`) are complete.
+
+## `state migrate` takes `PLAN_DIR` as positional argument
+`--plan-dir` is not a valid flag; the CLI expects `PLAN_DIR` positionally. Correct usage: `ravel-lite state migrate <PLAN_DIR>`. Task deliverable documentation incorrectly described it as `--plan-dir`.
 
 ## Plan-state migration requires atomicity, idempotency, dry-run, validation
 Any plan-state migration tool must apply changes atomically, be safe to re-run (idempotent), support `--dry-run` preview, and validate round-trip fidelity.
