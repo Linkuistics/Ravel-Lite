@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::related_projects::{self, Edge, RelatedProjectsFile};
+use crate::related_projects::{self, Edge, EdgeKind, RelatedProjectsFile};
 
 use super::load_proposals;
 
@@ -27,8 +27,8 @@ pub fn run_discover_apply(config_root: &Path) -> Result<()> {
     );
     for c in &report.kind_conflicts {
         eprintln!(
-            "  conflict: proposed {:?} on {:?} but existing {:?} blocks it",
-            c.proposed.kind, c.proposed.participants, c.existing.kind
+            "  conflict: proposed {:?} on {:?} but existing {:?} on {:?} blocks it",
+            c.proposed.kind, c.proposed.participants, c.existing.kind, c.existing.participants
         );
     }
     Ok(())
@@ -75,11 +75,17 @@ pub fn apply_proposals(config_root: &Path) -> Result<ApplyReport> {
     })
 }
 
-/// Look for an existing edge on the same participant pair with a
-/// *different* kind than `proposed`. Sibling/parent-of on the same
-/// unordered pair are mutually exclusive at the apply layer even though
-/// the underlying schema would technically allow both to coexist —
-/// this check is the policy knob.
+/// Look for an existing edge on the same participant pair that the
+/// apply layer must treat as a conflict:
+///
+/// * different kind on the same unordered pair (sibling vs parent-of) —
+///   mutually exclusive as a policy choice, even though the schema
+///   would allow coexistence;
+/// * same kind, but a reversed `parent-of` — `parent-of(A,B)` and
+///   `parent-of(B,A)` are a contradictory graph state, not a duplicate.
+///   `add_edge`'s canonical key is order-preserving for `parent-of`
+///   (direction is semantic), so this policy check is the only place
+///   the reversal is caught.
 fn find_conflicting_kind<'a>(
     file: &'a RelatedProjectsFile,
     proposed: &Edge,
@@ -92,7 +98,10 @@ fn find_conflicting_kind<'a>(
     file.edges.iter().find(|e| {
         let mut ev = e.participants.clone();
         ev.sort();
-        ev == pair_sorted && e.kind != proposed.kind
+        ev == pair_sorted
+            && (e.kind != proposed.kind
+                || (e.kind == EdgeKind::ParentOf
+                    && e.participants != proposed.participants))
     })
 }
 
@@ -165,6 +174,59 @@ mod tests {
         let second = apply_proposals(&cfg).unwrap();
         assert_eq!(second.added, 0);
         assert_eq!(second.already_present, 1);
+    }
+
+    #[test]
+    fn apply_rejects_reversed_parent_of_as_conflict() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        seed_two_projects(&cfg);
+        // Seed existing parent-of(A, B).
+        let mut file = related_projects::RelatedProjectsFile::default();
+        file.add_edge(Edge::parent_of("A", "B")).unwrap();
+        related_projects::save_atomic(&cfg, &file).unwrap();
+
+        // Propose the reversed parent-of(B, A) — must be rejected as a
+        // directional conflict, not silently added as a second edge.
+        save_proposals_atomic(
+            &cfg,
+            &mk_proposals(&[(EdgeKind::ParentOf, "B", "A")]),
+        )
+        .unwrap();
+
+        let report = apply_proposals(&cfg).unwrap();
+        assert_eq!(report.added, 0, "reversed parent-of must not be added");
+        assert_eq!(report.already_present, 0);
+        assert_eq!(report.kind_conflicts.len(), 1);
+
+        let loaded = related_projects::load_or_empty(&cfg).unwrap();
+        assert_eq!(loaded.edges.len(), 1, "only the original edge survives");
+        assert_eq!(loaded.edges[0].participants, vec!["A", "B"]);
+    }
+
+    #[test]
+    fn apply_treats_duplicate_parent_of_as_already_present() {
+        // Negative control: exact-duplicate parent-of must NOT be flagged as a
+        // conflict — it is a dedup no-op routed through `add_edge`.
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        seed_two_projects(&cfg);
+        let mut file = related_projects::RelatedProjectsFile::default();
+        file.add_edge(Edge::parent_of("A", "B")).unwrap();
+        related_projects::save_atomic(&cfg, &file).unwrap();
+
+        save_proposals_atomic(
+            &cfg,
+            &mk_proposals(&[(EdgeKind::ParentOf, "A", "B")]),
+        )
+        .unwrap();
+
+        let report = apply_proposals(&cfg).unwrap();
+        assert_eq!(report.added, 0);
+        assert_eq!(report.already_present, 1);
+        assert!(report.kind_conflicts.is_empty());
     }
 
     #[test]
