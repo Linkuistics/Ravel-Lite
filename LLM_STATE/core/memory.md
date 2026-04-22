@@ -192,6 +192,9 @@ Called in `Commands::Run` before Ratatui alternate-screen takeover so any `NameC
 ## `BacklogFile::task_counts` injects counts into survey
 `TaskCounts { total, not_started, in_progress, done, blocked }` lives in `state::backlog::schema`. `collect_task_counts` gathers per-plan counts; `inject_task_counts` in `survey/schema.rs` writes them onto `PlanRow`. Survey prompts (`survey.md`, `survey-incremental.md`) explicitly forbid the LLM from emitting `task_counts`.
 
+## `PlanRow` carries duplicate count fields pending migration
+`PlanRow` has both Rust-injected `task_counts: Option<TaskCounts>` and LLM-inferred `unblocked`/`blocked`/`done`/`received` fields. The latter require dep-traversal reasoning that is genuine LLM work, so they were left intact. Once all downstream consumers migrate to `task_counts`, the LLM-inferred count fields can be removed. Not urgent — track as a cleanup opportunity.
+
 ## `state session-log` provides full verb surface
 `src/state/session_log/` holds `SessionRecord` / `SessionLogFile` types. CLI verbs: `list`, `show`, `append`, `set-latest`, `show-latest`. `append_record` is idempotent by session id; duplicate appends are silently skipped.
 
