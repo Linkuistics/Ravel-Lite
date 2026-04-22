@@ -30,65 +30,25 @@ tasks:
     trivial (27-line deletion, produced by a subagent, reverted via `git checkout`)
     but the TUI verification step cannot be done by a subagent (no tty) and was
     not done by a human.
-- id: r7-1-module-scaffold-and-surfacefile-schema
-  title: R7.1 — Module scaffold and SurfaceFile schema
-  category: enhancement
-  status: done
-  dependencies: []
-  description: |
-    Create `src/discover/{mod,schema}.rs` with `SurfaceFile` and `SurfaceRecord` types; wire `pub mod discover` into `src/lib.rs`. See `docs/r7-related-projects-discovery-plan.md` § Task 1 for step-by-step. Goal: module compiles with schema types defined, no behaviour yet. Ends with a round-trip YAML test. Assumes R5 (global `related-projects.yaml`) and R7-design are both complete — they are.
-  results: |
-    **What was done**
-
-    Created `src/discover/` module with two files:
-
-    - `src/discover/mod.rs` — doc-commented module header with `pub mod schema;`. Spec pointer to `docs/r7-related-projects-discovery-design.md`.
-    - `src/discover/schema.rs` — `SurfaceFile` and `SurfaceRecord` types, `SURFACE_SCHEMA_VERSION = 1` constant, two round-trip tests.
-
-    Wired `pub mod discover;` into `src/lib.rs` in alphabetical order between `create` and `dream`.
-
-    **What worked**
-
-    - `cargo build`: clean.
-    - `cargo test -p ravel-lite --lib discover::schema`: 2/2 passing (`surface_file_round_trips_via_yaml`, `surface_record_empty_fields_round_trip_as_defaults`).
-    - `cargo test --lib`: 381/381 passing — no regressions from the `lib.rs` module addition.
-
-    **Design choices worth flagging to downstream tasks**
-
-    - `#[serde(default)]` on every `SurfaceRecord` field tolerates partial LLM emission (omitted fields materialise as empty defaults rather than parse errors). Identity fields on `SurfaceFile` (`schema_version`, `project`, `tree_sha`, `analysed_at`) deliberately have no `default` — missing them is a corrupt/incompatible file and should hard-fail.
-    - `schema_version: u32` plus module-level `const SURFACE_SCHEMA_VERSION: u32 = 1` matches the `related_projects.rs` / `projects.rs` convention. Task 4 (cache read) will slot in the standard `schema_version != SURFACE_SCHEMA_VERSION` load-side guard.
-    - Test assertions on `surface_record_empty_fields_round_trip_as_defaults` were expanded beyond the plan's minimal version to cover every field — cheap extra coverage of the `#[serde(default)]` contract.
-
-    **Deviations from the plan**
-
-    - Plan Step 7 (the commit) is intentionally skipped: work phase must not commit source; analyse-work owns that.
-    - Used `String::new()` instead of `"".to_string()` on the one empty-notes field in the round-trip test (idiomatic Rust, clippy-clean).
-
-    **What this suggests next**
-
-    The unblocked tasks from this node are r7-2 (ProposalsFile/ProposalRecord schemas — same file, same pattern), r7-3 (tree-SHA helper), and r7-4 (per-project cache read/write). r7-2 is the most natural continuation since it extends `schema.rs` with symmetric types; r7-3 and r7-4 are independent and could be run in parallel work phases.
 - id: r7-2-proposalsfile-and-proposalrecord-schemas
   title: R7.2 — ProposalsFile and ProposalRecord schemas
   category: enhancement
   status: not_started
-  dependencies:
-  - r7-1-module-scaffold-and-surfacefile-schema
+  dependencies: []
   description: |
     Extend `src/discover/schema.rs` with `ProposalsFile`, `ProposalRecord`, and `Stage1Failure` types (the Stage 2 output schema that `apply` reads). See `docs/r7-related-projects-discovery-plan.md` § Task 2. Ends with a round-trip YAML test.
 - id: r7-3-tree-sha-helper-with-dirty-tree-check
   title: R7.3 — Tree-SHA helper with dirty-tree check
   category: enhancement
   status: not_started
-  dependencies:
-  - r7-1-module-scaffold-and-surfacefile-schema
+  dependencies: []
   description: |
     Create `src/discover/tree_sha.rs::compute_project_tree_sha(project_path)`. Handles top-level repos and monorepo subtrees uniformly via `git rev-parse HEAD:<rel-path>`. Bails on non-git or dirty subtree with actionable errors. See `docs/r7-related-projects-discovery-plan.md` § Task 3.
 - id: r7-4-per-project-cache-read-and-write
   title: R7.4 — Per-project cache read and write
   category: enhancement
   status: not_started
-  dependencies:
-  - r7-1-module-scaffold-and-surfacefile-schema
+  dependencies: []
   description: |
     Create `src/discover/cache.rs` with atomic tmp-then-rename writes to `<config-dir>/discover-cache/<name>.yaml`. Matches `src/related_projects.rs::save_atomic` pattern. See `docs/r7-related-projects-discovery-plan.md` § Task 4.
 - id: r7-5-extend-projects-rename-cascade-into-cache-dir
@@ -104,7 +64,6 @@ tasks:
   category: enhancement
   status: not_started
   dependencies:
-  - r7-1-module-scaffold-and-surfacefile-schema
   - r7-3-tree-sha-helper-with-dirty-tree-check
   - r7-4-per-project-cache-read-and-write
   description: |
