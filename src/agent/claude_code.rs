@@ -178,33 +178,6 @@ impl Agent for ClaudeCodeAgent {
             args.push("--dangerously-skip-permissions".to_string());
         }
 
-        // WORKAROUND (2026-04-21): claude's interactive TUI silently
-        // fails to render when claude is spawned by ravel-lite, even
-        // though the EXACT same argv, cwd, env, prompt, and binary
-        // path render normally when invoked from a bash shell. Adding
-        // `--debug-file <path>` (which implicitly turns on `--debug`
-        // mode in claude — see `claude --help`) reliably masks the
-        // bug. We do not understand why; investigating took hours and
-        // ruled out: termios state, isatty on stdin/stdout/stderr,
-        // process-group leadership, foreground tty ownership, signal
-        // mask, signal handlers, O_NONBLOCK, args content, env vars,
-        // claude version (2.1.113 / 2.1.114 / 2.1.116), prompt size,
-        // the cmux wrapper, and earlier ravel-lite versions (commit
-        // 91ad991 from 2026-04-19 also reproduces the bug).
-        //
-        // The same shell command works:
-        //     cd <project> && claude --add-dir <plan> "<prompt>"
-        // but ravel-lite's std::process::Command spawn of the same
-        // does not. Difference must be in inherited process state we
-        // could not isolate without dtrace-level instrumentation.
-        //
-        // TRY REMOVING THIS in the future when claude is updated past
-        // 2.1.116 — delete the next two `args.push` lines and verify
-        // the Work-phase TUI still renders. If it does, the upstream
-        // issue is fixed and this workaround is no longer needed.
-        args.push("--debug-file".to_string());
-        args.push("/tmp/claude-debug.log".to_string());
-
         args.push(prompt.to_string());
 
         let status = std::process::Command::new("claude")
