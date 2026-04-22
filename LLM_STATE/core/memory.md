@@ -54,8 +54,8 @@ RELATED_PLANS and custom tokens expand first; atomic path tokens ({{DEV_ROOT}} e
 ## `EnvOverride` serialises env mutation in integration tests
 `EnvOverride` holds a process-wide `OnceLock<Mutex<()>>`; struct-field drop order keeps the lock held until `PATH`/`HOME` restoration completes, preventing fake-pi `PATH` from leaking into concurrent test runners.
 
-## `GitCommitWork` appends `latest-session.md` to `session-log.md`
-`append_session_log` in `phase_loop.rs` runs at the top of `GitCommitWork`, before `write_phase`. Reads `latest-session.md` and appends to `session-log.md`. Tail-check makes it idempotent; crash-retry is safe.
+## `GitCommitWork` appends `latest-session.yaml` to `session-log.yaml`
+`append_session_log` in `phase_loop.rs` delegates to `session_log::append_latest_to_log`. Idempotency is via session id (strictly stronger than the former tail-string check); missing `latest-session.yaml` is a graceful no-op.
 
 ## `write_phase` precedes `git_commit_plan` in all commit handlers
 All four `ScriptPhase::GitCommit*` handlers in `phase_loop.rs` call `write_phase(next)` before `git_commit_plan`. Phase.md is captured in the same commit as other plan-state writes; the plan tree is clean at every user-prompt point.
@@ -63,8 +63,8 @@ All four `ScriptPhase::GitCommit*` handlers in `phase_loop.rs` call `write_phase
 ## Work-baseline seeded atomically in the triage commit
 `GitCommitTriage` calls `git_save_work_baseline` before committing. `LlmPhase::Work` seeds work-baseline only when the file is absent (first-run fallback).
 
-## `LlmPhase::Work` does not delete `latest-session.md`
-Analyse-work overwrites `latest-session.md` unconditionally on entry; a deletion in the Work handler is decorative and was removed.
+## `LlmPhase::Work` does not delete `latest-session.yaml`
+Analyse-work overwrites `latest-session.yaml` unconditionally on entry; a deletion in the Work handler is decorative and was removed.
 
 ## Plan-tree cleanliness asserted via `git status --porcelain`
 `git_commit_triage_leaves_plan_tree_clean_at_user_prompt` and `git_commit_work_leaves_plan_tree_clean_at_user_prompt` assert `git status --porcelain -- <plan_dir>` is empty after `phase_loop` returns from a user-declined exit.
@@ -124,7 +124,7 @@ The fake-pi script in `pi_phase_cycle` uses a case statement on the current phas
 `src/multi_plan.rs` implements `build_plan_dir_map`, `options_from_response`, `select_plan_interactive`, and `run_multi_plan`. `ravel-lite run` accepts 1..N plan dirs; `--survey-state` is required when N > 1. Routes to the next plan via `dispatch_one_cycle`; the dispatch loop replaced the former LLM-authored coordinator-plan concept.
 
 ## `ravel-lite survey` emits structured YAML
-`src/survey/schema.rs` defines the output schema with `Serialize` derives and a `schema_version` marker. `input_hash` is seeded in Rust post-parse. `survey-format` subcommand renders YAML output to human-readable form.
+`src/survey/schema.rs` defines the output schema with `Serialize` derives and a `schema_version` marker. `input_hash` is seeded in Rust post-parse. `task_counts` is injected by Rust via `inject_task_counts` / `collect_task_counts`; survey prompts forbid the LLM from emitting `task_counts`. `survey-format` subcommand renders YAML output to human-readable form.
 
 ## Incremental survey splits `invoke.rs` into two functions
 `compute_survey_response` is the in-memory core; `run_survey` is the CLI wrapper. `src/survey/delta.rs` owns hash-comparison and delta-merge. `--prior` names the baseline state; `--force` skips the hash guard. `defaults/survey-incremental.md` is the prompt template for the delta path.
@@ -157,19 +157,19 @@ Lines matching `^\s*→\s*(.*)` immediately after an action marker are re-indent
 Project-level (not plan-level) edge list, keyed by plan name. Plans reference each other by name; the global list is shareable across all plans in a project.
 
 ## Plan-state files use structured YAML
-Structured YAML replaces prose plan-state files, accessed via `ravel-lite state <file> <verb>`. `state backlog` (R1) and `state memory` (R2) are complete.
+Structured YAML replaces prose plan-state files, accessed via `ravel-lite state <file> <verb>`. R1 (`state backlog`), R2 (`state memory`), and R3 (`state session-log`) are complete.
 
 ## Plan-state migration requires atomicity, idempotency, dry-run, validation
 Any plan-state migration tool must apply changes atomically, be safe to re-run (idempotent), support `--dry-run` preview, and validate round-trip fidelity.
 
 ## `migrate.rs` uses parse-all-then-write-all planner
-`plan_backlog_migration` and `plan_memory_migration` each return `Option<PendingMigration>`; `run_migrate` collects all, errors if set is empty, then writes only after all parses succeed. Parse failure on any file aborts before any disk write. Adding R3 session-log adds a third variant with no structural change.
+`plan_backlog_migration`, `plan_memory_migration`, `plan_session_log_migration`, and `plan_latest_session_migration` each return `Option<PendingMigration>`; `run_migrate` collects all, errors if set is empty, then writes only after all parses succeed. Parse failure on any file aborts before any disk write.
 
 ## `state::memory` parses `^## ` headings; empty body is an error
 `parse_md.rs` in `state::memory` splits on `^## ` (not `### ` as backlog uses). An entry with an empty body after the heading is a parse error, not silently skipped. See: `split_into_task_blocks splits on ### headings`.
 
 ## Structured plan-state design at `docs/structured-plan-state-design.md`
-Q1–Q8 design decisions for `ravel-lite state <file> <verb>` CLI. R1 (`state backlog` and `state migrate`) and R2 (`state memory`) are complete. R3 (`state session-log`) adds a third `PendingMigration` variant to `migrate.rs` with no structural change.
+Q1–Q8 design decisions for `ravel-lite state <file> <verb>` CLI. R1 (`state backlog` and `state migrate`), R2 (`state memory`), and R3 (`state session-log`) are complete.
 
 ## `src/projects.rs` holds `ProjectsCatalog`
 `ProjectsCatalog` (schema_version 1) maps project names to absolute paths. `auto_add` is pure and returns `AlreadyCatalogued`/`Added`/`NameCollision`. `ensure_in_catalog_interactive` is generic over `Read + Write`. Atomic save.
@@ -184,13 +184,19 @@ Q1–Q8 design decisions for `ravel-lite state <file> <verb>` CLI. R1 (`state ba
 Called in `Commands::Run` before Ratatui alternate-screen takeover so any `NameCollision` prompt reaches a real tty.
 
 ## `src/state/` module structure
-`src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, parse_md, verbs, mod), `memory/` (schema, yaml_io, parse_md, verbs, mod), and `migrate.rs`. New state areas follow this layout.
+`src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, parse_md, verbs, mod), `memory/` (schema, yaml_io, parse_md, verbs, mod), `session_log/` (schema, yaml_io, parse_md, verbs, mod), and `migrate.rs`. New state areas follow this layout.
 
 ## `find_task` centralises backlog id-lookup
 `find_task` in `src/state/backlog/verbs.rs` is the single resolution point for task-id lookup; all mutation verbs call it. Do not duplicate id-lookup logic.
+
+## `BacklogFile::task_counts` injects counts into survey
+`TaskCounts { total, not_started, in_progress, done, blocked }` lives in `state::backlog::schema`. `collect_task_counts` gathers per-plan counts; `inject_task_counts` in `survey/schema.rs` writes them onto `PlanRow`. Survey prompts (`survey.md`, `survey-incremental.md`) explicitly forbid the LLM from emitting `task_counts`.
+
+## `state session-log` provides full verb surface
+`src/state/session_log/` holds `SessionRecord` / `SessionLogFile` types. CLI verbs: `list`, `show`, `append`, `set-latest`, `show-latest`. `append_record` is idempotent by session id; duplicate appends are silently skipped.
 
 ## `split_into_task_blocks` splits on `### ` headings
 `split_into_task_blocks` uses `### ` heading boundaries, not `\n---`; `\n---` incorrectly fragments `[HANDOFF]` blocks appended to task bodies. See: `Task blocks delimited by \n--- separator`.
 
 ## `dispatch_state` routes state subcommands
-`main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog` or `dispatch_memory`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
+`main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, or `dispatch_session_log`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
