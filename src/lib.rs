@@ -9,6 +9,7 @@ pub mod multi_plan;
 pub mod phase_loop;
 pub mod projects;
 pub mod prompt;
+pub mod related_projects;
 pub mod state;
 pub mod subagent;
 pub mod survey;

@@ -9,6 +9,7 @@ mod multi_plan;
 mod phase_loop;
 mod projects;
 mod prompt;
+mod related_projects;
 mod state;
 mod subagent;
 mod survey;
@@ -246,6 +247,29 @@ enum StateCommands {
         /// Overwrite an existing backlog.yaml that differs from the re-migration output.
         #[arg(long)]
         force: bool,
+    },
+    /// Global edge list at `<config-dir>/related-projects.yaml`.
+    /// Edges reference projects by name (resolved per-user via the
+    /// projects catalog), so the file is shareable between users.
+    RelatedProjects {
+        #[command(subcommand)]
+        command: RelatedProjectsCommands,
+    },
+    /// One-shot merge of a plan's legacy `related-plans.md` into the
+    /// global `related-projects.yaml`. Creates the file on first call
+    /// and dedupes by (kind, canonicalised participants).
+    MigrateRelatedProjects {
+        plan_dir: PathBuf,
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Parse, resolve, and report without touching disk.
+        #[arg(long)]
+        dry_run: bool,
+        /// Remove the source `related-plans.md` after the merge succeeds.
+        #[arg(long)]
+        delete_original: bool,
     },
 }
 
@@ -504,6 +528,44 @@ enum ProjectsCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum RelatedProjectsCommands {
+    /// Emit the file as YAML. With `--plan`, filter to edges that
+    /// involve the project derived from the plan dir.
+    List {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Restrict output to edges involving the project that owns
+        /// `<plan>` (derived as `<plan>/../..`).
+        #[arg(long)]
+        plan: Option<PathBuf>,
+    },
+    /// Add an edge. `kind` is `sibling` or `parent-of`. Sibling edges
+    /// are order-insensitive; parent-of edges are `<parent> <child>`.
+    /// Refuses unknown project names.
+    AddEdge {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// `sibling` or `parent-of`.
+        kind: String,
+        /// First participant. For parent-of, this is the parent.
+        a: String,
+        /// Second participant. For parent-of, this is the child.
+        b: String,
+    },
+    /// Remove an edge matching `kind` and the participants (sibling is
+    /// order-insensitive, parent-of is order-sensitive).
+    RemoveEdge {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        kind: String,
+        a: String,
+        b: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -616,6 +678,66 @@ fn dispatch_state(command: StateCommands) -> Result<()> {
             };
             state::migrate::run_migrate(&plan_dir, &options)
         }
+        StateCommands::RelatedProjects { command } => dispatch_related_projects(command),
+        StateCommands::MigrateRelatedProjects {
+            plan_dir,
+            config,
+            dry_run,
+            delete_original,
+        } => {
+            let config_root = resolve_config_dir(config)?;
+            let options = related_projects::MigrateRelatedProjectsOptions {
+                dry_run,
+                delete_original,
+            };
+            let report =
+                related_projects::run_migrate_related_projects(&config_root, &plan_dir, &options)?;
+            print_migration_report(&report, dry_run);
+            Ok(())
+        }
+    }
+}
+
+fn dispatch_related_projects(command: RelatedProjectsCommands) -> Result<()> {
+    match command {
+        RelatedProjectsCommands::List { config, plan } => {
+            let config_root = resolve_config_dir(config)?;
+            related_projects::run_list(&config_root, plan.as_deref())
+        }
+        RelatedProjectsCommands::AddEdge { config, kind, a, b } => {
+            let config_root = resolve_config_dir(config)?;
+            let kind = related_projects::EdgeKind::parse(&kind).ok_or_else(|| {
+                anyhow::anyhow!("invalid kind {kind:?}; expected 'sibling' or 'parent-of'")
+            })?;
+            related_projects::run_add_edge(&config_root, kind, &a, &b)
+        }
+        RelatedProjectsCommands::RemoveEdge { config, kind, a, b } => {
+            let config_root = resolve_config_dir(config)?;
+            let kind = related_projects::EdgeKind::parse(&kind).ok_or_else(|| {
+                anyhow::anyhow!("invalid kind {kind:?}; expected 'sibling' or 'parent-of'")
+            })?;
+            related_projects::run_remove_edge(&config_root, kind, &a, &b)
+        }
+    }
+}
+
+fn print_migration_report(report: &related_projects::MigrationReport, dry_run: bool) {
+    let prefix = if dry_run { "dry-run: would add" } else { "added" };
+    for edge in &report.added {
+        println!(
+            "{prefix} {} edge: {} / {}",
+            edge.kind.as_str(),
+            edge.participants[0],
+            edge.participants[1]
+        );
+    }
+    for edge in &report.skipped_existing {
+        println!(
+            "already present: {} edge: {} / {}",
+            edge.kind.as_str(),
+            edge.participants[0],
+            edge.participants[1]
+        );
     }
 }
 
