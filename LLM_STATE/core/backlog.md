@@ -5,7 +5,7 @@
 ### R2 — Implement structured `state memory` verb surface + memory migration
 
 **Category:** `enhancement`
-**Status:** `not_started`
+**Status:** `done`
 **Dependencies:** R1 (done — establishes the schema / yaml_io / migrate patterns the memory submodule reuses)
 
 **Description:**
@@ -13,7 +13,43 @@
 Mirrors the R1 structure for `memory.yaml`. Extends `state migrate` to cover
 `memory.md` → `memory.yaml`. CLI: `state memory list / show / add / delete`.
 
-**Results:** _pending_
+**Results:**
+
+Shipped the full `state memory` surface plus the memory branch of `state
+migrate`, following R1's module pattern:
+
+- **`src/state/memory/`** — `schema.rs` (`MemoryFile { entries: Vec<MemoryEntry { id, title, body }> }`
+  with `#[serde(flatten)] extra` for forward-compat top-level keys),
+  `yaml_io.rs` (atomic temp-file rename, same pattern as backlog), `parse_md.rs`
+  (strict parser: splits on `^## ` headings, drops preamble before the first
+  heading, errors on empty-body entries), `verbs.rs` (list / show / add /
+  init / set-body / set-title / delete — no reorder, no status; dream
+  mutates position implicitly through the Vec). `allocate_id` and
+  `slug_from_title` are imported from `state::backlog::schema` rather than
+  duplicated.
+- **`src/state/migrate.rs`** — refactored from a single-file migrator into a
+  two-phase planner: `plan_backlog_migration` and `plan_memory_migration`
+  return `Option<PendingMigration>`, all source files parse before any target
+  is written, validation round-trip runs per migrator. The empty-plan case
+  now errors with "no migratable .md files found" rather than the prior
+  backlog-specific message. All five previous R1 migrate tests still cover
+  the corresponding behaviour (renamed / generalised).
+- **CLI** — `MemoryCommands` enum in `main.rs`, wired through `dispatch_state
+  → dispatch_memory`. Parser helper `parse_memory_format` mirrors
+  `parse_output_format`.
+- **Tests** — 22 lib unit tests in `state::memory::*` (incl.
+  `parses_live_core_memory_without_error` for the real `LLM_STATE/core/memory.md`),
+  9 lib unit tests in `state::migrate` (covers both files, idempotency, force,
+  parse-failure atomicity, empty-plan error), 4 end-to-end CLI integration
+  tests in `tests/state_memory.rs`. Total suite: 342 tests, 0 failures.
+  `cargo run -- state migrate LLM_STATE/core --dry-run` reports
+  `7 records` + `63 records` — a live migration would convert the core plan
+  cleanly.
+
+Suggests next: R3 (`state session-log`) can slot straight into the new
+`PendingMigration` enum as a third variant; the parse-all-then-write-all
+contract extends trivially. R1's pre-existing `iter_cloned_collect` clippy
+lint in `backlog/parse_md.rs:227` is unrelated and untouched.
 
 ---
 
