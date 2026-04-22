@@ -154,10 +154,13 @@ Lines matching `^\s*→\s*(.*)` immediately after an action marker are re-indent
 `defaults/phases/dream.md` specifies a two-line entry layout (label line + `→ detail` continuation) matching the continuation-line renderer in `format_result_text`.
 
 ## `related-plans` stored as global name-indexed edge list
-Project-level (not plan-level) edge list, keyed by plan name. Plans reference each other by name; the global list is shareable across all plans in a project.
+Implemented in `src/related_projects.rs`. Edge kinds: `sibling` and `parent-of`. Project-level (not plan-level), keyed by plan name; shareable across all plans in a project. Full CRUD, `Edge::validate` (rejects self-loops and non-pair counts), and `run_migrate_related_projects` (parses legacy `related-plans.md`, merges derived edges idempotently on re-run).
+
+## Sibling edges dedup by sorted participants; parent-of by order
+In `src/related_projects.rs`, sibling edge identity is order-insensitive (participants sorted before dedup); parent-of edge identity preserves participant order. Reversing this rule silently creates duplicate or missing edges.
 
 ## `.yaml` plan-state files are preview data until R6
-Phase prompts still read and write `.md` files; `.yaml` files produced by `state migrate` are frozen at migration-time and diverge as `.md` changes. R6 must re-migrate (with `--force --delete-originals`) before rewriting phase prompts to use CLI verbs. R1 (`state backlog`), R2 (`state memory`), and R3 (`state session-log`) are complete.
+Phase prompts still read and write `.md` files; `.yaml` files produced by `state migrate` are frozen at migration-time and diverge as `.md` changes. R6 must re-migrate (with `--force --delete-originals`) before rewriting phase prompts to use CLI verbs. R1 (`state backlog` and `state migrate`), R2 (`state memory`), R3 (`state session-log`), R4 (`state projects`), and R5 (`state related-projects`) are complete.
 
 ## `state migrate` takes `PLAN_DIR` as positional argument
 `--plan-dir` is not a valid flag; the CLI expects `PLAN_DIR` positionally. Correct usage: `ravel-lite state migrate <PLAN_DIR>`. Task deliverable documentation incorrectly described it as `--plan-dir`.
@@ -172,7 +175,7 @@ Any plan-state migration tool must apply changes atomically, be safe to re-run (
 `parse_md.rs` in `state::memory` splits on `^## ` (not `### ` as backlog uses). An entry with an empty body after the heading is a parse error, not silently skipped. See: `split_into_task_blocks splits on ### headings`.
 
 ## Structured plan-state design at `docs/structured-plan-state-design.md`
-Q1–Q8 design decisions for `ravel-lite state <file> <verb>` CLI. R1 (`state backlog` and `state migrate`), R2 (`state memory`), and R3 (`state session-log`) are complete.
+Q1–Q8 design decisions for `ravel-lite state <file> <verb>` CLI. R1–R5 complete. See: `.yaml plan-state files are preview data until R6`.
 
 ## `src/projects.rs` holds `ProjectsCatalog`
 `ProjectsCatalog` (schema_version 1) maps project names to absolute paths. `auto_add` is pure and returns `AlreadyCatalogued`/`Added`/`NameCollision`. `ensure_in_catalog_interactive` is generic over `Read + Write`. Atomic save.
@@ -181,7 +184,7 @@ Q1–Q8 design decisions for `ravel-lite state <file> <verb>` CLI. R1 (`state ba
 `add` enforces absolute paths; relative paths resolve differently from different CWDs, so the catalog is path-anchored. Rejection is a hard error at CLI entry.
 
 ## `state projects rename` is catalog-only
-`rename` updates the catalog name only. Cascade into `related-projects.yaml` is deferred to R5.
+`rename` updates the catalog name only. Cascade into `related-projects.yaml` is deferred to R6.
 
 ## `register_projects_from_plan_dirs` runs before TUI startup
 Called in `Commands::Run` before Ratatui alternate-screen takeover so any `NameCollision` prompt reaches a real tty.
@@ -205,4 +208,4 @@ Called in `Commands::Run` before Ratatui alternate-screen takeover so any `NameC
 `split_into_task_blocks` uses `### ` heading boundaries, not `\n---`; `\n---` incorrectly fragments `[HANDOFF]` blocks appended to task bodies. See: `Task blocks delimited by \n--- separator`.
 
 ## `dispatch_state` routes state subcommands
-`main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, or `dispatch_session_log`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
+`main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, or `dispatch_related_projects`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
