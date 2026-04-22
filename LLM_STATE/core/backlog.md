@@ -2,29 +2,6 @@
 
 ## Tasks
 
-### Add clippy `-D warnings` CI gate
-
-**Category:** `maintenance`
-**Status:** `not_started`
-**Dependencies:** none
-
-**Description:**
-
-`cargo clippy --all-targets -- -D warnings` is now clean (exit 0) as of the
-`[HANDOFF]` integration test task. Two pre-existing lints (`doc_lazy_continuation`
-in `src/survey/schema.rs` and `useless_format` in `tests/integration.rs`) were
-fixed as part of that work. Currently no CI step asserts clippy cleanliness, so
-drift can re-accumulate silently.
-
-Add a clippy gate to the CI pipeline (likely `.github/workflows/ci.yml` or
-equivalent) that runs `cargo clippy --all-targets -- -D warnings` and fails
-the build on any new lint. Verify the gate passes against current `main` before
-merging.
-
-**Results:** _pending_
-
----
-
 ### R1 — Implement structured `state backlog` verb surface + backlog-scoped `state migrate`
 
 **Category:** `enhancement`
@@ -52,7 +29,7 @@ govern this implementation.
 ### R4 — Implement `state projects` catalog + auto-add on `ravel-lite run`
 
 **Category:** `enhancement`
-**Status:** `not_started`
+**Status:** `done`
 **Dependencies:** none
 
 **Description:**
@@ -64,7 +41,39 @@ basename on first invocation (collision → explicit-name prompt).
 
 This is independent of R1–R3 and can proceed in parallel with them.
 
-**Results:** _pending_
+**Results:**
+
+New `src/projects.rs` module defines `ProjectsCatalog { schema_version: 1,
+projects: [{name, path}] }` with `load_or_empty` + atomic `save_atomic` (tmp
++ rename, mirrors `state::atomic_write`). Core decision logic is pure:
+`auto_add(&mut catalog, &path) -> AutoAddOutcome` returns `AlreadyCatalogued`
+/ `Added` / `NameCollision`; I/O + prompting live in
+`ensure_in_catalog_interactive` (generic over `Read + Write` so tests drive
+it with `Cursor`).
+
+CLI: `ravel-lite state projects list|add|remove|rename`, each taking
+`--config` matching the existing run/survey precedence chain. `add` refuses
+relative paths (catalog is anchored; a relative path resolves differently
+from different CWDs). `rename` is scoped to the catalog file only — the
+related-projects cascade is R5's job.
+
+Auto-add hook: `register_projects_from_plan_dirs` in `main.rs` runs inside
+`Commands::Run` before the TUI starts. Collects distinct projects via
+`project_root_for_plan`, prompts on stderr/stdin on basename collision
+(blank input aborts with an actionable error pointing at
+`state projects add --name <n>`). Keeping this in main.rs keeps the prompt
+on real stdin before Ratatui's alternate-screen takeover.
+
+Coverage: 18 unit tests in the module (round-trip, schema-version reject,
+collision handling, CLI handler behaviour, interactive prompt success +
+abort paths) and 2 CLI-binary integration tests (`add → list → rename →
+remove` round-trip; relative-path rejection). Full test suite 238+27 green;
+`cargo clippy --all-targets -- -D warnings` clean.
+
+Suggests next: R5 (`state related-projects` edge list + `migrate-related-projects`)
+is now unblocked — the catalog exists so edge-list name resolution has a target.
+R5's `rename` cascade will extend `projects::run_rename` to also rewrite
+edges in `related-projects.yaml`.
 
 ---
 

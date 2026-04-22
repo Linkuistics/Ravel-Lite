@@ -83,3 +83,14 @@ What to try next: run the updated dream phase on a real plan to confirm the two-
 - The full specifications for each task are inlined in the research task's `[HANDOFF]` block in `backlog.md` (Results section, after the `---` separator). Triage should mine and promote all seven as `not_started` tasks with the dependencies and descriptions already specified there.
 - R1 has an existing implementation plan at `docs/structured-backlog-r1-plan.md`; its task description should reference this file.
 - Dependencies: R2, R3 depend on R1; R5 depends on R4; R6 depends on R1–R5; R7 depends on R5. R1 and R4 are immediately ready.
+
+### Session 8 (2026-04-22T03:44:10Z) — Implement state projects catalog (R4)
+
+- Implemented R4: `state projects` catalog mapping project names to absolute paths
+- Created `src/projects.rs` with `ProjectsCatalog` struct (schema_version: 1, projects list), atomic save, `auto_add` pure logic returning `AlreadyCatalogued`/`Added`/`NameCollision`, and `ensure_in_catalog_interactive` generic over `Read + Write`
+- Wired CLI verbs `list`/`add`/`remove`/`rename` in `main.rs` under `StateCommands::Projects`
+- Added `register_projects_from_plan_dirs` in `main.rs`, called before TUI startup in `Commands::Run`, so collision prompts reach a real tty before Ratatui's alternate-screen takeover
+- `add` rejects relative paths (catalog is path-anchored; relative paths resolve differently from different CWDs)
+- `rename` is scoped to catalog only — R5 adds the `related-projects.yaml` cascade
+- 18 unit tests in module + 2 CLI integration tests (round-trip add→list→rename→remove; relative-path rejection); full suite 238+27 green; clippy clean
+- All changes committed; R4 status already correctly marked `done` in backlog
