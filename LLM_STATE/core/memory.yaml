@@ -331,3 +331,17 @@ entries:
   title: Multi-stage LLM pipeline uses run/Config/Outcome submodule shape
   body: |
     Each stage in `src/discover/` exposes `run_<stage>`, `<Stage>Config`, and `<Stage>Outcome`. This is the reusable template for adding new stages to multi-stage LLM pipelines in this codebase.
+- id: rename-cascade-registry-design-consideration
+  title: Rename cascade registry design consideration
+  body: |
+    ---
+    name: Rename cascade registry design consideration
+    description: Design note on when to introduce a Trait-based cascade registry for project rename operations
+    type: project
+    originSessionId: cffa02ce-72ae-4ad6-a1ac-39e9d8b54231
+    ---
+    `run_rename` in `src/projects.rs` currently cascades manually into three places: the catalog, `related-projects.yaml`, and `<config-dir>/discover-cache/<name>.yaml`. If a fourth surface is added (e.g. survey state, dream state), the pattern should be extracted into a Trait-based cascade registry rather than threaded in ad-hoc.
+
+    **Why:** R7.5 completed the third cascade point. The R7.5 author noted that a Trait-based registry is warranted if a third surface is added — that threshold is now met.
+
+    **How to apply:** Before adding any new rename cascade point, evaluate whether to introduce a `RenameHook` trait (or similar) and register all cascade handlers at startup. Three cascade points in `run_rename` is already approaching the boundary where manual threading becomes error-prone.
