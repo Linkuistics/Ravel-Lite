@@ -1,24 +1,11 @@
-id: session-19
-timestamp: 2026-04-22T22:03:34Z
+id: session-20
+timestamp: 2026-04-22T22:36:13Z
 phase: work
 body: |
-  ### Session 19 (2026-04-22T22:03:34Z) — R7.7–R7.11: complete discover pipeline
+  ### Session 20 (2026-04-22T22:36:13Z) — Fix reversed parent-of conflict detection in apply layer
 
-  - Implemented R7.7–R7.11 in full across five dependent tasks: Stage 2 LLM invocation, top-level orchestrator, apply-merge logic, CLI wiring, and end-to-end integration test.
-  - All five tasks passed code-quality review on first pass (APPROVE with minor observations only).
-  - The full discover pipeline compiles clean with cargo clippy; 450 tests pass including the new e2e shim test.
-
-  What worked:
-  - Module shape mirroring (stage2 mirrors stage1: Config → pub async run fn → helper spawn fn → tests) gave reviewers a familiar surface and sped up review.
-  - The `dispatch_state`/`dispatch_related_projects` async promotion avoided the block_on-inside-tokio-runtime panic that the plan's sync option would have caused.
-  - The fake-claude bash shim approach for the e2e test was robust: distinguish Stage1/Stage2 by prompt header grep, extract injected YAML path, write canned response.
-
-  What didn't / surprises:
-  - Plan called for `ravel_lite::discover::...` paths in main.rs — incorrect for a binary crate; corrected to `crate::discover::...`.
-  - `SharedConfig` requires `headroom: usize` with no serde default; the plan's minimal config snippet would have failed deserialization. Fixed in the e2e test.
-  - R7.9 review discovered an apply-layer spec gap: `find_conflicting_kind` does not flag `parent-of(A,B)` vs `parent-of(B,A)` as a directional conflict (both have kind==ParentOf, so the kind-mismatch filter passes them through). Promoted to backlog task.
-
-  What this suggests trying next:
-  - R7.12 (smoke test against real catalog with live model) — not yet scheduled; plan § Task 12 Step 3.
-  - Apply-layer directional conflict fix for parent-of reversals (new backlog task).
-  - `spawn_claude_*` deduplication if a third stage appears (currently two copies — acceptable).
+  - Implemented the `apply-layer-directional-conflict-check-for-parent-of-reversals` backlog task: fixed a bug in `find_conflicting_kind` (`src/discover/apply.rs`) where `parent-of(A,B)` + proposed `parent-of(B,A)` was not detected as a conflict because both edges share `kind == ParentOf`, causing the reversed edge to slip through into the graph — a contradictory state where A is parent of B and B is parent of A simultaneously.
+  - Fix was ~3 lines in the filter predicate: added an OR-branch so same-kind ParentOf edges with differing participant order are treated as directional conflicts. Also improved the conflict log line to include `existing.participants` so the message is readable when a reversal is blocked. Imported `EdgeKind` into the module to keep the predicate self-contained.
+  - TDD cycle followed: a RED test (`apply_rejects_reversed_parent_of_as_conflict`) reproduced the bug first try (reported `added == 1`, expected 0); a negative-control test (`apply_treats_duplicate_parent_of_as_already_present`) confirmed exact-duplicate ParentOf is still routed as `already_present` not a conflict. Full suite: 406 lib tests + all integration suites pass, 0 failures, clippy clean.
+  - The ~3-line estimate from the backlog description was accurate; no schema changes, no API changes, no new data structures needed.
+  - Both remaining open tasks (`remove-claude-code-debug-file-workaround`, `smoke-test-discover-pipeline`) require human-at-tty verification and cannot proceed headlessly.
