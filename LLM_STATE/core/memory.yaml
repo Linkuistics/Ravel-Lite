@@ -256,9 +256,9 @@ entries:
   body: |
     `ProjectsCatalog` (schema_version 1) maps project names to absolute paths. `auto_add` is pure and returns `AlreadyCatalogued`/`Added`/`NameCollision`. `ensure_in_catalog_interactive` is generic over `Read + Write`. Atomic save.
 - id: state-projects-add-rejects-relative-paths
-  title: '`state projects add` rejects relative paths'
+  title: state projects add resolves relative paths against CWD
   body: |
-    `add` enforces absolute paths; relative paths resolve differently from different CWDs, so the catalog is path-anchored. Rejection is a hard error at CLI entry.
+    `state projects add` resolves relative paths against the caller's CWD via `std::path::absolute`. The catalog stores the absolute form; no filesystem access required. Rejection of relative paths was removed in R7.1.
 - id: state-projects-rename-cascades-into-related-projects-yaml
   title: '`state projects rename` cascades into `related-projects.yaml`'
   body: |
@@ -303,3 +303,19 @@ entries:
   title: state migrate --force required when .yaml predates .md
   body: |
     When pre-existing `.yaml` files are stale relative to the authoritative `.md` originals, `state migrate` aborts without `--force`. `--force` re-derives from `.md` and overwrites `.yaml`. `.md` is the authoritative source; `.yaml` is a derived cache.
+- id: std-path-absolute-does-pure-path-math-anchored-to-cwd
+  title: std::path::absolute does pure path math anchored to CWD
+  body: |
+    `std::path::absolute` (stabilised Rust 1.79) performs pure path math anchored to the process CWD without touching the filesystem or resolving symlinks. Use it when recording a user-stated path without requiring the directory to exist.
+- id: projects-add-name-optional-defaults-to-basename
+  title: projects add --name optional; defaults to basename
+  body: |
+    `projects add --name` is optional; omitting it defaults the catalog name to the directory basename via `basename_as_name`. `basename_as_name` is a shared helper called by both `auto_add` and `run_add`.
+- id: src-discover-schema-surfacefile-and-surfacerecord-r7-1
+  title: 'src/discover/ schema: SurfaceFile and SurfaceRecord (R7.1)'
+  body: |
+    `src/discover/schema.rs` defines `SurfaceFile` (identity fields: `plan_name`, `tree_sha`) and `SurfaceRecord` (data fields). Two round-trip YAML tests guard the schema. Module wired at `src/lib.rs` as `pub mod discover`.
+- id: discover-schema-serde-default-on-data-fields-only
+  title: 'Discover schema: serde(default) on data fields only'
+  body: |
+    In `SurfaceRecord`, data fields carry `#[serde(default)]` to tolerate partial LLM emission; identity fields on `SurfaceFile` deliberately omit `default` so a missing identity field hard-fails on deserialise.
