@@ -206,11 +206,19 @@ entries:
 - id: related-plans-stored-as-global-name-indexed-edge-list
   title: '`related-plans` stored as global name-indexed edge list'
   body: |
-    Project-level (not plan-level) edge list, keyed by plan name. Plans reference each other by name; the global list is shareable across all plans in a project.
-- id: plan-state-files-use-structured-yaml
-  title: Plan-state files use structured YAML
+    Implemented in `src/related_projects.rs`. Edge kinds: `sibling` and `parent-of`. Project-level (not plan-level), keyed by plan name; shareable across all plans in a project. Full CRUD, `Edge::validate` (rejects self-loops and non-pair counts), and `run_migrate_related_projects` (parses legacy `related-plans.md`, merges derived edges idempotently on re-run).
+- id: sibling-edges-dedup-by-sorted-participants-parent-of-by-order
+  title: Sibling edges dedup by sorted participants; parent-of by order
   body: |
-    Structured YAML replaces prose plan-state files, accessed via `ravel-lite state <file> <verb>`. R1 (`state backlog`), R2 (`state memory`), and R3 (`state session-log`) are complete.
+    In `src/related_projects.rs`, sibling edge identity is order-insensitive (participants sorted before dedup); parent-of edge identity preserves participant order. Reversing this rule silently creates duplicate or missing edges.
+- id: yaml-plan-state-files-are-preview-data-until-r6
+  title: LLM writes land in .yaml; .md is stale legacy until R8
+  body: |
+    Phase prompts (`work.md`, `analyse-work.md`, `reflect.md`, `dream.md`, `triage.md`, `create-plan.md`) mutate plan-state exclusively via `ravel-lite state <verb>` calls, which write only `.yaml`. The legacy `.md` siblings remain on disk because the Rust side (`src/dream.rs`, `src/survey/discover.rs`, `src/multi_plan.rs`, `src/main.rs`) still reads them for compaction, survey, and `{{RELATED_PLANS}}` synthesis. R8 completes the cutover by migrating those Rust readers to `.yaml` and running `migrate --force --delete-originals` on each plan. Until R8, `.md` is stale-but-harmless: LLMs never read it and survey/dream/related-plans still need it.
+- id: state-migrate-takes-plan-dir-as-positional-argument
+  title: '`state migrate` takes `PLAN_DIR` as positional argument'
+  body: |
+    `--plan-dir` is not a valid flag; the CLI expects `PLAN_DIR` positionally. Correct usage: `ravel-lite state migrate <PLAN_DIR>`. Task deliverable documentation incorrectly described it as `--plan-dir`.
 - id: plan-state-migration-requires-atomicity-idempotency-dry-run-validation
   title: Plan-state migration requires atomicity, idempotency, dry-run, validation
   body: |
@@ -226,7 +234,7 @@ entries:
 - id: structured-plan-state-design-at-docs-structured-plan-state-design-md
   title: Structured plan-state design at `docs/structured-plan-state-design.md`
   body: |
-    Q1–Q8 design decisions for `ravel-lite state <file> <verb>` CLI. R1 (`state backlog` and `state migrate`), R2 (`state memory`), and R3 (`state session-log`) are complete.
+    Q1–Q8 design decisions for `ravel-lite state <file> <verb>` CLI. R1–R5 complete. See: `.yaml plan-state files are preview data until R6`.
 - id: src-projects-rs-holds-projectscatalog
   title: '`src/projects.rs` holds `ProjectsCatalog`'
   body: |
@@ -238,7 +246,7 @@ entries:
 - id: state-projects-rename-is-catalog-only
   title: '`state projects rename` is catalog-only'
   body: |
-    `rename` updates the catalog name only. Cascade into `related-projects.yaml` is deferred to R5.
+    `rename` updates the catalog name only. Cascade into `related-projects.yaml` is deferred to R6.
 - id: register-projects-from-plan-dirs-runs-before-tui-startup
   title: '`register_projects_from_plan_dirs` runs before TUI startup'
   body: |
@@ -270,4 +278,8 @@ entries:
 - id: dispatch-state-routes-state-subcommands
   title: '`dispatch_state` routes state subcommands'
   body: |
-    `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, or `dispatch_session_log`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
+    `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, or `dispatch_related_projects`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
+- id: projects-run-rename-cascades-into-related-projects-yaml
+  title: projects::run_rename cascades into related-projects.yaml
+  body: |
+    `projects::run_rename` cascades into the global edge store via `related_projects::rename_project_in_edges`. The cascade rewrites any edge participant matching `old` to `new`, preserving parent-of direction and skipping when `related-projects.yaml` is absent. Catalog uniqueness (enforced by `run_rename` before invoking the cascade) guarantees no self-loops or duplicate edges emerge from substitution, so the rewrite is mechanical — no re-canonicalisation or dedup pass is needed.

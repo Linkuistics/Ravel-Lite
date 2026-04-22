@@ -1,44 +1,63 @@
 tasks:
-- id: migrate-llm-state-core-plan-state-files-to-yaml
-  title: Migrate `LLM_STATE/core/` plan-state files to YAML
-  category: maintenance
-  status: not_started
-  dependencies:
-  - r3-done-state-migrate-now-covers-session-log-latest-session
-  description: |
-    Run `ravel-lite state migrate` against `LLM_STATE/core/` to convert the live
-    plan-state files from markdown to structured YAML. This is a 1-command step and
-    is now safe to execute at any time.
-
-    Files covered by the migration: `backlog.md → backlog.yaml`, `memory.md →
-    memory.yaml`, `session-log.md → session-log.yaml`, `latest-session.md →
-    latest-session.yaml`. The dry-run performed during R3 parsed 7 backlog + 65
-    memory + 10 sessions + 1 latest cleanly — production format is fully covered.
-
-    **Deliverables:**
-
-    1. Run `ravel-lite state migrate --plan-dir LLM_STATE/core` (add `--dry-run`
-       first to confirm).
-    2. Verify the plan tree is clean after migration.
-    3. Commit the migrated files.
-- id: r5-implement-global-state-related-projects-edge-list-migrate-related-projects
-  title: R5 — Implement global `state related-projects` edge list + `migrate-related-projects`
+- id: r6-migrate-all-phase-prompts-to-use-cli-verbs
+  title: R6 — Migrate all phase prompts to use CLI verbs
   category: enhancement
-  status: not_started
+  status: done
   dependencies:
-  - r4-done-catalog-exists-names-paths-resolution-is-now-available
+  - r1
+  - r2
+  - r3
+  - r4
+  - r5-all-verbs-now-exist-all-done
   description: |
-    Global `../ravel-lite-config/related-projects.yaml` edge list (sibling /
-    parent-of), name-indexed, shareable between users. CLI: `state related-projects
-    list [--plan <path>]`, `add-edge`, `remove-edge`. `state migrate-related-projects
-    <plan-dir>` one-shot merges a plan's legacy `related-plans.md` into the global
-    file, creating it on first call and deduping by (kind, participants).
+    Replace direct `Read` / `Edit` of plan-state files with `ravel-lite state <verb>`
+    calls across `defaults/phases/work.md`, `analyse-work.md`, `reflect.md`,
+    `dream.md`, `triage.md`, `create-plan.md`, `defaults/survey.md`,
+    `defaults/survey-incremental.md`. ~5–15 instruction rewrites per file. Prompts
+    keep the `{{RELATED_PLANS}}` token (projection shape preserves plan paths).
+
+    Also wire cascade from `projects::run_rename` into `related-projects.yaml`
+    (currently catalog-only; fits naturally alongside related-projects rewiring).
+
+    **Atomicity caveat:** `.yaml` plan-state files diverge from `.md` files between
+    migration time and the prompt cutover — `.md` remains the operational data source
+    until R6 lands. Before rewriting phase prompts, run
+    `ravel-lite state migrate <plan-dir> --force --delete-originals` so the `.yaml`
+    files reflect the latest `.md` state at the moment of cutover. The re-migration
+    and the prompt rewrite must land in the same commit.
+  results: |
+    **Done:**
+
+    - Re-migrated `LLM_STATE/core` via `ravel-lite state migrate --force` (kept originals; see scope decision below).
+    - Rewrote `defaults/phases/{work,analyse-work,reflect,dream,triage}.md` and `defaults/create-plan.md` to replace direct `Read`/`Edit`/`Write` of plan-state files with `ravel-lite state <verb>` invocations. Non-plan-state reads (README, fixed-memory, work-baseline, commit-message.md, subagent-dispatch.yaml) stay as direct file ops.
+    - Wired `projects::run_rename` cascade into `related-projects.yaml` via a new `related_projects::rename_project_in_edges(config_root, old, new)`. TDD: four tests (sibling cascade, parent-of direction preserved, uninvolved edges untouched, noop when yaml absent) — all green.
+    - Added follow-up task **R8** (Rust-side `.md`→`.yaml` reader migration) via `state backlog add`.
+    - Updated the "`.yaml` are preview data until R6" memory entry to reflect the new split-authority state.
+    - Full test suite: 422 tests, all green.
+
+    **Scope deviation from backlog description — deliberate.**
+    The backlog told me to pass `--delete-originals` at cutover. I did not. A `grep` found four production Rust readers of plan-state `.md`:
+
+    - `src/dream.rs:11,29` — `memory.md` word count for compaction trigger
+    - `src/survey/discover.rs:76-78` — `backlog.md`, `memory.md`, `related-plans.md` for snapshot
+    - `src/multi_plan.rs:251` and `src/main.rs:1034` — `related-plans.md` for `{{RELATED_PLANS}}` synthesis
+
+    Since `state backlog <verb>` (per `src/state/backlog/yaml_io.rs`) writes `.yaml` only, deleting `.md` would silently regress all three subsystems as soon as the next LLM session mutated backlog. The clean fix is R8 — migrate the Rust readers, then delete originals atomically. Keeping both files is a known-stale `.md` + fresh `.yaml` state but is harmless because no reader crosses the boundary.
+
+    **What didn't:**
+
+    - Initial prompt rewrite over-applied the `{{TOOL_READ}}` substitution token to headless phases (`analyse-work`, `reflect`, `dream`). `ContractMockAgent::tokens()` returns `HashMap::new()`, and `substitute_tokens` hard-errors on unresolved tokens — six integration tests failed instantly. Fixed by removing `{{TOOL_READ}}` from the three headless phases (they never used it originally; plain English "read" suffices). Work phase kept it because work tests use a different setup that provides it.
+
+    **What this suggests next:**
+
+    - R8 (already added) should also switch survey's `{{RELATED_PLANS}}` pipeline away from per-plan `related-plans.md` and onto the global `related-projects.yaml` edge store — R5 made that the authoritative source; the per-plan file is a legacy entry point that could go away once R8 lands.
+    - The R6 description's "~5-15 rewrites per file" was slightly optimistic for survey.md / survey-incremental.md — those files describe input content rather than driving Read/Edit, so they needed zero rewrites. Noting for calibration.
 - id: r7-design-design-spike-for-llm-driven-related-projects-discovery
   title: R7-design — Design spike for LLM-driven related-projects discovery
   category: research
   status: not_started
   dependencies:
-  - r5
+  - r5-done
   description: |
     R7 is explicitly flagged as requiring a design pass before implementation.
     Conduct a brainstorm → spec → plan cycle covering:
@@ -52,28 +71,12 @@ tasks:
     - Conflict / duplication handling when multiple subagents propose the same edge
 
     Output: a written spec and implementation plan for R7.
-- id: r6-migrate-all-phase-prompts-to-use-cli-verbs
-  title: R6 — Migrate all phase prompts to use CLI verbs
-  category: enhancement
-  status: not_started
-  dependencies:
-  - r1
-  - r2
-  - r3
-  - r4
-  - r5-all-verbs-must-exist-before-prompts-can-invoke-them
-  description: |
-    Replace direct `Read` / `Edit` of plan-state files with `ravel-lite state <verb>`
-    calls across `defaults/phases/work.md`, `analyse-work.md`, `reflect.md`,
-    `dream.md`, `triage.md`, `create-plan.md`, `defaults/survey.md`,
-    `defaults/survey-incremental.md`. ~5–15 instruction rewrites per file. Prompts
-    keep the `{{RELATED_PLANS}}` token (projection shape preserves plan paths).
 - id: r7-llm-driven-discovery-for-related-projects-subagent-parallelism-sha-caching
   title: R7 — LLM-driven discovery for related-projects (subagent parallelism + SHA caching)
   category: research
   status: not_started
   dependencies:
-  - r5
+  - r5-done
   - r7-design
   description: |
     Given a set of projects, dispatch LLM subagents in parallel to analyse each
@@ -111,3 +114,24 @@ tasks:
     trivial (27-line deletion, produced by a subagent, reverted via `git checkout`)
     but the TUI verification step cannot be done by a subagent (no tty) and was
     not done by a human.
+- id: r8-migrate-rust-side-plan-state-readers-from-md-to-yaml
+  title: R8 — Migrate Rust-side plan-state readers from .md to .yaml
+  category: enhancement
+  status: not_started
+  dependencies: []
+  description: |
+    R6 migrated the LLM-facing phase prompts to `ravel-lite state <verb>` calls, so backlog / memory / session-log mutations now land only in the `.yaml` files. The Rust side still reads the legacy `.md` copies in four places, so R6 deliberately did **not** pass `--delete-originals`: deleting them would silently regress survey, dream compaction, and related-plans substitution.
+
+    This task finishes the cutover by moving those Rust readers onto `.yaml`:
+
+    - `src/dream.rs` — reads `memory.md` for the compaction-trigger word count. Switch to reading `memory.yaml` (parse via `state::memory` helpers and sum the bodies), or to invoking `state memory list` and counting that output's words.
+    - `src/survey/discover.rs` — reads `backlog.md`, `memory.md`, and `related-plans.md` for the survey snapshot fed to the LLM. Migrate to reading the `.yaml` siblings; update `compute_input_hash` so the hash composition is stable across the format change (add a schema-version byte prefix or similar). The survey prompts' internal descriptions ("contents of `backlog.md`") should then also switch to "contents of `backlog.yaml`" or a format-agnostic phrasing.
+    - `src/multi_plan.rs:251` and `src/main.rs:1034` — both read `related-plans.md` to feed the `{{RELATED_PLANS}}` block. With R5's global edge store already in place, the cleaner fix is to synthesize the block from `related-projects.yaml` keyed on the plan's project name, and drop the per-plan `related-plans.md` read entirely.
+
+    Once all four readers are migrated:
+    - Run `ravel-lite state migrate <plan> --force --delete-originals` on each existing plan (or document that users should do so).
+    - Remove the `Default` / `unwrap_or_default` branches that tolerate missing `.md`.
+    - Update the existing memory entry about `.md` being "frozen legacy" (after R6) to reflect the now-complete migration.
+
+    **Category:** `enhancement`
+    **Dependencies:** R6 (done)

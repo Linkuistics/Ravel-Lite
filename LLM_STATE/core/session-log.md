@@ -212,3 +212,10 @@ What didn't: nothing significant. R5 was completed in one session as designed.
 
 What to try next: R6 (migrate all phase prompts to CLI verbs) is the highest-leverage
 follow-up; it closes the .md/.yaml divergence. R7-design is also unblocked.
+
+### Session 14 (2026-04-22T08:13:12Z) — R6: migrate phase prompts to CLI verbs + run_rename cascade
+
+- **What was attempted:** Complete R6 — rewrite all phase prompts to use `ravel-lite state <verb>` calls instead of direct Read/Edit of plan-state files, and wire `projects::run_rename` cascade into `related-projects.yaml` (an R6 sub-deliverable listed in the backlog description).
+- **What worked:** All six phase/create-plan files successfully migrated (`work.md`, `analyse-work.md`, `reflect.md`, `dream.md`, `triage.md`, `create-plan.md`). The `{{TOOL_READ}}` token was correctly scoped to `work.md` only — removing it from headless phases (analyse-work, reflect, dream) fixed six integration-test failures that would have blocked CI. Four TDD tests for `rename_project_in_edges` all green; full suite (422 tests) passes.
+- **Scope deviation — deliberate:** The backlog told us to pass `--delete-originals` at cutover; we did not. A grep found four Rust readers of `.md` plan-state files (`src/dream.rs`, `src/survey/discover.rs`, `src/multi_plan.rs`, `src/main.rs`). Deleting `.md` would silently regress those subsystems. The clean fix is R8 (added to backlog this session): migrate the Rust readers, then delete originals atomically.
+- **What this suggests next:** R8 should also synthesize the `{{RELATED_PLANS}}` block from the global `related-projects.yaml` instead of per-plan `related-plans.md`, completing the edge-store consolidation R5 started.
