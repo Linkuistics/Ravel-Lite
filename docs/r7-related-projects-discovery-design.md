@@ -1,43 +1,70 @@
 # R7 — LLM-driven Discovery for Related Projects
 
-**Status:** Proposed. Recommendation: **go**.
-**Date:** 2026-04-22
-**Related backlog tasks:** R7-design (this spec); R7 (implementation).
-**Depends on:** R5 (global `related-projects.yaml` + catalog) — done.
+**Status:** Shipped. Historical design record.
+**Date:** 2026-04-22 (original); superseded on schema vocabulary
+2026-04-23.
+
+> **Superseded vocabulary.** When this spec was written, the edge store
+> used two kinds (`sibling`, `parent-of`) in a file named
+> `related-projects.yaml`. The ontology was bumped to v2 (17 kinds over
+> three axes) and the edge store renamed to `related-components.yaml`.
+> For the current edge vocabulary, schema, and apply semantics, read
+> [`component-ontology.md`](component-ontology.md) — it is authoritative.
+> The transition itself is documented in
+> [`component-ontology-migration.md`](component-ontology-migration.md).
+> This doc is retained for pipeline architecture (two-stage split, cache
+> design, concurrency, failure modes), which the ontology docs do not
+> cover. Passages that speak about edge kinds, proposal fields, or the
+> old file name are marked historical below.
+
+**Related backlog tasks:** R7-design (this spec) — closed; R7
+(implementation) — shipped; follow-on ontology-v2 work in
+`component-ontology-migration.md` — shipped.
+**Depends on:** R5 (global catalog + edge store) — done.
 
 ## Problem
 
-The global `related-projects.yaml` edge list is presently populated by one of
-two mechanisms: (a) explicit `state related-projects add-edge` invocations, or
+When R7 was designed, the global edge list was populated by one of two
+mechanisms: (a) explicit `state related-projects add-edge` invocations, or
 (b) one-shot migration of legacy per-plan `related-plans.md` files via
-`state migrate-related-projects`. Both require the user to already know the
-relationships. As the catalog grows (and most catalogued projects have no
-plan, so there is no legacy `related-plans.md` to migrate), manually
-maintaining this graph does not scale.
+`state migrate-related-projects`. Both required the user to already know
+the relationships. As the catalog grows (and most catalogued projects
+have no plan, so there is no legacy `related-plans.md` to migrate),
+manually maintaining this graph does not scale.
 
-R7 adds an LLM-driven discovery mechanism: given the catalog, analyse every
-project's source tree and propose edges. The proposals are written to a
-review-gate file; a separate `apply` step commits them to
-`related-projects.yaml`.
+R7 adds an LLM-driven discovery mechanism: given the catalog, analyse
+every project's source tree and propose edges. The proposals are written
+to a review-gate file; a separate `apply` step commits them to the
+edge store (today `related-components.yaml`).
+
+> _Historical note._ The v1 migrator (`state migrate-related-projects`)
+> was retired at the v2 cutover — see `component-ontology-migration.md`
+> §6.1. The `add-edge` escape hatch survives under the v2 CLI verb
+> `state related-components add-edge`.
 
 ## Scope
 
 ### In scope
-- A new CLI verb pair under `state related-projects`: `discover` and
-  `discover-apply`.
+- A new CLI verb pair: `discover` and `discover-apply`. (Originally
+  under `state related-projects`; renamed to `state related-components`
+  at the v2 cutover, with the old name retained as a deprecation-window
+  alias.)
 - Two-stage LLM pipeline: per-project surface extraction (cached) → global
   edge inference (uncached).
 - Subtree-scoped git tree SHA as the cache key; works for both top-level
-  repos and monorepo subtrees.
-- Proposal file with rationale; manual review-gate merge into
-  `related-projects.yaml`.
+  repos and monorepo subtrees. *(The shipped key combines this with a
+  `dirty_hash` over uncommitted state — see §Cache.)*
+- Proposal file with rationale; manual review-gate merge into the edge
+  store.
 - Integration with the existing `projects::run_rename` cascade so cache files
   follow project renames.
 
 ### Out of scope (deferred)
 - Non-git project support (bail with actionable error for now).
-- Dirty-tree analysis — hashing working-tree state rather than bailing
-  (bail keeps results reproducible).
+- ~~Dirty-tree analysis — hashing working-tree state rather than bailing
+  (bail keeps results reproducible).~~ *Shipped after all — see §Cache
+  and §Preconditions. Reproducibility preserved by folding the dirty
+  state into the cache key rather than bailing.*
 - Auto-scheduling `discover` from a phase (e.g., triage running it
   periodically). Remains user-invoked.
 - Confidence-score calibration / auto-apply thresholds. Review-gate covers
@@ -56,7 +83,8 @@ catalog ──────► │  Stage 1    │  N parallel subagents (semapho
                 └──────┬──────┘     large projects
                        │
                        ▼
-      discover-cache/<name>.yaml  (keyed by subtree tree SHA;
+      discover-cache/<name>.yaml  (keyed by subtree state —
+                                   tree SHA + dirty hash;
                                    skipped when cache hits)
                        │
                        ▼
@@ -69,9 +97,13 @@ catalog ──────► │  Stage 1    │  N parallel subagents (semapho
          discover-proposals.yaml  (edges + rationale + failures)
                        │
                        ▼        (manual `apply` or `--apply` flag)
-           related-projects.yaml (merged; idempotent; kind-conflicts
-                                  reported + rejected)
+         related-components.yaml (merged; idempotent; directional
+                                  conflicts reported + rejected)
 ```
+
+> _Historical note._ The diagram originally named the edge store
+> `related-projects.yaml`; the v2 cutover renamed it. Conflict detection
+> also narrowed — see §Merge-Apply Policy.
 
 ### Why two stages, not one
 
@@ -111,6 +143,7 @@ N bounded records, not trees, so the LLM cost is small and bounded.
 schema_version: 1
 project: <name>            # injected by Rust post-parse (not LLM-emitted)
 tree_sha: <sha>            # injected by Rust post-parse
+dirty_hash: <sha or "">    # injected by Rust post-parse
 analysed_at: <timestamp>   # injected by Rust
 surface:
   purpose: <one-paragraph prose>
@@ -119,13 +152,18 @@ surface:
   network_endpoints: [<protocol>://<address-or-description>, ...]
   data_formats: [<name-or-schema-id>, ...]
   external_tools_spawned: [<binary-name>, ...]
-  explicit_cross_project_mentions: [<project-name-or-path>, ...]
+  explicit_cross_project_mentions: [<component-name>, ...]
+  interaction_role_hints: [<role>, ...]   # closed vocabulary; optional
   notes: <free-form prose>
 ```
 
-Identity fields (`project`, `tree_sha`, `analysed_at`) are injected by Rust
-after parsing the LLM output to prevent the LLM from claiming a different
-project name or a stale SHA.
+Identity fields (`project`, `tree_sha`, `dirty_hash`, `analysed_at`)
+are injected by Rust after parsing the LLM output to prevent the LLM
+from claiming a different project name, a stale SHA, or a fabricated
+dirty-state fingerprint. `interaction_role_hints` are advisory
+self-labels a component's own prose may declare (closed vocabulary in
+`InteractionRoleHint`); Stage 2 treats them as priors, not verdicts —
+an edge still requires cross-referenced surface-field evidence.
 
 ### Delivery mechanism
 
@@ -142,34 +180,62 @@ All Stage-1 surface records plus the project catalog (names + paths).
 ### Prompt contract
 
 The Stage 2 prompt instructs the LLM to propose edges from the N bounded
-surface records, citing specific surface fields as justification. Two edge
-kinds are available, matching the existing `related-projects.yaml` schema:
+surface records, citing specific surface fields as justification. Every
+edge is a tuple `(kind, lifecycle, direction)` annotated with evidence.
 
-- `sibling(A, B)` — peer-level shared purpose, protocol, or data format.
-  Order-insensitive.
-- `parent-of(A, B)` — one project produces artifacts or contracts the other
-  consumes. Order-sensitive (parent first).
+The edge-kind vocabulary is **not duplicated here** — it lives
+authoritatively in [`component-ontology.md`](component-ontology.md) §5
+(17 kinds across seven families), is data-ified in
+`defaults/ontology.yaml`, and is spliced into the shipped Stage 2 prompt
+via the `{{ONTOLOGY_KINDS}}` token (`defaults/discover-stage2.md`). See
+`component-ontology.md` §6 for direction/symmetry rules and §3.2 for the
+lifecycle-scope list.
+
+> _Historical note._ The original R7 design offered only two kinds,
+> `sibling` and `parent-of`, matching the shipped schema at the time.
+> That vocabulary was replaced wholesale at the v2 cutover
+> (`component-ontology-migration.md`). Every `sibling` / `parent-of`
+> reference elsewhere in this doc should be read as historical.
 
 ### Proposal schema
 
+The shipped shape is authoritatively defined in
+[`component-ontology.md`](component-ontology.md) §7 (on-disk schema for
+the edge store) and in `component-ontology-migration.md` §5.2 (the
+Stage 2 prompt's delta against this R7 spec). In summary:
+
 ```yaml
-schema_version: 1
+schema_version: 2
 generated_at: <timestamp>
-source_tree_shas:          # pins the exact input that produced these
-  <project>: <sha>
+source_project_states:    # pins the exact input that produced these
+  <project>:
+    tree_sha: <sha>
+    dirty_hash: <sha or "">
   ...
 proposals:
-  - kind: sibling | parent-of
-    participants: [<name>, <name>]  # parent first for parent-of
+  - kind: <kebab-case; see component-ontology.md §5>
+    lifecycle: <kebab-case; see component-ontology.md §3.2>
+    participants: [<name>, <name>]  # see §6 direction table
+    evidence_grade: strong | medium | weak
+    evidence_fields: [<field-path>, ...]
     rationale: <prose; must cite specific surface fields>
-    supporting_surface_fields: [<field-path>, ...]
   ...
-failures: []               # populated only when Stage 1 had failures
+failures: []              # populated only when Stage 1 had failures
 ```
 
-`source_tree_shas` pins exactly which version of each project produced the
-proposals; useful for audit and for detecting stale proposals if the user
-lets the file sit across discover runs.
+`source_project_states` pins exactly which version of each project
+produced the proposals; useful for audit and for detecting stale
+proposals if the user lets the file sit across discover runs. It holds
+the full cache key (`tree_sha` + `dirty_hash` pair, see §Cache), not
+just the committed-tree SHA.
+
+> _Historical note._ The original R7 spec named this field
+> `source_tree_shas` with scalar SHA values, and used
+> `supporting_surface_fields` for what is now `evidence_fields`. The
+> shipped schema_version is `2`. v1 files are read with an empty
+> `source_project_states` map (the legacy field is silently ignored) —
+> see the test `proposals_file_reads_legacy_source_tree_shas_as_empty_states`
+> in `src/discover/schema.rs`.
 
 ## Cache
 
@@ -177,32 +243,51 @@ lets the file sit across discover runs.
 `<config-dir>/discover-cache/<project-name>.yaml`
 
 One file per project, per-user, alongside `projects.yaml` and
-`related-projects.yaml`.
+`related-components.yaml`.
 
 ### Key
 
-Subtree-scoped git tree SHA:
+A `(tree_sha, dirty_hash)` pair, both subtree-scoped:
 
 ```
 rel = <project-path> relative to `git rev-parse --show-toplevel`
-tree_sha = git rev-parse HEAD:<rel>    # empty rel → root tree
+tree_sha   = git rev-parse HEAD:<rel>    # empty rel → root tree
+dirty_hash = <git hash-object over (git diff HEAD) ++ untracked contents>
+             # empty string when the subtree is clean
 ```
 
-This is git-native and handles both cases identically:
+`tree_sha` is git-native and handles both cases identically:
 - Top-level project: `rel` is empty; returns the repo root tree.
 - Monorepo subtree: returns only that subtree's tree hash. A commit
   touching a sibling subtree does not invalidate this cache entry.
 
+`dirty_hash` captures uncommitted state — staged/unstaged diffs plus
+untracked file contents — so that dirty-tree runs can still cache
+(rather than bail) but the cache correctly invalidates when the dirty
+state changes. Dirty changes in a sibling subtree do not affect this
+subtree's hash (pathspec-scoped `git diff HEAD --` and
+`git ls-files --others --`).
+
+See `src/discover/tree_sha.rs::compute_project_state` for the
+canonical implementation and its tests.
+
+> _Historical note._ The original R7 design proposed a single
+> tree-SHA key and bailed on a dirty subtree (below). The `dirty_hash`
+> half was added so that mid-iteration subtree analysis is still useful
+> — bail was too aggressive for the common "working on the project
+> right now" case.
+
 ### Hit / miss
-- Hit (`tree_sha` matches cached value): skip Stage 1 subagent; use cached
-  surface as-is.
+- Hit (both `tree_sha` **and** `dirty_hash` match cached values): skip
+  Stage 1 subagent; use cached surface as-is.
 - Miss or absent: dispatch Stage 1 subagent; write cache on success.
 
 ### Rename cascade
-`projects::run_rename` already cascades into `related-projects.yaml`. It
-will also rename `<config-dir>/discover-cache/<old>.yaml` →
-`<new>.yaml`, matching the existing cascade pattern. Cache files survive
-renames because the tree SHA is unchanged.
+`projects::run_rename` cascades into the edge store
+(`related-components.yaml` under v2) and also renames
+`<config-dir>/discover-cache/<old>.yaml` → `<new>.yaml`, matching the
+existing cascade pattern. Cache files survive renames because the tree
+SHA is unchanged.
 
 ### No Stage 2 cache
 Stage 2's input is the set of all N surface records, which changes whenever
@@ -217,9 +302,15 @@ Bail at Stage 1 dispatch time with an actionable error naming the project
 `git init` or remove from the catalog`). No cache file written.
 
 ### Dirty working tree (subtree-scoped)
-Bail. Uses the existing pathspec-scoped `git::working_tree_status(project_dir)`
-so a dirty sibling subtree in the same monorepo does not block *this*
-project. Error names which files are dirty.
+Not a bail in the shipped implementation — the subtree's dirty state is
+folded into `dirty_hash` (see §Cache). The cache invalidates cleanly
+when the uncommitted state changes, and Stage 1 proceeds against the
+current working tree. A dirty sibling subtree in the same monorepo does
+not affect *this* project's hash.
+
+> _Historical note._ The original design bailed on any dirty subtree
+> for reproducibility. That turned out to be too strict — see §Cache for
+> the shipped approach.
 
 ### Stage 1 subagent failure
 Best-effort. On failure:
@@ -241,20 +332,35 @@ cache hits on the second run, so the retry is cheap).
 
 ### Default: review-gate
 `discover` writes proposals to `<config-dir>/discover-proposals.yaml` and
-exits. The user reviews the file (including rationale per proposal), edits
-if desired, and runs `state related-projects discover-apply` to merge.
+exits. The user reviews the file (including rationale per proposal),
+edits if desired, and runs `state related-components discover-apply` to
+merge.
 
 ### Apply semantics
 - Reads `discover-proposals.yaml`.
-- For each proposal, invokes `RelatedProjectsFile::add_edge`.
-- Already-present edges (canonical-key match): silent no-op (existing
-  idempotency).
-- Kind-conflict (e.g., proposing `sibling(A,B)` when `parent-of(A,B)`
-  already exists, or the reverse): reported on stdout, proposal rejected,
-  existing edge preserved. Apply continues with remaining proposals.
+- For each proposal, invokes `RelatedComponentsFile::add_edge`.
+- Already-present edges (canonical-key match — see
+  `component-ontology.md` §7.3): silent no-op.
+- Directional conflict — the one check performed per
+  `component-ontology.md` §7.4: a directed edge proposed in the reverse
+  direction of an existing edge at the same `(kind, lifecycle)` is
+  reported on stdout, the proposal rejected, the existing edge
+  preserved. Apply continues with remaining proposals.
+- Cross-kind on the same pair is **not** a conflict — it is expected
+  (`component-ontology.md` §3.5): two components may legitimately share,
+  e.g., `generates@codegen` and `orchestrates@dev-workflow`. The v1
+  "sibling-vs-parent-of" conflict no longer exists, since the vocabulary
+  no longer does.
 - After apply succeeds, `discover-proposals.yaml` is left on disk so the
-  user can `rm` it or keep it for reference. The file header records the
-  tree-SHA snapshot at proposal time; a future `discover` run overwrites it.
+  user can `rm` it or keep it for reference. Its `source_project_states`
+  map records the cache key each project was at when the proposals were
+  generated; a future `discover` run overwrites the file.
+
+> _Historical note._ The original R7 design described a broader
+> kind-conflict check (rejecting any edge whose proposed kind
+> contradicted an existing kind on the same pair). Under v1's two-kind
+> vocabulary this was equivalent to "kinds mutually exclusive per
+> pair", which the v2 multiplicity rule explicitly permits.
 
 ### `discover --apply` shorthand
 Fuses discover + apply for scripted / non-interactive use. Identical
@@ -284,13 +390,13 @@ if the default proves wrong for most users.
 ## CLI Surface
 
 ```
-ravel-lite state related-projects discover
+ravel-lite state related-components discover
     [--config <dir>]
     [--project <name>]
     [--concurrency <N>]
     [--apply]
 
-ravel-lite state related-projects discover-apply
+ravel-lite state related-components discover-apply
     [--config <dir>]
 ```
 
@@ -298,30 +404,46 @@ The `discover-apply` sub-verb (rather than nested `discover apply`) keeps
 the clap structure flat and matches the existing flat-verb convention
 elsewhere in the CLI surface.
 
+> _Historical note._ The original R7 spec rooted these verbs under
+> `state related-projects`. That root is preserved for one release cycle
+> as a deprecation-window alias that forwards to
+> `state related-components` with a stderr warning
+> (`src/main.rs:757`); it will be removed per the policy in
+> `component-ontology-migration.md` §6.4.
+
 ## Rust Module Layout
 
-- **New file:** `src/discover.rs` — orchestrates the pipeline. Owns the
-  Stage 1 dispatch loop, cache read/write, Stage 2 invocation, proposals
-  writeback, apply logic. If it grows past ~500 lines, split to
-  `src/discover/{mod,cache,stage1,stage2,apply,schema}.rs` following the
-  `src/state/` pattern.
-- **Types:** `SurfaceRecord`, `SurfaceFile`, `ProposalRecord`, `ProposalsFile`
-  in `src/discover.rs` (or `src/discover/schema.rs` post-split). Serde derive.
-  `schema_version` field on both files.
-- **CLI:** extend `RelatedProjectsCommands` in `src/main.rs` with
-  `Discover { .. }` and `DiscoverApply { .. }` variants; route via
-  `dispatch_related_projects`.
+*As shipped — deltas from the original spec called out inline.*
+
+- **Pipeline:** `src/discover/{mod,cache,stage1,stage2,apply,schema,tree_sha}.rs`.
+  Shipped split, not the single-file form the original spec proposed —
+  the anticipated split point was reached during implementation.
+- **Types:** `SurfaceRecord`, `SurfaceFile`, `ProposalRecord`,
+  `ProposalsFile`, `InteractionRoleHint` in `src/discover/schema.rs`.
+  The core ontology types (`Edge`, `EdgeKind`, `LifecycleScope`,
+  `EvidenceGrade`, `RelatedComponentsFile`) live separately in
+  `src/ontology/` — that module is slated for eventual extraction to a
+  workspace crate (`component-ontology-migration.md` §7). Serde derive
+  throughout. `schema_version` field on each on-disk file.
+- **CLI:** `RelatedComponentsCommands` in `src/main.rs` with `Discover`
+  and `DiscoverApply` variants; routed via
+  `dispatch_related_components`. The legacy `RelatedProjectsCommands`
+  name is retained for one release cycle as the deprecation-window
+  alias.
 - **Prompt templates:** `defaults/discover-stage1.md` and
   `defaults/discover-stage2.md`. Substituted via the existing
-  `substitute_tokens` pipeline. No new tokens expected.
-- **Agent trait:** no changes to `Agent`. Stage 1 dispatch reuses the
-  existing `Agent::dispatch_subagent` — the "target plan" parameter is
-  widened by convention to accept a project path when no plan is involved.
-  (If this proves awkward in practice, a sibling method
-  `dispatch_project_subagent` can be added during implementation; the
-  decision is deferred to the implementation plan.)
-- **Cascade:** extend `projects::run_rename` to also rename cache files
-  in `<config-dir>/discover-cache/`.
+  `substitute_tokens` pipeline. Stage 2 picks up `{{ONTOLOGY_KINDS}}`
+  rendered from `defaults/ontology.yaml`
+  (`component-ontology.md` §8).
+- **Agent trait:** no changes. Stage 1 **does not** use
+  `Agent::dispatch_subagent`; it spawns `claude -p` directly via a
+  dedicated `spawn_claude_with_cwd` helper in `src/discover/stage1.rs`.
+  This closes the original spec's "widen the target parameter" open
+  question — the shipped resolution is simply to bypass the Agent trait
+  for project-rooted dispatch, since no plan-level state is involved.
+- **Cascade:** `projects::run_rename` cascades into
+  `related_components::rename_component_in_edges` and
+  `discover::cache::rename` (see `src/projects.rs:235–236`).
 
 ## Testing Strategy
 
@@ -334,9 +456,13 @@ elsewhere in the CLI surface.
   in `tests/integration.rs`.
 - **No live-LLM test in CI** — matches existing convention (all LLM calls
   are fake-agent-backed in tests).
-- **Kind-conflict apply test:** seed `related-projects.yaml` with
-  `parent-of(A,B)`, feed a proposal of `sibling(A,B)`, assert the
-  conflict is reported and the existing edge preserved.
+- **Directional-conflict apply test:** seed `related-components.yaml`
+  with a directed edge (e.g. `depends-on(A,B)` at `build`), feed a
+  proposal that reverses the participants at the same `(kind,
+  lifecycle)`, assert the conflict is reported and the existing edge
+  preserved. (The v1 shape of this test — seeding `parent-of(A,B)` and
+  proposing `sibling(A,B)` — is obsolete; cross-kind on the same pair
+  is no longer a conflict per `component-ontology.md` §3.5.)
 - **Failure-tolerance test:** Stage 1 fake-agent fails for one project in a
   three-project catalog; assert the failures section is populated, Stage 2
   runs over the two surviving surfaces, and overall exit is non-zero.
@@ -351,7 +477,7 @@ elsewhere in the CLI surface.
 | **Principle cost** | None. All cache, proposals, and apply state are readable files. No magic. |
 | **Implementation cost** | ~800–1200 LOC Rust + 2 prompt templates. Comparable to R5 (~900 LOC). |
 | **Test cost** | Moderate. Integration test needs a fake agent that emits structured surface YAML; one-off per-test scaffolding but follows an established pattern. |
-| **Risk: LLM calibration** | Addressed by review-gate; bad proposals do not reach `related-projects.yaml` without user approval. |
+| **Risk: LLM calibration** | Addressed by review-gate; bad proposals do not reach `related-components.yaml` without user approval. |
 | **Risk: runaway cost on first run** | Bounded by `--concurrency` limit; each Stage 1 run is self-contained. User can interrupt with Ctrl-C; successful Stage 1 writes are already cached. |
 
 ## Rollout
@@ -370,11 +496,17 @@ authored by `writing-plans` will sequence and refine these.
 
 ## Open Questions
 
-None at spec time. A few sub-decisions are deferred to the implementation
-plan because they are low-stakes and best resolved against actual code:
+Resolved during implementation:
 
-- Whether `Agent::dispatch_subagent`'s target parameter is widened by
-  convention or a sibling method is added.
-- Exact split point if `src/discover.rs` outgrows a single file.
-- Whether `discover-proposals.yaml` is kept or deleted after a successful
-  `apply` (default keep; revisit if it causes confusion).
+- **`Agent::dispatch_subagent` widening.** Resolved by *not* using the
+  Agent trait for Stage 1 — the pipeline spawns `claude -p` directly
+  via `spawn_claude_with_cwd` (`src/discover/stage1.rs`). No trait
+  changes.
+- **`src/discover.rs` split point.** Split at implementation time into
+  `src/discover/{mod,apply,cache,schema,stage1,stage2,tree_sha}.rs`.
+- **Proposals-file lifetime after apply.** Kept on disk (default as
+  originally proposed); no user reports of confusion to date.
+
+See `component-ontology-migration.md` for the schema-vocabulary
+open-question list that came out of v2 — hyperedges, temporal decay,
+per-kind evidence schemas, negative edges, catalog pluralism.
