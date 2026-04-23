@@ -445,3 +445,7 @@ entries:
     ---
 
     `related-components.yaml` uses `SCHEMA_VERSION=2`; `defaults/ontology.yaml` uses `ONTOLOGY_FILE_SCHEMA_VERSION=1`. Separate version fields keep the two evolutions independent; a bump in one does not imply a bump in the other.
+- id: action-lines-split-title-reason-into-two-row-layout
+  title: Action lines split title/reason into two-row layout
+  body: |
+    \`format_result_text\` in \`src/format.rs\` splits action-line detail text on \`" — "\` (em-dash with spaces) via \`str::split_once\`; the title row keeps the intent colour, the reason row is indented to the detail column and rendered dim. A \`trim().is_empty()\` guard suppresses the second row when the separator is trailing. The \` — \` separator is now load-bearing protocol in phase prompts: using \`-\` or \`–\` instead silently collapses back to single-row output.
