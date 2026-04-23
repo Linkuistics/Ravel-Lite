@@ -386,7 +386,7 @@ entries:
 - id: component-ontology-v2-spec-at-docs-component-ontology-md
   title: Component ontology v2 spec at docs/component-ontology.md
   body: |
-    `docs/component-ontology.md` is the canonical v2 inter-component relationship ontology spec (868 lines). Design-only; four backlog tasks cover additive implementation. See: `Component ontology v2 uses kind × lifecycle × direction axes`.
+    `docs/component-ontology.md` is the canonical v2 inter-component relationship ontology spec (reference section only). Split from monolithic form: spec stays at the original path; migration guidance lives in a separate companion doc. Design-only; four backlog tasks cover additive implementation. See: `Component ontology v2 uses kind × lifecycle × direction axes`.
 - id: component-ontology-v2-uses-kind-lifecycle-direction-axes
   title: Component ontology v2 uses kind × lifecycle × direction axes
   body: |
@@ -395,3 +395,7 @@ entries:
   title: Generated derived artifacts need no migrators; delete-and-regenerate
   body: |
     `related-projects.yaml` is a generated artifact; delete-and-regenerate is the upgrade path when the schema changes. No v1→v2 migrator is needed. Generalises: generated derived files never need forward-migration tools.
+- id: unquoted-paths-in-error-messages-hide-empty-path-bugs
+  title: Unquoted paths in error messages hide empty-path bugs
+  body: |
+    Quote all path values in user-facing error messages so an empty path appears as `""` rather than a silent double-space gap. Applies anywhere a path is interpolated into a string literal. An unquoted empty path is indistinguishable from surrounding whitespace, delaying diagnosis.
