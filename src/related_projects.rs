@@ -328,16 +328,28 @@ fn resolve_plan_project_name(
     )
 }
 
-/// Derive `<plan>/../..` as the project path. Matches
-/// `git::project_root_for_plan` semantics but returns a PathBuf without
-/// going through the String detour.
+/// Derive `<plan>/../..` as the project path, normalised to an absolute
+/// path so the result is directly comparable to entries in the catalog
+/// (which `projects::run_add` stores absolute via `std::path::absolute`).
+/// Uses the same normalisation rather than `canonicalize` so macOS
+/// symlink resolution (e.g. `/private/var/...`) cannot desynchronise the
+/// lookup path from the stored catalog path.
 fn plan_project_path(plan_dir: &Path) -> Result<PathBuf> {
-    let parent = plan_dir
+    let absolute = std::path::absolute(plan_dir).with_context(|| {
+        format!(
+            "failed to resolve plan dir {} to an absolute path",
+            plan_dir.display()
+        )
+    })?;
+    let parent = absolute
         .parent()
-        .with_context(|| format!("plan dir {} has no parent", plan_dir.display()))?;
-    let grandparent = parent
-        .parent()
-        .with_context(|| format!("plan dir {} has no grandparent (expected <project>/<state-dir>/<plan>)", plan_dir.display()))?;
+        .with_context(|| format!("plan dir {} has no parent", absolute.display()))?;
+    let grandparent = parent.parent().with_context(|| {
+        format!(
+            "plan dir {} has no grandparent (expected <project>/<state-dir>/<plan>)",
+            absolute.display()
+        )
+    })?;
     Ok(grandparent.to_path_buf())
 }
 
@@ -744,6 +756,19 @@ mod tests {
     fn plan_project_path_errors_on_shallow_input() {
         let err = plan_project_path(Path::new("/")).unwrap_err();
         assert!(format!("{err:#}").contains("parent") || format!("{err:#}").contains("grandparent"));
+    }
+
+    #[test]
+    fn plan_project_path_resolves_relative_input_against_cwd() {
+        // Relative plan_dir inputs (e.g. orchestrator-supplied
+        // `LLM_STATE/core`) must normalise to the same absolute form the
+        // catalog stores via `projects::run_add`, otherwise
+        // `find_by_path` misses and the caller sees a spurious
+        // "plan's project is not in the catalog" error.
+        let cwd = std::env::current_dir().unwrap();
+        let derived = plan_project_path(Path::new("a/b/c")).unwrap();
+        let expected = std::path::absolute(cwd.join("a")).unwrap();
+        assert_eq!(derived, expected);
     }
 
     // ---------- Migration tests ----------
