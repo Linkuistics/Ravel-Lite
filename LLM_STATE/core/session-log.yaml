@@ -467,3 +467,14 @@ sessions:
     - **What didn't work:** The task brief said "16 kebab-case EdgeKind variants" — the canonical spec lists 17. Implementation went with the spec. Any future task or description that cites a count should read from `EdgeKind::all()` or `defaults/ontology.yaml`, not from this session log.
     - **What this suggests trying next:** `migrate-callers-and-rename-to-related-components-no-migrator-delete-and-regenerate` is now unblocked. Its dependency `implement-ontology-v2-types-and-defaults-ontology-yaml-additive` is `done`. `parse_embedded_ontology_yaml()` is already exported from `ontology::` for task #3's `{{ONTOLOGY_KINDS}}` prompt renderer.
     - **Key learnings:** The dual-independent schema versioning (related-components.yaml at `SCHEMA_VERSION=2`, ontology file at `ONTOLOGY_FILE_SCHEMA_VERSION=1`) makes the two evolutions orthogonal. The "unsorted symmetric participants" test caught a real gap — `Edge::validate` must enforce sorting, not just distinctness, or canonical-key dedup silently fails for reversed participant order.
+- id: session-28
+  timestamp: 2026-04-23T08:03:18Z
+  phase: work
+  body: |
+    ### Session 28 (2026-04-23T08:03:18Z) — Split action-line title/reason into two-row layout
+
+    - **What was attempted:** UI change to `format_result_text` in `src/format.rs` so that `[LABEL] title — reason` action lines emit the reason on a separate dim row below the title, indented to the detail column, instead of joining title and reason into a single coloured row where the em-dash separator was visually invisible.
+    - **What worked:** `str::split_once(" — ")` on the detail text separates title from reason. The title row keeps its intent colour; the reason row is dim and indented by `2 + *LABEL_WIDTH + 2` spaces. `None` from `split_once` keeps the original single-row behaviour. A `trim().is_empty()` guard prevents a blank dim row when the separator is trailing. `last_action_intent` is still set after the action so dream's `→ …` continuation rows still chain correctly.
+    - **What worked (tests):** Five new tests added — two-row emission, no-separator fallback, inner-em-dash preservation, empty-reason guard, arrow-continuation compatibility. All 933 tests (unit + integration) green.
+    - **What this suggests next:** If reason wrapping on narrow TUI widths looks cramped, the indent could shift to a narrower prefix. The ` — ` split pattern is now load-bearing on phase prompts; a prompt-time lint could catch if an author uses `-` or `–` instead, but LLM drift is rare in practice.
+    - **Key learnings:** Splitting on `split_once` rather than `splitn` or `split` is the idiomatic Rust pattern that captures "first occurrence only" without materialising a vector; inner em-dashes in the reason are preserved for free. The `*LABEL_WIDTH` dereference in tests (using `Lazy<usize>`) confirms the indent is always in sync with the runtime constant.

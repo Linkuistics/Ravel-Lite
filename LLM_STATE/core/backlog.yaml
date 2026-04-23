@@ -197,3 +197,44 @@ tasks:
     - `docs/r7-related-projects-discovery-design.md` does not contradict `docs/component-ontology.md` on any point.
     - Sections describing the v1 vocabulary (`sibling`, `parent-of`) either removed or clearly marked as historical.
     - Cross-references to the ontology docs added where appropriate.
+- id: split-label-title-reason-action-lines-into-two-row-layout
+  title: Split [LABEL] title — reason action lines into two-row layout
+  category: refactor
+  status: done
+  dependencies: []
+  description: |
+    User-requested UI change: the action-line renderer in `src/format.rs` joined `[LABEL] <title> — <reason>` into a single coloured row, making the em-dash separator visually invisible and the reason indistinguishable from the title. The reason should sit on its own dim row under the title, indented to the detail column.
+  results: |
+    ## What was done
+
+    Modified the action-line branch in `format_result_text` (`src/format.rs:259-298`) to split `[LABEL] <title> — <reason>` on the first ` — ` and emit two rows instead of one:
+
+    - Row 1: `  LABEL  title` (label bold-intent, title intent-coloured)
+    - Row 2: `         reason` at detail-column indent, dim (no intent)
+
+    `str::split_once(" — ")` returns `None` when the separator is absent, so action lines with no em-dash stay single-row for free. Trailing em-dash with empty reason (`"title — "`) skips the reason row entirely via a `trim().is_empty()` guard. Inner em-dashes inside the reason are preserved (split on first occurrence only).
+
+    `last_action_intent` is still set after the action so existing `→ …` explicit continuations (dream's two-line format) chain correctly after the synthesised dim reason row.
+
+    ## Tests
+
+    Added 5 new tests to `src/format.rs::tests`:
+
+    - `format_result_text_splits_title_and_reason_on_em_dash` — confirms two-row emission + dim reason span
+    - `format_result_text_action_without_em_dash_stays_single_row` — confirms no regression for separator-less actions
+    - `format_result_text_splits_on_first_em_dash_only` — confirms inner em-dashes survive
+    - `format_result_text_empty_reason_skips_reason_row` — confirms trailing separator doesn't emit blank row
+    - `format_result_text_reason_row_does_not_break_arrow_continuation` — confirms dream's `→` continuation still inherits the action's intent after the dim reason row
+
+    All 21 existing `format` tests still pass (TDD: new tests failed red, then went green). Full `cargo test` suite (933 tests across unit + integration) passes.
+
+    ## Downstream impact
+
+    - **Dream phase output** now becomes three rows per entry: `[VERBOSE] heading`, `  what was wordy` (dim), `  → tightened form` (intent arrow). Arguably clearer — "before" state visually de-emphasised against the "after" arrow. Prompts unchanged.
+    - **Triage/reflect phases** similarly get two-row action entries, with the reason dim below the title.
+    - No schema version bump; no prompt changes; drift tests unaffected.
+
+    ## What this suggests next
+
+    - If reason wrapping on narrow TUI widths looks cramped, the detail-column indent could shift to a narrower prefix (e.g. just `    `). Defer until seen in practice.
+    - The em-dash split pattern (` — ` with U+2014 space-around) is now load-bearing on the phase prompts. If a future prompt author uses a hyphen-minus `-` or en-dash `–`, the split silently won't happen. A prompt-time lint could check this, but the LLM rarely drifts on this in practice; defer.
