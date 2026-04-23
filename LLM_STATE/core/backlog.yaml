@@ -2,7 +2,7 @@ tasks:
 - id: research-richer-ontology-of-inter-project-relationships
   title: Research richer ontology of inter-project relationships
   category: research
-  status: not_started
+  status: done
   dependencies: []
   description: |
     **Priority: HIGH.**
@@ -58,3 +58,275 @@ tasks:
     5. Lists migration steps for the current `sibling` / `parent-of` edges.
 
     No implementation yet — research + design only. Implementation follows in a separate task once the ontology is accepted.
+  results: |
+    Delivered a reference-grade design at `docs/component-ontology.md`. Reframed from "related projects" to "related components" with a flexible definition of component. The implementation is staged as four follow-up backlog tasks. **No v1→v2 migrator** — `related-components.yaml` is an entirely-generated artifact, so the correct upgrade path is delete-and-regenerate (§12 in the doc).
+
+    ## Deliverable
+
+    `docs/component-ontology.md` — canonical reference, not a proposal. Governs the Rust library (§9), the `defaults/ontology.yaml` source-of-truth file (§10), the Stage 2 discover prompt vocabulary (§13.2), the pre-v2 file upgrade procedure (§12), and the CLI + consumer updates (§14).
+
+    ### What the doc specifies
+
+    - **Component as the unit** (§2). Intentionally unit-agnostic: projects, crates, services, subsystems, external specs, third-party libraries. Today's `projects.yaml` catalog populates components; the ontology doesn't depend on that being permanent.
+    - **Three orthogonal axes** (§4): `kind` × `lifecycle` × `direction`, mirroring SPDX 3.0.1's `RelationshipType` × `LifecycleScopeType` factoring.
+    - **16 edge kinds** across 7 families (§6): dependency, linkage, generation, communication, orchestration, testing, specification. SPDX-alignment column cited per kind.
+    - **7 lifecycle scopes** (§4.2): `design`, `codegen`, `build`, `test`, `deploy`, `runtime`, `dev-workflow`.
+    - **Evidence grade** (strong / medium / weak) with explicit heuristics (§4.4).
+    - **Multiplicity** (§4.5): multiple edges per component pair are legal and expected; dedup key expanded to `(kind, lifecycle, participants)`.
+    - **Rust library surface** (§9): explicit in-scope / out-of-scope boundaries, public API sketch, minimal dependency posture (serde, serde_yaml, anyhow, thiserror only). Loader hard-errors on non-v2 `schema_version`; no in-memory upgrade path.
+    - **`defaults/ontology.yaml`** (§10): single source of truth for the Rust enum and the Stage 2 prompt; drift test enforces bijection.
+    - **Extraction plan** (§11): three phases with explicit entry/exit criteria. Phase A — internal module `src/ontology/`. Phase B — workspace crate when a second internal consumer exists. Phase C — publication to crates.io when a second out-of-repo consumer exists.
+    - **Handling pre-v2 files** (§12): the v1 file is an entirely-generated artifact, so upgrade is `delete related-projects.yaml && discover --apply`. Loader hard-errors on the old filename or v1 schema version; error message names the discover command. Discover cache is preserved across upgrade to keep the re-run cheap. No migrator, no `.v1.bak` stash, no rule-based transform.
+    - **Consumer audit** (§14.1): every known reader/writer of the v1 graph listed with its v2 change. Legacy markdown-to-graph migrator `state migrate-related-projects` retires by default at v2 cutover.
+    - **Non-consumers** (§14.2): `read_related_plans_markdown` / per-plan `related-plans.md` is the legacy prose integration and is deliberately untouched; it reads markdown, not the graph.
+
+    ### Prior art
+
+    Surveyed SPDX 3.0.1 (adopted the kind × lifecycle factoring; aligned vocabulary where concepts match; did not adopt SBOM/vuln/licensing concerns), Maven/Gradle (informs lifecycle-scope enum), CycloneDX (captured optional/required via `has-optional-dependency` instead of a separate field), Stevens/Myers/Constantine (right framing — "what crosses the seam" — wrong unit), Bazel/Pants/Nx (codegen as first-class edge).
+
+    ## Follow-up tasks queued
+
+    Four backlog tasks, linear dependency chain:
+
+    1. `implement-ontology-v2-types-and-defaults-ontology-yaml-additive` (HIGH) — foundation; types, ontology YAML, drift test, unit tests. Additive; no renames.
+    2. `migrate-callers-and-rename-to-related-components-no-migrator-delete-and-regenerate` (HIGH, depends on 1) — rename types/files/CLI across all callers; hard-error loader for v1 files with actionable `discover --apply` message; retire the legacy markdown-to-graph migrator.
+    3. `rewrite-stage-2-discover-prompt-for-ontology-v2-vocabulary` (HIGH, depends on 2) — flip Stage 2 to emit v2 directly; introduce `{{ONTOLOGY_KINDS}}` template token; proposals-file schema bumps.
+    4. `extend-cli-for-ontology-v2-and-add-stage-1-interaction-role-hints` (MEDIUM, depends on 3) — extended `add-edge` / `remove-edge` / `list` args; optional Stage 1 `interaction_role_hints` field.
+    5. `extract-component-ontology-to-workspace-crate-phase-b` (LOW, deferred, depends on 4) — Phase B crate extraction with explicit entry criteria.
+
+    ## What worked
+
+    - SPDX 3.0 as the anchor: validated the kind × lifecycle factoring, gave aligned vocabulary.
+    - Grounding every v2 kind in an existing Stage 1 surface field: no new extractors required.
+    - The R7 smoke-test case as acceptance test: v2 must resolve Ravel-Lite → Ravel as two edges at two lifecycle scopes (`generates@codegen` + `orchestrates@dev-workflow`).
+    - Staging the implementation as four sequential tasks with clear dependency chain + explicit transitional states that compile.
+    - Treating the ontology YAML as the source of truth (Rust enum derives from it via drift tests, Stage 2 prompt substitutes from it).
+    - Recognising that a generated artifact doesn't need a migrator — user steering during the work phase collapsed §12 from a rule-based transform spec to a one-paragraph "delete and regenerate" procedure.
+
+    ## What didn't work / deferred
+
+    - Hyperedges (3+ participants) deferred to §15.
+    - Numeric confidence scoring deferred (three-grade system is enough for review gate).
+    - Negative edges ("looks related, isn't") deferred.
+    - Per-kind typed evidence schemas deferred until a second consumer asks for them.
+    - Publication to crates.io (Phase C) deferred until a second out-of-repo consumer exists.
+    - Legacy `read_related_plans_markdown` / per-plan `related-plans.md` integration deliberately untouched; its replacement by graph-aware prompt rendering is a separate future task.
+    - v1 → v2 in-place migration eliminated entirely (not "deferred" — not needed, and its absence simplifies the loader).
+
+    ## What this suggests next
+
+    The immediate next work phase should pick up task 1 (foundation). It is pure additive work — no renames, no caller changes — so it should land cleanly as a single work-phase unit. The subsequent tasks then have clear inputs. Task 5 (crate extraction) should remain on the backlog but not be scheduled until its entry criteria fire.
+
+    Before task 1 begins, the user should review the §6 kind list against concrete examples from the portfolio (Ravel-Lite, Ravel, APIAnyware-MacOS, TestAnyware, and anything else where v1 felt wrong). The review should prune or merge kinds that lack real examples — keep the enum as small as the evidence justifies. Acceptance checklist in §16 codifies the criteria.
+- id: implement-ontology-v2-types-and-defaults-ontology-yaml-additive
+  title: Implement ontology v2 types and defaults/ontology.yaml (additive)
+  category: feature
+  status: not_started
+  dependencies: []
+  description: |
+    **Priority: HIGH.** Foundation task — unlocks the ontology-v2 work stream.
+
+    Introduce the schema-v2 types and the language-neutral ontology file **additively**, without renaming anything yet. After this task, v1 code still compiles and runs; v2 types exist and are unit-tested but have no production caller.
+
+    ## Scope
+
+    - New module `src/ontology/` with the types defined in
+      `docs/component-ontology.md` §9.4 and §9.5:
+      - `EdgeKind` (16 kebab-case variants, §6)
+      - `LifecycleScope` (7 variants, §4.2)
+      - `EvidenceGrade` (`strong | medium | weak`)
+      - `Edge` with `kind`, `lifecycle`, `participants`, `evidence_grade`, `evidence_fields`, `rationale`
+      - `RelatedComponentsFile` with `schema_version: 2`
+    - `EdgeKind::is_directed()`, `as_str()`, `parse()`, `all()` per the sketch in §9.4.
+    - `Edge::canonical_key`, `Edge::validate` (enforcing invariants in §9.5).
+    - `RelatedComponentsFile::add_edge` (idempotent, dedup by canonical key).
+    - `rename_component_in_edges(&mut self, old, new)`.
+    - Atomic save helper (mirroring existing `save_atomic` pattern).
+    - `defaults/ontology.yaml` matching §10's sketch: every `EdgeKind` variant, every `LifecycleScope`, every `EvidenceGrade`, with descriptions.
+    - **Drift test**: `src/ontology/mod.rs` test reads `defaults/ontology.yaml` at test time and asserts bijection with the Rust enums. Adding a kind in one place without the other fails the test (mirrors `init.rs` drift tests for coding-style files).
+    - Unit tests covering: serde round-trip, canonical-key dedup for directed + symmetric kinds, invariant violations (empty rationale, 1 participant, reversed directed kind, etc.).
+
+    ## Out of scope
+
+    - Any rename of `related_projects` / `RelatedProjectsFile` / `RELATED_PROJECTS_FILE` / `related-projects.yaml`.
+    - Any change to `src/discover/**` or `defaults/discover-stage*.md`.
+    - CLI changes.
+    - The v1 → v2 migrator (deferred to the next task).
+
+    ## Exit criteria
+
+    - `cargo test -p ravel-lite ontology` passes.
+    - `cargo build` passes with no warnings touching the new module.
+    - `defaults/ontology.yaml` is embedded via the existing `EmbeddedFile` registration pattern if applicable (check `init.rs`).
+    - `docs/component-ontology.md` is the truth source; if implementation requires amendments, update the doc in the same task.
+- id: migrate-callers-and-rename-to-related-components-no-migrator-delete-and-regenerate
+  title: Migrate callers and rename to related-components (no migrator; delete-and-regenerate)
+  category: refactor
+  status: not_started
+  dependencies:
+  - implement-ontology-v2-types-and-defaults-ontology-yaml-additive
+  description: |
+    **Priority: HIGH.** Swaps all internal consumers onto v2 types and ships the file rename. After this task, Ravel-Lite reads and writes `related-components.yaml` natively. There is no v1→v2 migrator: `related-projects.yaml` is an entirely-generated artifact, so the upgrade procedure is "delete v1 and re-run discover" per `docs/component-ontology.md` §12.
+
+    **Depends on:** `implement-ontology-v2-types-and-defaults-ontology-yaml-additive` (types must exist).
+
+    ## Scope
+
+    Rename / refactor per `docs/component-ontology.md` §14.1:
+
+    - **Module**: `src/related_projects.rs` contents absorbed into `src/ontology/` (or deleted if the v2 types live there already). Public items re-exported from `ontology::` under new names.
+    - **Types**: `RelatedProjectsFile` → `RelatedComponentsFile`; `rename_project_in_edges` → `rename_component_in_edges`.
+    - **Constants**: `RELATED_PROJECTS_FILE` → `RELATED_COMPONENTS_FILE`; value `"related-components.yaml"`.
+    - **Load path**: hard error on `schema_version != 2` and on the old filename `related-projects.yaml`. Error message names the file, the observed version, the expected version, and the `discover --apply` command the user needs to run (§12.2). No in-memory upgrade.
+    - **Callers**: every Rust file that referenced the old names updates to the new. Includes `src/projects.rs` rename cascade, `src/discover/apply.rs`, `src/multi_plan.rs`, `src/main.rs` CLI dispatch, `tests/state_related_projects.rs`.
+    - **Test fixtures**: existing unit tests in `src/related_projects.rs:606–1077` rewritten against v2 shapes where they touch edges; preserve coverage of canonical-key / rename-cascade semantics.
+    - **Legacy markdown migrator** (`state migrate-related-projects`): retire the CLI verb by default in this task (the `read_related_plans_markdown` per-plan integration remains untouched; only the *graph-populating* migrator retires). If this proves too aggressive, teach it to emit v2 `describes` / `depends-on` edges instead — note in the task's Results which path was taken.
+
+    **Transitional behaviour** during this task's lifetime (not shipped): `src/discover/stage2.rs` still emits v1-shape `sibling` / `parent-of` edges into the proposals file. Since the v2 apply path rejects v1 shapes, Stage 2 must either be updated in this task to emit neutral placeholder edges *or* the Stage 2 rewrite (the next task) must be bundled. Preferred: take Stage 2 along here minimally (swap to v2 output schema, emit `weak`-grade edges with best-available kind) so the system stays runnable end-to-end; then the next task does the **prompt** rewrite and the full vocabulary swap.
+
+    ## Out of scope
+
+    - Stage 2 prompt rewrite for the new kind vocabulary (separate task).
+    - CLI verb rename (`state related-projects` → `state related-components`); that happens here, but the deprecated-alias behaviour is the only CLI-facing change. New `add-edge` args (`lifecycle`, `evidence-grade`, etc.) are a separate task.
+    - Extraction to a workspace crate (deferred).
+    - Any form of v1→v2 schema migration. Delete-and-regenerate is the supported upgrade path.
+
+    ## Exit criteria
+
+    - `cargo test` green.
+    - Loading a v1 `related-projects.yaml` produces a clear hard error naming the `discover --apply` command; no silent upgrade.
+    - Loading a v2 file and re-saving is byte-identical (serde round-trip).
+    - `ravel-lite state related-projects list` still works via the deprecated alias, emits a stderr deprecation warning, and delegates to the new verb.
+    - No Rust symbol matches `grep -rn 'RelatedProjectsFile\\|RELATED_PROJECTS_FILE\\|rename_project_in_edges' src/` except in the deprecated-alias shim.
+- id: rewrite-stage-2-discover-prompt-for-ontology-v2-vocabulary
+  title: Rewrite Stage 2 discover prompt for ontology v2 vocabulary
+  category: feature
+  status: not_started
+  dependencies:
+  - migrate-callers-and-rename-to-related-components-no-migrator-delete-and-regenerate
+  description: |
+    **Priority: HIGH.** Flips Stage 2 from emitting v1 (`sibling` / `parent-of`) to emitting v2 directly, using the component-ontology vocabulary.
+
+    **Depends on:** the caller-migration task.
+
+    ## Scope
+
+    - **Prompt rewrite** of `defaults/discover-stage2.md` per `docs/component-ontology.md` §13.2:
+      - "Edge kinds" section replaced by `{{ONTOLOGY_KINDS}}` — a new template token rendered from `defaults/ontology.yaml` at Stage 2 launch time, not hard-coded in the prompt.
+      - New "Decision tree" section explicitly walking the kind-picking order (§13.2 has the sketch).
+      - Output schema updated: proposals emit `kind`, `lifecycle`, `participants`, `evidence_grade`, `evidence_fields`, `rationale`. `supporting_surface_fields` renamed to `evidence_fields`.
+      - "Insufficient signals" section repurposed as the `weak` evidence-grade threshold; still listed verbatim as traps to avoid.
+    - **Stage 2 code** (`src/discover/stage2.rs`, `src/discover/schema.rs`):
+      - `ProposalRecord` gains `lifecycle`, `evidence_grade`, `evidence_fields` (these were likely stubbed in the previous task's transitional bundling; this task completes them).
+      - `ProposalsFile` bumps `schema_version` to 2 definitively.
+      - Stage 2 substitutes `{{ONTOLOGY_KINDS}}` using the loader from the ontology crate (`ontology::render_prompt_block()` or similar helper — define in this task).
+    - **Apply phase** (`src/discover/apply.rs`) accepts v2 proposal shape natively.
+    - **Drift test**: a test asserts that the kind list in `defaults/discover-stage2.md` (via the rendered token) is in bijection with `defaults/ontology.yaml` — same test style as the existing `shipped_pi_prompts_have_no_dangling_tokens`.
+    - **Golden-file test** (optional but recommended): one fixture LLM output covering three v2 edge kinds + three lifecycles, asserting Stage 2 parses and applies correctly.
+
+    ## Out of scope
+
+    - Stage 1 `interaction_role_hints` field (separate task; Stage 2 must work without it).
+    - CLI `add-edge` argument extension for `lifecycle` / `evidence-grade` (separate task; Stage 2 writes directly via the library, not the CLI).
+    - Workspace-crate extraction.
+
+    ## Exit criteria
+
+    - Running `ravel-lite state related-components discover --apply` against a real catalog produces a v2 `related-components.yaml` with non-empty `lifecycle` + `evidence_grade` on every edge.
+    - The Ravel-Lite → {Ravel, APIAnyware-MacOS, TestAnyware} smoke test that motivated v2 now produces `generates @ codegen` + `orchestrates @ dev-workflow` (or the evidence-appropriate variants) — not `parent-of`.
+    - No dangling `{{…}}` tokens in the rendered Stage 2 prompt.
+    - All drift tests green.
+- id: extend-cli-for-ontology-v2-and-add-stage-1-interaction-role-hints
+  title: Extend CLI for ontology v2 and add Stage 1 interaction_role_hints
+  category: feature
+  status: not_started
+  dependencies:
+  - rewrite-stage-2-discover-prompt-for-ontology-v2-vocabulary
+  description: |
+    **Priority: MEDIUM.** Brings the interactive CLI and Stage 1 surface-extraction up to v2 parity. After this task the CLI is fully v2-capable for humans, and Stage 2 gains Stage-1-sourced priors.
+
+    **Depends on:** the Stage 2 prompt-rewrite task.
+
+    ## Scope
+
+    ### CLI extensions (`ravel-lite state related-components …`)
+
+    Per `docs/component-ontology.md` §14.1:
+
+    - **`add-edge`** signature extended:
+      ```
+      add-edge <kind> <lifecycle> <a> <b> \
+        --evidence-grade <strong|medium|weak> \
+        --evidence-field <string> [--evidence-field …] \
+        --rationale <string>
+      ```
+      Validates `kind` against `EdgeKind::parse`, `lifecycle` against `LifecycleScope::parse`, `evidence-fields` non-empty unless `evidence-grade=weak`.
+    - **`remove-edge`**: accepts `kind + lifecycle + a + b`. A v1-style remove without `lifecycle` is an error (not a silent "remove any matching").
+    - **`list`** gains `--kind <K>` and `--lifecycle <L>` filters in addition to the existing `--plan <PLAN_DIR>` filter.
+    - Deprecated alias `state related-projects` is kept through this release and removed at the end of it.
+
+    ### Stage 1 optional hint field
+
+    Per §13.1:
+
+    - `SurfaceRecord` gains optional `interaction_role_hints: Vec<String>`. Closed vocabulary (enum strings: `generator`, `orchestrator`, `test-harness`, `spec-document`, `spawner`, `documented-by`, `client`, `server`, `library`, `tool`); unknowns rejected.
+    - `defaults/discover-stage1.md` gains a "Role hints (optional)" section describing the vocabulary and when to emit each hint. Hints are advisory — Stage 2 still picks edges from cross-referenced evidence.
+    - Stage 2 prompt updated to include the hint field in each component's surface dump, and the decision tree given a note that hints are priors, not verdicts.
+
+    ### Tests
+
+    - CLI integration tests for all extended subcommands, plus the deprecated-alias warning path.
+    - Stage 1 drift test already exists for `SurfaceRecord` fields — extend to cover the new field.
+    - Stage 2 prompt drift test: the rendered hint vocabulary matches the `SurfaceRecord` enum.
+
+    ## Out of scope
+
+    - Workspace-crate extraction (separate task).
+    - Removing the deprecated `state related-projects` alias — that happens in the release after this one.
+
+    ## Exit criteria
+
+    - Manual smoke test: `add-edge generates codegen Ravel-Lite Ravel --evidence-grade strong --evidence-field Ravel-Lite.produces_files --evidence-field Ravel.consumes_files --rationale "…"` round-trips through YAML.
+    - `list --kind generates --lifecycle codegen` filters correctly.
+    - `state related-projects list` still works with a stderr deprecation banner.
+    - A fresh discover run populates `interaction_role_hints` for at least one catalog project whose README clearly declares a role (e.g., Ravel-Lite declares itself as an orchestrator).
+- id: extract-component-ontology-to-workspace-crate-phase-b
+  title: Extract component-ontology to workspace crate (Phase B)
+  category: refactor
+  status: not_started
+  dependencies:
+  - extend-cli-for-ontology-v2-and-add-stage-1-interaction-role-hints
+  description: |
+    **Priority: LOW (deferred).** Phase B of the extraction plan. Do not start until entry criteria below are met.
+
+    **Depends on:** the CLI + Stage 1 hints task.
+
+    ## Entry criteria (from `docs/component-ontology.md` §11.2)
+
+    - Phase A (the v2 ontology in `src/ontology/`) has been stable for ≥1 release.
+    - A second consumer inside Ravel-Lite is on the near horizon (e.g., a phase prompt renderer that walks the graph to inject context about a plan's component neighbours). If no second consumer is imminent, do not extract — the single-consumer crate is unjustified churn.
+
+    ## Scope
+
+    - Move `src/ontology/` → `crates/component-ontology/` in a Cargo workspace.
+    - Convert the root `Cargo.toml` to a workspace manifest if it isn't already.
+    - Update Ravel-Lite's `Cargo.toml` to depend on `component-ontology` via `path = "crates/component-ontology"`.
+    - Verify zero Ravel-Lite-specific concepts in the extracted crate: no `LLM_STATE`, no phases, no plans, no backlog, no subagents. The crate's universe is edges, kinds, lifecycles, components, evidence.
+    - Verify the dependency list is minimal (§11.4): `serde`, `serde_yaml`, `anyhow`, `thiserror` only.
+    - Publish `defaults/ontology.yaml` as a crate-vendored file (include via `include_str!` or ship in the crate root and have Ravel-Lite copy at install).
+    - Ship crate at `0.1.0` with a short README describing the standalone use case.
+    - Verify `cargo build -p component-ontology` succeeds independently.
+    - Verify all Ravel-Lite tests still pass.
+
+    ## Out of scope
+
+    - Publication to crates.io (Phase C; deferred until a second out-of-repo consumer exists).
+    - Renaming the crate. `component-ontology` is intentionally the final name.
+    - Introducing a trait registry for edge kinds — the flat enum suffices; premature.
+
+    ## Exit criteria
+
+    - Workspace builds and tests cleanly.
+    - `component-ontology` crate has a standalone README documenting its public API.
+    - No Ravel-Lite code imports `ravel_lite::ontology::…`; all imports route through `component_ontology::…`.
+    - Semver policy documented in the crate README.
