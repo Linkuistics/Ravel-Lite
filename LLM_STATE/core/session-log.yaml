@@ -446,3 +446,13 @@ sessions:
     - **Key learnings:** SPDX 3.0.1 was a strong anchor — validated the kind × lifecycle factoring and provided alignment vocabulary. Generated artifacts don't need migrators. Three orthogonal axes (kind × lifecycle × direction) give sufficient expressiveness without requiring hyperedges or numeric confidence.
 
     ## Hand-offs (omit this section entirely when there are none)
+- id: session-26
+  timestamp: 2026-04-23T06:56:47Z
+  phase: work
+  body: |
+    ### Session 26 (2026-04-23T06:56:47Z) — Bug fix + ontology doc split
+
+    - Attempted: fix `plan_project_path` empty-path crash for relative inputs; split monolithic `docs/component-ontology.md` into reference spec + migration doc.
+    - What worked: both tasks completed cleanly. The relative-path fix used `std::path::absolute` (matching how `projects::run_add` stores catalog paths) with 466 tests passing. The doc split preserved §9.4 / §9.5 anchors by reordering "Ontology YAML" before "Rust library surface", keeping the Rust library section at §9.
+    - What didn't: the backlog CLI has no `set-description` verb, so four stale §-refs in three active backlog tasks (§11.2, §12, §13.2, §14.1) could not be refreshed cleanly; left as triage concern. A new task `add-set-description-verb-to-backlog-cli` was added to address this.
+    - Key learnings: the double-space in "plan's project  is not in the catalog" error message was the direct diagnostic signal for the empty-path bug — quoting the displayed path value would surface this class of issue faster in future.
