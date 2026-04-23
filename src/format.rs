@@ -265,12 +265,28 @@ pub fn format_result_text(text: &str) -> Vec<StyledLine> {
                     Some(intent) => (Style::bold_intent(intent), Style::intent(intent)),
                     None => (Style::dim(), Style::dim()),
                 };
+                // `[LABEL] title — reason` splits into a coloured title row and
+                // a dim reason row under the detail column. First ` — ` only;
+                // further em-dashes stay in the reason. No separator → title-only.
+                let (title, reason) = match detail.split_once(" — ") {
+                    Some((t, r)) => (t.to_string(), Some(r.trim().to_string())),
+                    None => (detail, None),
+                };
                 push(&mut out, StyledLine(vec![
                     Span::plain("  "),
                     Span::styled(padded, tag_style),
                     Span::plain("  "),
-                    Span::styled(detail, detail_style),
+                    Span::styled(title, detail_style),
                 ]));
+                if let Some(reason) = reason {
+                    if !reason.is_empty() {
+                        let indent = " ".repeat(2 + *LABEL_WIDTH + 2);
+                        push(&mut out, StyledLine(vec![
+                            Span::plain(indent),
+                            Span::dim(reason),
+                        ]));
+                    }
+                }
                 last_action_intent = Some(intent_opt);
                 continue;
             }
@@ -539,6 +555,76 @@ mod tests {
         // formatter, not the generic dim-text fallthrough).
         assert!(!flat_text(promoted).contains("[PROMOTED]"));
         assert!(!flat_text(archived).contains("[ARCHIVED]"));
+    }
+
+    #[test]
+    fn format_result_text_splits_title_and_reason_on_em_dash() {
+        // `[LABEL] title — reason` emits two rows: title on the action row,
+        // reason indented to the detail column on the next row, dimmed.
+        let lines = format_result_text("[NEW] Task title — reason for being new");
+        let title_row = lines.iter().find(|l| flat_text(l).contains("NEW")).unwrap();
+        let title_text = flat_text(title_row);
+        assert!(title_text.contains("Task title"), "title on action row: {title_text:?}");
+        assert!(!title_text.contains("reason for being new"), "reason must not appear on action row: {title_text:?}");
+        assert!(!title_text.contains(" — "), "em-dash separator must be stripped: {title_text:?}");
+
+        let reason_row = lines.iter().find(|l| flat_text(l).contains("reason for being new")).unwrap();
+        let reason_text = flat_text(reason_row);
+        let indent_width = 2 + *LABEL_WIDTH + 2;
+        assert!(
+            reason_text.starts_with(&" ".repeat(indent_width)),
+            "reason must indent to detail column: {reason_text:?}"
+        );
+        let reason_span = reason_row.0.iter().find(|s| s.text.contains("reason for being new")).unwrap();
+        assert_eq!(reason_span.style, Style::dim(), "reason must be dim");
+    }
+
+    #[test]
+    fn format_result_text_action_without_em_dash_stays_single_row() {
+        // No separator → single row, no dim reason row emitted.
+        let lines = format_result_text("[AWKWARD] minor tweak");
+        let rows_with_text: Vec<_> = lines
+            .iter()
+            .filter(|l| !l.is_blank())
+            .collect();
+        assert_eq!(rows_with_text.len(), 1, "single action row expected: {rows_with_text:?}");
+        let text = flat_text(rows_with_text[0]);
+        assert!(text.contains("AWKWARD"));
+        assert!(text.contains("minor tweak"));
+    }
+
+    #[test]
+    fn format_result_text_splits_on_first_em_dash_only() {
+        // Reason may itself contain ` — `; only the first occurrence is a split.
+        let lines = format_result_text("[STALE] entry — old behaviour — new behaviour");
+        let title_row = lines.iter().find(|l| flat_text(l).contains("STALE")).unwrap();
+        assert!(flat_text(title_row).contains("entry"));
+        assert!(!flat_text(title_row).contains("old behaviour"));
+
+        let reason_row = lines.iter().find(|l| flat_text(l).contains("old behaviour")).unwrap();
+        let reason_text = flat_text(reason_row);
+        assert!(reason_text.contains("old behaviour — new behaviour"), "inner em-dash preserved: {reason_text:?}");
+    }
+
+    #[test]
+    fn format_result_text_empty_reason_skips_reason_row() {
+        // `[NEW] title — ` (trailing em-dash, empty reason) must not emit a blank dim row.
+        let lines = format_result_text("[NEW] title — ");
+        let rows_with_text: Vec<_> = lines
+            .iter()
+            .filter(|l| !l.is_blank())
+            .collect();
+        assert_eq!(rows_with_text.len(), 1, "empty reason must not emit a row: {rows_with_text:?}");
+    }
+
+    #[test]
+    fn format_result_text_reason_row_does_not_break_arrow_continuation() {
+        // After emitting title + dim reason, a subsequent `→ …` still chains
+        // to the action's intent (dream format relies on this).
+        let lines = format_result_text("[VERBOSE] heading — what was wordy\n    → tightened form");
+        let arrow_row = lines.iter().find(|l| flat_text(l).contains("tightened form")).unwrap();
+        let arrow_span = arrow_row.0.iter().find(|s| s.text.contains("→")).expect("arrow span");
+        assert_eq!(arrow_span.style, Style::intent(Intent::Meta));
     }
 
     #[test]
