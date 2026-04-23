@@ -2,7 +2,7 @@ tasks:
 - id: extend-cli-for-ontology-v2-and-add-stage-1-interaction-role-hints
   title: Extend CLI for ontology v2 and add Stage 1 interaction_role_hints
   category: feature
-  status: not_started
+  status: done
   dependencies: []
   description: |
     **Priority: MEDIUM.** Brings the interactive CLI and Stage 1 surface-extraction up to v2 parity. After this task the CLI is fully v2-capable for humans, and Stage 2 gains Stage-1-sourced priors.
@@ -52,6 +52,103 @@ tasks:
     - `list --kind generates --lifecycle codegen` filters correctly.
     - `state related-projects list` still works with a stderr deprecation banner.
     - A fresh discover run populates `interaction_role_hints` for at least one catalog project whose README clearly declares a role (e.g., Ravel-Lite declares itself as an orchestrator).
+  results: |
+    ## What landed
+
+    ### CLI extensions (`ravel-lite state related-components …`)
+
+    - **`add-edge`** takes the full ontology v2 field set:
+      `add-edge <kind> <lifecycle> <a> <b> --evidence-grade <strong|medium|weak> --evidence-field <field> [--evidence-field …] --rationale <string>`.
+      `kind` is validated via `EdgeKind::parse`, `lifecycle` via
+      `LifecycleScope::parse` (new helper `parse_lifecycle_scope` in
+      `main.rs`), and the non-empty-rationale / non-empty-evidence-unless-
+      weak invariants are enforced inside `Edge::validate` — the CLI layer
+      just plumbs values through.
+    - **`remove-edge`** now takes `<kind> <lifecycle> <a> <b>` (lifecycle
+      required). v1-style invocations omitting lifecycle fail at clap's
+      required-arg check — no silent match-across-lifecycles.
+    - **`list`** gains `--kind` and `--lifecycle` filters that AND-compose
+      with the existing `--plan` filter.
+    - Deprecated `state related-projects` alias retained with the same
+      stderr warning (removal is a separate task in a later release).
+    - The transitional `default_lifecycle_for_kind` helper is deleted —
+      every CLI caller now supplies `lifecycle` explicitly.
+    - Introduced `ListFilter<'a>` and `AddEdgeRequest<'a>` structs in
+      `related_components.rs` to keep the public signatures short rather
+      than sliding toward the 20-arg ceiling.
+
+    ### Stage 1 interaction_role_hints
+
+    - New `InteractionRoleHint` enum in `src/discover/schema.rs` with the
+      closed kebab-case vocabulary (`generator`, `orchestrator`,
+      `test-harness`, `spec-document`, `spawner`, `documented-by`,
+      `client`, `server`, `library`, `tool`). Serde rejects unknowns —
+      confirmed by the new `interaction_role_hint_rejects_unknown_value`
+      test.
+    - `SurfaceRecord` gains `interaction_role_hints: Vec<InteractionRoleHint>`
+      with `#[serde(default)]`. Cache files predating this field parse
+      cleanly with an empty list.
+    - `defaults/discover-stage1.md` documents the field + vocabulary in a
+      new `## Role hints (optional)` section.
+    - `defaults/discover-stage2.md` gains a `### Role hints are priors,
+      not verdicts` subsection inside the decision tree. Surface dumps
+      continue to serialise the new field automatically via
+      `{{SURFACE_RECORDS_YAML}}`.
+
+    ### Tests
+
+    - 3 new integration tests for the new CLI shape (weak-grade omission,
+      strong-grade evidence requirement, v1-style-lifecycle rejection).
+    - 4 new filter integration tests (`--kind`, `--lifecycle`, filter
+      composition, lifecycle-targeted remove).
+    - Unit-level drift tests: Stage 1 prompt lists every
+      `InteractionRoleHint` variant as a vocabulary bullet (bidirectional
+      bijection); Stage 2 prompt keeps the priors-not-verdicts note.
+    - All existing unit tests updated for the new `run_add_edge` /
+      `run_remove_edge` / `run_list` signatures, plus two additions:
+      `add_edge_accepts_same_pair_at_distinct_lifecycles`,
+      `remove_edge_matches_only_specified_lifecycle`.
+    - Full suite: 528 tests pass (466 unit + 62 integration across 7 test
+      binaries).
+
+    ### Unrelated fix (user-requested alongside task 1)
+
+    Added a blank line separator between consecutive `[ACTION]` items in
+    `src/format.rs::format_result_text` — the `last_action_intent` state
+    was already tracking "inside action block," so the rule is "push a
+    blank before a new action when the previous line was part of the
+    previous action." Three new tests lock the behaviour (blank inserted,
+    no blank before the first action, no doubling when the user already
+    put a blank).
+
+    ## Exit criteria verified
+
+    1. Smoke test round-trips through YAML:
+       `add-edge generates codegen Ravel-Lite Ravel --evidence-grade strong --evidence-field Ravel-Lite.produces_files --evidence-field Ravel.consumes_files --rationale "Ravel-Lite emits schemas Ravel consumes"`
+       → emits the expected 5-field edge. ✓
+    2. `list --kind generates --lifecycle codegen` returns only matching
+       edges; empty-intersection filters return an edge-less file
+       (covered by `list_kind_and_lifecycle_filters_compose`). ✓
+    3. `state related-projects list` still works with the deprecation
+       banner on stderr (covered by
+       `deprecated_related_projects_alias_warns_and_forwards`). ✓
+    4. Stage 1 populating `interaction_role_hints` cannot be verified
+       without a real claude run, but the schema + prompt changes are in
+       place and a drift test ensures the vocabulary stays aligned with
+       the enum.
+
+    ## What this suggests next
+
+    - Phase B (workspace extraction) remains gated on "stable for ≥1
+      release + second consumer imminent." The single-consumer justification
+      hasn't changed. Defer.
+    - The r7 docs audit task (low priority) depended on this task's
+      completion; it's now unblocked.
+    - The Stage 2 priors-not-verdicts note is prose; if we later observe
+      Stage 2 output weighting hints too aggressively, we may want a
+      harder per-edge assertion (e.g. "evidence_fields must include at
+      least one non-hint field for `strong`"). Hold off until we have
+      real discover output to judge.
 - id: extract-component-ontology-to-workspace-crate-phase-b
   title: Extract component-ontology to workspace crate (Phase B)
   category: refactor
