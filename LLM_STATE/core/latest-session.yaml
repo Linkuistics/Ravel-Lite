@@ -1,11 +1,11 @@
-id: session-20
-timestamp: 2026-04-22T22:36:13Z
+id: session-21
+timestamp: 2026-04-22T23:47:28Z
 phase: work
 body: |
-  ### Session 20 (2026-04-22T22:36:13Z) — Fix reversed parent-of conflict detection in apply layer
+  ### Session 21 (2026-04-22T23:47:28Z) — Remove --debug-file TUI workaround
 
-  - Implemented the `apply-layer-directional-conflict-check-for-parent-of-reversals` backlog task: fixed a bug in `find_conflicting_kind` (`src/discover/apply.rs`) where `parent-of(A,B)` + proposed `parent-of(B,A)` was not detected as a conflict because both edges share `kind == ParentOf`, causing the reversed edge to slip through into the graph — a contradictory state where A is parent of B and B is parent of A simultaneously.
-  - Fix was ~3 lines in the filter predicate: added an OR-branch so same-kind ParentOf edges with differing participant order are treated as directional conflicts. Also improved the conflict log line to include `existing.participants` so the message is readable when a reversal is blocked. Imported `EdgeKind` into the module to keep the predicate self-contained.
-  - TDD cycle followed: a RED test (`apply_rejects_reversed_parent_of_as_conflict`) reproduced the bug first try (reported `added == 1`, expected 0); a negative-control test (`apply_treats_duplicate_parent_of_as_already_present`) confirmed exact-duplicate ParentOf is still routed as `already_present` not a conflict. Full suite: 406 lib tests + all integration suites pass, 0 failures, clippy clean.
-  - The ~3-line estimate from the backlog description was accurate; no schema changes, no API changes, no new data structures needed.
-  - Both remaining open tasks (`remove-claude-code-debug-file-workaround`, `smoke-test-discover-pipeline`) require human-at-tty verification and cannot proceed headlessly.
+  - Attempted to remove the `--debug-file /tmp/claude-debug.log` workaround from `src/agent/claude_code.rs::invoke_interactive` now that the installed `claude` binary is 2.1.117 (past the 2.1.116 threshold specified in the task).
+  - Deleted 27 lines: two `args.push` lines and the 24-line WORKAROUND comment block (lines 181–206 in the pre-change file). Forensic detail in that comment is preserved in git blame; recoverable via `git log -S "WORKAROUND" -- src/agent/claude_code.rs`.
+  - `cargo check` and `cargo test` (406 lib tests + integration suites) passed cleanly. No test pinned the `--debug-file` args.
+  - Task intentionally left as `blocked` rather than `done`: the task description is explicit that "a version bump alone is insufficient" — the fix is empirical and requires a human watching a real Work-phase TUI rendered by a freshly-built `ravel-lite` binary without the flag.
+  - Next step: human rebuilds (`cargo install --path .`) and runs `ravel-lite run` against a real plan. If TUI renders normally → mark task done. If TUI silently fails → revert commit and re-block with note "2.1.117 still reproduces".
