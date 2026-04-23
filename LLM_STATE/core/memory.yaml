@@ -461,3 +461,17 @@ entries:
   title: interaction_role_hints spec is in migration doc §5.2, not ontology doc
   body: |
     `docs/component-ontology.md` has no §13.2 or §14.1. The `interaction_role_hints` design lives in `docs/component-ontology-migration.md §5.2`. Task briefs that cite the former section numbers are wrong; use the migration companion doc.
+- id: prompt-vocab-enum-variant-bijection-tests-guard-llm-code-alignment
+  title: Prompt vocab ↔ enum variant bijection tests guard LLM/code alignment
+  body: |
+    Prompt vocabulary ↔ enum variant bijection tests guard LLM/code alignment.
+
+    A test that asserts bijection between an enum's variants and a prompt's listed vocabulary (e.g. `InteractionRoleHint` vs `defaults/discover-stage1.md`) will catch prompt-vocabulary drift before any production run. Adding a new enum variant without updating the prompt fails the test; adding a new prompt term without a matching variant also fails. Apply this pattern for any closed-vocabulary enum whose terms appear in an LLM prompt.
+- id: format-result-text-inserts-blank-line-between-consecutive-action-blocks
+  title: '`format_result_text` inserts blank line between consecutive ACTION blocks'
+  body: |
+    `src/format.rs::format_result_text` inserts a blank line when an `[ACTION]` marker immediately follows a previous `[ACTION]` block (including its continuation lines). Keeps multi-action output visually scannable; phase prompts do not need manual blank lines between action outputs.
+- id: remove-edge-requires-lifecycle-v1-style-calls-fail-at-clap
+  title: '`remove-edge` requires --lifecycle; v1-style calls fail at clap'
+  body: |
+    `ravel-lite state related-components remove-edge` requires `--lifecycle`; omitting it is a clap parse error. v1-style two-argument invocations (without lifecycle) are not accepted. See: `related-components.yaml stores global name-indexed edge list`.
