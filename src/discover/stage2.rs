@@ -227,6 +227,23 @@ mod tests {
     }
 
     #[test]
+    fn shipped_stage2_prompt_declares_role_hints_are_priors_not_verdicts() {
+        // Lock the prose guarantee that Stage 2 does not promote
+        // `interaction_role_hints` into edges without cross-referenced
+        // evidence. Migration doc §5.2 is load-bearing here; future
+        // prompt rewrites that drop this guidance silently would let
+        // self-declared roles mint weak edges.
+        assert!(
+            SHIPPED_STAGE2_PROMPT.contains("priors, not verdicts"),
+            "Stage 2 prompt must say hints are priors, not verdicts"
+        );
+        assert!(
+            SHIPPED_STAGE2_PROMPT.contains("interaction_role_hints"),
+            "Stage 2 prompt must name the interaction_role_hints field explicitly"
+        );
+    }
+
+    #[test]
     fn assert_no_dangling_tokens_reports_leftovers() {
         let err = assert_no_dangling_tokens("hello {{MISSING}} world").unwrap_err();
         let msg = format!("{err:#}");

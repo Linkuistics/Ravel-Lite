@@ -73,6 +73,17 @@ same pair.
 9. **None of the above with direct evidence?**
    → No edge. Omission is the correct answer for weak overlaps.
 
+### Role hints are priors, not verdicts
+
+Each surface record may carry an optional `interaction_role_hints`
+list — self-declared labels a component's own prose assigns itself
+(e.g. `generator`, `orchestrator`, `server`, `client`). Treat these
+as **priors only**: they can raise your prior that a particular
+decision-tree branch applies to a pair, but an edge still requires
+cross-referenced surface-field evidence (overlapping paths, matching
+endpoints, named tools, etc.). Never propose an edge solely because
+one side's hint suggests it.
+
 ## Insufficient signals (weak evidence-grade threshold)
 
 Patterns too thin to support a proposal on their own. If the only

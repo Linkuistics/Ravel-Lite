@@ -27,6 +27,28 @@ use crate::projects::{self, ProjectsCatalog};
 // `crate::ontology` directly.
 pub use crate::ontology::{EdgeKind, LifecycleScope};
 
+/// Filter set for `run_list`. An empty filter emits every edge; each
+/// populated field narrows the match set by AND-composition.
+pub struct ListFilter<'a> {
+    pub plan: Option<&'a Path>,
+    pub kind: Option<EdgeKind>,
+    pub lifecycle: Option<LifecycleScope>,
+}
+
+/// Full-field request for `run_add_edge`. Participants are borrowed
+/// because their lifetime is trivially shorter than the caller's stack
+/// frame; the owned fields (`evidence_fields`, `rationale`) move into
+/// the constructed `Edge`.
+pub struct AddEdgeRequest<'a> {
+    pub kind: EdgeKind,
+    pub lifecycle: LifecycleScope,
+    pub a: &'a str,
+    pub b: &'a str,
+    pub evidence_grade: EvidenceGrade,
+    pub evidence_fields: Vec<String>,
+    pub rationale: String,
+}
+
 pub const RELATED_COMPONENTS_FILE: &str = "related-components.yaml";
 pub const LEGACY_RELATED_PROJECTS_FILE: &str = "related-projects.yaml";
 
@@ -86,55 +108,54 @@ fn error_if_legacy_file_present(config_root: &Path) -> Result<()> {
 
 // ---------- CLI handlers ----------
 
-pub fn run_list(config_root: &Path, plan_dir: Option<&Path>) -> Result<()> {
+pub fn run_list(config_root: &Path, filter: &ListFilter<'_>) -> Result<()> {
     let file = load_or_empty(config_root)?;
-    let filtered = match plan_dir {
-        None => file,
+
+    // Plan-derived component filter is resolved once; kind/lifecycle
+    // are direct value comparisons against each edge.
+    let plan_component = match filter.plan {
+        None => None,
         Some(plan) => {
             let catalog = projects::load_or_empty(config_root)?;
-            let component_name = resolve_plan_component_name(&catalog, plan)?;
-            RelatedComponentsFile {
-                schema_version: file.schema_version,
-                edges: file
-                    .edges
-                    .into_iter()
-                    .filter(|e| e.involves(&component_name))
-                    .collect(),
-            }
+            Some(resolve_plan_component_name(&catalog, plan)?)
         }
     };
+
+    let filtered = RelatedComponentsFile {
+        schema_version: file.schema_version,
+        edges: file
+            .edges
+            .into_iter()
+            .filter(|e| plan_component.as_deref().is_none_or(|name| e.involves(name)))
+            .filter(|e| filter.kind.is_none_or(|k| e.kind == k))
+            .filter(|e| filter.lifecycle.is_none_or(|l| e.lifecycle == l))
+            .collect(),
+    };
+
     let yaml = serde_yaml::to_string(&filtered)
         .context("failed to serialise related-components to YAML")?;
     print!("{yaml}");
     Ok(())
 }
 
-/// Add an edge with synthesised defaults — the transitional CLI shape.
-/// `kind` selects the v2 vocabulary; the `lifecycle` is chosen by
-/// `default_lifecycle_for_kind`, `evidence_grade` is `weak`,
-/// `evidence_fields` is empty, and `rationale` is a generic placeholder
-/// that names the CLI provenance. The next backlog task replaces this
-/// with explicit `--lifecycle` / `--evidence-grade` / `--rationale`
-/// flags.
-pub fn run_add_edge(config_root: &Path, kind: EdgeKind, a: &str, b: &str) -> Result<()> {
+/// Add an edge with the full ontology v2 field set supplied by the
+/// caller. Validation happens inside `Edge::validate` via
+/// `RelatedComponentsFile::add_edge` — non-empty rationale,
+/// `evidence_fields` non-empty unless `evidence_grade=weak`, symmetric
+/// kinds stored in sorted order, distinct participants.
+pub fn run_add_edge(config_root: &Path, req: &AddEdgeRequest<'_>) -> Result<()> {
     let catalog = projects::load_or_empty(config_root)?;
-    require_component_known(&catalog, a)?;
-    require_component_known(&catalog, b)?;
+    require_component_known(&catalog, req.a)?;
+    require_component_known(&catalog, req.b)?;
 
-    let participants = canonicalise_participants_for_kind(kind, a, b);
+    let participants = canonicalise_participants_for_kind(req.kind, req.a, req.b);
     let edge = Edge {
-        kind,
-        lifecycle: default_lifecycle_for_kind(kind),
+        kind: req.kind,
+        lifecycle: req.lifecycle,
         participants,
-        evidence_grade: EvidenceGrade::Weak,
-        evidence_fields: Vec::new(),
-        rationale: format!(
-            "added via `ravel-lite state related-components add-edge {} {} {}`; \
-             lifecycle / evidence-grade / rationale flags pending v2 CLI extension",
-            kind.as_str(),
-            a,
-            b,
-        ),
+        evidence_grade: req.evidence_grade,
+        evidence_fields: req.evidence_fields.clone(),
+        rationale: req.rationale.clone(),
     };
 
     let mut file = load_or_empty(config_root)?;
@@ -142,62 +163,42 @@ pub fn run_add_edge(config_root: &Path, kind: EdgeKind, a: &str, b: &str) -> Res
     if !added {
         eprintln!(
             "edge already present (kind={}, lifecycle={}, {} / {}); no change.",
-            kind.as_str(),
-            default_lifecycle_for_kind(kind).as_str(),
-            a,
-            b
+            req.kind.as_str(),
+            req.lifecycle.as_str(),
+            req.a,
+            req.b
         );
         return Ok(());
     }
     save_atomic(config_root, &file)
 }
 
-/// Remove every edge matching `(kind, canonicalised participants)` —
-/// across all lifecycles — until the next task's `--lifecycle` flag
-/// makes lifecycle-targeted removal possible. Errors when the search
-/// finds nothing so scripted cleanups don't silently no-op.
-pub fn run_remove_edge(config_root: &Path, kind: EdgeKind, a: &str, b: &str) -> Result<()> {
+/// Remove the unique edge matching `(kind, lifecycle, canonicalised
+/// participants)`. Errors when the search finds nothing so scripted
+/// cleanups don't silently no-op.
+pub fn run_remove_edge(
+    config_root: &Path,
+    kind: EdgeKind,
+    lifecycle: LifecycleScope,
+    a: &str,
+    b: &str,
+) -> Result<()> {
     let mut file = load_or_empty(config_root)?;
     let want = canonicalise_participants_for_kind(kind, a, b);
     let before = file.edges.len();
-    file.edges
-        .retain(|e| !(e.kind == kind && e.participants == want));
+    file.edges.retain(|e| {
+        !(e.kind == kind && e.lifecycle == lifecycle && e.participants == want)
+    });
     if file.edges.len() == before {
         bail!(
-            "no matching edge to remove (kind={}, {} / {})",
+            "no matching edge to remove (kind={}, lifecycle={}, {} / {})",
             kind.as_str(),
+            lifecycle.as_str(),
             a,
             b
         );
     }
     save_atomic(config_root, &file)
-}
-
-/// Default lifecycle per kind, drawn from the typical-lifecycle column of
-/// `docs/component-ontology.md` §5. When a kind has more than one
-/// canonical lifecycle, the one most representative of the kind's
-/// primary use is chosen. Only consulted by the transitional CLI
-/// `add-edge`; once explicit `--lifecycle` lands this helper goes away.
-fn default_lifecycle_for_kind(kind: EdgeKind) -> LifecycleScope {
-    match kind {
-        EdgeKind::DependsOn => LifecycleScope::Build,
-        EdgeKind::HasOptionalDependency => LifecycleScope::Build,
-        EdgeKind::ProvidedByHost => LifecycleScope::Runtime,
-        EdgeKind::LinksStatically => LifecycleScope::Build,
-        EdgeKind::LinksDynamically => LifecycleScope::Runtime,
-        EdgeKind::Generates => LifecycleScope::Codegen,
-        EdgeKind::Scaffolds => LifecycleScope::DevWorkflow,
-        EdgeKind::CommunicatesWith => LifecycleScope::Runtime,
-        EdgeKind::Calls => LifecycleScope::Runtime,
-        EdgeKind::Invokes => LifecycleScope::DevWorkflow,
-        EdgeKind::Orchestrates => LifecycleScope::DevWorkflow,
-        EdgeKind::Embeds => LifecycleScope::Runtime,
-        EdgeKind::Tests => LifecycleScope::Test,
-        EdgeKind::ProvidesFixturesFor => LifecycleScope::Test,
-        EdgeKind::ConformsTo => LifecycleScope::Design,
-        EdgeKind::CoImplements => LifecycleScope::Design,
-        EdgeKind::Describes => LifecycleScope::Design,
-    }
 }
 
 fn canonicalise_participants_for_kind(kind: EdgeKind, a: &str, b: &str) -> Vec<String> {
@@ -272,11 +273,32 @@ mod tests {
         paths
     }
 
-    fn cli_edge(kind: EdgeKind, a: &str, b: &str) -> Edge {
+    /// Test helper: build a weak-evidence edge with a fixed lifecycle so
+    /// unit tests don't replicate the add-edge flag plumbing. Mirrors
+    /// what the CLI would produce for `add-edge <kind> <lifecycle> a b
+    /// --evidence-grade weak --rationale test`.
+    fn weak_edge(kind: EdgeKind, lifecycle: LifecycleScope, a: &str, b: &str) -> Edge {
         Edge {
             kind,
-            lifecycle: default_lifecycle_for_kind(kind),
+            lifecycle,
             participants: canonicalise_participants_for_kind(kind, a, b),
+            evidence_grade: EvidenceGrade::Weak,
+            evidence_fields: Vec::new(),
+            rationale: "test".into(),
+        }
+    }
+
+    fn req_weak<'a>(
+        kind: EdgeKind,
+        lifecycle: LifecycleScope,
+        a: &'a str,
+        b: &'a str,
+    ) -> AddEdgeRequest<'a> {
+        AddEdgeRequest {
+            kind,
+            lifecycle,
+            a,
+            b,
             evidence_grade: EvidenceGrade::Weak,
             evidence_fields: Vec::new(),
             rationale: "test".into(),
@@ -295,7 +317,7 @@ mod tests {
     fn save_then_load_round_trips() {
         let tmp = TempDir::new().unwrap();
         let mut file = RelatedComponentsFile::default();
-        file.add_edge(cli_edge(EdgeKind::Generates, "Alpha", "Beta"))
+        file.add_edge(weak_edge(EdgeKind::Generates, LifecycleScope::Codegen, "Alpha", "Beta"))
             .unwrap();
         save_atomic(tmp.path(), &file).unwrap();
         let loaded = load_or_empty(tmp.path()).unwrap();
@@ -326,7 +348,7 @@ mod tests {
     fn rename_cascade_rewrites_participants() {
         let tmp = TempDir::new().unwrap();
         let mut file = RelatedComponentsFile::default();
-        file.add_edge(cli_edge(EdgeKind::Generates, "OldName", "Peer"))
+        file.add_edge(weak_edge(EdgeKind::Generates, LifecycleScope::Codegen, "OldName", "Peer"))
             .unwrap();
         save_atomic(tmp.path(), &file).unwrap();
 
@@ -350,7 +372,11 @@ mod tests {
         std::fs::create_dir_all(&cfg).unwrap();
         mk_catalog_with(&cfg, &["Known"]);
 
-        let err = run_add_edge(&cfg, EdgeKind::Generates, "Known", "Stranger").unwrap_err();
+        let err = run_add_edge(
+            &cfg,
+            &req_weak(EdgeKind::Generates, LifecycleScope::Codegen, "Known", "Stranger"),
+        )
+        .unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("Stranger"));
         assert!(msg.contains("state projects add"));
@@ -358,22 +384,75 @@ mod tests {
     }
 
     #[test]
-    fn add_edge_synthesises_v2_defaults_and_persists() {
+    fn add_edge_persists_caller_supplied_v2_fields() {
         let tmp = TempDir::new().unwrap();
         let cfg = tmp.path().join("cfg");
         std::fs::create_dir_all(&cfg).unwrap();
         mk_catalog_with(&cfg, &["A", "B"]);
 
-        run_add_edge(&cfg, EdgeKind::Generates, "A", "B").unwrap();
+        let req = AddEdgeRequest {
+            kind: EdgeKind::Generates,
+            lifecycle: LifecycleScope::Codegen,
+            a: "A",
+            b: "B",
+            evidence_grade: EvidenceGrade::Strong,
+            evidence_fields: vec!["A.produces_files".into(), "B.consumes_files".into()],
+            rationale: "A emits schemas B consumes".into(),
+        };
+        run_add_edge(&cfg, &req).unwrap();
 
         let loaded = load_or_empty(&cfg).unwrap();
         assert_eq!(loaded.edges.len(), 1);
         let edge = &loaded.edges[0];
         assert_eq!(edge.kind, EdgeKind::Generates);
         assert_eq!(edge.lifecycle, LifecycleScope::Codegen);
-        assert_eq!(edge.evidence_grade, EvidenceGrade::Weak);
-        assert!(edge.evidence_fields.is_empty());
-        assert!(edge.rationale.contains("added via"));
+        assert_eq!(edge.evidence_grade, EvidenceGrade::Strong);
+        assert_eq!(
+            edge.evidence_fields,
+            vec!["A.produces_files".to_string(), "B.consumes_files".to_string()]
+        );
+        assert_eq!(edge.rationale, "A emits schemas B consumes");
+    }
+
+    #[test]
+    fn add_edge_rejects_strong_grade_without_evidence_fields() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        mk_catalog_with(&cfg, &["A", "B"]);
+
+        let req = AddEdgeRequest {
+            kind: EdgeKind::Generates,
+            lifecycle: LifecycleScope::Codegen,
+            a: "A",
+            b: "B",
+            evidence_grade: EvidenceGrade::Strong,
+            evidence_fields: Vec::new(),
+            rationale: "A emits schemas B consumes".into(),
+        };
+        let err = run_add_edge(&cfg, &req).unwrap_err();
+        assert!(format!("{err:#}").contains("evidence_field"));
+        assert!(!cfg.join(RELATED_COMPONENTS_FILE).exists());
+    }
+
+    #[test]
+    fn add_edge_rejects_empty_rationale() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        mk_catalog_with(&cfg, &["A", "B"]);
+
+        let req = AddEdgeRequest {
+            kind: EdgeKind::Generates,
+            lifecycle: LifecycleScope::Codegen,
+            a: "A",
+            b: "B",
+            evidence_grade: EvidenceGrade::Weak,
+            evidence_fields: Vec::new(),
+            rationale: "   ".into(),
+        };
+        let err = run_add_edge(&cfg, &req).unwrap_err();
+        assert!(format!("{err:#}").contains("rationale"));
     }
 
     #[test]
@@ -383,11 +462,36 @@ mod tests {
         std::fs::create_dir_all(&cfg).unwrap();
         mk_catalog_with(&cfg, &["A", "B"]);
 
-        run_add_edge(&cfg, EdgeKind::Generates, "A", "B").unwrap();
-        run_add_edge(&cfg, EdgeKind::Generates, "A", "B").unwrap();
+        let req = req_weak(EdgeKind::Generates, LifecycleScope::Codegen, "A", "B");
+        run_add_edge(&cfg, &req).unwrap();
+        run_add_edge(&cfg, &req).unwrap();
 
         let loaded = load_or_empty(&cfg).unwrap();
         assert_eq!(loaded.edges.len(), 1);
+    }
+
+    #[test]
+    fn add_edge_accepts_same_pair_at_distinct_lifecycles() {
+        // §3.5: one pair, one kind, two lifecycles → two edges. The CLI
+        // must preserve this — `lifecycle` participates in the dedup key.
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        mk_catalog_with(&cfg, &["A", "B"]);
+
+        run_add_edge(
+            &cfg,
+            &req_weak(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B"),
+        )
+        .unwrap();
+        run_add_edge(
+            &cfg,
+            &req_weak(EdgeKind::DependsOn, LifecycleScope::Runtime, "A", "B"),
+        )
+        .unwrap();
+
+        let loaded = load_or_empty(&cfg).unwrap();
+        assert_eq!(loaded.edges.len(), 2);
     }
 
     #[test]
@@ -399,8 +503,16 @@ mod tests {
 
         // Reverse order on a symmetric kind must still dedup with the
         // sorted form.
-        run_add_edge(&cfg, EdgeKind::CoImplements, "Beta", "Alpha").unwrap();
-        run_add_edge(&cfg, EdgeKind::CoImplements, "Alpha", "Beta").unwrap();
+        run_add_edge(
+            &cfg,
+            &req_weak(EdgeKind::CoImplements, LifecycleScope::Design, "Beta", "Alpha"),
+        )
+        .unwrap();
+        run_add_edge(
+            &cfg,
+            &req_weak(EdgeKind::CoImplements, LifecycleScope::Design, "Alpha", "Beta"),
+        )
+        .unwrap();
 
         let loaded = load_or_empty(&cfg).unwrap();
         assert_eq!(loaded.edges.len(), 1);
@@ -415,8 +527,50 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let cfg = tmp.path().join("cfg");
         std::fs::create_dir_all(&cfg).unwrap();
-        let err = run_remove_edge(&cfg, EdgeKind::Generates, "A", "B").unwrap_err();
+        let err = run_remove_edge(
+            &cfg,
+            EdgeKind::Generates,
+            LifecycleScope::Codegen,
+            "A",
+            "B",
+        )
+        .unwrap_err();
         assert!(format!("{err:#}").contains("no matching edge"));
+    }
+
+    #[test]
+    fn remove_edge_matches_only_specified_lifecycle() {
+        // Adding a `depends-on` at two lifecycles then removing one must
+        // leave the other in place — the lifecycle is a required part
+        // of the match key, not a wildcard.
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        mk_catalog_with(&cfg, &["A", "B"]);
+
+        run_add_edge(
+            &cfg,
+            &req_weak(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B"),
+        )
+        .unwrap();
+        run_add_edge(
+            &cfg,
+            &req_weak(EdgeKind::DependsOn, LifecycleScope::Runtime, "A", "B"),
+        )
+        .unwrap();
+
+        run_remove_edge(
+            &cfg,
+            EdgeKind::DependsOn,
+            LifecycleScope::Build,
+            "A",
+            "B",
+        )
+        .unwrap();
+
+        let loaded = load_or_empty(&cfg).unwrap();
+        assert_eq!(loaded.edges.len(), 1);
+        assert_eq!(loaded.edges[0].lifecycle, LifecycleScope::Runtime);
     }
 
     #[test]
@@ -426,8 +580,19 @@ mod tests {
         std::fs::create_dir_all(&cfg).unwrap();
         mk_catalog_with(&cfg, &["Alpha", "Beta"]);
 
-        run_add_edge(&cfg, EdgeKind::CoImplements, "Alpha", "Beta").unwrap();
-        run_remove_edge(&cfg, EdgeKind::CoImplements, "Beta", "Alpha").unwrap();
+        run_add_edge(
+            &cfg,
+            &req_weak(EdgeKind::CoImplements, LifecycleScope::Design, "Alpha", "Beta"),
+        )
+        .unwrap();
+        run_remove_edge(
+            &cfg,
+            EdgeKind::CoImplements,
+            LifecycleScope::Design,
+            "Beta",
+            "Alpha",
+        )
+        .unwrap();
 
         assert!(load_or_empty(&cfg).unwrap().edges.is_empty());
     }

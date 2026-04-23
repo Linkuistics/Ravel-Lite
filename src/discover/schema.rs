@@ -20,6 +20,66 @@ use crate::ontology::{EdgeKind, EvidenceGrade, LifecycleScope};
 
 pub const SURFACE_SCHEMA_VERSION: u32 = 1;
 
+/// Closed vocabulary of advisory labels a component's own prose may
+/// declare about its interaction role. Stage 1 emits these from README /
+/// top-level docs; Stage 2 treats them as priors, not verdicts (edges
+/// are still picked from cross-referenced evidence). Unknowns are
+/// rejected at deserialisation — `serde_yaml` errors on any value not
+/// matching one of the kebab-case variants below, which is the
+/// enforcement shape we want for a closed vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InteractionRoleHint {
+    Generator,
+    Orchestrator,
+    TestHarness,
+    SpecDocument,
+    Spawner,
+    DocumentedBy,
+    Client,
+    Server,
+    Library,
+    Tool,
+}
+
+impl InteractionRoleHint {
+    // `as_str` and `all` feed the drift tests and prompt-rendering tests
+    // only; the binary compilation unit never constructs hint values
+    // directly (they land in `SurfaceRecord` via serde). Matches the
+    // shape of `LifecycleScope::parse` / `LifecycleScope::all`.
+    #[allow(dead_code)]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InteractionRoleHint::Generator => "generator",
+            InteractionRoleHint::Orchestrator => "orchestrator",
+            InteractionRoleHint::TestHarness => "test-harness",
+            InteractionRoleHint::SpecDocument => "spec-document",
+            InteractionRoleHint::Spawner => "spawner",
+            InteractionRoleHint::DocumentedBy => "documented-by",
+            InteractionRoleHint::Client => "client",
+            InteractionRoleHint::Server => "server",
+            InteractionRoleHint::Library => "library",
+            InteractionRoleHint::Tool => "tool",
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn all() -> &'static [InteractionRoleHint] {
+        &[
+            InteractionRoleHint::Generator,
+            InteractionRoleHint::Orchestrator,
+            InteractionRoleHint::TestHarness,
+            InteractionRoleHint::SpecDocument,
+            InteractionRoleHint::Spawner,
+            InteractionRoleHint::DocumentedBy,
+            InteractionRoleHint::Client,
+            InteractionRoleHint::Server,
+            InteractionRoleHint::Library,
+            InteractionRoleHint::Tool,
+        ]
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SurfaceFile {
     pub schema_version: u32,
@@ -52,6 +112,12 @@ pub struct SurfaceRecord {
     pub external_tools_spawned: Vec<String>,
     #[serde(default)]
     pub explicit_cross_project_mentions: Vec<String>,
+    /// Advisory labels the component's own prose declares about itself.
+    /// Closed vocabulary (`InteractionRoleHint::all`); unknown strings
+    /// fail deserialisation. Stage 2 treats these as priors — every
+    /// edge still needs cross-referenced surface-field evidence.
+    #[serde(default)]
+    pub interaction_role_hints: Vec<InteractionRoleHint>,
     #[serde(default)]
     pub notes: String,
 }
@@ -117,6 +183,10 @@ mod tests {
                 data_formats: vec!["AlphaRecord".to_string()],
                 external_tools_spawned: vec!["git".to_string()],
                 explicit_cross_project_mentions: vec!["Beta".to_string()],
+                interaction_role_hints: vec![
+                    InteractionRoleHint::Generator,
+                    InteractionRoleHint::TestHarness,
+                ],
                 notes: String::new(),
             },
         };
@@ -136,7 +206,41 @@ mod tests {
         assert!(parsed.data_formats.is_empty());
         assert!(parsed.external_tools_spawned.is_empty());
         assert!(parsed.explicit_cross_project_mentions.is_empty());
+        assert!(parsed.interaction_role_hints.is_empty());
         assert!(parsed.notes.is_empty());
+    }
+
+    #[test]
+    fn interaction_role_hint_round_trips_every_variant_through_yaml() {
+        for hint in InteractionRoleHint::all() {
+            let kebab = hint.as_str();
+            let yaml = serde_yaml::to_string(hint).unwrap();
+            // Serialised form is the kebab string wrapped by serde_yaml's
+            // scalar quoting; round-trip parity is the contract.
+            let parsed: InteractionRoleHint = serde_yaml::from_str(&yaml).unwrap();
+            assert_eq!(parsed, *hint, "round-trip mismatch for {kebab}");
+        }
+    }
+
+    #[test]
+    fn interaction_role_hint_rejects_unknown_value() {
+        let yaml = "interaction_role_hints:\n  - mystery-role\n";
+        let err = serde_yaml::from_str::<SurfaceRecord>(yaml).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("mystery-role") || msg.contains("unknown variant"),
+            "unknown hint must be rejected with a descriptive error; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn surface_record_parses_legacy_yaml_without_hints_field() {
+        // A cache file written before this field existed must still load
+        // and surface an empty hint list.
+        let yaml = "purpose: alpha\nconsumes_files: []\n";
+        let parsed: SurfaceRecord = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(parsed.purpose, "alpha");
+        assert!(parsed.interaction_role_hints.is_empty());
     }
 
     #[test]

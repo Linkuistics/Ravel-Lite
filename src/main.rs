@@ -549,7 +549,8 @@ enum ProjectsCommands {
 #[derive(Subcommand)]
 enum RelatedComponentsCommands {
     /// Emit the file as YAML. With `--plan`, filter to edges that
-    /// involve the component derived from the plan dir.
+    /// involve the component derived from the plan dir. `--kind` and
+    /// `--lifecycle` compose with `--plan` (all filters AND-combine).
     List {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location.
@@ -559,37 +560,55 @@ enum RelatedComponentsCommands {
         /// `<plan>` (derived as `<plan>/../..`).
         #[arg(long)]
         plan: Option<PathBuf>,
+        /// Only emit edges whose kind matches this ontology v2 kebab-case
+        /// name (e.g. `generates`, `co-implements`).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Only emit edges whose lifecycle matches this ontology v2
+        /// kebab-case scope (e.g. `runtime`, `codegen`, `dev-workflow`).
+        #[arg(long)]
+        lifecycle: Option<String>,
     },
-    /// Add an edge. `kind` is one of the ontology v2 kebab-case kinds
-    /// (e.g. `generates`, `orchestrates`, `depends-on`,
-    /// `co-implements`). Symmetric kinds are participant-order-
-    /// insensitive; directed kinds use canonical order from
-    /// docs/component-ontology.md §6. Refuses unknown component names.
-    ///
-    /// **Transitional**: this CLI synthesises sensible per-kind
-    /// defaults for `lifecycle`, `evidence_grade=weak`, and
-    /// `rationale`. Explicit `--lifecycle` / `--evidence-grade` /
-    /// `--rationale` flags are introduced in the next backlog task.
+    /// Add an edge with the full ontology v2 field set. `kind` and
+    /// `lifecycle` are positional; every other field is a flag.
+    /// Symmetric kinds are participant-order-insensitive; directed
+    /// kinds use canonical order from docs/component-ontology.md §6.
+    /// Refuses unknown component names.
     AddEdge {
         #[arg(long)]
         config: Option<PathBuf>,
         /// One of the v2 kebab-case kinds (see
         /// docs/component-ontology.md §5).
         kind: String,
+        /// One of the v2 kebab-case lifecycles (see
+        /// docs/component-ontology.md §3.2).
+        lifecycle: String,
         /// First participant. For directed kinds, the canonical-order
         /// "from" component.
         a: String,
         /// Second participant. For directed kinds, the canonical-order
         /// "to" component.
         b: String,
+        /// Evidence grade: `strong`, `medium`, or `weak`. `strong`/`medium`
+        /// require at least one `--evidence-field`; `weak` may omit.
+        #[arg(long)]
+        evidence_grade: String,
+        /// Surface-field path that justifies this edge (e.g.
+        /// `Ravel-Lite.produces_files`). Repeat for multiple fields.
+        #[arg(long = "evidence-field", value_name = "FIELD")]
+        evidence_fields: Vec<String>,
+        /// One-paragraph human justification. Required; non-empty.
+        #[arg(long)]
+        rationale: String,
     },
-    /// Remove every edge matching `(kind, canonicalised participants)`
-    /// across all lifecycles. Errors if no match. (Lifecycle-targeted
-    /// removal arrives with the same CLI extension as `add-edge`.)
+    /// Remove the unique edge matching `(kind, lifecycle, canonicalised
+    /// participants)`. Errors if no match. A v1-style invocation
+    /// omitting `lifecycle` is rejected by clap's required-arg check.
     RemoveEdge {
         #[arg(long)]
         config: Option<PathBuf>,
         kind: String,
+        lifecycle: String,
         a: String,
         b: String,
     },
@@ -746,19 +765,53 @@ async fn dispatch_state(command: StateCommands) -> Result<()> {
 
 async fn dispatch_related_components(command: RelatedComponentsCommands) -> Result<()> {
     match command {
-        RelatedComponentsCommands::List { config, plan } => {
+        RelatedComponentsCommands::List { config, plan, kind, lifecycle } => {
             let config_root = resolve_config_dir(config)?;
-            related_components::run_list(&config_root, plan.as_deref())
+            let kind = kind.as_deref().map(parse_edge_kind).transpose()?;
+            let lifecycle = lifecycle.as_deref().map(parse_lifecycle_scope).transpose()?;
+            let filter = related_components::ListFilter {
+                plan: plan.as_deref(),
+                kind,
+                lifecycle,
+            };
+            related_components::run_list(&config_root, &filter)
         }
-        RelatedComponentsCommands::AddEdge { config, kind, a, b } => {
+        RelatedComponentsCommands::AddEdge {
+            config,
+            kind,
+            lifecycle,
+            a,
+            b,
+            evidence_grade,
+            evidence_fields,
+            rationale,
+        } => {
             let config_root = resolve_config_dir(config)?;
             let kind = parse_edge_kind(&kind)?;
-            related_components::run_add_edge(&config_root, kind, &a, &b)
+            let lifecycle = parse_lifecycle_scope(&lifecycle)?;
+            let evidence_grade = parse_evidence_grade(&evidence_grade)?;
+            let req = related_components::AddEdgeRequest {
+                kind,
+                lifecycle,
+                a: &a,
+                b: &b,
+                evidence_grade,
+                evidence_fields,
+                rationale,
+            };
+            related_components::run_add_edge(&config_root, &req)
         }
-        RelatedComponentsCommands::RemoveEdge { config, kind, a, b } => {
+        RelatedComponentsCommands::RemoveEdge {
+            config,
+            kind,
+            lifecycle,
+            a,
+            b,
+        } => {
             let config_root = resolve_config_dir(config)?;
             let kind = parse_edge_kind(&kind)?;
-            related_components::run_remove_edge(&config_root, kind, &a, &b)
+            let lifecycle = parse_lifecycle_scope(&lifecycle)?;
+            related_components::run_remove_edge(&config_root, kind, lifecycle, &a, &b)
         }
         RelatedComponentsCommands::Discover {
             config,
@@ -790,6 +843,27 @@ fn parse_edge_kind(input: &str) -> Result<related_components::EdgeKind> {
             .join(", ");
         anyhow::anyhow!(
             "invalid kind {input:?}; expected one of the ontology v2 kinds: {kebab}"
+        )
+    })
+}
+
+fn parse_lifecycle_scope(input: &str) -> Result<related_components::LifecycleScope> {
+    related_components::LifecycleScope::parse(input).ok_or_else(|| {
+        let kebab = related_components::LifecycleScope::all()
+            .iter()
+            .map(|l| l.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::anyhow!(
+            "invalid lifecycle {input:?}; expected one of the ontology v2 lifecycles: {kebab}"
+        )
+    })
+}
+
+fn parse_evidence_grade(input: &str) -> Result<crate::ontology::EvidenceGrade> {
+    crate::ontology::EvidenceGrade::parse(input).ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid evidence-grade {input:?}; expected one of: strong, medium, weak"
         )
     })
 }

@@ -51,7 +51,42 @@ inside breaks YAML parsing because YAML reads `key: value` as a map.
     are dependencies, not catalog projects.
   - Do NOT include this project's own name.
   - If no catalog projects are mentioned, emit an empty list.
+- `interaction_role_hints` — *optional, closed vocabulary*. Advisory
+  labels this project's own prose (README, top-level doc comments,
+  package description) declares about itself. Hints are priors for
+  Stage 2 — they are not edges. Pick each hint only when the component
+  *explicitly* presents itself in that role; leave the list empty
+  rather than guess.
 - `notes` — anything else relationally relevant that did not fit above.
+
+## Role hints (optional)
+
+The `interaction_role_hints` field takes zero or more values from this
+closed vocabulary. Unknown values are rejected at parse time, so spell
+them exactly:
+
+- `generator` — emits committed source artifacts (code, schemas, config)
+  that another component consumes as source.
+- `orchestrator` — manages another component's lifecycle, state, or
+  multi-step workflow (stronger than mere invocation).
+- `test-harness` — exists primarily to exercise another component's
+  behaviour end-to-end.
+- `spec-document` — is itself a specification (an RFC, a protocol doc,
+  an architectural design note) that other components implement.
+- `spawner` — shells out to other binaries as a routine part of its
+  operation (but does not necessarily own their lifecycle).
+- `documented-by` — is primarily user-facing documentation for another
+  component.
+- `client` — calls endpoints another component serves.
+- `server` — serves endpoints clients consume.
+- `library` — is consumed by other components as a library dependency
+  (importable API, not a standalone program).
+- `tool` — is a standalone CLI / GUI / interactive utility invoked by a
+  human or by other tooling.
+
+A component may carry multiple hints when its prose legitimately
+declares multiple roles. When prose is ambiguous, emit no hint — Stage 2
+can still pick edges from cross-referenced surface-field evidence.
 
 ## Other catalog projects
 
@@ -83,6 +118,8 @@ external_tools_spawned:
   - <binary-name>
 explicit_cross_project_mentions:
   - <project-name-or-path>
+interaction_role_hints:
+  - <role from the vocabulary above>
 notes: |
   <free-form prose>
 ```

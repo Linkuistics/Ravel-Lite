@@ -324,8 +324,75 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::super::schema::SurfaceRecord;
+    use super::super::schema::{InteractionRoleHint, SurfaceRecord};
     use super::*;
+
+    /// Content of the shipped `defaults/discover-stage1.md` embedded at
+    /// compile time. Drift tests run off the same bytes the released
+    /// binary copies to `<config-dir>/discover-stage1.md` on first run.
+    const SHIPPED_STAGE1_PROMPT: &str = include_str!("../../defaults/discover-stage1.md");
+
+    #[test]
+    fn shipped_stage1_prompt_lists_every_interaction_role_hint() {
+        // Bijection guard: every `InteractionRoleHint` variant must
+        // appear as a vocabulary bullet of the form `- `\``<name>`\` — …`
+        // in the Stage 1 prompt, and no other bullet of that shape may
+        // exist (so a hint removed from the enum leaves no stale
+        // vocabulary entry behind).
+        use std::collections::BTreeSet;
+
+        let enum_names: BTreeSet<String> = InteractionRoleHint::all()
+            .iter()
+            .map(|h| h.as_str().to_string())
+            .collect();
+
+        // The vocabulary section is the only place bullets of the form
+        // `- `\``<kebab>`\` — …` appear in this prompt; scope the scan
+        // to the "## Role hints (optional)" section to avoid picking up
+        // unrelated backtick-wrapped bullets elsewhere.
+        let section_start = SHIPPED_STAGE1_PROMPT
+            .find("## Role hints (optional)")
+            .expect("Stage 1 prompt must have a `## Role hints (optional)` section");
+        let rest = &SHIPPED_STAGE1_PROMPT[section_start..];
+        let section_end = rest[2..]
+            .find("\n## ")
+            .map(|i| i + 2)
+            .unwrap_or(rest.len());
+        let section = &rest[..section_end];
+
+        let bullet = regex::Regex::new(r"(?m)^- `([a-z][a-z0-9-]*)`").unwrap();
+        let rendered: BTreeSet<String> = bullet
+            .captures_iter(section)
+            .map(|c| c[1].to_string())
+            .collect();
+
+        let missing_from_prompt: Vec<_> = enum_names.difference(&rendered).cloned().collect();
+        let missing_from_enum: Vec<_> = rendered.difference(&enum_names).cloned().collect();
+        assert!(
+            missing_from_prompt.is_empty(),
+            "InteractionRoleHint variants missing from Stage 1 prompt vocabulary: {missing_from_prompt:?}"
+        );
+        assert!(
+            missing_from_enum.is_empty(),
+            "Stage 1 prompt lists vocabulary items not in InteractionRoleHint: {missing_from_enum:?}"
+        );
+    }
+
+    #[test]
+    fn shipped_stage1_prompt_declares_interaction_role_hints_field() {
+        // The fields list must mention `interaction_role_hints` by name
+        // and flag it as optional / closed-vocabulary, so Stage 1 knows
+        // it may emit zero values without the subagent feeling obliged
+        // to guess.
+        assert!(
+            SHIPPED_STAGE1_PROMPT.contains("`interaction_role_hints`"),
+            "Stage 1 prompt must document the interaction_role_hints field by name"
+        );
+        assert!(
+            SHIPPED_STAGE1_PROMPT.contains("optional, closed vocabulary"),
+            "Stage 1 prompt must flag interaction_role_hints as optional + closed vocabulary"
+        );
+    }
 
     /// Local copy of the git fixture used by `tree_sha::tests`. We can't
     /// reach across the module's private `tests` submodule, so the

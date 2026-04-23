@@ -260,6 +260,13 @@ pub fn format_result_text(text: &str) -> Vec<StyledLine> {
             let tag = caps[1].to_uppercase();
             let detail = caps[2].to_string();
             if let Some(intent_opt) = ACTION_INTENTS.get(tag.as_str()).copied() {
+                // Visually separate consecutive action items. `last_action_intent`
+                // stays Some across a title row, its reason row, and any `→`
+                // continuations, so this check fires exactly when the previous
+                // emitted line belonged to the previous action block.
+                if last_action_intent.is_some() {
+                    push(&mut out, StyledLine::empty());
+                }
                 let padded = format!("{:<width$}", tag, width = *LABEL_WIDTH);
                 let (tag_style, detail_style) = match intent_opt {
                     Some(intent) => (Style::bold_intent(intent), Style::intent(intent)),
@@ -678,6 +685,40 @@ mod tests {
             !text.starts_with(&" ".repeat(indent_width)),
             "orphan arrow must not be indented to detail column: {text:?}"
         );
+    }
+
+    #[test]
+    fn format_result_text_inserts_blank_between_consecutive_actions() {
+        // Two actions back-to-back must render with a blank row between them.
+        let lines = format_result_text("[NEW] first — reason one\n[OBSOLETE] second — reason two");
+        let first_idx = lines.iter().position(|l| flat_text(l).contains("first")).unwrap();
+        let second_idx = lines.iter().position(|l| flat_text(l).contains("second")).unwrap();
+        // Expect: first-title, first-reason, blank, second-title, second-reason.
+        assert!(second_idx > first_idx + 2, "second action immediately follows first: {lines:?}");
+        let between: Vec<_> = lines[first_idx + 1..second_idx].iter().collect();
+        assert!(
+            between.iter().any(|l| l.is_blank()),
+            "expected blank row between actions: {between:?}"
+        );
+    }
+
+    #[test]
+    fn format_result_text_no_blank_before_first_action() {
+        // Output starts with one leading blank (progress/result separator); no
+        // extra blank should appear just because the first line is an action.
+        let lines = format_result_text("[NEW] only action");
+        let action_idx = lines.iter().position(|l| flat_text(l).contains("only action")).unwrap();
+        assert_eq!(action_idx, 1, "expected leading blank then action row: {lines:?}");
+    }
+
+    #[test]
+    fn format_result_text_preserves_user_blank_between_actions() {
+        // User already put a blank line between actions → must not double it.
+        let lines = format_result_text("[NEW] a\n\n[OBSOLETE] b");
+        let a_idx = lines.iter().position(|l| flat_text(l).contains(" a")).unwrap();
+        let b_idx = lines.iter().position(|l| flat_text(l).contains(" b")).unwrap();
+        let blanks_between = lines[a_idx + 1..b_idx].iter().filter(|l| l.is_blank()).count();
+        assert_eq!(blanks_between, 1, "exactly one blank between actions: {lines:?}");
     }
 
     #[test]
