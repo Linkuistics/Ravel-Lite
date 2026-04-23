@@ -1,11 +1,24 @@
-id: session-28
-timestamp: 2026-04-23T08:03:18Z
+id: session-29
+timestamp: 2026-04-23T08:58:46Z
 phase: work
 body: |
-  ### Session 28 (2026-04-23T08:03:18Z) — Split action-line title/reason into two-row layout
+  ### Session 29 (2026-04-23T08:58:46Z) — Migrate related-projects to related-components with ontology v2
 
-  - **What was attempted:** UI change to `format_result_text` in `src/format.rs` so that `[LABEL] title — reason` action lines emit the reason on a separate dim row below the title, indented to the detail column, instead of joining title and reason into a single coloured row where the em-dash separator was visually invisible.
-  - **What worked:** `str::split_once(" — ")` on the detail text separates title from reason. The title row keeps its intent colour; the reason row is dim and indented by `2 + *LABEL_WIDTH + 2` spaces. `None` from `split_once` keeps the original single-row behaviour. A `trim().is_empty()` guard prevents a blank dim row when the separator is trailing. `last_action_intent` is still set after the action so dream's `→ …` continuation rows still chain correctly.
-  - **What worked (tests):** Five new tests added — two-row emission, no-separator fallback, inner-em-dash preservation, empty-reason guard, arrow-continuation compatibility. All 933 tests (unit + integration) green.
-  - **What this suggests next:** If reason wrapping on narrow TUI widths looks cramped, the indent could shift to a narrower prefix. The ` — ` split pattern is now load-bearing on phase prompts; a prompt-time lint could catch if an author uses `-` or `–` instead, but LLM drift is rare in practice.
-  - **Key learnings:** Splitting on `split_once` rather than `splitn` or `split` is the idiomatic Rust pattern that captures "first occurrence only" without materialising a vector; inner em-dashes in the reason are preserved for free. The `*LABEL_WIDTH` dereference in tests (using `Lazy<usize>`) confirms the indent is always in sync with the runtime constant.
+  - Completed task `migrate-callers-and-rename-to-related-components-no-migrator-delete-and-regenerate`: swapped all internal consumers from v1 `RelatedProjectsFile` / `EdgeKind::{Sibling, ParentOf}` onto the v2 ontology types already living in `src/ontology/`.
+  - Deleted `src/related_projects.rs` (1102 lines); added `src/related_components.rs` with host-aware load/save/rename wrappers, legacy-v1-file hard-error guard, and updated CLI handlers.
+  - Renamed `tests/state_related_projects.rs` → `tests/state_related_components.rs`, rewritten end-to-end for v2 shapes (symmetric-kind canonicalisation, deprecated-alias forwarding with stderr warning, legacy-v1-file hard-error path).
+  - Bumped proposals schema to v2 in `src/discover/schema.rs`: `ProposalRecord` gains `lifecycle`, `evidence_grade`, `evidence_fields`, `rationale`; `PROPOSALS_SCHEMA_VERSION = 2`.
+  - Updated `src/discover/apply.rs` to construct v2 `Edge` values from v2 proposals; narrowed `find_directional_conflict` to directed-kind + same-lifecycle + reversed-participants only.
+  - Updated `src/main.rs`: added `mod ontology`; new `StateCommands::RelatedComponents` variant; old `RelatedProjects` variant retained as a deprecated alias with stderr warning; `MigrateRelatedProjects` / `print_migration_report` deleted.
+  - Updated `src/projects.rs` rename cascade to call `related_components::rename_component_in_edges`; four cascade tests rewritten for v2 edge kinds.
+  - Updated `defaults/discover-stage2.md` to emit v2 proposal shape (9-kind transitional subset; full vocabulary swap is next task).
+  - Updated `defaults/phases/work.md` and `defaults/create-plan.md` to reference `state related-components` and `discover --apply`.
+  - Changed LICENSE from MIT to Apache 2.0.
+  - All 500 tests pass.
+
+  - Worked well: the v2 types in `src/ontology/` were already complete, making the migration primarily mechanical caller-by-caller substitution. The legacy-v1-file hard-error path and deprecated-alias test coverage were straightforward to add.
+  - Surprises: the fake-claude shim in `tests/discover.rs` extracts the output path via `grep -oE '/[^[:space:]]+\.yaml'`, which greedily matches any `.yaml` filename in the prompt — a mention of `defaults/ontology.yaml` in the Stage 2 prompt would have hijacked it. Worked around by omitting that filename from the prompt; the next task's prompt rewrite should harden the shim to extract from a dedicated marker.
+  - Linting surprise: `src/ontology/mod.rs` pub-re-exports are consumed only by lib-side `#[cfg(test)]` drift tests; main.rs sees them as unused. Resolved with targeted `#[allow(unused_imports)]` / `#[allow(dead_code)]` — worth removing when the next task's prompt-rendering code uses those symbols.
+
+  - Unblocked: `rewrite-stage-2-discover-prompt-for-ontology-v2-vocabulary` (next task). Its prompt rewrite should also harden the fake-claude shim.
+  - Latent design question: `find_directional_conflict` uses the narrow reading of §7.4 (same lifecycle only for reversed-pair conflicts). Whether cross-lifecycle reversals should also be flagged is not settled; surfaced in the task results for the next triage cycle.

@@ -2,7 +2,7 @@ tasks:
 - id: migrate-callers-and-rename-to-related-components-no-migrator-delete-and-regenerate
   title: Migrate callers and rename to related-components (no migrator; delete-and-regenerate)
   category: refactor
-  status: not_started
+  status: done
   dependencies: []
   description: |
     **Priority: HIGH.** Swaps all internal consumers onto v2 types and ships the file rename. After this task, Ravel-Lite reads and writes `related-components.yaml` natively. There is no v1→v2 migrator: `related-projects.yaml` is an entirely-generated artifact, so the upgrade procedure is "delete v1 and re-run discover" per `docs/component-ontology.md` §12.
@@ -37,6 +37,57 @@ tasks:
     - Loading a v2 file and re-saving is byte-identical (serde round-trip).
     - `ravel-lite state related-projects list` still works via the deprecated alias, emits a stderr deprecation warning, and delegates to the new verb.
     - No Rust symbol matches `grep -rn 'RelatedProjectsFile\\|RELATED_PROJECTS_FILE\\|rename_project_in_edges' src/` except in the deprecated-alias shim.
+  results: |
+    ## What was done
+
+    Flipped Ravel-Lite from the v1 `RelatedProjectsFile` / `EdgeKind::{Sibling, ParentOf}` types onto the v2 ontology already living in `src/ontology/`, renamed every internal reference, retired the legacy markdown migrator, swapped Stage 2 onto the v2 proposals schema, and added a deprecated CLI alias for one release cycle.
+
+    ### Files added / removed
+    - **Added** `src/related_components.rs` — host adapter holding the `RELATED_COMPONENTS_FILE` constant, host-aware load/save/rename wrappers around the host-agnostic `crate::ontology` library, the legacy-v1-file detection guard, `read_related_plans_markdown`, and the CLI handlers (`run_list`, `run_add_edge`, `run_remove_edge`). Re-exports `EdgeKind` and `LifecycleScope` so callers route through one module rather than reaching into `crate::ontology` directly.
+    - **Deleted** `src/related_projects.rs` (1102 lines).
+    - **Renamed** `tests/state_related_projects.rs` → `tests/state_related_components.rs` (rewritten end-to-end for v2; covers symmetric-kind canonicalisation via CLI, deprecated-alias forwarding with stderr warning, and the legacy-v1-file hard-error path).
+
+    ### Schema bumps
+    - `PROPOSALS_SCHEMA_VERSION = 2` in `src/discover/schema.rs`. `ProposalRecord` widened to carry `lifecycle: LifecycleScope`, `evidence_grade: EvidenceGrade`, `evidence_fields: Vec<String>` (renamed from `supporting_surface_fields`), and a required `rationale`.
+    - `related-components.yaml` (v2) is the new canonical filename; `related-projects.yaml` (v1) is hard-error-rejected at the loader with an actionable message naming `discover --apply` (per spec §12).
+
+    ### Caller migration (every call-site flipped)
+    - `src/projects.rs::run_rename` cascade now calls `related_components::rename_component_in_edges`. Its four cascade tests rewritten against v2 (using `EdgeKind::CoImplements` for symmetric semantics + `EdgeKind::Generates` for directed) — these tests now also pin the symmetric-kind re-sort behaviour.
+    - `src/discover/apply.rs` now constructs v2 `Edge` values from v2 `ProposalRecord` proposals; `find_directional_conflict` narrowed per spec §7.4 (directed kind + same lifecycle + reversed participants only — cross-kind on the same pair is legal per §3.5).
+    - `src/discover/stage2.rs` inherits the v2 `ProposalRecord` shape via serde derives — no Rust changes needed there. Prompt updated minimally to emit v2 shape (full decision-tree rewrite is the next task).
+    - `src/multi_plan.rs` import updated.
+    - `src/main.rs`: `mod ontology` added; new `StateCommands::RelatedComponents` variant; old `RelatedProjects` variant retained as a thin alias that prints a stderr deprecation warning and forwards to the new dispatcher; `MigrateRelatedProjects` variant + `print_migration_report` helper deleted; `parse_edge_kind` helper validates against the full v2 vocabulary and lists all 17 kebab-case kinds in the error message.
+
+    ### CLI behaviour
+    The brief deferred `--lifecycle` / `--evidence-grade` / `--rationale` flags to the next task. Transitional `add-edge` synthesises sensible per-kind defaults from `default_lifecycle_for_kind` (e.g. `generates @ codegen`, `tests @ test`, `co-implements @ design`), `evidence_grade: weak`, empty `evidence_fields`, and a self-describing rationale — which is what `Edge::validate` accepts for weak-grade edges. `remove-edge` matches across all lifecycles for a `(kind, canonicalised participants)` pair (lifecycle-targeted removal arrives with the same CLI extension).
+
+    ### Defaults
+    - `defaults/discover-stage2.md` rewritten to emit v2 shape (transitional 9-kind subset; full vocabulary swap + decision tree is the next task).
+    - `defaults/phases/work.md` updated to call `state related-components list`.
+    - `defaults/create-plan.md` paragraph about `migrate-related-projects` rewritten to point at `discover --apply`.
+
+    ## What worked
+
+    - All 500 tests pass (446 lib + 1 discover + 28 integration + 10 backlog + 4 memory + 7 related-components + 4 session-log).
+    - Grep audit per exit criteria: `grep -rn 'RelatedProjectsFile\|RELATED_PROJECTS_FILE\|rename_project_in_edges' src/` returns matches only inside the documented `LEGACY_RELATED_PROJECTS_FILE` constant (the legacy-detection shim) — zero production references to v1 types remain.
+    - The legacy-filename hard-error path is integration-tested end-to-end: planting a v1 file at the legacy path causes `state related-components list` to exit non-zero with `"legacy v1 file"` and `"discover --apply"` in stderr.
+    - The deprecated alias (`state related-projects`) is integration-tested: it succeeds, emits a stderr `deprecated` warning, and produces byte-identical output to the canonical verb.
+
+    ## What didn't work / surprises
+
+    - The bin and lib are separate compilation units in this codebase (lib.rs and main.rs each declare every module). Adding `mod ontology;` to main.rs surfaces `unused_imports` lints on `pub use` re-exports that only the lib's `#[cfg(test)]` drift tests consume. Resolved with targeted `#[allow(unused_imports)]` on the public API surface in `src/ontology/mod.rs` and `#[allow(dead_code)]` on `LifecycleScope::parse / ::all` and `EvidenceGrade::parse / ::all`. Worth removing those allows when the next task's prompt-rendering code uses them.
+    - The fake-claude shim in `tests/discover.rs` extracts the output path with `grep -oE '/[^[:space:]]+\.yaml' | head -n1`. My initial Stage 2 prompt mentioned `defaults/ontology.yaml`, which the shim greedily matched ahead of `{{PROPOSALS_OUTPUT_PATH}}`. Worked around by dropping that filename from the prompt; logged in the insight block that the next task's prompt rewrite should harden the shim instead.
+
+    ## Transitional choices that should be tightened by the next task
+
+    - The Stage 2 prompt currently describes a 9-kind subset of the 17-kind vocabulary, hand-curated as "the most useful subset for the proposals you will likely write". The next task replaces this with `{{ONTOLOGY_KINDS}}` substitution from `defaults/ontology.yaml` plus the full §13.2 decision tree.
+    - `add-edge` / `remove-edge` synthesise defaults rather than accept explicit `--lifecycle` / `--evidence-grade` / `--rationale` flags. The next task adds those flags; at that point `default_lifecycle_for_kind` and the cross-lifecycle remove behaviour both go away.
+    - `EdgeKind::all` ordering is preserved verbatim from the existing v2 enum — both the bijection drift test (`edge_kinds_in_yaml_and_rust_are_bijective`) and the `parse_edge_kind` error-message helper consume it in declaration order. The next task's `{{ONTOLOGY_KINDS}}` template will probably want a stable rendering order; the current order matches `defaults/ontology.yaml`, so no churn is needed.
+
+    ## Suggests next
+
+    - `rewrite-stage-2-discover-prompt-for-ontology-v2-vocabulary` is now unblocked. Its prompt rewrite should also harden the fake-claude shim to extract the output path from a dedicated marker rather than scanning for `.yaml` substrings.
+    - The latent `find_directional_conflict` semantic note: the spec §7.4 wording ("same directed kind, reversed participants") is silent on whether cross-lifecycle reversals (e.g. `depends-on(A,B) @ build` + `depends-on(B,A) @ runtime`) should be flagged. I implemented the narrow reading (same lifecycle only). Worth surfacing in the next task's review or memory if the wider reading is wanted.
 - id: rewrite-stage-2-discover-prompt-for-ontology-v2-vocabulary
   title: Rewrite Stage 2 discover prompt for ontology v2 vocabulary
   category: feature
