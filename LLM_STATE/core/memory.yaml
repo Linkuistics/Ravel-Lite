@@ -371,3 +371,7 @@ entries:
   title: Discover stage spawns need --allowed-tools and --add-dir
   body: |
     `--setting-sources project,local` excludes the user's allowlist; Write to a cache dir outside cwd is silently blocked. Stage 1 and Stage 2 spawns require `--allowed-tools "Read,Grep,Glob,Bash,Write,Task"` and `--add-dir <cache-dir>`.
+- id: opportunistic-discover-on-catalog-changes-deferred-idea
+  title: Opportunistic discover on catalog changes (deferred idea)
+  body: |
+    During the R7 smoke-test cycle, the idea surfaced of teaching analyse-work or triage to run `discover` opportunistically when project composition changes (new projects added, catalog membership shifts). This would keep `related-projects.yaml` fresher without requiring manual invocation. Not yet concrete enough for a backlog task — file here for when the ontology research (and possible discover-pipeline iteration) makes the trigger conditions clearer.
