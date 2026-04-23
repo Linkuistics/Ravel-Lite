@@ -81,6 +81,7 @@ mod tests {
             schema_version: SURFACE_SCHEMA_VERSION,
             project: name.to_string(),
             tree_sha: sha.to_string(),
+            dirty_hash: String::new(),
             analysed_at: "2026-04-22T00:00:00Z".to_string(),
             surface: SurfaceRecord::default(),
         }

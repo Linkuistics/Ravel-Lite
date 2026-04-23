@@ -43,12 +43,16 @@ pub async fn run_stage2(
         .replace("{{PROPOSALS_OUTPUT_PATH}}", &output_path.to_string_lossy())
         .replace("{{SURFACE_RECORDS_YAML}}", &surfaces_yaml);
 
-    let success = spawn_claude_for_stage2(&prompt, &cfg.model, cfg.timeout).await?;
+    let success = spawn_claude_for_stage2(&prompt, &cfg.model, &cfg.config_root, cfg.timeout).await?;
     if !success {
         bail!("Stage 2 claude subprocess exited non-zero");
     }
     if !output_path.exists() {
-        bail!("Stage 2 did not create {}", output_path.display());
+        bail!(
+            "Stage 2 did not create {} — claude likely refused the Write \
+             (check stderr above for permission/sandbox errors)",
+            output_path.display()
+        );
     }
 
     let raw = std::fs::read_to_string(&output_path).with_context(|| {
@@ -92,8 +96,12 @@ fn render_surfaces_for_prompt(surfaces: &[SurfaceFile]) -> Result<String> {
 async fn spawn_claude_for_stage2(
     prompt: &str,
     model: &str,
+    config_root: &std::path::Path,
     timeout: Duration,
 ) -> Result<bool> {
+    // Set cwd to config_root so the proposals tmp file lives inside
+    // claude's sandboxed working directory; pair with `--allowed-tools`
+    // so Write isn't denied when user settings are excluded.
     let mut child = TokioCommand::new("claude")
         .arg("-p")
         .arg(prompt)
@@ -102,6 +110,9 @@ async fn spawn_claude_for_stage2(
         .arg("--strict-mcp-config")
         .arg("--setting-sources")
         .arg("project,local")
+        .arg("--allowed-tools")
+        .arg("Write")
+        .current_dir(config_root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -136,6 +147,7 @@ mod tests {
                 schema_version: SURFACE_SCHEMA_VERSION,
                 project: project.to_string(),
                 tree_sha: format!("sha-{project}"),
+                dirty_hash: String::new(),
                 analysed_at: "t".to_string(),
                 surface: SurfaceRecord {
                     purpose: purpose.to_string(),

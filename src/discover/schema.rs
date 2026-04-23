@@ -18,6 +18,13 @@ pub struct SurfaceFile {
     pub schema_version: u32,
     pub project: String,
     pub tree_sha: String,
+    /// Hash of uncommitted subtree state (diff + untracked contents).
+    /// Empty string when the subtree was clean at analysis time. Cache
+    /// hit requires both `tree_sha` AND `dirty_hash` to match the
+    /// project's current state. Serde-default preserves read-compat with
+    /// pre-existing cache files that predate this field.
+    #[serde(default)]
+    pub dirty_hash: String,
     pub analysed_at: String,
     pub surface: SurfaceRecord,
 }
@@ -81,6 +88,7 @@ mod tests {
             schema_version: SURFACE_SCHEMA_VERSION,
             project: "Alpha".to_string(),
             tree_sha: "deadbeef".to_string(),
+            dirty_hash: "feedface".to_string(),
             analysed_at: "2026-04-22T12:00:00Z".to_string(),
             surface: SurfaceRecord {
                 purpose: "Does the alpha thing.".to_string(),

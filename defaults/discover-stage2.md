@@ -29,6 +29,32 @@ Propose edges when you see evidence such as:
 - Semantic purpose overlap (both describe themselves as "task queue",
   "config loader", etc.) — use judgement here.
 
+## Insufficient signals (do NOT propose edges from these alone)
+
+These patterns are too weak to justify an edge on their own. Require
+direct evidence from the matching-signals list above before proposing.
+
+- **Shared upstream dependencies.** Two projects independently mentioning
+  the same *third* catalog project in their `explicit_cross_project_mentions`
+  is NOT evidence of a `sibling` or `parent-of` edge between those two
+  projects. Many unrelated projects share infrastructure dependencies.
+- **Same programming language or ecosystem.** Both being Rust crates,
+  Racket packages, Swift apps, or Node packages is not a relationship.
+- **Generic or trivial file-glob overlap.** Patterns like `*.txt`,
+  `**/*.rkt`, `~/.config/**`, or any whole-language source-tree glob
+  are too broad to constitute file-level coupling. Require a specific,
+  named file or a narrow glob whose match set is plausibly produced by
+  one project and consumed by another.
+- **Same external tools alone.** Both projects spawning `git` or `bash`
+  is not evidence; both spawning a *bespoke* binary owned by one of
+  them is.
+
+Edges should rest on direct evidence: A produces a specific artifact B
+consumes, A serves an endpoint B calls, A and B implement the same named
+specification, or one project explicitly names the other in its prose.
+When in doubt, omit the edge — false positives are costlier than missed
+edges since the user reviews proposals manually.
+
 ## Output format
 
 Write YAML to `{{PROPOSALS_OUTPUT_PATH}}` matching this shape:

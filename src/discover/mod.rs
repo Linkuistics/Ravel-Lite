@@ -70,6 +70,7 @@ pub async fn run_discover(config_root: &Path, options: RunDiscoverOptions) -> Re
         config_root: config_root.to_path_buf(),
         model: model.clone(),
         prompt_template: stage1_prompt,
+        catalog_names: all_projects.iter().map(|p| p.name.clone()).collect(),
         concurrency,
         timeout: Duration::from_secs(stage1::DEFAULT_STAGE1_TIMEOUT_SECS),
     };
@@ -87,10 +88,18 @@ pub async fn run_discover(config_root: &Path, options: RunDiscoverOptions) -> Re
     // Stage 2 and recorded as "not yet analysed" failures.
     let mut surfaces: Vec<SurfaceFile> = Vec::new();
     let mut failures: Vec<Stage1Failure> = Vec::new();
+    let mut any_fresh_surface = false;
     for outcome in outcomes {
         match outcome {
-            Stage1Outcome::Fresh(s) | Stage1Outcome::Cached(s) => surfaces.push(s),
-            Stage1Outcome::Failed(f) => failures.push(f),
+            Stage1Outcome::Fresh(s) => {
+                any_fresh_surface = true;
+                surfaces.push(s);
+            }
+            Stage1Outcome::Cached(s) => surfaces.push(s),
+            Stage1Outcome::Failed(f) => {
+                eprintln!("  Stage 1 FAILED  {}: {}", f.project, f.error);
+                failures.push(f);
+            }
         }
     }
     if options.project_filter.is_some() {
@@ -111,33 +120,70 @@ pub async fn run_discover(config_root: &Path, options: RunDiscoverOptions) -> Re
         }
     }
 
-    eprintln!(
-        "Stage 2: inferring edges over {} surface(s)...",
-        surfaces.len()
-    );
-    let stage2_cfg = Stage2Config {
-        config_root: config_root.to_path_buf(),
-        model,
-        prompt_template: stage2_prompt,
-        timeout: Duration::from_secs(stage2::DEFAULT_STAGE2_TIMEOUT_SECS),
+    // When every surface was cached and nothing failed this run, Stage 2's
+    // input is byte-identical to last time — re-running it would regenerate
+    // proposals that (modulo LLM noise) already exist in discover-proposals.yaml,
+    // wastefully spending a claude call AND clobbering any manual edits the
+    // user made to the proposals file. Preserve the existing file instead.
+    let proposals_already_exist = proposals_path(config_root).exists();
+    let skip_stage2_reuse_existing =
+        !any_fresh_surface && failures.is_empty() && proposals_already_exist && !surfaces.is_empty();
+
+    let proposals = if skip_stage2_reuse_existing {
+        eprintln!(
+            "Stage 2: skipped — all {} surface(s) served from cache; preserving existing {}",
+            surfaces.len(),
+            PROPOSALS_FILE
+        );
+        load_proposals(config_root)?
+    } else if surfaces.is_empty() {
+        // Skip Stage 2 entirely — asking the LLM to infer edges from
+        // zero surfaces is meaningless and the spawned claude has no
+        // useful work to do. Persist the failures so the user can act
+        // on them, and let the caller bail at the end.
+        eprintln!("Stage 2: skipped — no surfaces produced (all Stage 1 attempts failed)");
+        let proposals = ProposalsFile {
+            schema_version: schema::PROPOSALS_SCHEMA_VERSION,
+            generated_at: stage1::current_utc_rfc3339(),
+            source_tree_shas: Default::default(),
+            proposals: Vec::new(),
+            failures,
+        };
+        save_proposals_atomic(config_root, &proposals)?;
+        proposals
+    } else {
+        eprintln!(
+            "Stage 2: inferring edges over {} surface(s)...",
+            surfaces.len()
+        );
+        let stage2_cfg = Stage2Config {
+            config_root: config_root.to_path_buf(),
+            model,
+            prompt_template: stage2_prompt,
+            timeout: Duration::from_secs(stage2::DEFAULT_STAGE2_TIMEOUT_SECS),
+        };
+        let proposals = run_stage2(&surfaces, failures, &stage2_cfg).await?;
+        save_proposals_atomic(config_root, &proposals)?;
+        proposals
     };
-    let proposals = run_stage2(&surfaces, failures, &stage2_cfg).await?;
 
-    save_proposals_atomic(config_root, &proposals)?;
-
-    let had_failures = !proposals.failures.is_empty();
     eprintln!(
-        "Wrote {} proposal(s) and {} failure(s) to {}",
+        "{}: {} proposal(s), {} failure(s)",
+        proposals_path(config_root).display(),
         proposals.proposals.len(),
         proposals.failures.len(),
-        proposals_path(config_root).display()
     );
 
     if options.apply {
         apply::run_discover_apply(config_root)?;
     }
 
-    if had_failures {
+    // Bail on Stage 1 failures from THIS run — not on stale failures
+    // preserved from a prior run in the skipped-Stage-2 path. The skip
+    // branch only fires when `failures.is_empty()` for the current run,
+    // so the loaded proposals' failure list (whatever it contains) is
+    // from history and shouldn't block this run's exit status.
+    if !skip_stage2_reuse_existing && !proposals.failures.is_empty() {
         bail!("discover completed with Stage 1 failures — see the failures section of the proposals file");
     }
     Ok(())

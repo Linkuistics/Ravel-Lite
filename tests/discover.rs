@@ -181,4 +181,37 @@ fn discover_writes_proposals_and_apply_merges_them() {
     assert!(status.success());
     let rp = std::fs::read_to_string(cfg.join("related-projects.yaml")).unwrap();
     assert!(rp.contains("parent-of"));
+
+    // --- Second run: every Stage 1 must cache-hit and Stage 2 must be skipped ---
+    // We hand-edit the proposals file to a marker string; if Stage 2 runs, the
+    // fake claude shim would overwrite it, wiping our marker. Preserving the
+    // marker proves the file was not rewritten.
+    let marker = "# USER-EDIT-MARKER — discover must not overwrite this\n";
+    let mut preserved = marker.to_string();
+    preserved.push_str(&std::fs::read_to_string(&proposals_path).unwrap());
+    std::fs::write(&proposals_path, &preserved).unwrap();
+
+    let output = Command::new(bin_path())
+        .env("PATH", format!("{}:{}", shim_dir.display(), std::env::var("PATH").unwrap()))
+        .args(["state", "related-projects", "discover", "--config"])
+        .arg(&cfg)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "second discover run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Stage 2: skipped"),
+        "expected Stage 2 skip message, got stderr:\n{stderr}"
+    );
+
+    let second_content = std::fs::read_to_string(&proposals_path).unwrap();
+    assert!(
+        second_content.starts_with(marker),
+        "discover-proposals.yaml was rewritten despite all Stage 1 being cached"
+    );
 }

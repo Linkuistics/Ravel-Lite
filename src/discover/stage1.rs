@@ -28,7 +28,7 @@ use crate::projects::ProjectEntry;
 
 use super::cache;
 use super::schema::{Stage1Failure, SurfaceFile, SurfaceRecord, SURFACE_SCHEMA_VERSION};
-use super::tree_sha::compute_project_tree_sha;
+use super::tree_sha::compute_project_state;
 
 pub const DEFAULT_STAGE1_TIMEOUT_SECS: u64 = 600;
 
@@ -44,6 +44,11 @@ pub struct Stage1Config {
     pub config_root: PathBuf,
     pub model: String,
     pub prompt_template: String,
+    /// Names of every project in the catalog. Used to substitute
+    /// `{{CATALOG_PROJECTS}}` in the prompt with the catalog minus the
+    /// project currently being analysed, so the subagent can scope
+    /// `explicit_cross_project_mentions` to first-party catalog entries.
+    pub catalog_names: Vec<String>,
     pub concurrency: usize,
     pub timeout: Duration,
 }
@@ -60,6 +65,7 @@ pub async fn run_stage1(
         let config_root = cfg.config_root.clone();
         let model = cfg.model.clone();
         let prompt_template = cfg.prompt_template.clone();
+        let catalog_names = cfg.catalog_names.clone();
         let timeout = cfg.timeout;
         let name = project.name.clone();
         let path = project.path.clone();
@@ -75,6 +81,7 @@ pub async fn run_stage1(
                         &path,
                         &model,
                         &prompt_template,
+                        &catalog_names,
                         timeout,
                     )
                     .await
@@ -108,17 +115,18 @@ async fn process_project(
     path: &Path,
     model: &str,
     prompt_template: &str,
+    catalog_names: &[String],
     timeout: Duration,
 ) -> Result<Stage1Outcome> {
-    let tree_sha = compute_project_tree_sha(path).with_context(|| {
+    let state = compute_project_state(path).with_context(|| {
         format!(
-            "compute_project_tree_sha for '{name}' at {}",
+            "compute_project_state for '{name}' at {}",
             path.display()
         )
     })?;
 
     if let Some(cached) = cache::load(config_root, name)? {
-        if cached.tree_sha == tree_sha {
+        if cached.tree_sha == state.tree_sha && cached.dirty_hash == state.dirty_hash {
             return Ok(Stage1Outcome::Cached(cached));
         }
     }
@@ -134,18 +142,19 @@ async fn process_project(
         })?;
     }
 
-    let prompt = prompt_template.replace(
-        "{{SURFACE_OUTPUT_PATH}}",
-        &output_path.to_string_lossy(),
-    );
+    let catalog_block = render_catalog_for_prompt(name, catalog_names);
+    let prompt = prompt_template
+        .replace("{{SURFACE_OUTPUT_PATH}}", &output_path.to_string_lossy())
+        .replace("{{CATALOG_PROJECTS}}", &catalog_block);
 
-    let exit_ok = spawn_claude_with_cwd(&prompt, model, path, timeout).await?;
+    let exit_ok = spawn_claude_with_cwd(&prompt, model, path, &cache_dir, timeout).await?;
     if !exit_ok {
         bail!("Stage 1 subagent for '{name}' exited non-zero");
     }
     if !output_path.exists() {
         bail!(
-            "Stage 1 subagent for '{name}' did not create {}",
+            "Stage 1 subagent for '{name}' did not create {} — claude likely refused the Write \
+             (check stderr above for permission/sandbox errors)",
             output_path.display()
         );
     }
@@ -164,7 +173,8 @@ async fn process_project(
     let file = SurfaceFile {
         schema_version: SURFACE_SCHEMA_VERSION,
         project: name.to_string(),
-        tree_sha: tree_sha.clone(),
+        tree_sha: state.tree_sha.clone(),
+        dirty_hash: state.dirty_hash.clone(),
         analysed_at: current_utc_rfc3339(),
         surface,
     };
@@ -176,8 +186,13 @@ async fn spawn_claude_with_cwd(
     prompt: &str,
     model: &str,
     cwd: &Path,
+    extra_writable_dir: &Path,
     timeout: Duration,
 ) -> Result<bool> {
+    // `--setting-sources project,local` excludes the user's permission
+    // allowlist; without an explicit `--allowed-tools` the Write needed
+    // to deposit the surface YAML is silently denied. `--add-dir` grants
+    // claude write access to the cache dir, which lives outside its cwd.
     let mut child = TokioCommand::new("claude")
         .arg("-p")
         .arg(prompt)
@@ -186,6 +201,10 @@ async fn spawn_claude_with_cwd(
         .arg("--strict-mcp-config")
         .arg("--setting-sources")
         .arg("project,local")
+        .arg("--add-dir")
+        .arg(extra_writable_dir)
+        .arg("--allowed-tools")
+        .arg("Read,Grep,Glob,Bash,Write,Task")
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -217,11 +236,27 @@ async fn spawn_claude_with_cwd(
     }
 }
 
+/// Render the catalog list for `{{CATALOG_PROJECTS}}` substitution as a
+/// markdown bullet list excluding `current_project`. An empty result
+/// (single project in catalog) emits a clear placeholder so the LLM
+/// doesn't infer "no constraint".
+fn render_catalog_for_prompt(current_project: &str, all_names: &[String]) -> String {
+    let others: Vec<&String> = all_names.iter().filter(|n| *n != current_project).collect();
+    if others.is_empty() {
+        return "_(none — this project is the only catalog entry)_".to_string();
+    }
+    others
+        .iter()
+        .map(|n| format!("- {n}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Render the current UTC time as an RFC-3339 string (`YYYY-MM-DDTHH:MM:SSZ`).
 ///
 /// We roll our own rather than pull in `chrono` just for a timestamp —
 /// the surface cache's `analysed_at` is informational, not parsed back.
-fn current_utc_rfc3339() -> String {
+pub(super) fn current_utc_rfc3339() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -323,17 +358,18 @@ mod tests {
         let cfg = tmp.path().join("cfg");
         std::fs::create_dir_all(&cfg).unwrap();
 
-        // Make a fresh git repo for the project, compute its real SHA.
+        // Make a fresh git repo for the project, compute its real state.
         let project = tmp.path().join("proj");
         std::fs::create_dir_all(&project).unwrap();
         init_repo_with_readme(&project);
-        let sha = compute_project_tree_sha(&project).unwrap();
+        let state = compute_project_state(&project).unwrap();
 
-        // Seed a cache entry with the exact SHA.
+        // Seed a cache entry with the exact tree_sha + dirty_hash.
         let file = SurfaceFile {
             schema_version: SURFACE_SCHEMA_VERSION,
             project: "Proj".to_string(),
-            tree_sha: sha.clone(),
+            tree_sha: state.tree_sha.clone(),
+            dirty_hash: state.dirty_hash.clone(),
             analysed_at: "2026-04-22T00:00:00Z".to_string(),
             surface: SurfaceRecord {
                 purpose: "cached".to_string(),
@@ -348,6 +384,7 @@ mod tests {
             &project,
             "unused-model",
             "unused-prompt",
+            &[],
             Duration::from_secs(5),
         )
         .await
@@ -355,11 +392,89 @@ mod tests {
 
         match outcome {
             Stage1Outcome::Cached(f) => {
-                assert_eq!(f.tree_sha, sha);
+                assert_eq!(f.tree_sha, state.tree_sha);
+                assert_eq!(f.dirty_hash, state.dirty_hash);
                 assert_eq!(f.surface.purpose, "cached");
             }
             other => panic!("expected Cached outcome, got {other:?}"),
         }
+    }
+
+    /// Seed the cache for a clean repo, then introduce an uncommitted
+    /// change — the state's `dirty_hash` diverges so the cached entry
+    /// must NOT be served.
+    #[tokio::test]
+    async fn cache_miss_when_tree_goes_dirty_after_seed() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+
+        let project = tmp.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        init_repo_with_readme(&project);
+        let clean_state = compute_project_state(&project).unwrap();
+
+        // Seed cache as the clean state.
+        cache::save_atomic(
+            &cfg,
+            &SurfaceFile {
+                schema_version: SURFACE_SCHEMA_VERSION,
+                project: "Proj".to_string(),
+                tree_sha: clean_state.tree_sha.clone(),
+                dirty_hash: clean_state.dirty_hash.clone(),
+                analysed_at: "t".to_string(),
+                surface: SurfaceRecord::default(),
+            },
+        )
+        .unwrap();
+
+        // Introduce a dirty edit — `dirty_hash` on current state now
+        // differs from the cached entry, so we must NOT get a Cached
+        // outcome. (We can't assert it *runs* claude in the unit test,
+        // but we can assert no cache hit — in this test harness claude
+        // is absent, so the fresh path will error out.)
+        std::fs::write(project.join("README.md"), "edited\n").unwrap();
+        let dirty_state = compute_project_state(&project).unwrap();
+        assert_ne!(clean_state.dirty_hash, dirty_state.dirty_hash);
+
+        let outcome = process_project(
+            &cfg,
+            "Proj",
+            &project,
+            "unused-model",
+            "unused-prompt",
+            &[],
+            Duration::from_secs(1),
+        )
+        .await;
+
+        // We expect a failure (no claude on PATH, short timeout) rather
+        // than a successful Cached outcome — that's the cache-miss proof.
+        assert!(
+            outcome.is_err()
+                || !matches!(
+                    outcome.as_ref().unwrap(),
+                    Stage1Outcome::Cached(_)
+                ),
+            "dirty tree must not serve stale cache"
+        );
+    }
+
+    #[test]
+    fn render_catalog_excludes_current_project_and_renders_bullets() {
+        let names = vec!["Alpha".to_string(), "Beta".to_string(), "Gamma".to_string()];
+        let rendered = render_catalog_for_prompt("Beta", &names);
+        assert_eq!(rendered, "- Alpha\n- Gamma");
+    }
+
+    #[test]
+    fn render_catalog_handles_solo_project() {
+        let names = vec!["Solo".to_string()];
+        let rendered = render_catalog_for_prompt("Solo", &names);
+        assert!(
+            rendered.starts_with("_(none"),
+            "expected placeholder marker, got: {rendered}"
+        );
     }
 
     #[test]

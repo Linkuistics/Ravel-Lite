@@ -16,6 +16,14 @@ judgement.
 For each field below, include evidence from the code — do not speculate.
 If a field does not apply, emit an empty list or empty string.
 
+**List-item formatting rule (applies to every list-typed field below):**
+each list item must be a bare name, path, or URL — no parenthetical
+descriptions, no inline annotations, no colons except as part of a URL
+scheme. For example, write `- EventLogLine`, NOT `- EventLogLine (text:
+"...")`. If you need to disambiguate or describe a list item, mention
+it in the `notes` field instead. Adding a parenthetical with a colon
+inside breaks YAML parsing because YAML reads `key: value` as a map.
+
 - `purpose` — one paragraph describing what this project does, written
   from evidence in the README, main entry points, and top-level modules.
 - `consumes_files` — file paths or glob patterns this project *reads*
@@ -31,10 +39,26 @@ If a field does not apply, emit an empty list or empty string.
   `TaskCounts`, `MyProtoMessage`).
 - `external_tools_spawned` — binaries this project shells out to
   (`git`, `claude`, `cargo`, etc.).
-- `explicit_cross_project_mentions` — names or paths of *other projects*
-  this project directly references in its README, memory files, or code
-  comments.
+- `explicit_cross_project_mentions` — names of *other projects from the
+  catalog list below* that this project directly references in its
+  README, memory files, or code comments.
+
+  STRICT RULES for this field:
+  - Only include names that appear EXACTLY in the catalog list below.
+    Do not paraphrase, abbreviate, or expand names.
+  - Do NOT include third-party libraries, frameworks, or vendor
+    applications (e.g. Raycast, swift-lispkit, React, ffmpeg) — those
+    are dependencies, not catalog projects.
+  - Do NOT include this project's own name.
+  - If no catalog projects are mentioned, emit an empty list.
 - `notes` — anything else relationally relevant that did not fit above.
+
+## Other catalog projects
+
+These are the names of the user's other catalogued projects. Only these
+names are valid values for `explicit_cross_project_mentions`:
+
+{{CATALOG_PROJECTS}}
 
 ## Output format
 
