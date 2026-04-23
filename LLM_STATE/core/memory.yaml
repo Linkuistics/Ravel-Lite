@@ -447,3 +447,7 @@ entries:
   title: '`remove-edge` requires --lifecycle; v1-style calls fail at clap'
   body: |
     `ravel-lite state related-components remove-edge` requires `--lifecycle`; omitting it is a clap parse error. v1-style two-argument invocations (without lifecycle) are not accepted. See: `related-components.yaml stores global name-indexed edge list`.
+- id: stage-2-hints-as-priors-enforcement-is-prose-only-hard-assertion-deferred
+  title: Stage 2 hints-as-priors enforcement is prose-only; hard assertion deferred
+  body: |
+    Stage 2 `priors-not-verdicts` section is currently prose only. If real discover runs show Stage 2 over-weighting `interaction_role_hints` (e.g., proposing `strong` edges where the only evidence is a hint), consider adding a per-edge hard assertion: "evidence_fields must include at least one non-hint field for strong-grade proposals." Hold off until there is real discover output to judge; the prompt change alone may be sufficient.
