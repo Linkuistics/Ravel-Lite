@@ -375,3 +375,11 @@ entries:
   title: Opportunistic discover on catalog changes (deferred idea)
   body: |
     During the R7 smoke-test cycle, the idea surfaced of teaching analyse-work or triage to run `discover` opportunistically when project composition changes (new projects added, catalog membership shifts). This would keep `related-projects.yaml` fresher without requiring manual invocation. Not yet concrete enough for a backlog task — file here for when the ontology research (and possible discover-pipeline iteration) makes the trigger conditions clearer.
+- id: proposalsfile-source-project-states-stores-full-projectstate
+  title: ProposalsFile.source_project_states stores full ProjectState
+  body: |
+    `ProposalsFile.source_project_states` is `BTreeMap<String, ProjectState>` (tree_sha + dirty_hash per surface), not `BTreeMap<String, String>`. The proposals file cache-state is now identical to the in-memory cache key. Legacy `source_tree_shas` key is silently dropped on read; `proposals_file_reads_legacy_source_tree_shas_as_empty_states` pins this behaviour. See: `Discover cache key is tree_sha + dirty_hash pair`.
+- id: serde-default-on-added-fields-avoids-schema-version-bump
+  title: serde(default) on added fields avoids schema version bump
+  body: |
+    Adding `#[serde(default)]` to a newly introduced field on an existing serialised struct maintains read-compat with pre-existing files. No schema_version bump needed when the field is informational (not identity-determining). `ProjectState.dirty_hash` demonstrates this pattern.
