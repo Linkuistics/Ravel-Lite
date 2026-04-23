@@ -214,15 +214,15 @@ entries:
 - id: read-related-plans-markdown-centralises-related-plans-md-access
   title: '`read_related_plans_markdown` centralises `related-plans.md` access'
   body: |
-    `src/related_projects.rs::read_related_plans_markdown(plan_dir)` is the single access point for plan-local `related-plans.md` prose. Returns `""` gracefully on absent file; `{{RELATED_PLANS}}` token substitutes to an empty block. Both `src/main.rs` and `src/multi_plan.rs` route through it. Future swap to rendering from `related-projects.yaml` is a one-function change.
+    `read_related_plans_markdown(plan_dir)` is the single access point for plan-local `related-plans.md` prose. Returns `""` gracefully on absent file; `{{RELATED_PLANS}}` token substitutes to an empty block. Both `src/main.rs` and `src/multi_plan.rs` route through it.
 - id: related-plans-stored-as-global-name-indexed-edge-list
-  title: '`related-plans` stored as global name-indexed edge list'
+  title: '`related-components.yaml` stores global name-indexed edge list'
   body: |
-    `src/related_projects.rs` stores project-level (not plan-level) edges keyed by plan name, shareable across all plans in a project. Edge kinds: `sibling` and `parent-of`. Full CRUD, `Edge::validate` (rejects self-loops and non-pair counts), and `run_migrate_related_projects` (parses legacy `related-plans.md`, merges derived edges idempotently on re-run).
+    `related-components.yaml` stores project-level (not plan-level) edges keyed by component name, shareable across all plans in a project. Schema version 2; uses v2 `EdgeKind` vocabulary. Full CRUD with `Edge::validate` (rejects self-loops, unsorted symmetric participants). Legacy v1 `related-projects.yaml` hard-errors on read. See: `run_rename needs a Trait registry before fourth cascade`.
 - id: sibling-edges-dedup-by-sorted-participants-parent-of-by-order
   title: Sibling edges dedup by sorted participants; parent-of by order
   body: |
-    In `src/related_projects.rs`, sibling edge identity is order-insensitive (participants sorted before dedup); parent-of edge identity preserves participant order. Reversing this rule silently creates duplicate or missing edges.
+    In `src/related_components.rs` and `src/discover/apply.rs`, symmetric edge kinds use sorted participants for identity (order-insensitive dedup); directed edge kinds preserve participant order. Reversing this rule silently creates duplicate or missing edges. See: `Edge::validate must enforce participant sort order`.
 - id: plan-state-md-readers-fully-migrated
   title: LLM_STATE/core plan-state migrated to typed YAML
   body: |
@@ -256,9 +256,9 @@ entries:
   body: |
     `state projects add` resolves relative paths against the caller's CWD via `std::path::absolute`; stores the absolute form. No filesystem access required.
 - id: state-projects-rename-cascades-into-related-projects-yaml
-  title: '`state projects rename` cascades into `related-projects.yaml`'
+  title: '`state projects rename` cascades into `related-components.yaml`'
   body: |
-    `rename` updates the catalog name and cascades via `rename_project_in_edges` in `src/related_projects.rs`.
+    `rename` updates the catalog name and cascades via `rename_component_in_edges` in `src/related_components.rs`.
 - id: register-projects-from-plan-dirs-runs-before-tui-startup
   title: '`register_projects_from_plan_dirs` runs before TUI startup'
   body: |
@@ -290,11 +290,11 @@ entries:
 - id: dispatch-state-routes-state-subcommands
   title: '`dispatch_state` routes state subcommands'
   body: |
-    `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, or `dispatch_related_projects`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
+    `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, or `dispatch_related_components`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
 - id: r7-design-llm-driven-related-projects-discovery
   title: 'R7 design: LLM-driven related-projects discovery'
   body: |
-    `state related-projects discover` fans out one subagent per project (two-stage pipeline: per-project interaction-surface extraction then global edge proposal) and writes `discover-proposals.yaml`; `discover-apply` merges after human review. Cache key is `(tree_sha, dirty_hash)` pair; see `Discover cache key is tree_sha + dirty_hash pair`. Full design at `docs/r7-related-projects-discovery-design.md`; TDD plan at `docs/r7-related-projects-discovery-plan.md`.
+    `state related-components discover` fans out one subagent per project (two-stage pipeline: per-project interaction-surface extraction then global edge proposal) and writes `discover-proposals.yaml`; `discover-apply` merges after human review. Cache key is `(tree_sha, dirty_hash)` pair; see `Discover cache key is tree_sha + dirty_hash pair`. Full design at `docs/r7-related-projects-discovery-design.md`; TDD plan at `docs/r7-related-projects-discovery-plan.md`.
 - id: state-migrate-force-required-when-yaml-predates-md
   title: state migrate --force required when .yaml predates .md
   body: |
@@ -330,11 +330,11 @@ entries:
 - id: rename-cascade-registry-design-consideration
   title: '`run_rename` needs a Trait registry before fourth cascade'
   body: |
-    `run_rename` in `src/projects.rs` cascades into three places: catalog, `related-projects.yaml`, and `<config-dir>/discover-cache/<name>.yaml`. Before adding a fourth cascade point, extract into a `RenameHook` Trait registry rather than threading in ad-hoc.
+    `run_rename` in `src/projects.rs` cascades into three places: catalog, `related-components.yaml`, and `<config-dir>/discover-cache/<name>.yaml`. Before adding a fourth cascade point, extract into a `RenameHook` Trait registry rather than threading in ad-hoc.
 - id: find-conflicting-kind-misses-parent-of-direction-reversals
-  title: find_conflicting_kind detects parent-of direction reversals
+  title: '`find_directional_conflict` requires same-lifecycle for reversed-pair conflicts'
   body: |
-    Same-kind `ParentOf` edges with reversed participant order are treated as directional conflicts in `src/discover/apply.rs::find_conflicting_kind` via an OR-branch on participant order. Exact-duplicate `ParentOf` edges still route as `already_present`, not conflicts. See: `Sibling edges dedup by sorted participants; parent-of by order`.
+    `src/discover/apply.rs::find_directional_conflict` flags a conflict when a directed-kind edge with the same lifecycle and reversed participants already exists. Cross-lifecycle reversals are not flagged; whether they should be is an open design question deferred to triage. See: `Sibling edges dedup by sorted participants; parent-of by order`.
 - id: discover-e2e-uses-a-fake-claude-bash-shim-per-stage
   title: Discover e2e uses a fake-claude bash shim per stage
   body: |
@@ -449,3 +449,7 @@ entries:
   title: Action lines split title/reason into two-row layout
   body: |
     \`format_result_text\` in \`src/format.rs\` splits action-line detail text on \`" — "\` (em-dash with spaces) via \`str::split_once\`; the title row keeps the intent colour, the reason row is indented to the detail column and rendered dim. A \`trim().is_empty()\` guard suppresses the second row when the separator is trailing. The \` — \` separator is now load-bearing protocol in phase prompts: using \`-\` or \`–\` instead silently collapses back to single-row output.
+- id: fake-claude-stage-2-shim-greedily-extracts-first-yaml-path
+  title: Fake-claude Stage 2 shim greedily extracts first `.yaml` path
+  body: |
+    The discover e2e fake-claude shim extracts the output path via `grep -oE '/[^[:space:]]+\.yaml'`, which matches any `.yaml` filename in the prompt body. Mentioning a `.yaml` file (e.g. `defaults/ontology.yaml`) in the Stage 2 prompt text hijacks the extracted path. Workaround: omit `.yaml` filenames from Stage 2 prompt prose, or harden the shim to extract from a dedicated marker. See: `Discover e2e uses a fake-claude bash shim per stage`.
