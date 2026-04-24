@@ -12,7 +12,7 @@ pub use parse_md::parse_backlog_markdown;
 pub use repair_stale_statuses::{
     analyse_repairs, run_repair_stale_statuses, Repair, RepairReason, RepairReport,
 };
-pub use schema::{BacklogFile, Status, TaskCounts};
+pub use schema::{BacklogFile, PlanRowCounts, Status, TaskCounts};
 pub use verbs::{
     run_add, run_clear_handoff, run_delete, run_init, run_list, run_reorder,
     run_set_dependencies, run_set_description, run_set_handoff, run_set_results,

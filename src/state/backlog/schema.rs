@@ -65,6 +65,31 @@ pub struct TaskCounts {
     pub blocked: usize,
 }
 
+/// The three per-row readiness fields the survey `PlanRow` carries
+/// alongside `TaskCounts`. `task_counts` is a pure per-status tally;
+/// these three depend on cross-task information (dependency status) or
+/// on the `handoff` field, so they live in a separate struct computed
+/// in one pass. Moving them out of LLM-inferred territory lets the
+/// survey prompt drop the "count these" instruction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PlanRowCounts {
+    /// Tasks with `status == NotStarted` whose every dependency id
+    /// resolves to a task with `status == Done` in the same backlog.
+    /// A dep id with no matching task is treated as unmet so typos or
+    /// renamed ids never accidentally unblock a task.
+    pub unblocked: usize,
+    /// Tasks with `status == Blocked`, plus tasks with
+    /// `status == NotStarted` that have at least one unmet dep. Matches
+    /// the union the survey render key at `src/survey/render.rs`
+    /// documents as `B = blocked`.
+    pub blocked: usize,
+    /// Tasks carrying a `handoff` block — the YAML-era replacement for
+    /// the legacy `## Received` dispatches section. Non-empty means the
+    /// next triage needs to either promote the hand-off to a new task
+    /// or archive it to memory.
+    pub received: usize,
+}
+
 impl BacklogFile {
     /// Tally tasks by status. `total` is the length of the task list;
     /// the per-status fields are exact counts of tasks with that
@@ -82,6 +107,41 @@ impl BacklogFile {
                 Status::InProgress => counts.in_progress += 1,
                 Status::Done => counts.done += 1,
                 Status::Blocked => counts.blocked += 1,
+            }
+        }
+        counts
+    }
+
+    /// One-pass computation of the three survey-row fields whose
+    /// derivation requires cross-task information. Keeping them together
+    /// in `PlanRowCounts` guarantees all three come from a single
+    /// consistent snapshot of the backlog.
+    pub fn plan_row_counts(&self) -> PlanRowCounts {
+        use std::collections::HashMap;
+        let done_by_id: HashMap<&str, bool> = self
+            .tasks
+            .iter()
+            .map(|t| (t.id.as_str(), t.status == Status::Done))
+            .collect();
+        let mut counts = PlanRowCounts::default();
+        for task in &self.tasks {
+            if task.handoff.is_some() {
+                counts.received += 1;
+            }
+            match task.status {
+                Status::Blocked => counts.blocked += 1,
+                Status::NotStarted => {
+                    let all_deps_done = task
+                        .dependencies
+                        .iter()
+                        .all(|id| done_by_id.get(id.as_str()).copied().unwrap_or(false));
+                    if all_deps_done {
+                        counts.unblocked += 1;
+                    } else {
+                        counts.blocked += 1;
+                    }
+                }
+                Status::InProgress | Status::Done => {}
             }
         }
         counts
@@ -247,6 +307,129 @@ mod tests {
         let counts = backlog.task_counts();
         assert_eq!(counts, TaskCounts::default());
         assert_eq!(counts.total, 0);
+    }
+
+    fn t(id: &str, status: Status, deps: &[&str]) -> Task {
+        Task {
+            id: id.into(),
+            title: id.into(),
+            category: "maintenance".into(),
+            status,
+            blocked_reason: if status == Status::Blocked {
+                Some("upstream".into())
+            } else {
+                None
+            },
+            dependencies: deps.iter().map(|s| (*s).into()).collect(),
+            description: "Body.\n".into(),
+            results: if status == Status::Done {
+                Some("Done.\n".into())
+            } else {
+                None
+            },
+            handoff: None,
+        }
+    }
+
+    #[test]
+    fn plan_row_counts_unblocked_requires_every_dep_done() {
+        let backlog = BacklogFile {
+            tasks: vec![
+                t("dep-done", Status::Done, &[]),
+                t("dep-in-progress", Status::InProgress, &[]),
+                t("ready", Status::NotStarted, &["dep-done"]),
+                t("waiting", Status::NotStarted, &["dep-in-progress"]),
+                t("partially-ready", Status::NotStarted, &["dep-done", "dep-in-progress"]),
+            ],
+            extra: Default::default(),
+        };
+        let counts = backlog.plan_row_counts();
+        assert_eq!(counts.unblocked, 1);
+        assert_eq!(counts.blocked, 2, "waiting + partially-ready are blocked on unmet deps");
+    }
+
+    #[test]
+    fn plan_row_counts_not_started_with_no_deps_is_unblocked() {
+        let backlog = BacklogFile {
+            tasks: vec![
+                t("a", Status::NotStarted, &[]),
+                t("b", Status::NotStarted, &[]),
+            ],
+            extra: Default::default(),
+        };
+        let counts = backlog.plan_row_counts();
+        assert_eq!(counts.unblocked, 2);
+        assert_eq!(counts.blocked, 0);
+    }
+
+    #[test]
+    fn plan_row_counts_unknown_dep_id_counts_as_unmet() {
+        // A dep id that no task in the backlog matches is treated as
+        // unmet — a typo or renamed id must not accidentally unblock
+        // the task.
+        let backlog = BacklogFile {
+            tasks: vec![t("orphan", Status::NotStarted, &["nonexistent-id"])],
+            extra: Default::default(),
+        };
+        let counts = backlog.plan_row_counts();
+        assert_eq!(counts.unblocked, 0);
+        assert_eq!(counts.blocked, 1);
+    }
+
+    #[test]
+    fn plan_row_counts_status_blocked_always_counts_as_blocked() {
+        let backlog = BacklogFile {
+            tasks: vec![
+                t("explicitly-blocked", Status::Blocked, &[]),
+                t("blocked-with-done-deps", Status::Blocked, &["foo"]),
+                t("foo", Status::Done, &[]),
+            ],
+            extra: Default::default(),
+        };
+        let counts = backlog.plan_row_counts();
+        assert_eq!(counts.unblocked, 0);
+        assert_eq!(counts.blocked, 2);
+    }
+
+    #[test]
+    fn plan_row_counts_in_progress_and_done_are_neither_unblocked_nor_blocked() {
+        let backlog = BacklogFile {
+            tasks: vec![
+                t("in-flight", Status::InProgress, &[]),
+                t("finished", Status::Done, &[]),
+            ],
+            extra: Default::default(),
+        };
+        let counts = backlog.plan_row_counts();
+        assert_eq!(counts.unblocked, 0);
+        assert_eq!(counts.blocked, 0);
+    }
+
+    #[test]
+    fn plan_row_counts_received_counts_tasks_with_handoff_regardless_of_status() {
+        let mut with_handoff = t("with-handoff", Status::Done, &[]);
+        with_handoff.handoff = Some("pending design\n".into());
+        let mut pending_handoff = t("pending-handoff", Status::NotStarted, &[]);
+        pending_handoff.handoff = Some("received dispatch\n".into());
+        let backlog = BacklogFile {
+            tasks: vec![
+                t("no-handoff", Status::NotStarted, &[]),
+                with_handoff,
+                pending_handoff,
+            ],
+            extra: Default::default(),
+        };
+        let counts = backlog.plan_row_counts();
+        assert_eq!(counts.received, 2);
+        // Unrelated fields still compute correctly around handoffs.
+        assert_eq!(counts.unblocked, 2, "no-handoff and pending-handoff both ready");
+    }
+
+    #[test]
+    fn plan_row_counts_empty_backlog_is_all_zero() {
+        let backlog = BacklogFile::default();
+        let counts = backlog.plan_row_counts();
+        assert_eq!(counts, PlanRowCounts::default());
     }
 
     #[test]

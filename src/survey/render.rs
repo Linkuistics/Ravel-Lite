@@ -18,7 +18,7 @@ Task counts column: U/B/D/R  (`-` = zero)
   U = unblocked  — not_started tasks with no unmet dependencies
   B = blocked    — status=blocked or not_started with unmet deps
   D = done       — status=done
-  R = received   — items under `## Received` not yet triaged
+  R = received   — tasks carrying a pending hand-off awaiting triage
 ";
 
 /// Convert a task-count integer into the cell-rendering form: zeros

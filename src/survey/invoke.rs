@@ -27,10 +27,10 @@ use super::delta::{merge_delta, PlanClassification};
 use super::discover::{load_plan, PlanSnapshot};
 use super::render::render_survey_output;
 use super::schema::{
-    emit_survey_yaml, inject_input_hashes, inject_task_counts, parse_survey_response, plan_key,
-    SurveyResponse, SCHEMA_VERSION,
+    emit_survey_yaml, inject_input_hashes, inject_plan_row_counts, inject_task_counts,
+    parse_survey_response, plan_key, SurveyResponse, SCHEMA_VERSION,
 };
-use crate::state::backlog::TaskCounts;
+use crate::state::backlog::{PlanRowCounts, TaskCounts};
 
 /// Fallback model when neither `--model` nor `models.survey` is
 /// configured. A cheap, fast model is appropriate: survey is a
@@ -188,6 +188,7 @@ async fn run_cold_survey(
         .collect();
     inject_input_hashes(&mut response, &hashes)?;
     inject_task_counts(&mut response, &collect_task_counts(all_plans.iter()));
+    inject_plan_row_counts(&mut response, &collect_plan_row_counts(all_plans.iter()));
     // Cold-path response carries whatever schema_version the LLM
     // emitted (or the default); pin it to the binary's current value
     // so persisted YAML is always labelled with the producer version.
@@ -211,6 +212,23 @@ where
         .collect()
 }
 
+/// Collect `(plan_key, PlanRowCounts)` entries for snapshots whose
+/// `backlog.yaml` parsed successfully. Same skip-on-None semantics as
+/// `collect_task_counts`; downstream `inject_plan_row_counts` leaves
+/// unmatched rows at their serde defaults (zeros) so a missing backlog
+/// shows up as `0/0/0` alongside the existing `task_counts: None`.
+fn collect_plan_row_counts<'a, I>(snapshots: I) -> HashMap<String, PlanRowCounts>
+where
+    I: Iterator<Item = &'a PlanSnapshot>,
+{
+    snapshots
+        .filter_map(|p| {
+            p.plan_row_counts
+                .map(|counts| (plan_key(&p.project, &p.plan), counts))
+        })
+        .collect()
+}
+
 async fn run_incremental_survey(
     config_root: &Path,
     model: &str,
@@ -223,12 +241,21 @@ async fn run_incremental_survey(
     // Nothing changed relative to prior: skip the LLM call entirely
     // and return the prior through as the new output. This is the
     // fast-path that makes per-cycle surveying affordable.
+    //
+    // Even in the fast-path, re-inject task_counts and plan_row_counts
+    // from the current snapshots. The prior's values came from whichever
+    // binary last ran — and for a pre-extraction prior those counts may
+    // be LLM-inferred rather than Rust-computed. Same-snapshot input
+    // re-injection produces identical values for a current-binary prior
+    // and fixes up any migration drift for an older one.
     if classification.is_noop() {
         eprintln!(
             "Incremental survey: all {} plan(s) unchanged — carrying prior forward.",
             all_plans.len()
         );
         let mut carried = prior.clone();
+        inject_task_counts(&mut carried, &collect_task_counts(all_plans.iter()));
+        inject_plan_row_counts(&mut carried, &collect_plan_row_counts(all_plans.iter()));
         carried.schema_version = SCHEMA_VERSION;
         return Ok(carried);
     }
@@ -270,6 +297,16 @@ async fn run_incremental_survey(
     inject_task_counts(
         &mut delta_response,
         &collect_task_counts(
+            classification
+                .changed
+                .iter()
+                .chain(classification.added.iter())
+                .copied(),
+        ),
+    );
+    inject_plan_row_counts(
+        &mut delta_response,
+        &collect_plan_row_counts(
             classification
                 .changed
                 .iter()

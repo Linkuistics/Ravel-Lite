@@ -135,6 +135,7 @@ mod tests {
             memory: memory.map(|s| s.into()),
             input_hash: String::new(),
             task_counts: None,
+            plan_row_counts: None,
         }
     }
 

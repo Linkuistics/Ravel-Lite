@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
 use crate::git::project_root_for_plan;
-use crate::state::backlog::{read_backlog, TaskCounts};
+use crate::state::backlog::{read_backlog, PlanRowCounts, TaskCounts};
 use crate::state::memory::read_memory;
 
 /// A single plan's state, bundled for inclusion in the survey prompt.
@@ -40,6 +40,12 @@ pub struct PlanSnapshot {
     /// this into the survey's `PlanRow` so the LLM never has to count
     /// tasks itself.
     pub task_counts: Option<TaskCounts>,
+    /// Readiness + received-handoff counts computed from the plan's
+    /// parsed `backlog.yaml` via `BacklogFile::plan_row_counts`. `None`
+    /// with the same "absent or unparseable" semantics as `task_counts`.
+    /// Callers inject the three fields into the survey's `PlanRow` so
+    /// the LLM no longer derives them from the prompt.
+    pub plan_row_counts: Option<PlanRowCounts>,
 }
 
 /// Derive the project name for a plan by deriving the subtree root
@@ -117,6 +123,7 @@ pub fn load_plan(plan_dir: &Path) -> Result<PlanSnapshot> {
     );
 
     let task_counts = backlog_file.as_ref().map(|bf| bf.task_counts());
+    let plan_row_counts = backlog_file.as_ref().map(|bf| bf.plan_row_counts());
 
     Ok(PlanSnapshot {
         project,
@@ -126,6 +133,7 @@ pub fn load_plan(plan_dir: &Path) -> Result<PlanSnapshot> {
         memory,
         input_hash,
         task_counts,
+        plan_row_counts,
     })
 }
 

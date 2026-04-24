@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 
-use crate::state::backlog::TaskCounts;
+use crate::state::backlog::{PlanRowCounts, TaskCounts};
 
 /// Canonical schema version for emitted and consumed YAML. Bumped only
 /// when a struct-level change would make prior YAML deserialise into a
@@ -52,9 +52,20 @@ pub struct PlanRow {
     pub project: String,
     pub plan: String,
     pub phase: String,
+    /// Injected by `inject_plan_row_counts` from the plan's parsed
+    /// `backlog.yaml` — the LLM's emitted value is overwritten. Kept
+    /// in the schema for wire compatibility with prior surveys and
+    /// because downstream render still reads it. `#[serde(default)]`
+    /// lets the LLM omit the field entirely once it drops out of the
+    /// prompt contract.
+    #[serde(default)]
     pub unblocked: usize,
+    /// Injected by `inject_plan_row_counts`. See `unblocked`.
+    #[serde(default)]
     pub blocked: usize,
     pub done: usize,
+    /// Injected by `inject_plan_row_counts`. See `unblocked`.
+    #[serde(default)]
     pub received: usize,
     #[serde(default)]
     pub notes: String,
@@ -199,6 +210,28 @@ pub fn inject_task_counts(
         let key = plan_key(&row.project, &row.plan);
         if let Some(counts) = counts_by_plan_key.get(&key) {
             row.task_counts = Some(*counts);
+        }
+    }
+}
+
+/// Inject Rust-computed `unblocked`, `blocked`, and `received` counts
+/// into every `PlanRow` that has a matching entry in
+/// `counts_by_plan_key`. Rows whose key is absent from the map are
+/// left at their deserialised values — which for an LLM response that
+/// follows the post-extraction prompt will be zeros via
+/// `#[serde(default)]`. Silent skip follows the same convention as
+/// `inject_task_counts`: a missing backlog surfaces to the user
+/// through the LLM's `notes`, not through a hard error here.
+pub fn inject_plan_row_counts(
+    response: &mut SurveyResponse,
+    counts_by_plan_key: &std::collections::HashMap<String, PlanRowCounts>,
+) {
+    for row in &mut response.plans {
+        let key = plan_key(&row.project, &row.plan);
+        if let Some(counts) = counts_by_plan_key.get(&key) {
+            row.unblocked = counts.unblocked;
+            row.blocked = counts.blocked;
+            row.received = counts.received;
         }
     }
 }
@@ -397,6 +430,75 @@ plans:
         let mut resp2 = parse_survey_response(sample_yaml()).unwrap();
         inject_task_counts(&mut resp2, &unrelated);
         assert!(resp2.plans[0].task_counts.is_none());
+    }
+
+    #[test]
+    fn inject_plan_row_counts_overwrites_llm_emitted_fields() {
+        // LLM-emitted values in sample_yaml have unblocked: 1, blocked: 15.
+        // Injection must overwrite them with the Rust-computed values so
+        // drift between LLM arithmetic and ground truth cannot slip
+        // through to the persisted survey.
+        let mut resp = parse_survey_response(sample_yaml()).unwrap();
+        assert_eq!(resp.plans[0].unblocked, 1);
+        assert_eq!(resp.plans[0].blocked, 15);
+        assert_eq!(resp.plans[0].received, 0);
+
+        let mut counts = std::collections::HashMap::new();
+        counts.insert(
+            "Ravel/sub-A-global-store".to_string(),
+            PlanRowCounts { unblocked: 3, blocked: 7, received: 2 },
+        );
+        inject_plan_row_counts(&mut resp, &counts);
+        assert_eq!(resp.plans[0].unblocked, 3);
+        assert_eq!(resp.plans[0].blocked, 7);
+        assert_eq!(resp.plans[0].received, 2);
+    }
+
+    #[test]
+    fn inject_plan_row_counts_leaves_unmatched_rows_untouched() {
+        // A map entry for an unrelated plan must not write into the
+        // response's row, and a row whose key has no map entry must
+        // carry whatever value it already held.
+        let mut resp = parse_survey_response(sample_yaml()).unwrap();
+        let before = (
+            resp.plans[0].unblocked,
+            resp.plans[0].blocked,
+            resp.plans[0].received,
+        );
+        let mut unrelated = std::collections::HashMap::new();
+        unrelated.insert(
+            "Other/plan".to_string(),
+            PlanRowCounts { unblocked: 99, blocked: 99, received: 99 },
+        );
+        inject_plan_row_counts(&mut resp, &unrelated);
+        assert_eq!(
+            (
+                resp.plans[0].unblocked,
+                resp.plans[0].blocked,
+                resp.plans[0].received,
+            ),
+            before,
+            "an unrelated map entry must not overwrite the row"
+        );
+    }
+
+    #[test]
+    fn parse_survey_response_defaults_unblocked_blocked_received_when_absent() {
+        // Once the extraction's prompt change lands, the LLM may omit
+        // the three injected fields entirely. `#[serde(default)]` must
+        // let those rows deserialise cleanly; the values are then
+        // filled in by `inject_plan_row_counts`.
+        let yaml = r#"
+plans:
+  - project: P
+    plan: x
+    phase: work
+    done: 0
+"#;
+        let resp = parse_survey_response(yaml).unwrap();
+        assert_eq!(resp.plans[0].unblocked, 0);
+        assert_eq!(resp.plans[0].blocked, 0);
+        assert_eq!(resp.plans[0].received, 0);
     }
 
     #[test]

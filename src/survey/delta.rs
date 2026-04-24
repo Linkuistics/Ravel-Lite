@@ -171,6 +171,7 @@ mod tests {
             memory: None,
             input_hash: hash.into(),
             task_counts: None,
+            plan_row_counts: None,
         }
     }
 

@@ -28,17 +28,15 @@ plans:
   - project: <string>             # project basename, as provided above
     plan: <string>                # plan directory basename
     phase: <string>               # raw contents of phase.md, trimmed
-    unblocked: <int>              # backlog tasks that are not_started AND have no unmet deps
-    blocked: <int>                # backlog tasks with status=blocked OR not_started with unmet deps
     done: <int>                   # see note below — prefer pre-populated task_counts.done
-    received: <int>               # count of dispatches under `## Received` NOT yet promoted to numbered tasks
     notes: <string>               # short free-text cell; leave empty if nothing worth noting
-    # NOTE: a `task_counts` object (total / not_started / in_progress /
-    # done / blocked) is populated by the calling tool in Rust after
-    # your response is parsed. You do NOT need to tally those raw
-    # per-status totals yourself — the tool fills them in from each
-    # plan's parsed `backlog.yaml`. Do not emit `task_counts` in your
-    # response; the tool injects it post-parse.
+    # NOTE: `unblocked`, `blocked`, `received`, and the `task_counts`
+    # object (total / not_started / in_progress / done / blocked) are
+    # all populated by the calling tool in Rust after your response is
+    # parsed — it fills them in from each plan's parsed `backlog.yaml`.
+    # Do NOT compute or emit these fields yourself; omit them from
+    # your output. The tool overwrites them post-parse regardless of
+    # what you emit, so any value you provide is ignored.
 
 cross_plan_blockers:
   - blocked: <project>/<plan>     # plan that is blocked
@@ -71,10 +69,11 @@ recommended_invocation_order:
 - Include EVERY discovered plan in the `plans` list. Do not omit any.
 - Sort `plans` by project, then plan name.
 - `notes` is terse (one short phrase). Use it to flag things like
-  "2 unprocessed dispatches", "backlog.yaml missing", or "stale
+  "pending handoffs", "backlog.yaml missing", or "stale
   pre-pivot framing". Leave it as an empty string if there's nothing
   specific to note.
-- A plan with `backlog.yaml` missing: counts are all 0, `notes: backlog.yaml missing`.
+- A plan with `backlog.yaml` missing: `notes: backlog.yaml missing`
+  (the injected counts will all be 0 automatically).
 - `cross_plan_blockers`: entries where blocker and blocked are
   DIFFERENT plans. Include both same-project and cross-project
   dependencies — the survey is the place to see them all at once.
@@ -96,8 +95,9 @@ recommended_invocation_order:
       shared `order`, list the most-unblocking entry first (that
       secondary ordering becomes the list position you emit).
   Priority order for assigning `order`:
-    1. Plans with unprocessed `## Received` items whose triage unblocks
-       other plans on the critical path.
+    1. Plans whose injected `received` is non-zero — those hand-offs
+       need triage, and clearing them unblocks other plans on the
+       critical path.
     2. Plans with `not_started` tasks marked `P1` and no dependencies.
     3. Independent research or literature-survey plans (cheap to run,
        often unblocked).
