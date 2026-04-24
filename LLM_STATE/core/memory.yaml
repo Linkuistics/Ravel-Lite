@@ -338,7 +338,7 @@ entries:
 - id: discover-e2e-uses-a-fake-claude-bash-shim-per-stage
   title: Discover e2e uses a fake-claude bash shim per stage
   body: |
-    Discover e2e tests use a fake-claude bash shim that distinguishes Stage1 vs Stage2 by grepping the prompt header, extracts the YAML surface-file path from the prompt body, and writes a canned YAML response matching the expected schema.
+    Discover e2e tests use a fake-claude bash shim that distinguishes Stage 1 vs Stage 2 by grepping the prompt header. Stage 1: extracts the YAML surface-file path from the prompt body and writes a canned YAML surface response. Stage 2: issues `ravel-lite state discover-proposals add-proposal` CLI calls for each canned proposal edge; no YAML path extraction.
 - id: sharedconfig-headroom-has-no-serde-default-tests-must-supply-it
   title: SharedConfig.headroom has no serde default; tests must supply it
   body: |
@@ -370,7 +370,7 @@ entries:
 - id: discover-stage-spawns-need-allowed-tools-and-add-dir
   title: Discover stage spawns need --allowed-tools and --add-dir
   body: |
-    `--setting-sources project,local` excludes the user's allowlist; Write to a cache dir outside cwd is silently blocked. Stage 1 and Stage 2 spawns require `--allowed-tools "Read,Grep,Glob,Bash,Write,Task"` and `--add-dir <cache-dir>`.
+    `--setting-sources project,local` excludes the user's allowlist; writes to dirs outside cwd are silently blocked. Stage 1 spawns require `--allowed-tools "Read,Grep,Glob,Bash,Write,Task"` and `--add-dir <cache-dir>`. Stage 2 spawns require only `--allowed-tools Bash` and `--add-dir <config_root>`; Stage 2 issues CLI calls rather than writing files directly.
 - id: opportunistic-discover-on-catalog-changes-deferred-idea
   title: Opportunistic discover on catalog changes is a deferred idea
   body: |
@@ -423,10 +423,6 @@ entries:
   title: Action lines split title/reason into two-row layout
   body: |
     \`format_result_text\` in \`src/format.rs\` splits action-line detail text on \`" — "\` (em-dash with spaces) via \`str::split_once\`; the title row keeps the intent colour, the reason row is indented to the detail column and rendered dim. A \`trim().is_empty()\` guard suppresses the second row when the separator is trailing. The \` — \` separator is now load-bearing protocol in phase prompts: using \`-\` or \`–\` instead silently collapses back to single-row output.
-- id: fake-claude-stage-2-shim-greedily-extracts-first-yaml-path
-  title: Fake-claude Stage 2 shim greedily extracts first `.yaml` path
-  body: |
-    The discover e2e fake-claude shim extracts the output path via `grep -oE '/[^[:space:]]+\.yaml'`; it matches the first `.yaml` path in the rendered prompt. Stage 2 substitutes `{{ONTOLOGY_KINDS}}` before `{{PROPOSALS_OUTPUT_PATH}}` (content macros first, per `substitute_tokens` ordering); the rendered kind block contains no `.yaml` paths, so the shim's greedy extraction lands on the actual output path. Any new Stage 2 content token that could produce `.yaml` paths must also appear after `{{PROPOSALS_OUTPUT_PATH}}` in the template. See: `Discover e2e uses a fake-claude bash shim per stage`; `substitute_tokens expands content macros before path tokens`.
 - id: render-embedded-kinds-for-prompt-injects-edgekind-vocabulary-into-stage-2
   title: render_embedded_kinds_for_prompt injects EdgeKind vocabulary into Stage 2
   body: |
@@ -459,3 +455,11 @@ entries:
   title: docs/architecture.md has no v1 edge-kind vocabulary
   body: |
     `docs/architecture.md` carries no v1 edge-kind vocabulary or `related-projects` references. Matches for `sibling`/`parent`/`child` are filesystem or process-context English, not ontology edge kinds. The source-tree section (lines 407–435) has generic drift (missing `ontology/`, `state/`, `discover/`, `related_components.rs`, `survey/` subdirs); separate task needed for doc drift unrelated to v1 migration.
+- id: stage-2-writes-proposals-via-per-edge-add-proposal-cli
+  title: Stage 2 writes proposals via per-edge add-proposal CLI
+  body: |
+    `run_stage2` spawns claude with `--allowed-tools Bash`; the LLM issues `ravel-lite state discover-proposals add-proposal` for each edge. Validation in `src/state/discover_proposals/` enforces: clap enum parsing, participant count, catalog-membership, `Edge::validate()`, and exact-duplicate rejection. Post-spawn, `run_stage2` loads the accumulated `discover-proposals.yaml`. The prior `RawStage2Output` YAML-parse approach is removed. Mirrors the main phase-loop CLI pattern.
+- id: pre-initialise-output-file-before-cli-driven-spawn
+  title: Pre-initialise output file before CLI-driven spawn
+  body: |
+    Pre-initialise the output file before spawning an LLM with CLI write tools: the zero-calls case produces a valid empty file (load succeeds) rather than a missing-file error. Seed prior-phase failures into the initial file so they survive the round-trip regardless of LLM output. `run_stage2` demonstrates this: creates `discover-proposals.yaml` with Stage 1 failures before spawning Stage 2.
