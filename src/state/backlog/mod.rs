@@ -2,6 +2,7 @@
 
 pub mod lint_dependencies;
 pub mod parse_md;
+pub mod render;
 pub mod repair_stale_statuses;
 pub mod schema;
 pub mod verbs;
@@ -9,6 +10,7 @@ pub mod yaml_io;
 
 pub use lint_dependencies::{lint_dependencies, run_lint_dependencies, LintReport, TaskDrift};
 pub use parse_md::parse_backlog_markdown;
+pub use render::{render_markdown, GroupBy};
 pub use repair_stale_statuses::{
     analyse_repairs, run_repair_stale_statuses, Repair, RepairReason, RepairReport,
 };

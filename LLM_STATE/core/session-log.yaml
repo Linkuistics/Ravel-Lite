@@ -789,3 +789,17 @@ sessions:
     - Build, clippy, and tests all pass (552 tests).
     - The root bug — every cycle producing a `run-plan: work` plan-state commit with a template-derived message like "Record results and flip status" — is resolved: plan-state is now folded into the single source-describing commit by default.
     - What to try next: run a full work → analyse-work cycle on a real task that spans two top-level directories and verify the multi-commit path works end-to-end in practice.
+- id: session-53
+  timestamp: 2026-04-25T14:56:45Z
+  phase: work
+  body: |
+    ### Session 53 (2026-04-25T14:56:45Z) — Add deterministic backlog and phase-summary render verbs
+
+    - **What was attempted:** Three tasks from the `core` category were scheduled: (1) add `backlog list --format markdown` for deterministic backlog presentation, (2) add `state phase-summary render` for deterministic triage/reflect/dream label output, and (3) sync `docs/analysis/llm-work-audit.md` to the commits.yaml flow.
+    - **What worked:** All three tasks completed.
+      - `src/state/backlog/render.rs` (new): `render_markdown(&BacklogFile, GroupBy)` with Kahn-style depth computation, stable `(status_rank, depth, insertion_order)` ordering, pipe/newline escaping, empty-backlog guard. `--group-by category|status` flag added to `backlog list`. `defaults/phases/work.md` step 1 updated to call the verb.
+      - `src/phase_summary.rs` (new): `run_render`, `compute_labels`, per-phase `compute_triage_labels` / `compute_reflect_labels` / `compute_dream_labels`. Structural labels only: `[DONE]`, `[NEW]`, `[OBSOLETE]`, `[REPRIORITISED]` (triage); `[NEW]`, `[OBSOLETE]`, `[STALE]` (reflect/dream); plus `[STATS]` (dream). Intent-required labels excluded; they remain in the LLM preamble. `--baseline ""` is first-cycle-safe. 19 unit tests + 4 CLI integration tests; 582 total green.
+      - `docs/analysis/llm-work-audit.md` rows A5, A6, A9 and §5 rewritten to reflect the landed commits.yaml flow. `commit-message.md` references removed.
+    - **What didn't work / explicitly deferred:** Prompt wiring for `state phase-summary render` (triage/reflect/dream `## Output format` replacement) was deliberately deferred because the prompts need to `cat` a baseline file that the orchestrator doesn't yet write. That dependency (`wire-orchestrator-baseline-capture-for-reflect-dream-triage-phases`) was promoted to a backlog task.
+    - **What this suggests trying next:** Wire orchestrator baseline capture for reflect/dream/triage (small change to three `git-commit-<phase>` script phases), then update triage/reflect/dream prompts to invoke `state phase-summary render`. Both tasks are now in the backlog.
+    - **Key learnings:** Dropping intent-required labels from the renderer is the right call — the diff alone cannot distinguish a deliberate reorder from an accidental one. The LLM preamble stays as the place for that reasoning. Same layering as `backlog_transitions.rs` confirmed the pattern is sound; a shared `git_baseline.rs` helper is a future refactor opportunity but was deliberately skipped.

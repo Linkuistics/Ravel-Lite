@@ -11,6 +11,7 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
+use super::render::{render_markdown, GroupBy};
 use super::schema::{allocate_id, BacklogFile, Status, Task};
 use super::yaml_io::{read_backlog, write_backlog};
 
@@ -18,6 +19,7 @@ use super::yaml_io::{read_backlog, write_backlog};
 pub enum OutputFormat {
     Yaml,
     Json,
+    Markdown,
 }
 
 impl OutputFormat {
@@ -25,6 +27,7 @@ impl OutputFormat {
         match input {
             "yaml" => Some(OutputFormat::Yaml),
             "json" => Some(OutputFormat::Json),
+            "markdown" => Some(OutputFormat::Markdown),
             _ => None,
         }
     }
@@ -73,7 +76,12 @@ pub fn task_matches(task: &Task, filter: &ListFilter, done_ids: &HashSet<&str>) 
     true
 }
 
-pub fn run_list(plan_dir: &Path, filter: &ListFilter, format: OutputFormat) -> Result<()> {
+pub fn run_list(
+    plan_dir: &Path,
+    filter: &ListFilter,
+    format: OutputFormat,
+    group_by: GroupBy,
+) -> Result<()> {
     let backlog = read_backlog(plan_dir)?;
     let done_ids: HashSet<&str> = backlog
         .tasks
@@ -93,19 +101,31 @@ pub fn run_list(plan_dir: &Path, filter: &ListFilter, format: OutputFormat) -> R
         extra: Default::default(),
     };
 
-    emit(&projection, format)
+    match format {
+        OutputFormat::Markdown => {
+            print!("{}", render_markdown(&projection, group_by));
+            Ok(())
+        }
+        _ => emit(&projection, format),
+    }
 }
 
 fn emit(backlog: &BacklogFile, format: OutputFormat) -> Result<()> {
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(backlog)?,
         OutputFormat::Json => serde_json::to_string_pretty(backlog)? + "\n",
+        OutputFormat::Markdown => {
+            bail!("markdown output is only supported on `backlog list`; got it from a different verb")
+        }
     };
     print!("{serialised}");
     Ok(())
 }
 
 pub fn run_show(plan_dir: &Path, id: &str, format: OutputFormat) -> Result<()> {
+    if format == OutputFormat::Markdown {
+        bail!("`backlog show` does not support --format markdown; use yaml or json");
+    }
     let backlog = read_backlog(plan_dir)?;
     let task = find_task(&backlog, id)?;
     let wrapper = BacklogFile {
@@ -510,6 +530,28 @@ mod tests {
         let filter = ListFilter { ready: true, ..Default::default() };
         let count = backlog.tasks.iter().filter(|t| task_matches(t, &filter, &done)).count();
         assert_eq!(count, 1, "one ready task (bar) expected");
+    }
+
+    #[test]
+    fn run_list_with_markdown_format_does_not_error() {
+        let tmp = TempDir::new().unwrap();
+        write_backlog(tmp.path(), &sample_backlog()).unwrap();
+        run_list(
+            tmp.path(),
+            &ListFilter::default(),
+            OutputFormat::Markdown,
+            GroupBy::Category,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn run_show_rejects_markdown_format_with_clear_error() {
+        let tmp = TempDir::new().unwrap();
+        write_backlog(tmp.path(), &sample_backlog()).unwrap();
+        let err = run_show(tmp.path(), "foo", OutputFormat::Markdown).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("markdown"), "error must mention markdown: {msg}");
     }
 
     #[test]

@@ -153,6 +153,9 @@ fn emit(report: &RepairReport, format: OutputFormat) -> Result<()> {
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(report)?,
         OutputFormat::Json => serde_json::to_string_pretty(report)? + "\n",
+        OutputFormat::Markdown => {
+            anyhow::bail!("`backlog repair-stale-statuses` does not support --format markdown; use yaml or json")
+        }
     };
     print!("{serialised}");
     Ok(())

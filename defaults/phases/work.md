@@ -52,10 +52,9 @@ code you are about to change and pick from `fixed-memory/` yourself.
 
 ## Behavior
 
-1. Display a summary of the current backlog. For each task, show title,
-   status (`not_started` / `in_progress` / `done` / `blocked`), and
-   priority. The backlog YAML from step 2 carries every field you need —
-   do not re-read `backlog.md`.
+1. Run `ravel-lite state backlog list {{PLAN}} --format markdown` and
+   emit its output verbatim. The renderer is the canonical backlog
+   view — do not reformat, reorder, or add columns.
 
 2. Ask the user: "Any input on which task to work on next? If yes, name
    it; otherwise I'll pick the best next task." Wait for their response.

@@ -53,11 +53,11 @@ re-proposed.
 | A2 | `git diff <baseline> --stat` + full diff | M | LLM is shelling; content of the diff is what it reasons over — shelling itself is mechanical |
 | A3 | Inspect backlog results recorded by work phase | M | already CLI-backed (`state backlog list`) |
 | A4 | **Safety-net stale-status scan**: for each task whose Results is non-empty and status is `not_started`/`in_progress`, flip to `done` | **M** | strong extraction candidate — pure boolean scan + conditional write |
-| A5 | Stage + commit every snapshot path outside `{{PLAN}}/` | M (structure) + J (message prose) | structure is path partitioning; prose is judgement |
-| A6 | Justify any snapshot path *not* committed | J | operator intent |
+| A5 | Review work tree from `{{WORK_TREE_STATUS}}`; revert accidental edits (`git checkout --` / `rm`) | J (identify accidentals) + M (reversion) | LLM no longer stages or commits — the `git-commit-work` script phase does both per the `commits.yaml` spec authored in A9 |
+| A6 | Justify any snapshot path intentionally left uncovered by `commits.yaml` in the session record | J | operator intent; uncovered paths surface as uncommitted residue and trigger a TUI warning |
 | A7 | **Session-number determination**: count `session-log list` records, add one | **M** | `wc`+arithmetic |
 | A8 | Write session record (id, ts, phase, body) | M (metadata) + J (body prose) | id/ts/phase are all determinable by Rust |
-| A9 | Write `commit-message.md` for the plan-state commit | J | the core of analyse-work's reason to exist |
+| A9 | Author `{{PLAN}}/commits.yaml` — ordered list of `{paths, message}` entries | M (YAML format) + J (partition + message prose) | `src/git.rs::apply_commits_spec` consumes the spec in the subsequent `git-commit-work` script phase and issues the actual `git add`/`git commit` calls. `commits.yaml` replaced the two-commit flow (LLM-issued source commit + plan-state commit driven by `commit-message.md`); one spec now covers source, docs, config, and plan-state |
 
 ### 1.3 `defaults/phases/reflect.md`
 
@@ -595,9 +595,10 @@ Results → no-op (blocked is operator intent, never overridden).
 
 - **Reflect** as a phase is unchanged. Its sub-tasks (new vs
   sharpen vs contradict vs obsolete) are irreducibly judgement.
-- **Commit message prose** for §2.9's partitioned groups, and for
-  `commit-message.md` generally, remains LLM work — that is
-  analyse-work's reason to exist.
+- **Commit message prose** for every `commits.yaml` entry, and
+  the partition decisions about which paths belong in which
+  entry, remain LLM work — that is analyse-work's reason to
+  exist.
 - **The ranking inside survey's `recommended_invocation_order`**
   stays LLM work. Ordering is a judgement call that uses priors
   the tool can't fully reconstruct.

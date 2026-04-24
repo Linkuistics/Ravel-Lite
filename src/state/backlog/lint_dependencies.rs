@@ -126,6 +126,9 @@ pub fn run_lint_dependencies(plan_dir: &Path, format: OutputFormat) -> Result<()
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(&report)?,
         OutputFormat::Json => serde_json::to_string_pretty(&report)? + "\n",
+        OutputFormat::Markdown => {
+            anyhow::bail!("`backlog lint-dependencies` does not support --format markdown; use yaml or json")
+        }
     };
     print!("{serialised}");
     Ok(())

@@ -544,3 +544,54 @@ tasks:
     let after = std::fs::read_to_string(tmp.path().join("backlog.yaml")).unwrap();
     assert_eq!(before, after, "dry-run must not mutate disk");
 }
+
+#[test]
+fn list_format_markdown_emits_deterministic_table_grouped_by_category() {
+    let tmp = TempDir::new().unwrap();
+    seed_two_task_backlog_md(tmp.path());
+    Command::new(bin())
+        .args(["state", "migrate"])
+        .arg(tmp.path())
+        .output()
+        .unwrap();
+
+    let out = Command::new(bin())
+        .args(["state", "backlog", "list"])
+        .arg(tmp.path())
+        .args(["--format", "markdown"])
+        .output()
+        .expect("failed to spawn ravel-lite");
+    assert!(
+        out.status.success(),
+        "list --format markdown failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.starts_with("## maintenance"), "missing category heading:\n{stdout}");
+    assert!(stdout.contains("| id | title | status | deps |"), "header row missing:\n{stdout}");
+    assert!(
+        stdout.contains("| add-clippy-d-warnings-ci-gate |"),
+        "task row missing:\n{stdout}"
+    );
+}
+
+#[test]
+fn list_format_markdown_with_invalid_group_by_rejects() {
+    let tmp = TempDir::new().unwrap();
+    seed_two_task_backlog_md(tmp.path());
+    Command::new(bin())
+        .args(["state", "migrate"])
+        .arg(tmp.path())
+        .output()
+        .unwrap();
+
+    let out = Command::new(bin())
+        .args(["state", "backlog", "list"])
+        .arg(tmp.path())
+        .args(["--format", "markdown", "--group-by", "priority"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "invalid --group-by must fail");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("priority"), "error must cite the bad value: {stderr}");
+}

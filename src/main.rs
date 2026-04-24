@@ -252,6 +252,36 @@ enum StateCommands {
         #[command(subcommand)]
         command: DiscoverProposalsCommands,
     },
+    /// Deterministic labelled-line summary of what changed in
+    /// backlog.yaml (triage) or memory.yaml (reflect/dream) between a
+    /// baseline commit and the current working-tree state. Replaces the
+    /// LLM's manual re-transcription of its own tool calls at the end
+    /// of each phase; the narrative preamble stays in the LLM.
+    PhaseSummary {
+        #[command(subcommand)]
+        command: PhaseSummaryCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum PhaseSummaryCommands {
+    /// Emit the labelled summary for a phase given its baseline SHA.
+    Render {
+        /// Path to the plan directory.
+        plan_dir: PathBuf,
+        /// Which phase's summary to render: `triage`, `reflect`, or `dream`.
+        #[arg(long)]
+        phase: String,
+        /// Git SHA holding the phase-start snapshot of backlog.yaml /
+        /// memory.yaml. Empty or absent means "first cycle, no prior
+        /// state" — only additions are reported.
+        #[arg(long, default_value = "")]
+        baseline: String,
+        /// Output format: `text` (default, one labelled line per mutation)
+        /// or `yaml` (structured sequence for machine consumption).
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -274,6 +304,9 @@ enum BacklogCommands {
         missing_results: bool,
         #[arg(long, default_value = "yaml")]
         format: String,
+        /// Section layout when `--format markdown` is set: `category` (default) or `status`.
+        #[arg(long, default_value = "category")]
+        group_by: String,
     },
     /// Emit a single task by id.
     Show {
@@ -809,6 +842,32 @@ async fn dispatch_state(command: StateCommands) -> Result<()> {
         }
         StateCommands::RelatedComponents { command } => dispatch_related_components(command).await,
         StateCommands::DiscoverProposals { command } => dispatch_discover_proposals(command),
+        StateCommands::PhaseSummary { command } => dispatch_phase_summary(command),
+    }
+}
+
+fn dispatch_phase_summary(command: PhaseSummaryCommands) -> Result<()> {
+    use ravel_lite::phase_summary::{self, Phase, RenderFormat};
+
+    match command {
+        PhaseSummaryCommands::Render {
+            plan_dir,
+            phase,
+            baseline,
+            format,
+        } => {
+            let phase = Phase::parse(&phase).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "invalid --phase value {phase:?}; expected `triage`, `reflect`, or `dream`"
+                )
+            })?;
+            let format = RenderFormat::parse(&format).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "invalid --format value {format:?}; expected `text` or `yaml`"
+                )
+            })?;
+            phase_summary::run_render(&plan_dir, phase, &baseline, format)
+        }
     }
 }
 
@@ -912,7 +971,7 @@ async fn dispatch_related_components(command: RelatedComponentsCommands) -> Resu
 }
 
 fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
-    use ravel_lite::state::backlog::{self, ListFilter, ReorderPosition, Status};
+    use ravel_lite::state::backlog::{self, GroupBy, ListFilter, ReorderPosition, Status};
 
     match command {
         BacklogCommands::List {
@@ -923,6 +982,7 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
             has_handoff,
             missing_results,
             format,
+            group_by,
         } => {
             let status = status
                 .as_deref()
@@ -942,7 +1002,12 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
                 missing_results,
             };
             let fmt = parse_output_format(&format)?;
-            backlog::run_list(&plan_dir, &filter, fmt)
+            let grouping = GroupBy::parse(&group_by).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "invalid --group-by value {group_by:?}; expected `category` or `status`"
+                )
+            })?;
+            backlog::run_list(&plan_dir, &filter, fmt, grouping)
         }
         BacklogCommands::Show { plan_dir, id, format } => {
             let fmt = parse_output_format(&format)?;
@@ -1037,7 +1102,9 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
 
 fn parse_output_format(input: &str) -> Result<ravel_lite::state::backlog::OutputFormat> {
     ravel_lite::state::backlog::OutputFormat::parse(input)
-        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
+        .ok_or_else(|| {
+            anyhow::anyhow!("invalid --format value {input:?}; expected `yaml`, `json`, or `markdown`")
+        })
 }
 
 fn parse_memory_format(input: &str) -> Result<ravel_lite::state::memory::OutputFormat> {
