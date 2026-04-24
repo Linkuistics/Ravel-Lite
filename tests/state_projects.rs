@@ -103,13 +103,14 @@ fn state_projects_add_list_rename_remove_via_binary() {
     );
 }
 
-/// `state projects add` accepts a relative path and stores it as
-/// absolute, resolved against the child process's CWD. Pins the
-/// canonicalisation at the user-facing CLI, not just the internal
-/// helper. `Command::current_dir` scopes the CWD change to the child
-/// so this test is safe under parallel execution.
+/// `state projects add` with a relative path resolves the input
+/// against the child process's CWD (not `<config_root>`), then stores
+/// the resulting location in `projects.yaml` in the portable form
+/// (relative to the directory containing `projects.yaml`).
+/// `Command::current_dir` scopes the CWD change to the child so this
+/// test is safe under parallel execution.
 #[test]
-fn state_projects_add_canonicalises_relative_path_via_binary() {
+fn state_projects_add_relative_path_resolves_against_cwd_via_binary() {
     let tmp = TempDir::new().unwrap();
     let cfg = tmp.path().join("cfg");
     fs::create_dir_all(&cfg).unwrap();
@@ -133,13 +134,28 @@ fn state_projects_add_canonicalises_relative_path_via_binary() {
     let catalog: serde_yaml::Value =
         serde_yaml::from_str(&fs::read_to_string(cfg.join("projects.yaml")).unwrap()).unwrap();
     let stored_path = catalog["projects"][0]["path"].as_str().unwrap();
+    // On-disk form is relative to the directory containing projects.yaml.
+    // Resolving it against `cfg` must yield the project dir under the
+    // spawn CWD — that's the proof the CLI used CWD (not cfg) for input
+    // resolution before relativising for storage.
+    let resolved = cfg.join(stored_path);
+    let cleaned = resolved
+        .components()
+        .fold(std::path::PathBuf::new(), |mut acc, c| match c {
+            std::path::Component::ParentDir => {
+                acc.pop();
+                acc
+            }
+            std::path::Component::CurDir => acc,
+            other => {
+                acc.push(other);
+                acc
+            }
+        });
     assert!(
-        stored_path.starts_with('/'),
-        "stored path must be absolute, got {stored_path}"
-    );
-    assert!(
-        stored_path.ends_with("workdir/rel-target"),
-        "stored path must reflect CWD resolution, got {stored_path}"
+        cleaned.ends_with("workdir/rel-target"),
+        "resolved path must reflect CWD-based input resolution, got {}",
+        cleaned.display()
     );
 }
 

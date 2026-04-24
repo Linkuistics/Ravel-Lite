@@ -1,10 +1,25 @@
 //! Per-user projects catalog: `<config_root>/projects.yaml`.
 //!
-//! Maps project names to absolute paths. Shared-between-users edge
+//! Maps project names to project directories. Shared-between-users edge
 //! lists (R5) reference projects by name; this catalog is the per-user
-//! name → path resolver. Paths are absolute because projects live
-//! outside the config dir and the catalog is the canonical place to
-//! know where.
+//! name → path resolver.
+//!
+//! ## Path representation
+//!
+//! In memory, `ProjectEntry.path` is always an absolute, cleaned
+//! `PathBuf`. Consumers may use it directly for filesystem operations.
+//!
+//! On disk, paths are written **relative to the directory containing
+//! `projects.yaml`** (i.e. `<config_root>`). This makes `projects.yaml`
+//! portable: the same file can be committed to a shared repository and
+//! loaded correctly from different `<config_root>` absolute paths on
+//! different machines, provided the project layout relative to the
+//! catalog is the same.
+//!
+//! Loading accepts both relative and absolute path values for
+//! backwards compatibility with older all-absolute catalogs. The first
+//! state-mutating verb on a legacy catalog rewrites every entry to the
+//! relative form — semantics are unchanged, only the on-disk shape.
 //!
 //! All read/write goes through `load_or_empty` / `save_atomic` so the
 //! single `schema_version` field is always applied correctly and every
@@ -13,6 +28,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use path_clean::PathClean;
 use serde::{Deserialize, Serialize};
 
 pub const CATALOG_FILE: &str = "projects.yaml";
@@ -21,17 +37,32 @@ pub const CATALOG_FILE: &str = "projects.yaml";
 /// changes incompatibly.
 pub const SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectsCatalog {
     pub schema_version: u32,
-    #[serde(default)]
     pub projects: Vec<ProjectEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectEntry {
     pub name: String,
     pub path: PathBuf,
+}
+
+/// On-disk shape: `path` may be absolute or relative to the directory
+/// containing `projects.yaml`. The in-memory `ProjectEntry` is always
+/// absolute; conversion happens in `load_or_empty` / `save_atomic`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RawProjectsCatalog {
+    schema_version: u32,
+    #[serde(default)]
+    projects: Vec<RawProjectEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RawProjectEntry {
+    name: String,
+    path: PathBuf,
 }
 
 impl Default for ProjectsCatalog {
@@ -49,7 +80,8 @@ impl ProjectsCatalog {
     }
 
     pub fn find_by_path(&self, path: &Path) -> Option<&ProjectEntry> {
-        self.projects.iter().find(|p| p.path == path)
+        let cleaned = path.to_path_buf().clean();
+        self.projects.iter().find(|p| p.path == cleaned)
     }
 }
 
@@ -107,7 +139,7 @@ pub fn auto_add(catalog: &mut ProjectsCatalog, project_path: &Path) -> Result<Au
 
     catalog.projects.push(ProjectEntry {
         name: name.clone(),
-        path: project_path.to_path_buf(),
+        path: project_path.to_path_buf().clean(),
     });
     Ok(AutoAddOutcome::Added { name })
 }
@@ -140,7 +172,7 @@ pub fn try_add_named(
     }
     catalog.projects.push(ProjectEntry {
         name: name.to_string(),
-        path: project_path.to_path_buf(),
+        path: project_path.to_path_buf().clean(),
     });
     Ok(())
 }
@@ -152,23 +184,33 @@ pub fn load_or_empty(config_root: &Path) -> Result<ProjectsCatalog> {
     }
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
-    let catalog: ProjectsCatalog = serde_yaml::from_str(&content)
+    let raw: RawProjectsCatalog = serde_yaml::from_str(&content)
         .with_context(|| format!("Failed to parse {}", path.display()))?;
-    if catalog.schema_version != SCHEMA_VERSION {
+    if raw.schema_version != SCHEMA_VERSION {
         bail!(
             "{} has schema_version {} but this ravel-lite expects {}; aborting to avoid data loss",
             path.display(),
-            catalog.schema_version,
+            raw.schema_version,
             SCHEMA_VERSION
         );
     }
-    Ok(catalog)
+    let projects = raw
+        .projects
+        .into_iter()
+        .map(|raw_entry| ProjectEntry {
+            name: raw_entry.name,
+            path: resolve_against_catalog_dir(&raw_entry.path, config_root),
+        })
+        .collect();
+    Ok(ProjectsCatalog {
+        schema_version: raw.schema_version,
+        projects,
+    })
 }
 
 pub fn save_atomic(config_root: &Path, catalog: &ProjectsCatalog) -> Result<()> {
     let path = config_root.join(CATALOG_FILE);
-    let yaml = serde_yaml::to_string(catalog)
-        .context("Failed to serialise projects catalog to YAML")?;
+    let yaml = serialise_catalog(catalog, config_root)?;
     let tmp = config_root.join(format!(".{CATALOG_FILE}.tmp"));
     std::fs::write(&tmp, yaml.as_bytes())
         .with_context(|| format!("Failed to write temp file {}", tmp.display()))?;
@@ -177,27 +219,77 @@ pub fn save_atomic(config_root: &Path, catalog: &ProjectsCatalog) -> Result<()> 
     Ok(())
 }
 
+/// Serialise the in-memory catalog into the on-disk YAML form, with
+/// every path expressed relative to `<config_root>`. Shared by
+/// `save_atomic` and `run_list` so the list command prints the exact
+/// shape that is on (or would be on) disk.
+fn serialise_catalog(catalog: &ProjectsCatalog, config_root: &Path) -> Result<String> {
+    let projects = catalog
+        .projects
+        .iter()
+        .map(|entry| {
+            let on_disk = relativise_against_catalog_dir(&entry.path, config_root)?;
+            Ok(RawProjectEntry {
+                name: entry.name.clone(),
+                path: on_disk,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let raw = RawProjectsCatalog {
+        schema_version: catalog.schema_version,
+        projects,
+    };
+    serde_yaml::to_string(&raw).context("Failed to serialise projects catalog to YAML")
+}
+
+/// Resolve a stored path against `<config_root>` and clean. Absolute
+/// stored paths (legacy catalogs, or any future explicit absolute) are
+/// returned cleaned but otherwise unchanged.
+fn resolve_against_catalog_dir(stored: &Path, config_root: &Path) -> PathBuf {
+    if stored.is_absolute() {
+        stored.to_path_buf().clean()
+    } else {
+        config_root.join(stored).clean()
+    }
+}
+
+/// Compute the on-disk relative form of an in-memory absolute path.
+/// On Unix two absolutes always have a relative form (worst case
+/// climbs to `/` then descends), so failure here implies a non-absolute
+/// in-memory path — a contract violation worth surfacing as an error.
+fn relativise_against_catalog_dir(absolute: &Path, config_root: &Path) -> Result<PathBuf> {
+    pathdiff::diff_paths(absolute, config_root).with_context(|| {
+        format!(
+            "cannot compute relative path from {} to catalog dir {}",
+            absolute.display(),
+            config_root.display()
+        )
+    })
+}
+
 // ---------- CLI handlers ----------
 
 pub fn run_list(config_root: &Path) -> Result<()> {
     let catalog = load_or_empty(config_root)?;
-    let yaml = serde_yaml::to_string(&catalog)
-        .context("Failed to serialise projects catalog to YAML")?;
+    let yaml = serialise_catalog(&catalog, config_root)?;
     print!("{yaml}");
     Ok(())
 }
 
 /// Add a project to the catalog. `project_path` may be relative — it is
 /// resolved against the current working directory via `std::path::absolute`
-/// (pure path math; no disk access, no symlink resolution). `name` is
-/// optional; when `None`, the path's basename is used.
+/// (pure path math; no disk access, no symlink resolution) and then
+/// cleaned (`.` / `..` segments collapsed). `name` is optional; when
+/// `None`, the path's basename is used.
 pub fn run_add(config_root: &Path, name: Option<&str>, project_path: &Path) -> Result<()> {
-    let absolute_path = std::path::absolute(project_path).with_context(|| {
-        format!(
-            "Failed to resolve project path {} to an absolute path",
-            project_path.display()
-        )
-    })?;
+    let absolute_path = std::path::absolute(project_path)
+        .with_context(|| {
+            format!(
+                "Failed to resolve project path {} to an absolute path",
+                project_path.display()
+            )
+        })?
+        .clean();
     let resolved_name = match name {
         Some(n) => n.to_string(),
         None => basename_as_name(&absolute_path)?,
@@ -821,5 +913,182 @@ mod tests {
 
         let loaded = load_or_empty(&cfg).unwrap();
         assert_eq!(loaded.projects.len(), 1, "abort must not mutate catalog");
+    }
+
+    // ---------- relative-path catalog tests ----------
+
+    /// Read the on-disk YAML and return the `path` field of the first
+    /// entry as it appears literally — used to assert on the on-disk
+    /// shape, not the in-memory resolved form.
+    fn first_stored_path_string(cfg: &Path) -> String {
+        let yaml: serde_yaml::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(cfg.join(CATALOG_FILE)).unwrap())
+                .unwrap();
+        yaml["projects"][0]["path"]
+            .as_str()
+            .expect("first entry must have a string path")
+            .to_string()
+    }
+
+    #[test]
+    fn save_writes_path_relative_to_catalog_dir_when_project_under_root() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        // Project nested under cfg so the relative form is a simple basename.
+        let project = mk_project_dir(&cfg, "nested-proj");
+
+        run_add(&cfg, Some("nested-proj"), &project).unwrap();
+
+        let stored = first_stored_path_string(&cfg);
+        assert_eq!(
+            stored, "nested-proj",
+            "project under catalog dir must serialise as a bare relative segment"
+        );
+    }
+
+    #[test]
+    fn save_writes_path_with_parent_segments_when_project_outside_root() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        // Project as a sibling of cfg — relative form must climb out.
+        let project = mk_project_dir(tmp.path(), "sibling-proj");
+
+        run_add(&cfg, Some("sibling-proj"), &project).unwrap();
+
+        let stored = first_stored_path_string(&cfg);
+        assert_eq!(
+            stored, "../sibling-proj",
+            "sibling project must serialise with one parent segment"
+        );
+    }
+
+    #[test]
+    fn load_resolves_relative_stored_path_against_catalog_dir() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        // Hand-craft a relative-form yaml as if checked in from another machine.
+        std::fs::write(
+            cfg.join(CATALOG_FILE),
+            "schema_version: 1\nprojects:\n- name: hand-written\n  path: ./local-proj\n",
+        )
+        .unwrap();
+
+        let loaded = load_or_empty(&cfg).unwrap();
+
+        assert_eq!(loaded.projects.len(), 1);
+        assert!(
+            loaded.projects[0].path.is_absolute(),
+            "in-memory path must be absolute, got {}",
+            loaded.projects[0].path.display()
+        );
+        assert_eq!(loaded.projects[0].path, cfg.join("local-proj"));
+    }
+
+    #[test]
+    fn load_accepts_legacy_absolute_stored_paths() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        let project = mk_project_dir(tmp.path(), "legacy-abs");
+        // Hand-craft a legacy all-absolute yaml.
+        std::fs::write(
+            cfg.join(CATALOG_FILE),
+            format!(
+                "schema_version: 1\nprojects:\n- name: legacy-abs\n  path: {}\n",
+                project.display()
+            ),
+        )
+        .unwrap();
+
+        let loaded = load_or_empty(&cfg).unwrap();
+
+        assert_eq!(loaded.projects.len(), 1);
+        assert_eq!(loaded.projects[0].path, project);
+    }
+
+    #[test]
+    fn save_after_load_migrates_legacy_absolute_entries_to_relative() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        let project = mk_project_dir(tmp.path(), "legacy");
+        // Seed a legacy absolute-form catalog.
+        std::fs::write(
+            cfg.join(CATALOG_FILE),
+            format!(
+                "schema_version: 1\nprojects:\n- name: legacy\n  path: {}\n",
+                project.display()
+            ),
+        )
+        .unwrap();
+
+        // Load + add a sibling entry to trigger a save.
+        let other = mk_project_dir(tmp.path(), "other");
+        run_add(&cfg, Some("other"), &other).unwrap();
+
+        // Both entries should now be relative on disk.
+        let yaml: serde_yaml::Value =
+            serde_yaml::from_str(&std::fs::read_to_string(cfg.join(CATALOG_FILE)).unwrap())
+                .unwrap();
+        for entry in yaml["projects"].as_sequence().unwrap() {
+            let p = entry["path"].as_str().unwrap();
+            assert!(
+                !p.starts_with('/'),
+                "after save, every entry must be relative, got {p}"
+            );
+        }
+    }
+
+    #[test]
+    fn same_yaml_loaded_from_two_locations_yields_distinct_absolute_paths() {
+        // The portability proof: a single committed projects.yaml,
+        // copied verbatim into two different config roots, resolves to
+        // each user's local absolute path.
+        let yaml_body =
+            "schema_version: 1\nprojects:\n- name: shared\n  path: ../shared-proj\n";
+
+        let user_a = TempDir::new().unwrap();
+        let user_b = TempDir::new().unwrap();
+        let cfg_a = user_a.path().join("cfg");
+        let cfg_b = user_b.path().join("cfg");
+        std::fs::create_dir_all(&cfg_a).unwrap();
+        std::fs::create_dir_all(&cfg_b).unwrap();
+        std::fs::write(cfg_a.join(CATALOG_FILE), yaml_body).unwrap();
+        std::fs::write(cfg_b.join(CATALOG_FILE), yaml_body).unwrap();
+
+        let loaded_a = load_or_empty(&cfg_a).unwrap();
+        let loaded_b = load_or_empty(&cfg_b).unwrap();
+
+        assert_eq!(loaded_a.projects[0].name, "shared");
+        assert_eq!(loaded_b.projects[0].name, "shared");
+        assert_ne!(
+            loaded_a.projects[0].path, loaded_b.projects[0].path,
+            "different config roots must produce different absolute paths"
+        );
+        assert_eq!(loaded_a.projects[0].path, user_a.path().join("shared-proj"));
+        assert_eq!(loaded_b.projects[0].path, user_b.path().join("shared-proj"));
+    }
+
+    #[test]
+    fn find_by_path_matches_unclean_search_argument() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        let project = mk_project_dir(tmp.path(), "target");
+        run_add(&cfg, Some("target"), &project).unwrap();
+        let catalog = load_or_empty(&cfg).unwrap();
+
+        // Reach the same dir via a path that contains a `..` segment.
+        let detour = tmp.path().join("target").join("..").join("target");
+        let found = catalog.find_by_path(&detour);
+
+        assert!(
+            found.is_some(),
+            "find_by_path must clean its argument before comparing"
+        );
+        assert_eq!(found.unwrap().name, "target");
     }
 }
