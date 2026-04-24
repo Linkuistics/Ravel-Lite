@@ -1,300 +1,4 @@
 tasks:
-- id: eliminate-binary-library-double-compilation-in-main-rs
-  title: Eliminate binary/library double-compilation in main.rs
-  category: architecture
-  status: done
-  dependencies: []
-  description: |
-    Eliminate the binary/library double-compilation in `src/main.rs`.
-
-    ## Problem
-
-    `src/main.rs:1-20` re-declares every library module with `mod xxx;`:
-
-    ```
-    mod agent;
-    mod config;
-    mod create;
-    ... (17 modules)
-    ```
-
-    `src/lib.rs` re-declares the same modules as `pub mod xxx;`. Every module is therefore compiled twice — once as part of the library crate and once as part of the binary crate. Concretely, this forces **five `#[allow(unused_imports)]` attributes** on `pub use` re-exports in `src/survey.rs` (5) and `src/ontology/mod.rs` (3+), with comments that explicitly document the workaround:
-
-    > `main.rs` declares `mod survey;` of its own, so the binary crate compiles this file alongside the library crate. These re-exports are the library's public API (reached via `ravel_lite::survey::*` from integration tests); the binary never touches them. Silence the bin-side `unused_imports` warning so `deny(warnings)` doesn't reject the build.
-
-    Every new `pub use` item intended for external consumers needs a new `#[allow(unused_imports)]`. The allow-comments have already grown from one file to two and will propagate on each new exported API.
-
-    ## Fix
-
-    Convert `src/main.rs` to consume the library crate instead of re-declaring every module:
-
-    1. Delete lines 1-20 of `src/main.rs` (the `mod xxx;` block).
-    2. Replace `use crate::xxx::…;` imports with `use ravel_lite::xxx::…;`.
-    3. Remove the `#[allow(unused_imports)]` attributes on `pub use` blocks in `src/survey.rs` and `src/ontology/mod.rs` (the comments above each can also go).
-    4. Verify `cargo build`, `cargo test`, and `cargo clippy --all-targets --all-features` still pass.
-
-    ## Exit criteria
-
-    - `src/main.rs` has no `mod xxx;` declarations.
-    - Build and tests pass.
-    - No `#[allow(unused_imports)]` attributes remain on library `pub use` blocks.
-    - Build time for a clean `cargo build` measurably drops (single-compile, not double).
-
-    ## Scope
-
-    - Strictly refactor — no behaviour change.
-    - If any `use crate::` path currently resolves to something `pub` in the module but not `pub use`'d from the parent, the fix is to `pub use` it, not to leave a `mod` declaration behind.
-  results: |
-    ## What was done
-
-    Converted `src/main.rs` from a parallel-crate-root into a thin consumer
-    of the library crate, eliminating the binary/library double-compilation.
-
-    ### Edits
-
-    - **`src/main.rs`**: deleted the 20-line `mod xxx;` block at the top
-      of the file; added `use ravel_lite::{create, init, multi_plan,
-      phase_loop, projects, related_components, state, survey};` to bring
-      bare module paths into scope; renamed every `crate::` reference to
-      `ravel_lite::` (20 call-sites in total).
-    - **`src/survey.rs`**: removed the five `#[allow(unused_imports)]`
-      attributes on `pub use` re-exports and their explanatory 6-line
-      comment.
-    - **`src/ontology/mod.rs`**: removed the three `#[allow(unused_imports)]`
-      attributes on `pub use` re-exports and their explanatory 7-line
-      comment.
-
-    ### Verification
-
-    - `cargo build` → clean (single compile pass).
-    - `cargo clippy --all-targets --all-features` → clean under
-      `deny(warnings)`.
-    - `cargo test` → 541 tests pass, 0 failed.
-    - `cargo build -vv` → exactly two `rustc` invocations for this crate:
-      one `--crate-type lib` from `src/lib.rs`, one `--crate-type bin` from
-      `src/main.rs` with `--extern ravel_lite=libravel_lite-*.rlib`. No
-      module source file is compiled twice.
-    - `grep -rn '#\[allow(unused_imports)\]' src` → 0 matches. The
-      propagating-debt workaround pattern is fully gone.
-
-    ## What worked
-
-    - Every item `main.rs` reaches (including through previously bare
-      references like `projects::run_list`) was already `pub` on the
-      library surface, because integration tests exercise them via
-      `ravel_lite::*`. The switch was a pure visibility reshuffle with
-      no API changes.
-    - `Edit` with `replace_all: true` on the literal `crate::` token
-      handled the 20 rewrites in one shot; a pre-grep confirmed zero
-      doc-comment matches, so the replace was safe.
-
-    ## What didn't
-
-    - First build failed because several references in `main.rs` used
-      bare module names (`projects::...`, `phase_loop::...`, etc.) rather
-      than `crate::`-prefixed paths. Those had relied on the binary
-      crate's now-deleted `mod` declarations to seed the namespace. Fix
-      was a single `use ravel_lite::{...}` statement.
-    - First attempt included `discover` in that import list even though
-      all its call-sites were fully qualified via `ravel_lite::discover::`;
-      clippy flagged the unused import under `deny(warnings)` and it
-      was removed.
-
-    ## What this suggests next
-
-    - **The `pub use` re-exports in `src/survey.rs` and
-      `src/ontology/mod.rs` are now load-bearing for the library surface
-      only.** There is no longer a reason to be defensive about them. If
-      future audits find any of these re-exports have no out-of-crate
-      consumer, they can be deleted cleanly (they'd then just be
-      unused lib surface, not bin-visible warnings).
-    - **Follow-up opportunity: shape of `use ravel_lite::{...}` in
-      `main.rs`.** The bin now has two import shapes — specific items
-      (e.g. `use ravel_lite::config::{load_agent_config, ...}`) and bare
-      module imports (e.g. `use ravel_lite::{create, init, ...}`). Worth
-      considering whether to pick one style for consistency, though the
-      mix reflects real usage (some modules accessed only through a
-      handful of functions, others used pervasively).
-    - **The pattern is transplantable.** Any other binary-plus-library
-      crate in the broader ecosystem that re-declares `mod xxx;` in
-      `main.rs` exhibits the same double-compile. This is the canonical
-      fix.
-- id: retire-legacy-v1-related-projects-yaml-hard-error-shim
-  title: Retire legacy v1 related-projects.yaml hard-error shim
-  category: cleanup
-  status: not_started
-  dependencies: []
-  description: |
-    Retire the legacy v1 `related-projects.yaml` hard-error shim.
-
-    ## Current state
-
-    `src/related_components.rs` carries:
-
-    - `pub const LEGACY_RELATED_PROJECTS_FILE: &str = "related-projects.yaml";` (line 53)
-    - `fn error_if_legacy_file_present(config_root: &Path) -> Result<()>` (line 92) — ~15 LOC `bail!` with migration guidance
-    - Called from `load_or_empty` on every v2 read (line 56)
-    - Test `rename_cascade_is_noop_when_file_absent` references the const at `tests/state_related_components.rs:449` and `src/related_components.rs:331`
-
-    Memory records confirm the v2 cutover is complete: "Ravel-Lite has moved to the component-ontology v2 schema; v1 files are not auto-upgraded. Delete '<path>' ... then run `discover --apply`."
-
-    ## Proposal
-
-    Remove the shim when the user judges the migration window has closed (enough time has passed that no in-the-wild config is still holding a legacy `related-projects.yaml` file). The mechanism is:
-
-    1. Delete the `LEGACY_RELATED_PROJECTS_FILE` const.
-    2. Delete `error_if_legacy_file_present` and its call in `load_or_empty`.
-    3. Delete the test that asserts the shim fires (and any test fixture that creates a v1 file).
-    4. Retain the migration-path memory note (it still documents the one-time upgrade steps for any stragglers).
-
-    ## Decision point (defer until executing)
-
-    Before executing, confirm: has sufficient time elapsed since the v2 cutover commit (`7db7307 Migrate related-projects to related-components with ontology v2`) that the shim's guardrail value is lower than the ~20 LOC + read-path overhead cost?
-
-    ## Priority
-
-    Low. The shim is cheap and the blast radius of keeping it is zero. Only act when confident.
-- id: split-tests-integration-rs-into-topic-scoped-files
-  title: Split tests/integration.rs into topic-scoped files
-  category: testing
-  status: not_started
-  dependencies: []
-  description: |
-    Split `tests/integration.rs` into topic-scoped test files.
-
-    ## Current state
-
-    `tests/integration.rs` is 2580 LOC with 25 tests. Peer topic-scoped test files already exist:
-    - `tests/state_backlog.rs`
-    - `tests/state_memory.rs`
-    - `tests/state_session_log.rs`
-    - `tests/state_related_components.rs`
-    - `tests/discover.rs`
-
-    ## Proposal
-
-    Migrate the 25 tests in `integration.rs` into topic-scoped sibling files, following the established pattern. Natural topic groupings visible from the test names:
-
-    - **Dream / reflect / baseline**: `dream_guard_integration`, `git_commit_reflect_seeds_dream_baseline_when_missing`
-    - **Config loading**: `config_loading_integration`, `embedded_defaults_are_valid`
-    - **Survey**: `survey_loads_plans_from_multiple_projects_individually_named`, `survey_yaml_emit_injects_input_hashes_and_round_trips`, `survey_incremental_merge_reuses_unchanged_rows_and_includes_llm_delta`, `survey_incremental_is_noop_when_no_files_changed`, `survey_incremental_rejects_llm_delta_outside_changed_set`, `survey_format_renders_markdown_matching_direct_render`
-    - **Phase loop / handoff**: `phase_loop_triage_cycle_exits_cleanly_on_no_confirm`, `phase_contract_round_trip_writes_expected_files`, and the `[HANDOFF]` tests
-    - **Shared helpers** (`flip_stale_task_statuses`, `inject_handoff_into_task_block`, `extract_handoff_from_block`, `init_test_repo`, `write_memory_yaml_with_word_count`, `write_backlog_yaml_with_marker`) move to a new `tests/common/mod.rs` shared module.
-
-    Target file names: `tests/phase_loop.rs`, `tests/survey.rs`, `tests/dream.rs`, `tests/config.rs`, `tests/common/mod.rs`.
-
-    ## Exit criteria
-
-    - `tests/integration.rs` is deleted (or reduced to a minimal entry-point if something must remain).
-    - All 25 tests pass in their new locations.
-    - No duplicated helper code between test files.
-
-    ## Priority
-
-    Low. The file is navigable today — this is a maintainability improvement, not a bug.
-- id: support-relative-paths-in-projects-yaml-for-git-shared-catalogs
-  title: Support relative paths in projects.yaml for git-shared catalogs
-  category: architecture
-  status: not_started
-  dependencies: []
-  description: |
-    Support paths in `projects.yaml` being either absolute or relative to
-    the location of `projects.yaml` itself. This enables the catalog file
-    to be committed to git and shared between users whose home directories
-    and project checkouts live at different absolute paths.
-
-    ## Current state
-
-    `src/projects.rs` stores every `ProjectEntry.path` as an absolute
-    `PathBuf`:
-
-    - `run_add` (line 195) forces the input through `std::path::absolute`
-      before storing.
-    - `auto_add` / `try_add_named` accept whatever the caller passes but
-      all current callers hand them absolute paths.
-    - The `save_then_load_round_trips` and `run_add_canonicalises_*`
-      tests assert on absolute-path storage.
-
-    Consumers downstream (discovery pipeline, orchestrator directory
-    resolution, edge participant lookup) read `ProjectEntry.path` and use
-    it as-is to open files on disk.
-
-    ## Problem
-
-    An absolute-paths-only catalog cannot be checked into a shared
-    repository. Two users collaborating on the same cross-project ontology
-    necessarily have different home/project roots, so the YAML diverges
-    per machine. This blocks using git to share catalog state.
-
-    ## Proposed shape
-
-    The on-disk schema accepts either absolute paths **or** paths
-    relative to the directory containing `projects.yaml`. At load time,
-    relative paths are resolved against `<config_root>` (which is already
-    passed to `load_or_empty`) to yield the absolute path the rest of the
-    code currently expects.
-
-    On write, preserve the form the user supplied: if a `ProjectEntry`
-    was loaded with a relative path, save it back relative; if it was
-    added via `run_add` with an absolute path, save it absolute. Don't
-    silently rewrite users' paths.
-
-    Design questions to resolve during execution:
-
-    1. **Representation in the in-memory struct.** Two options:
-       - Keep `path: PathBuf` as absolute (the post-resolve form) and
-         carry a sibling `original_form: Option<PathBuf>` for round-trip
-         fidelity.
-       - Change `path` to an enum `{ Absolute(PathBuf), Relative(PathBuf) }`
-         and resolve at each consumer. More invasive.
-
-       The first is less churn but risks losing the original on
-       re-serialize; decide based on how many downstream sites care.
-
-    2. **`run_add` CLI surface.** Today `run_add` always canonicalises
-       input to absolute. Add a `--relative` flag (or make relative the
-       default when the path is already inside `<config_root>`'s project
-       tree) so users can opt into committable entries. Default behaviour
-       should not change silently.
-
-    3. **Validation.** Reject `..` segments that escape `<config_root>`'s
-       intended scope? Or allow them (the point is relative-from-yaml,
-       which naturally implies `..` is fine)? Lean: allow, since a shared
-       monorepo checkout may need `../sibling-repo`.
-
-    4. **Portability of `projects.yaml` itself.** If the file is committed
-       to the repo and all listed paths are relative to its directory,
-       the catalog is portable. Document this invariant in the module
-       docstring at `src/projects.rs:1-11` (which currently asserts
-       "paths are absolute").
-
-    ## Exit criteria
-
-    - `projects.yaml` accepts both absolute and relative `path:` values.
-    - Relative paths resolve against the directory containing
-      `projects.yaml` at load time.
-    - `run_add` grows an explicit way to store a relative form (exact
-      flag name TBD at implementation time).
-    - Round-trip: a catalog with a mix of absolute and relative entries
-      preserves the original form across save/load.
-    - Existing all-absolute catalogs continue to load and behave
-      identically (backwards compatible on-disk).
-    - Module docstring updated to reflect the dual-form semantics.
-    - New tests cover: relative-path load resolution, relative-path
-      round-trip preservation, mixed catalog, and a committed-catalog
-      scenario where the same YAML loads correctly from two different
-      `<config_root>` absolute paths.
-
-    ## Scope boundary
-
-    This task is scoped to the catalog format and its loader/writer. It
-    does NOT cover:
-
-    - Migration tooling to bulk-convert existing absolute entries to
-      relative form (deferred — add as a follow-up task if there's
-      demand).
-    - Any schema version bump: the change is additive (relative paths
-      are a new valid input form), so `SCHEMA_VERSION` stays at 1.
 - id: create-must-always-produce-a-plan-even-when-user-pastes-a-bug-report
   title: create must always produce a plan even when user pastes a bug report
   category: bug
@@ -400,3 +104,179 @@ tasks:
     more plan-shaped description), but it wastes one headful claude
     session per occurrence and the failure mode is not obvious to a
     first-time user. Low-LOC fix with straightforward exit criteria.
+- id: support-relative-paths-in-projects-yaml-for-git-shared-catalogs
+  title: Support relative paths in projects.yaml for git-shared catalogs
+  category: architecture
+  status: not_started
+  dependencies: []
+  description: |
+    Support paths in `projects.yaml` being either absolute or relative to
+    the location of `projects.yaml` itself. This enables the catalog file
+    to be committed to git and shared between users whose home directories
+    and project checkouts live at different absolute paths.
+
+    ## Current state
+
+    `src/projects.rs` stores every `ProjectEntry.path` as an absolute
+    `PathBuf`:
+
+    - `run_add` (line 195) forces the input through `std::path::absolute`
+      before storing.
+    - `auto_add` / `try_add_named` accept whatever the caller passes but
+      all current callers hand them absolute paths.
+    - The `save_then_load_round_trips` and `run_add_canonicalises_*`
+      tests assert on absolute-path storage.
+
+    Consumers downstream (discovery pipeline, orchestrator directory
+    resolution, edge participant lookup) read `ProjectEntry.path` and use
+    it as-is to open files on disk.
+
+    ## Problem
+
+    An absolute-paths-only catalog cannot be checked into a shared
+    repository. Two users collaborating on the same cross-project ontology
+    necessarily have different home/project roots, so the YAML diverges
+    per machine. This blocks using git to share catalog state.
+
+    ## Proposed shape
+
+    The on-disk schema accepts either absolute paths **or** paths
+    relative to the directory containing `projects.yaml`. At load time,
+    relative paths are resolved against `<config_root>` (which is already
+    passed to `load_or_empty`) to yield the absolute path the rest of the
+    code currently expects.
+
+    On write, preserve the form the user supplied: if a `ProjectEntry`
+    was loaded with a relative path, save it back relative; if it was
+    added via `run_add` with an absolute path, save it absolute. Don't
+    silently rewrite users' paths.
+
+    Design questions to resolve during execution:
+
+    1. **Representation in the in-memory struct.** Two options:
+       - Keep `path: PathBuf` as absolute (the post-resolve form) and
+         carry a sibling `original_form: Option<PathBuf>` for round-trip
+         fidelity.
+       - Change `path` to an enum `{ Absolute(PathBuf), Relative(PathBuf) }`
+         and resolve at each consumer. More invasive.
+
+       The first is less churn but risks losing the original on
+       re-serialize; decide based on how many downstream sites care.
+
+    2. **`run_add` CLI surface.** Today `run_add` always canonicalises
+       input to absolute. Add a `--relative` flag (or make relative the
+       default when the path is already inside `<config_root>`'s project
+       tree) so users can opt into committable entries. Default behaviour
+       should not change silently.
+
+    3. **Validation.** Reject `..` segments that escape `<config_root>`'s
+       intended scope? Or allow them (the point is relative-from-yaml,
+       which naturally implies `..` is fine)? Lean: allow, since a shared
+       monorepo checkout may need `../sibling-repo`.
+
+    4. **Portability of `projects.yaml` itself.** If the file is committed
+       to the repo and all listed paths are relative to its directory,
+       the catalog is portable. Document this invariant in the module
+       docstring at `src/projects.rs:1-11` (which currently asserts
+       "paths are absolute").
+
+    ## Exit criteria
+
+    - `projects.yaml` accepts both absolute and relative `path:` values.
+    - Relative paths resolve against the directory containing
+      `projects.yaml` at load time.
+    - `run_add` grows an explicit way to store a relative form (exact
+      flag name TBD at implementation time).
+    - Round-trip: a catalog with a mix of absolute and relative entries
+      preserves the original form across save/load.
+    - Existing all-absolute catalogs continue to load and behave
+      identically (backwards compatible on-disk).
+    - Module docstring updated to reflect the dual-form semantics.
+    - New tests cover: relative-path load resolution, relative-path
+      round-trip preservation, mixed catalog, and a committed-catalog
+      scenario where the same YAML loads correctly from two different
+      `<config_root>` absolute paths.
+
+    ## Scope boundary
+
+    This task is scoped to the catalog format and its loader/writer. It
+    does NOT cover:
+
+    - Migration tooling to bulk-convert existing absolute entries to
+      relative form (deferred — add as a follow-up task if there's
+      demand).
+    - Any schema version bump: the change is additive (relative paths
+      are a new valid input form), so `SCHEMA_VERSION` stays at 1.
+- id: retire-legacy-v1-related-projects-yaml-hard-error-shim
+  title: Retire legacy v1 related-projects.yaml hard-error shim
+  category: cleanup
+  status: not_started
+  dependencies: []
+  description: |
+    Retire the legacy v1 `related-projects.yaml` hard-error shim.
+
+    ## Current state
+
+    `src/related_components.rs` carries:
+
+    - `pub const LEGACY_RELATED_PROJECTS_FILE: &str = "related-projects.yaml";` (line 53)
+    - `fn error_if_legacy_file_present(config_root: &Path) -> Result<()>` (line 92) — ~15 LOC `bail!` with migration guidance
+    - Called from `load_or_empty` on every v2 read (line 56)
+    - Test `rename_cascade_is_noop_when_file_absent` references the const at `tests/state_related_components.rs:449` and `src/related_components.rs:331`
+
+    Memory records confirm the v2 cutover is complete: "Ravel-Lite has moved to the component-ontology v2 schema; v1 files are not auto-upgraded. Delete '<path>' ... then run `discover --apply`."
+
+    ## Proposal
+
+    Remove the shim when the user judges the migration window has closed (enough time has passed that no in-the-wild config is still holding a legacy `related-projects.yaml` file). The mechanism is:
+
+    1. Delete the `LEGACY_RELATED_PROJECTS_FILE` const.
+    2. Delete `error_if_legacy_file_present` and its call in `load_or_empty`.
+    3. Delete the test that asserts the shim fires (and any test fixture that creates a v1 file).
+    4. Retain the migration-path memory note (it still documents the one-time upgrade steps for any stragglers).
+
+    ## Decision point (defer until executing)
+
+    Before executing, confirm: has sufficient time elapsed since the v2 cutover commit (`7db7307 Migrate related-projects to related-components with ontology v2`) that the shim's guardrail value is lower than the ~20 LOC + read-path overhead cost?
+
+    ## Priority
+
+    Low. The shim is cheap and the blast radius of keeping it is zero. Only act when confident.
+- id: split-tests-integration-rs-into-topic-scoped-files
+  title: Split tests/integration.rs into topic-scoped files
+  category: testing
+  status: not_started
+  dependencies: []
+  description: |
+    Split `tests/integration.rs` into topic-scoped test files.
+
+    ## Current state
+
+    `tests/integration.rs` is 2580 LOC with 25 tests. Peer topic-scoped test files already exist:
+    - `tests/state_backlog.rs`
+    - `tests/state_memory.rs`
+    - `tests/state_session_log.rs`
+    - `tests/state_related_components.rs`
+    - `tests/discover.rs`
+
+    ## Proposal
+
+    Migrate the 25 tests in `integration.rs` into topic-scoped sibling files, following the established pattern. Natural topic groupings visible from the test names:
+
+    - **Dream / reflect / baseline**: `dream_guard_integration`, `git_commit_reflect_seeds_dream_baseline_when_missing`
+    - **Config loading**: `config_loading_integration`, `embedded_defaults_are_valid`
+    - **Survey**: `survey_loads_plans_from_multiple_projects_individually_named`, `survey_yaml_emit_injects_input_hashes_and_round_trips`, `survey_incremental_merge_reuses_unchanged_rows_and_includes_llm_delta`, `survey_incremental_is_noop_when_no_files_changed`, `survey_incremental_rejects_llm_delta_outside_changed_set`, `survey_format_renders_markdown_matching_direct_render`
+    - **Phase loop / handoff**: `phase_loop_triage_cycle_exits_cleanly_on_no_confirm`, `phase_contract_round_trip_writes_expected_files`, and the `[HANDOFF]` tests
+    - **Shared helpers** (`flip_stale_task_statuses`, `inject_handoff_into_task_block`, `extract_handoff_from_block`, `init_test_repo`, `write_memory_yaml_with_word_count`, `write_backlog_yaml_with_marker`) move to a new `tests/common/mod.rs` shared module.
+
+    Target file names: `tests/phase_loop.rs`, `tests/survey.rs`, `tests/dream.rs`, `tests/config.rs`, `tests/common/mod.rs`.
+
+    ## Exit criteria
+
+    - `tests/integration.rs` is deleted (or reduced to a minimal entry-point if something must remain).
+    - All 25 tests pass in their new locations.
+    - No duplicated helper code between test files.
+
+    ## Priority
+
+    Low. The file is navigable today — this is a maintainability improvement, not a bug.
