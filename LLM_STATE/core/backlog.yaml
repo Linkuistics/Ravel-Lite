@@ -2,7 +2,7 @@ tasks:
 - id: fix-work-baseline-timing-move-git-save-work-baseline-after-git-commit-plan
   title: 'Fix work-baseline timing: move git_save_work_baseline after git_commit_plan'
   category: core
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Fix the `work-baseline` timing bug: move `git_save_work_baseline` to run AFTER `git_commit_plan` in the `GitCommitTriage` arm of `src/phase_loop.rs`.
@@ -31,6 +31,34 @@ tasks:
     ## Verification
 
     After the fix, a `{{BACKLOG_TRANSITIONS}}` diff should show only changes from the current work session, not from the prior cycle's triage. Run a full work → analyse-work → triage cycle and confirm the baseline SHA in `work-baseline` matches the triage commit SHA.
+  results: |
+    ## What was done
+
+    In `src/phase_loop.rs` `handle_script_phase` `GitCommitTriage` arm:
+
+    - Moved `git_save_work_baseline` to run **after** `git_commit_plan("triage")`, so the SHA captured is the triage commit (HEAD advances when the triage commit lands) rather than the reflect commit.
+    - Added a follow-on `git_commit_plan(…, "save-work-baseline")` call so the updated `work-baseline` file lands in a commit instead of floating in the working tree. This preserves the `git_commit_triage_leaves_plan_tree_clean_at_user_prompt` invariant.
+
+    Added a new regression test (`git_commit_triage_records_work_baseline_at_triage_commit_sha`) that runs `phase_loop` through a triage cycle and asserts `work-baseline` contains the SHA of the commit whose message starts with `run-plan: triage`, plus asserts the follow-on `save-work-baseline` commit exists.
+
+    ## Why not `git commit --amend`
+
+    Considered amending the triage commit with `work-baseline` folded in. Rejected: `work-baseline` must contain the pre-amend HEAD SHA to be the value the next work cycle diffs against. After amend, that SHA is orphaned (not reachable from any branch), so a future `git diff <baseline>..HEAD` would either fail to resolve the baseline or resolve it via reflog only — fragile and guaranteed to break once git GCs the orphan. A second forward commit keeps the baseline SHA on the reachable history.
+
+    ## What worked
+
+    - `cargo test` — all 521 unit tests + every integration test pass, including both the new baseline-SHA test and the existing clean-tree invariant test.
+    - Fix is localised to the `GitCommitTriage` arm; no API changes to `git_save_work_baseline` or `git_commit_plan`.
+
+    ## What didn't
+
+    Nothing. The first-run `work-baseline` fallback in the LLM-branch (`src/phase_loop.rs:327-329`) still leaves the file dirty through the first work phase — intentionally out of scope here (self-heals at next `git-commit-work`).
+
+    ## Suggests next
+
+    - `implement-multi-commit-splitting-by-path-in-analyse-work` is now unblocked and should get a cleaner baseline-to-now diff to partition.
+    - The GitCommitTriage arm now produces two commits per cycle ("run-plan: triage …" + "run-plan: save-work-baseline …"). If the extra audit-trail commit becomes noisy in `git log`, consider hiding it from the phase-header log output (`log_commit` call on `baseline_result`) — but keep the commit itself for the clean-tree invariant.
+    - The same "baseline-must-match-current-HEAD" reasoning applies weakly to the first-run `work-baseline` fallback in the LLM branch: it leaves the file dirty through the first Work phase. Small enough to ignore, but a candidate for consistency cleanup if we ever want every state write to be committed before the next user-prompt.
 - id: implement-multi-commit-splitting-by-path-in-analyse-work
   title: Implement multi-commit splitting by path in analyse-work
   category: core
@@ -72,7 +100,7 @@ tasks:
 - id: add-backlog-repair-stale-statuses-cli-verb
   title: Add 'backlog repair-stale-statuses' CLI verb
   category: core
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Extract analyse-work's stale-status safety-net into `ravel-lite state backlog repair-stale-statuses`.
@@ -124,6 +152,42 @@ tasks:
     - Task with `blocked` status + some deps still pending → NOT changed
     - `--dry-run` reports repairs without writing
     - Empty backlog → empty output, exit 0
+  results: |
+    ## What was done
+
+    Extracted the analyse-work safety-net into a new CLI verb `ravel-lite state backlog repair-stale-statuses`.
+
+    - New module `src/state/backlog/repair_stale_statuses.rs`: pure `analyse_repairs(&BacklogFile) -> RepairReport` + a `run_repair_stale_statuses` CLI entry point. Follows the `lint_dependencies.rs` template exactly (pure analysis, Serde-derived report types, `run_*` does IO).
+    - Wired into `src/main.rs` as `BacklogCommands::RepairStaleStatuses` with `--dry-run` and `--format yaml|json`. The dispatcher calls `std::process::exit(1)` when the returned repair count is non-zero.
+    - Exposed through `src/state/backlog/mod.rs`: `analyse_repairs`, `Repair`, `RepairReason`, `RepairReport`, `run_repair_stale_statuses`.
+    - Updated `defaults/phases/analyse-work.md` §5: replaced the 9-line "Scan the backlog for every task whose …" prose with a one-liner that runs the verb and folds any reported task ids into the plan-state commit message.
+
+    Two repair modes implemented:
+    1. `in_progress` + non-empty `results` → `done` (reason `results_non_empty`).
+    2. `blocked` + all structural `dependencies` now `done` → `not_started`, with `blocked_reason` cleared (reason `dependencies_satisfied`).
+
+    ## Semantic narrowing vs. the prior prompt
+
+    The previous prompt flipped `not_started` OR `in_progress` to `done` when results were non-empty. The task spec narrowed that to `in_progress` only — a result on a `not_started` task signals intent (revert, amend, staged change), not drift, and silent flipping there would lose information. The unit test `not_started_with_non_empty_results_is_not_repaired` pins the new semantics.
+
+    `blocked` + zero explicit dependencies is intentionally NOT auto-unblocked: a blocker with no listed deps is external (operator decision, upstream project, awaiting review) and must not silently resolve. Pinned by `blocked_with_no_dependencies_is_not_auto_unblocked`.
+
+    ## What worked
+
+    - 11 new unit tests in `repair_stale_statuses::tests` cover: `in_progress` + results → done; `not_started` + results not changed; empty/`_pending_`/whitespace results not changed; blocked + all-done deps → unblocked; blocked + pending deps not changed; blocked + no deps not changed; `run` applies + writes; `--dry-run` reports without writing; empty backlog zero repairs; Serde snake_case reason tags.
+    - 3 new CLI integration tests in `tests/state_backlog.rs` cover the binary-level exit-code contract: exit 1 when repairs apply, exit 0 when clean, `--dry-run` still exits 1 when drift detected (scripts need the signal).
+    - Full suite passes: 532 unit + every integration test green (up from 521, +11 for the new module).
+    - Smoke-tested live against `LLM_STATE/core` — `--dry-run` reports `repairs: []` and exits 0.
+
+    ## What didn't
+
+    Nothing. One minor judgement call: the task description suggested `--format yaml|text` but the existing `OutputFormat` enum is `yaml|json`. Kept the existing convention for consistency with `lint-dependencies`.
+
+    ## Suggests next
+
+    - The two remaining mechanical-op extractions from the audit cluster are still open: `inject-unblocked-blocked-received-survey-counts-from-rust` and `add-backlog-render-cli-verb-…`. Both are unblocked and follow the same pattern.
+    - Consider cross-checking the `defaults/phases/analyse-work.md` step 9 prompt — step 5's "include reported task ids in the commit message" now depends on the LLM invoking the verb and reading its YAML output. If we later find the LLM skipping the verb invocation, a triage-time drift-lint at the start of analyse-work could fail-loud on pre-existing drift.
+    - The dispatcher's `std::process::exit(1)` is fine for a terminal verb but is a small deviation from the project's `Result<()>` pattern. If more scripting-friendly verbs get added, consider a `ScriptExit` variant on the top-level enum so the exit-code logic lives in one place.
 - id: inject-unblocked-blocked-received-survey-counts-from-rust
   title: Inject unblocked/blocked/received survey counts from Rust
   category: core
