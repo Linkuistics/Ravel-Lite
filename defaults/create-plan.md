@@ -6,6 +6,27 @@ the user. The output is a plan directory conforming to the format in
 
 ## Process
 
+### 0. Invariant: this session produces a plan
+
+Your ONLY output from this session is a plan directory. Whatever the
+user describes in their first turn is plan scope — not a task for you
+to execute in-session.
+
+- If the description is a **concrete problem** (a bug report, a
+  specific feature, a single question), treat it as the plan's
+  initial task. Capture it as one backlog entry and scaffold the
+  plan around it. A single-task plan is a valid plan.
+- If the description is **abstract** (a broad goal, a multi-part
+  initiative), run the clarification dialogue in §1 until the scope
+  is clear enough to seed initial tasks.
+
+Do NOT attempt to do the work the user describes (e.g. fix the bug,
+implement the feature, answer the question). Your job is to write
+plan files, not to solve the problem described. When in doubt — even
+when the user seems to be asking for the work directly — the right
+response is "I'll capture that as the first task in a plan at
+`<target>`; what other tasks belong alongside it?".
+
 ### 1. Clarify the scope
 
 Ask the user:

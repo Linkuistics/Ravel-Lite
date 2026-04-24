@@ -34,7 +34,15 @@ pub fn compose_create_prompt(template: &str, abs_plan_dir: &Path) -> String {
          The directory does not exist yet. Create it, then create the \
          plan files inside it according to the conventions above. \
          When the plan is ready, confirm with the user by listing what \
-         you created.\n",
+         you created.\n\n\
+         INVARIANT: Your ONLY output from this session is a plan \
+         directory at {target}. If the user's description sounds like \
+         a single concrete task (a bug report, a feature request, a \
+         specific question), that is the plan's initial task — \
+         capture it in the backlog and scaffold the plan around it. A \
+         single-task plan is a valid plan. Do not attempt to do the \
+         work the user described; your job is to write plan files, \
+         not to solve the problem they described.\n",
         target = abs_plan_dir.display()
     )
 }
@@ -162,6 +170,22 @@ mod tests {
     fn compose_prompt_separates_template_from_instructions_with_hr() {
         let out = compose_create_prompt("TEMPLATE", Path::new("/x"));
         assert!(out.contains("\n\n---\n\n"));
+    }
+
+    #[test]
+    fn compose_prompt_asserts_plan_only_output_invariant() {
+        let out = compose_create_prompt("TEMPLATE", Path::new("/abs/plan"));
+        assert!(
+            out.contains("ONLY output from this session is a plan directory"),
+            "composed prompt must bind the agent against pivoting away \
+             from plan creation when the user pastes a concrete problem; \
+             got:\n{out}"
+        );
+        assert!(
+            out.contains("single-task plan is a valid plan"),
+            "composed prompt must tell the agent that a concrete one-task \
+             description is acceptable plan scope, not a pivot signal"
+        );
     }
 
     #[test]
