@@ -38,3 +38,87 @@ tasks:
     - `component-ontology` crate has a standalone README documenting its public API.
     - No Ravel-Lite code imports `ravel_lite::ontology::…`; all imports route through `component_ontology::…`.
     - Semver policy documented in the crate README.
+- id: stage-2-discover-emit-proposals-via-cli-drop-yaml-boundary
+  title: 'Stage 2 discover: emit proposals via CLI, drop YAML boundary'
+  category: bug
+  status: done
+  dependencies: []
+  description: |
+    **Priority: HIGH.** Fix the brittle YAML-boundary in Stage 2 of `ravel-lite state related-components discover`.
+
+    ## Problem
+
+    When Stage 2's LLM emits a `kind` not in the v2 `EdgeKind` vocabulary (e.g. `parent-of` — a v1 kind removed in v2), `serde_yaml::from_str::<RawStage2Output>` in `src/discover/stage2.rs:68-69` fails all-or-nothing: every valid proposal in the same file is lost.
+
+    Reproduced by the user running `ravel-lite state related-components discover --config ../ravel-lite-config`:
+
+    ```
+    Error: parse Stage 2 output from ../ravel-lite-config/.tmp-proposals-14837.yaml
+    Caused by:
+        proposals[0].kind: unknown variant `parent-of`, expected one of `depends-on`, …
+    ```
+
+    ## Approach (user-chosen)
+
+    Structured data maintained through **format-compliant tooling**: Stage 2's LLM emits each proposal via `ravel-lite state discover-proposals add-proposal …`, mirroring the main phase-loop's established pattern (LLM phases never write plan-state YAML directly). Clap's enum parsing rejects `--kind parent-of` with a remediating error listing the full closed vocab; the LLM sees the error on that single bad call and retries — good proposals never land in a bad batch.
+
+    ## Scope
+
+    - New CLI verb: `ravel-lite state discover-proposals add-proposal --config <DIR> --kind <KIND> --lifecycle <SCOPE> --participant <NAME> --participant <NAME> --evidence-grade <GRADE> [--evidence-field <F>]... --rationale <TEXT>`.
+    - New module `src/state/discover_proposals/` (mod.rs + verbs.rs); reuses schema from `src/discover/schema.rs` and yaml I/O from `src/discover/mod.rs`.
+    - Validation layers inside the verb: clap enum parsing → `Edge::validate()` → catalog-membership check on participants → exact-duplicate rejection within the proposals file.
+    - Rewrite `src/discover/stage2.rs::run_stage2` to: pre-initialise the proposals file, spawn claude with `--allowed-tools Bash --add-dir <config_root>`, skip the post-hoc YAML parse, load the file after claude exits.
+    - Rewrite `defaults/discover-stage2.md` — drop `{{PROPOSALS_OUTPUT_PATH}}` and the "Write YAML" section; introduce `{{CONFIG_ROOT}}` and instruct the LLM to invoke the CLI once per edge.
+    - Update `tests/discover.rs` fake-claude shim to issue CLI calls instead of writing YAML.
+    - Update `src/discover/stage2.rs` unit tests for the new token shape.
+    - Obsolete the memory entry `fake-claude-stage-2-shim-greedily-extracts-first-yaml-path` (delete or rewrite in analyse-work phase).
+
+    ## Out of scope
+
+    - Changing Stage 1 (it already uses closed-vocab enforcement via serde for `InteractionRoleHint`; its per-project isolation means strict parsing doesn't have the same blast radius).
+    - Tool-use loops where the LLM self-validates via additional tool calls. The CLI flow already gives an error signal per call.
+
+    ## Exit criteria
+
+    - `cargo build --release` clean.
+    - `cargo test` passes, including the rewritten e2e discover test.
+    - Manual: `ravel-lite state discover-proposals add-proposal --config X --kind parent-of …` exits non-zero with stderr listing the 17 valid kinds.
+    - Manual: `ravel-lite state related-components discover --config …` against a real catalog emits proposals via CLI (no tmp YAML file involved).
+  results: |
+    ## Implementation
+
+    **New CLI verb** `ravel-lite state discover-proposals add-proposal` in `src/state/discover_proposals/` — thin typed-CLI façade that appends a validated `ProposalRecord` to `<config-root>/discover-proposals.yaml`. Schema types and yaml I/O are imported from `src/discover/`; this module's sole responsibility is argv validation and idempotent append. Four validation layers, cheapest first:
+
+    1. `clap`'s `parse_edge_kind` / `parse_lifecycle_scope` / `parse_evidence_grade` reject unknowns at arg-parse with the full valid vocabulary in the error message.
+    2. Participant count must be exactly 2 (two `--participant` flags).
+    3. Both participants must be in the projects catalog; error lists known components.
+    4. `Edge::validate()` for self-loops, empty rationale, missing `evidence_fields` when grade != weak.
+    5. Exact-duplicate rejection against already-accumulated proposals.
+
+    **Stage 2 rewrite** in `src/discover/stage2.rs`: `run_stage2` now pre-initialises `discover-proposals.yaml` with the Stage 1 failures and source-project-states seeded, spawns `claude` with `--allowed-tools Bash --add-dir <config_root>` (replacing `Write`), and loads the accumulated file after claude exits. The `RawStage2Output` struct and the post-hoc YAML parse are gone. `run_stage2` shrank from ~60 lines to ~30.
+
+    **Prompt rewrite** `defaults/discover-stage2.md`: replaced the "Write YAML to {{PROPOSALS_OUTPUT_PATH}}" output section with a CLI invocation template referencing `{{CONFIG_ROOT}}`. The new "Output — invoke the CLI once per edge" section documents the add-proposal shape and instructs the LLM to read stderr on non-zero exits and retry with corrected arguments.
+
+    **Integration test** `tests/discover.rs`: the fake-claude shim now takes a `&[Stage2Proposal]` and issues one `ravel-lite state discover-proposals add-proposal` invocation per entry in the Stage 2 branch. Stage 1's branch is unchanged (still writes YAML). The shim now structurally mirrors production — Stage 2 goes through the CLI both in tests and at runtime.
+
+    ## Verification
+
+    - All 536 tests pass (`cargo test`): 474 lib, 1 discover e2e, 28+10+4+15+4 integration suites, doc-tests.
+    - `cargo clippy --all-targets` clean.
+    - 7 new unit tests for the `add-proposal` verb cover: append, idempotency, symmetric-participant canonicalisation, unknown participant rejection, self-loop rejection, wrong-count rejection, preservation of Stage-1-seeded failures across CLI appends.
+    - 1 new unit test (`shipped_stage2_prompt_instructs_llm_to_invoke_add_proposal_cli`) regression-guards the prompt: asserts the `add-proposal` CLI string is present, `{{PROPOSALS_OUTPUT_PATH}}` is absent, `{{CONFIG_ROOT}}` is present. A future prompt rewrite that reverts to YAML output fails this test.
+    - Manual smoke of each error path: unknown `--kind`, unknown `--lifecycle`, unknown participant — all emit clear remediation with the full valid set listed.
+
+    ## What worked
+
+    - **clap's `ValueEnum`-style parse helpers already existed** in `main.rs` (`parse_edge_kind`, `parse_lifecycle_scope`, `parse_evidence_grade`); the add-proposal dispatcher wires through them directly. Zero new vocabulary mapping code.
+    - **Pre-initialising the proposals file** before spawning claude cleanly sidesteps the "what if the LLM makes zero calls" edge case — the file is valid-but-empty on disk, `load_proposals` succeeds, and the zero-proposal path is just `load_or_empty` equivalent.
+    - **Failures pass-through survives** because `failures` are seeded into the pre-initialised file; add-proposal's `load_or_default_proposals_file` reads them, appends a proposal, and writes both back. The verb is idempotent on failures by not touching them.
+    - **The integration test shim naturally produced the two-stage symmetry** I wanted: Stage 1 still writes YAML (no change there), Stage 2 issues CLI commands (matches production exactly).
+
+    ## What this suggests next
+
+    - **Obsolete memory entry** `fake-claude-stage-2-shim-greedily-extracts-first-yaml-path` — no longer accurate; the Stage 2 branch of the shim invokes the CLI instead of extracting a yaml path. Reflect phase should delete or rewrite.
+    - **Latent prompt-adherence question**: if discover runs continue to surface v1 kinds, the reflect phase could add a negative-prompt stanza ("These were v1 and are forbidden: parent-of, sibling-of, child-of") to reinforce the closed vocab. Deferred — wait for evidence from real runs first.
+    - **Catalog-membership check at `add-proposal`** is a new constraint Stage 2 didn't previously enforce (the batch YAML parse accepted any string for participants). This tightens the contract for the better, but if any existing workflow relies on Stage 2 proposing edges involving components not yet catalogued, that workflow will now fail. No known consumer does this; flagging for triage awareness.
+    - **Consider extracting the `parse_edge_kind`/`parse_lifecycle_scope`/`parse_evidence_grade` helpers** from `main.rs` into a `crate::ontology::cli` submodule — they're used by two dispatchers now (`dispatch_related_components` and `dispatch_discover_proposals`) and are pure ontology concerns. Small refactor; not blocking.
