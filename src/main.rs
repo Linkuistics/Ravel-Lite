@@ -31,6 +31,7 @@ use crate::agent::pi::PiAgent;
 use crate::agent::Agent;
 use crate::config::{load_agent_config, load_shared_config, resolve_config_dir};
 use crate::git::project_root_for_plan;
+use crate::ontology::cli::{parse_edge_kind, parse_evidence_grade, parse_lifecycle_scope};
 use crate::types::{AgentConfig, LlmPhase, PlanContext};
 use crate::ui::{run_tui, UI};
 
@@ -257,13 +258,6 @@ enum StateCommands {
     /// participants reference components by name (resolved per-user via
     /// the projects catalog), so the file is shareable between users.
     RelatedComponents {
-        #[command(subcommand)]
-        command: RelatedComponentsCommands,
-    },
-    /// Deprecated alias for `related-components`. Will be removed after
-    /// one release cycle. Emits a stderr deprecation warning and
-    /// forwards to the new verb unchanged.
-    RelatedProjects {
         #[command(subcommand)]
         command: RelatedComponentsCommands,
     },
@@ -803,14 +797,6 @@ async fn dispatch_state(command: StateCommands) -> Result<()> {
             state::migrate::run_migrate(&plan_dir, &options)
         }
         StateCommands::RelatedComponents { command } => dispatch_related_components(command).await,
-        StateCommands::RelatedProjects { command } => {
-            eprintln!(
-                "warning: `state related-projects` is deprecated; use \
-                 `state related-components` instead. The alias will be \
-                 removed after one release cycle."
-            );
-            dispatch_related_components(command).await
-        }
         StateCommands::DiscoverProposals { command } => dispatch_discover_proposals(command),
     }
 }
@@ -912,40 +898,6 @@ async fn dispatch_related_components(command: RelatedComponentsCommands) -> Resu
             crate::discover::apply::run_discover_apply(&config_root)
         }
     }
-}
-
-fn parse_edge_kind(input: &str) -> Result<related_components::EdgeKind> {
-    related_components::EdgeKind::parse(input).ok_or_else(|| {
-        let kebab = related_components::EdgeKind::all()
-            .iter()
-            .map(|k| k.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        anyhow::anyhow!(
-            "invalid kind {input:?}; expected one of the ontology v2 kinds: {kebab}"
-        )
-    })
-}
-
-fn parse_lifecycle_scope(input: &str) -> Result<related_components::LifecycleScope> {
-    related_components::LifecycleScope::parse(input).ok_or_else(|| {
-        let kebab = related_components::LifecycleScope::all()
-            .iter()
-            .map(|l| l.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        anyhow::anyhow!(
-            "invalid lifecycle {input:?}; expected one of the ontology v2 lifecycles: {kebab}"
-        )
-    })
-}
-
-fn parse_evidence_grade(input: &str) -> Result<crate::ontology::EvidenceGrade> {
-    crate::ontology::EvidenceGrade::parse(input).ok_or_else(|| {
-        anyhow::anyhow!(
-            "invalid evidence-grade {input:?}; expected one of: strong, medium, weak"
-        )
-    })
 }
 
 fn dispatch_backlog(command: BacklogCommands) -> Result<()> {

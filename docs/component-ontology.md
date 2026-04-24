@@ -3,7 +3,7 @@
 **Status:** Reference specification.
 **Applies to:** `related-components.yaml`, the `ravel-lite state
 related-components` CLI, the Stage 2 discover prompt, and the Rust
-library that implements the schema (`component-ontology`).
+module that implements the schema (`src/ontology/`).
 
 ## 1. Purpose
 
@@ -456,10 +456,11 @@ Rust crate.
 
 ## 9. Rust library surface
 
-The library is `component-ontology`. Inside Ravel-Lite it lives at
-`src/ontology/` and is re-exported via the crate root; when it graduates
-to a workspace member crate the path becomes
-`crates/component-ontology/`.
+This surface is implemented at `src/ontology/` inside Ravel-Lite and is
+re-exported via the crate root. Extraction into a standalone crate is
+not a Ravel-Lite work item; the [Atlas](https://github.com/linkuistics)
+project owns any such packaging. The description below governs the
+shape of the types regardless of where they eventually live.
 
 ### 9.1 In scope for the library
 

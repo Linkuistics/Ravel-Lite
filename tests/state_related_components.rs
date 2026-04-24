@@ -1,7 +1,6 @@
-//! End-to-end CLI integration tests for `ravel-lite state related-components *`,
-//! plus the deprecated `state related-projects` alias. Shells out to the
-//! built binary via CARGO_BIN_EXE_ravel-lite, matching the pattern in
-//! tests/integration.rs.
+//! End-to-end CLI integration tests for `ravel-lite state related-components *`.
+//! Shells out to the built binary via CARGO_BIN_EXE_ravel-lite, matching the
+//! pattern in tests/integration.rs.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -438,37 +437,6 @@ fn remove_edge_requires_matching_lifecycle() {
     let yaml = String::from_utf8(list.stdout).unwrap();
     assert!(yaml.contains("lifecycle: runtime"), "runtime must survive: {yaml}");
     assert!(!yaml.contains("lifecycle: build"), "build must be gone: {yaml}");
-}
-
-#[test]
-fn deprecated_related_projects_alias_warns_and_forwards() {
-    let tmp = TempDir::new().unwrap();
-    let (cfg, _plan_dir) = scaffold(tmp.path(), "Me", &["Peer"]);
-
-    // Add via the canonical verb.
-    let add = strong_add_edge(&cfg, "generates", "codegen", "Me", "Peer");
-    assert!(add.status.success());
-
-    // List via the deprecated alias must succeed AND emit a stderr warning.
-    let list = Command::new(bin())
-        .args(["state", "related-projects", "list"])
-        .args(["--config", cfg.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(list.status.success(), "deprecated alias must still work");
-
-    let stderr = String::from_utf8_lossy(&list.stderr);
-    assert!(
-        stderr.contains("deprecated"),
-        "deprecated alias must emit a warning to stderr: {stderr}"
-    );
-    assert!(
-        stderr.contains("related-components"),
-        "deprecation warning must point at the new verb: {stderr}"
-    );
-
-    let yaml = String::from_utf8(list.stdout).unwrap();
-    assert!(yaml.contains("kind: generates"), "alias output: {yaml}");
 }
 
 #[test]

@@ -13,6 +13,7 @@
 //! production caller today; the file surface exists ahead of the
 //! migration task that swaps internal callers onto it.
 
+pub mod cli;
 pub mod defaults;
 pub mod schema;
 pub mod yaml_io;

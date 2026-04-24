@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-//! End-to-end integration test for `state related-projects discover`
+//! End-to-end integration test for `state related-components discover`
 //! and `discover-apply`. Uses a fake `claude` shell script on PATH that
 //! reads the prompt, extracts the output-path tokens, and writes canned
 //! YAML there.

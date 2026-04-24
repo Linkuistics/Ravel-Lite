@@ -7,7 +7,7 @@
 //!   proposes edges, written to `<config-dir>/discover-proposals.yaml`
 //!   for review.
 //!
-//! Spec: `docs/r7-related-projects-discovery-design.md`.
+//! Edge vocabulary: `docs/component-ontology.md`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

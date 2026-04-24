@@ -411,26 +411,64 @@ ravel-lite/
 ├── Cargo.toml
 ├── defaults/                   # embedded by include_str!, written by init
 │   ├── config.yaml
-│   ├── agents/…           # includes agents/pi/subagents/ (pi subagent defs)
+│   ├── agents/…                # includes agents/pi/subagents/ (pi subagent defs)
 │   ├── phases/…
-│   └── fixed-memory/…
+│   ├── fixed-memory/…
+│   ├── ontology.yaml           # canonical edge-kind vocabulary
+│   ├── create-plan.md          # prompt for `create` command
+│   ├── survey.md               # prompt for `survey` (full snapshot)
+│   ├── survey-incremental.md   # prompt for `survey` (delta path)
+│   ├── discover-stage1.md      # prompt: per-project interaction surface
+│   └── discover-stage2.md      # prompt: cross-project edge proposals
 └── src/
-    ├── main.rs
-    ├── config.rs               # YAML config loading
+    ├── main.rs                 # binary entry + CLI dispatch
+    ├── lib.rs                  # library surface for integration tests
+    ├── config.rs               # YAML config loading + .local overlays
     ├── types.rs                # LlmPhase, ScriptPhase, PlanContext, etc.
     ├── agent/
     │   ├── mod.rs              # Agent trait
     │   ├── claude_code.rs      # ClaudeCodeAgent + stream parser
-    │   └── pi.rs               # PiAgent + stream parser
+    │   ├── pi.rs               # PiAgent + stream parser
+    │   └── common.rs           # shared helpers across agent impls
     ├── format.rs               # Pure formatting functions
-    ├── phase_loop.rs           # Phase state machine
+    ├── phase_loop.rs           # Phase state machine (single cycle)
+    ├── multi_plan.rs           # Survey-driven multi-plan routing
     ├── subagent.rs             # Dispatch + concurrent execution
-    ├── git.rs                  # git commit, baseline save
+    ├── git.rs                  # git commit, baseline save, project-root math
     ├── dream.rs                # should_dream, update_baseline
     ├── prompt.rs               # Template loading + token substitution
     ├── init.rs                 # `init` command — writes defaults
-    ├── survey.rs               # `survey` command — multi-root LLM status
     ├── create.rs               # `create` command — interactive plan scaffold
+    ├── term_title.rs           # OSC-escape terminal title side channel
+    ├── projects.rs             # ProjectsCatalog (name → path)
+    ├── related_components.rs   # global name-indexed edge store
+    ├── survey.rs               # `survey` command entry
+    ├── survey/
+    │   ├── compose.rs          # prompt composition (fenced YAML blocks)
+    │   ├── delta.rs            # incremental survey hash + merge
+    │   ├── discover.rs         # survey-time proposal emission
+    │   ├── invoke.rs           # spawn_claude_and_read helper
+    │   ├── render.rs           # YAML → human-readable output
+    │   └── schema.rs           # SurveyResponse, PlanRow, task counts
+    ├── ontology/               # component-relationship ontology (schema v2)
+    │   ├── schema.rs           # EdgeKind, LifecycleScope, EvidenceGrade, Edge
+    │   ├── yaml_io.rs          # load / save_atomic for RelatedComponentsFile
+    │   ├── defaults.rs         # embedded defaults/ontology.yaml + renderers
+    │   └── cli.rs              # kebab-case parsers shared by CLI dispatchers
+    ├── discover/               # two-stage LLM discovery of cross-project edges
+    │   ├── stage1.rs           # per-project interaction-surface extraction
+    │   ├── stage2.rs           # global edge-proposal fan-in
+    │   ├── cache.rs            # (tree_sha, dirty_hash) keyed cache
+    │   ├── tree_sha.rs         # git rev-parse + dirty-hash helpers
+    │   ├── schema.rs           # SurfaceFile, SurfaceRecord, ProposalsFile
+    │   └── apply.rs            # proposal → RelatedComponentsFile merge
+    ├── state/                  # typed CRUD over plan-state files
+    │   ├── phase.rs
+    │   ├── migrate.rs
+    │   ├── backlog/            # schema + yaml_io + parse_md + verbs
+    │   ├── memory/             # schema + yaml_io + parse_md + verbs
+    │   ├── session_log/        # schema + yaml_io + parse_md + verbs
+    │   └── discover_proposals/ # schema + verbs (add-proposal, load)
     └── ui.rs                   # Ratatui TUI, UI handle, rendering
 ```
 
