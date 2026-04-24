@@ -21,177 +21,6 @@ tasks:
     - Verify by running a triage phase on a plan with no cross-plan edges
       and confirming the label is gone from the phase output and from the
       recorded session-log entry.
-- id: add-backlog-lint-dependencies-cli-verb
-  title: Add 'backlog lint-dependencies' CLI verb
-  category: core
-  status: done
-  dependencies: []
-  description: |
-    Extract triage's prose-dependency reconciliation into `ravel-lite state backlog lint-dependencies`.
-
-    ## What
-
-    Add a new CLI verb that walks `backlog.yaml`, finds every task description that mentions another task id in prose (e.g. "depends on T4", "see task foo-bar"), and reports the set of tasks where those prose mentions do not match the structured `dependencies` field. Output is YAML, one row per drift case: task id, prose-mentioned ids, structured dependency ids.
-
-    ## Why
-
-    Triage currently performs this full-backlog prose scan via the LLM every cycle. It is a pure deterministic scan — no judgement involved — and the LLM pays token cost for it every time. Moving it to Rust reduces triage context cost and eliminates false positives from LLM interpretation of loose prose.
-
-    ## Verb shape (from audit §2.1)
-
-    ```
-    ravel-lite state backlog lint-dependencies <PLAN_DIR>
-      [--fix]          # auto-add the prose-mentioned ids to structured deps
-      [--format yaml|text]
-    ```
-
-    Output (YAML):
-    ```yaml
-    drifts:
-      - task_id: foo
-        prose_mentioned: [bar, baz]
-        structured_deps: [bar]
-        missing: [baz]
-    ```
-
-    ## Prompt change
-
-    Remove the corresponding reconciliation section from `defaults/phases/triage.md`. LLM guidance changes to: "Run `ravel-lite state backlog lint-dependencies <PLAN_DIR>` to detect prose/structured dep drift before reviewing tasks; use the output to inform your triage but do not re-scan prose manually."
-
-    ## Unit tests
-
-    - Task with matching prose + structured deps → no drift reported
-    - Task with prose mention not in structured deps → drift reported
-    - Task with structured dep not mentioned in prose → not flagged (structured is authoritative)
-    - Empty backlog → empty output, exit 0
-    - Malformed task id in prose (not an actual id) → not reported
-  results: |
-    Shipped `ravel-lite state backlog lint-dependencies <PLAN_DIR>` as a
-    read-only CLI verb that reports drift between prose task-id mentions
-    in task descriptions and the structured `dependencies:` field.
-
-    ## What was built
-
-    - New module `src/state/backlog/lint_dependencies.rs` with:
-      - `lint_dependencies(&BacklogFile) -> LintReport` — pure drift
-        analysis, independent of filesystem and output format.
-      - `run_lint_dependencies(plan_dir, OutputFormat)` — CLI runner.
-      - Helpers `scan_prose_mentions` and `contains_id_as_word` — byte-scan
-        whole-word match; slug chars are `[a-zA-Z0-9_-]`; any other byte
-        (whitespace, punctuation, UTF-8 continuation) is a boundary.
-    - Public types `TaskDrift { task_id, prose_mentioned, structured_deps,
-      missing }` and `LintReport { drifts }`, serde-derived for YAML/JSON
-      output matching the audit brief's spec.
-    - Clap wiring: `BacklogCommands::LintDependencies { plan_dir, format }`
-      with `--format` defaulting to yaml. Dispatch delegates to
-      `run_lint_dependencies`.
-    - Module exports threaded through `src/state/backlog/mod.rs`.
-    - Prompt change in `defaults/phases/triage.md`: removed the
-      "Keep the `dependencies` field in sync with the prose" reconciliation
-      paragraph that told the LLM to rescan prose manually; added a
-      preflight directive at the top of "Local triage" instructing the LLM
-      to run the linter and treat its output as advisory input to
-      `set-dependencies`.
-
-    ## Test coverage (11 new tests, all passing)
-
-    - `no_drift_when_prose_mention_matches_structured_deps`
-    - `drift_when_prose_mention_missing_from_structured_deps`
-    - `structured_dep_not_in_prose_is_not_flagged` (structured-is-authoritative)
-    - `empty_backlog_yields_empty_report`
-    - `prose_string_that_is_not_an_actual_id_is_not_flagged`
-    - `self_mention_is_not_drift`
-    - `multiple_prose_mentions_all_reported_in_sorted_order`
-    - `substring_match_does_not_count_without_word_boundaries`
-      (`foobar` and `foo-bar-baz` do not match id `foo`)
-    - `id_inside_backticks_is_matched`
-      (markdown code-span boundaries admit the match)
-    - `task_with_no_description_does_not_panic` (byte-scanner bounds check)
-    - `run_lint_dependencies_emits_yaml_for_populated_backlog` (I/O path)
-
-    Full workspace test run: 504 tests pass (493 → 504, no regressions).
-    `every_file_under_defaults_is_registered_in_embedded_files` still green
-    since the triage.md edit is an in-place update, not a new file.
-
-    ## End-to-end verification
-
-    Against real `LLM_STATE/core` backlog:
-
-    ```
-    $ ravel-lite state backlog lint-dependencies LLM_STATE/core
-    drifts: []
-    ```
-
-    Against a synthetic backlog with a seeded drift (`bar` mentions `foo`
-    in prose but has no structured dep):
-
-    ```yaml
-    drifts:
-    - task_id: bar
-      prose_mentioned:
-      - foo
-      structured_deps: []
-      missing:
-      - foo
-    ```
-
-    Both YAML and JSON formats exercised; `--help` text is correct.
-
-    ## Design choices worth carrying forward
-
-    - **Detection as a pure function.** `lint_dependencies(&BacklogFile)`
-      operates on a parsed struct and returns a report. The runner wraps
-      I/O. This mirrors the `task_matches` predicate pattern in `verbs.rs`
-      and keeps unit tests tempdir-free for the core logic.
-    - **Byte-scan word-boundary match, not regex.** Slugs are ASCII-only;
-      a 14-line byte loop is simpler than a regex compile and avoids any
-      regex-escape concern. UTF-8 safety falls out automatically — all
-      continuation bytes are ≥ 0x80, which is outside the slug alphabet,
-      so they naturally act as boundaries without special-casing.
-    - **Deterministic output ordering.** `BTreeSet` for mention
-      collection → sorted `Vec<String>` output. Tests can compare against
-      literal slices without having to sort the result.
-
-    ## Deliberately deferred: `--fix`
-
-    The audit brief lists a `--fix` flag that would auto-add
-    prose-mentioned ids to structured deps. Shipped without it because:
-
-    1. Every unit test enumerated in the brief is a read-only detection
-       test; none exercise write-mode behaviour, and the spec wording
-       frames the verb primarily as a reporter ("detect and report").
-    2. A blind auto-apply is semantically wrong when a prose mention is a
-       reference rather than a dependency (e.g. "this supersedes `other-id`
-       but works independently"). The LLM already decides case-by-case
-       during triage; a `--fix` flag would either duplicate that judgement
-       in Rust or produce wrong edits.
-    3. The current triage prompt wording treats the report as advisory,
-       which is the correct affordance for v1. `--fix` can be added later
-       if a clear autofix semantic emerges, wrapping the existing
-       `run_set_dependencies` (cycle-check, unknown-dep-check, etc. would
-       then apply for free).
-
-    ## Suggested follow-ups
-
-    - **Measure the token win.** Compare triage prompt-in / response-out
-      over ~3 cycles before and after this change; the audit brief claimed
-      "pay token cost every cycle" but did not quantify. Data would inform
-      whether the next extraction in the cohort
-      (`repair-stale-statuses`, `inject-…-counts`) is worth the work or
-      whether the savings are smaller than expected.
-    - **`--fix` reconsidered.** If triage consistently applies every
-      reported drift to structured deps (empirical check: compare the
-      linter output against the follow-up `set-dependencies` calls in
-      session logs), then autofix becomes a safe write-mode mirror of the
-      read-only verb.
-    - **Cross-task id collisions.** A title like "Add ravel-lite CLI
-      support" produces id `add-ravel-lite-cli-support`, and any task that
-      mentions `ravel-lite` or `cli` in prose will *not* match it (correct
-      — word boundary). But a task whose id happens to coincide with a
-      common English word (e.g. a hypothetical id `add`) would match every
-      occurrence of "add". Audit id-slug generation at `allocate_id` time
-      to reject common-word collisions if this becomes a problem in
-      practice.
 - id: add-backlog-repair-stale-statuses-cli-verb
   title: Add 'backlog repair-stale-statuses' CLI verb
   category: core
@@ -287,6 +116,93 @@ tasks:
     - `count_unblocked` returns correct count when some deps satisfied
     - `received` is 0 when no tasks transitioned this cycle
     - `received` increments per transitioned task
+- id: add-backlog-render-cli-verb-for-deterministic-markdown-table-output
+  title: Add 'backlog render' CLI verb for deterministic markdown-table output
+  category: core
+  status: not_started
+  dependencies: []
+  description: |
+    Extract backlog-table rendering into a CLI verb so phase output is deterministic.
+
+    ## What
+
+    Add a CLI verb that renders `backlog.yaml` as a human-readable markdown
+    table, with stable column choices, grouping, and ordering. The verb
+    becomes the single source of truth for how the backlog is shown to the
+    user in phase output (work, triage) and anywhere else a human-facing
+    summary appears.
+
+    Proposed surface — either a new verb or an extension of the existing
+    list verb:
+
+    ```
+    ravel-lite state backlog list <PLAN_DIR> --format markdown
+    # or
+    ravel-lite state backlog render <PLAN_DIR> [--group-by category|status] [--show-deps]
+    ```
+
+    Output (markdown): one section per category (or per status, with
+    `--group-by status`); columns `id | title | status | deps`. Stable
+    row ordering: by `not_started` → `in_progress` → `blocked` → `done`,
+    then by dependency topology so that roots appear before leaves.
+
+    ## Why
+
+    The work-phase prompt currently instructs the LLM to "display a summary
+    of the current backlog". Every run re-invents the presentation:
+    column choices, whether to show dependencies inline, grouping
+    (by category vs status vs priority), whether to fold `done` tasks,
+    what to omit. Result: inconsistent UX across cycles and wasted tokens
+    rewriting the same view logic.
+
+    `ravel-lite state backlog list` already emits deterministic YAML. The
+    variability lives in the *re-presentation* step — purely mechanical
+    formatting work. Moving it to Rust removes that variability, saves
+    tokens, and gives the project one canonical backlog view that can
+    evolve under version control rather than per-run LLM taste.
+
+    This is the same family as the three other LLM-work audit extractions
+    (`lint-dependencies`, `repair-stale-statuses`, `inject-…-counts`),
+    but addresses presentation rather than computation. The principle is
+    the same: "Never do in an LLM what you can do in code".
+
+    ## Prompt changes
+
+    Update `defaults/phases/work.md` (and any other phase that currently
+    instructs the LLM to render a backlog summary — check triage and the
+    survey prompts): replace the "display a summary" instruction with a
+    one-liner directing the LLM to run the new CLI and reproduce its
+    output verbatim.
+
+    Example replacement:
+
+    > Run `ravel-lite state backlog list <PLAN_DIR> --format markdown` and
+    > emit its output directly. Do not reformat or reorder.
+
+    ## Unit tests
+
+    - Empty backlog → a minimal empty-state rendering (no panic, no empty
+      tables)
+    - Tasks across all four statuses → rows ordered `not_started` →
+      `in_progress` → `blocked` → `done`
+    - Tasks with dependency chains → roots render before leaves within
+      their status group
+    - `--group-by category` vs `--group-by status` produce the expected
+      sections
+    - Long task titles and multi-line descriptions → table cells stay
+      single-line (truncate or elide body; never break the table)
+
+    ## Notes / scope
+
+    - Column choices are a matter of taste; picking them in Rust bakes
+      them in, but they remain trivial to change in one place. Prefer a
+      small, opinionated default over a flag-heavy surface.
+    - If other phases render backlog summaries for slightly different
+      purposes, consider one verb with modes (`--mode work | triage |
+      survey`) rather than several near-duplicate verbs.
+    - Related standing memory: "Never do in an LLM what you can do in
+      code". Presentation is mechanical; this extraction fits squarely
+      within that rule.
 - id: analyse-work-better-analysis-split-commits-by-hunk-better-messages
   title: 'Analyse-work: better analysis, split commits by hunk, better messages'
   category: core
@@ -383,90 +299,3 @@ tasks:
   - write-reference-page-covering-all-user-facing-cli-verbs
   description: |
     Finishing task once tutorial (T2) and reference (T3) content is in place. Add a 'Documentation' section near the bottom of /Users/antony/Development/www.linkuistics.com/projects/ravel-lite.html with links to the new tutorial chapters and the reference page. Update /Users/antony/Development/www.linkuistics.com/SYNC.yml so the Ravel-Lite entry's site_pages list mentions the new projects/ravel-lite/*.html files and the synced_at SHA is bumped. Verify rendered output matches site brand. Depends on T2 and T3.
-- id: add-backlog-render-cli-verb-for-deterministic-markdown-table-output
-  title: Add 'backlog render' CLI verb for deterministic markdown-table output
-  category: core
-  status: not_started
-  dependencies: []
-  description: |
-    Extract backlog-table rendering into a CLI verb so phase output is deterministic.
-
-    ## What
-
-    Add a CLI verb that renders `backlog.yaml` as a human-readable markdown
-    table, with stable column choices, grouping, and ordering. The verb
-    becomes the single source of truth for how the backlog is shown to the
-    user in phase output (work, triage) and anywhere else a human-facing
-    summary appears.
-
-    Proposed surface — either a new verb or an extension of the existing
-    list verb:
-
-    ```
-    ravel-lite state backlog list <PLAN_DIR> --format markdown
-    # or
-    ravel-lite state backlog render <PLAN_DIR> [--group-by category|status] [--show-deps]
-    ```
-
-    Output (markdown): one section per category (or per status, with
-    `--group-by status`); columns `id | title | status | deps`. Stable
-    row ordering: by `not_started` → `in_progress` → `blocked` → `done`,
-    then by dependency topology so that roots appear before leaves.
-
-    ## Why
-
-    The work-phase prompt currently instructs the LLM to "display a summary
-    of the current backlog". Every run re-invents the presentation:
-    column choices, whether to show dependencies inline, grouping
-    (by category vs status vs priority), whether to fold `done` tasks,
-    what to omit. Result: inconsistent UX across cycles and wasted tokens
-    rewriting the same view logic.
-
-    `ravel-lite state backlog list` already emits deterministic YAML. The
-    variability lives in the *re-presentation* step — purely mechanical
-    formatting work. Moving it to Rust removes that variability, saves
-    tokens, and gives the project one canonical backlog view that can
-    evolve under version control rather than per-run LLM taste.
-
-    This is the same family as the three other LLM-work audit extractions
-    (`lint-dependencies`, `repair-stale-statuses`, `inject-…-counts`),
-    but addresses presentation rather than computation. The principle is
-    the same: "Never do in an LLM what you can do in code".
-
-    ## Prompt changes
-
-    Update `defaults/phases/work.md` (and any other phase that currently
-    instructs the LLM to render a backlog summary — check triage and the
-    survey prompts): replace the "display a summary" instruction with a
-    one-liner directing the LLM to run the new CLI and reproduce its
-    output verbatim.
-
-    Example replacement:
-
-    > Run `ravel-lite state backlog list <PLAN_DIR> --format markdown` and
-    > emit its output directly. Do not reformat or reorder.
-
-    ## Unit tests
-
-    - Empty backlog → a minimal empty-state rendering (no panic, no empty
-      tables)
-    - Tasks across all four statuses → rows ordered `not_started` →
-      `in_progress` → `blocked` → `done`
-    - Tasks with dependency chains → roots render before leaves within
-      their status group
-    - `--group-by category` vs `--group-by status` produce the expected
-      sections
-    - Long task titles and multi-line descriptions → table cells stay
-      single-line (truncate or elide body; never break the table)
-
-    ## Notes / scope
-
-    - Column choices are a matter of taste; picking them in Rust bakes
-      them in, but they remain trivial to change in one place. Prefer a
-      small, opinionated default over a flag-heavy surface.
-    - If other phases render backlog summaries for slightly different
-      purposes, consider one verb with modes (`--mode work | triage |
-      survey`) rather than several near-duplicate verbs.
-    - Related standing memory: "Never do in an LLM what you can do in
-      code". Presentation is mechanical; this extraction fits squarely
-      within that rule.
