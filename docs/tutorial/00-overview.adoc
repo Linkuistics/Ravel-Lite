@@ -1,0 +1,43 @@
+= Overview
+
+Ravel-Lite is an orchestration loop for LLM development cycles. You hand it a plan — a directory of YAML files describing tasks, memory, and phase — and it runs a fixed cycle of phases against that plan, spawning a coding agent as a subprocess for each one. The loop repeats until the backlog is empty or you stop it.
+
+This tutorial walks through the concepts you need to run Ravel-Lite on real work: installing the binary, creating a project, initialising a plan, and stepping through a full cycle with a worked example.
+
+== What Ravel-Lite is not
+
+Ravel-Lite is not an IDE, an LLM, or a daemon. It is a Rust CLI that shells out to https://claude.ai/code[Claude Code] or https://github.com/mariozechner/pi-coding-agent[Pi], reads their JSON stream output, renders progress in a https://ratatui.rs[Ratatui] TUI, and writes every state transition to disk as a file you can inspect or edit.
+
+== The shape of a cycle
+
+Every cycle runs the same ordered sequence of phases:
+
+----
+work → analyse-work → git-commit-work →
+reflect → git-commit-reflect → [dream trigger?] →
+dream → git-commit-dream →
+triage → git-commit-triage → [continue?] → work
+----
+
+Each phase is a separate agent invocation driven by a prompt file under `defaults/phases/`. The orchestrator spawns the agent, streams its output, and on exit records the result. The phases split cleanly into two kinds:
+
+* *Interactive phases* (just `work`) ask you to steer task selection before anything is written.
+* *Headless phases* run on their own against the phase prompt and the plan state — no conversation.
+
+The git-commit phases between reasoning phases build an audit trail: every state change the orchestrator makes lands in a commit you can diff later.
+
+== State you can read
+
+A plan lives at `<project>/LLM_STATE/<plan-name>/`. Its shape:
+
+[source,text]
+----
+LLM_STATE/<plan-name>/
+├── backlog.yaml         # tasks, status, dependencies, results
+├── memory.yaml          # distilled learnings kept across cycles
+├── session-log.yaml     # one record per completed phase
+├── latest-session.yaml  # most recent session, handed to git-commit-work
+└── phase.md             # the phase to run next
+----
+
+Everything Ravel-Lite does ends up in one of these files. Nothing is embedded in the binary, nothing lives only in an agent's head: the next chapter walks through how to inspect these files from the command line while a cycle is running.

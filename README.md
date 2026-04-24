@@ -66,6 +66,32 @@ the monorepo enforces) are not automated — the per-commit
 `commit-message.md` authored by analyse-work is the customisation
 point.
 
+## Documentation
+
+User-facing docs are authored as AsciiDoc chapters under `docs/` and
+built into HTML pages wrapped in the Linkuistics site chrome. Chapter
+order lives in `docs/manifest.txt` (one source path per line); the HTML
+shell is `docs/templates/page-shell.html`; per-project values (project
+slug, back-link, output directory) live in `docs/build-config.sh`.
+
+Prerequisites: `asciidoctor` on `PATH` (`brew install asciidoctor` on
+macOS). Build:
+
+```bash
+./scripts/build-docs.sh
+```
+
+The script flattens `tutorial/foo.adoc` and `reference/bar.adoc` into
+a single `projects/ravel-lite/tutorial-foo.html` /
+`projects/ravel-lite/reference-bar.html` layer under the configured
+`OUTPUT_DIR` — by default the sibling `www.linkuistics.com` checkout —
+and injects a prev/next chapter navigation at the bottom of each page
+based on manifest order.
+
+The template and build script are intentionally project-agnostic: to
+adopt the same pattern in another project, copy `scripts/build-docs.sh`
+and `docs/templates/` verbatim and edit only `docs/build-config.sh`.
+
 ## Releasing
 
 Versions are cut with [`cargo-release`](https://github.com/crate-ci/cargo-release):

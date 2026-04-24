@@ -4,3 +4,6 @@
 # OS
 .DS_Store
 /target
+# Playwright MCP scratch dir (created when a work phase uses the
+# browser tools to visually verify built HTML)
+.playwright-mcp/

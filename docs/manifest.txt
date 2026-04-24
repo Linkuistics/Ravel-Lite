@@ -1,0 +1,6 @@
+# Ordered list of chapters. One source path per line (relative to docs/).
+# Order controls the prev/next navigation that gets injected at the
+# bottom of each rendered page. Blank lines and lines starting with `#`
+# are ignored.
+
+tutorial/00-overview.adoc
