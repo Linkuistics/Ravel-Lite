@@ -671,3 +671,14 @@ sessions:
     - **What didn't work (fixed mid-flight):** Bash 5.2+ back-reference bug: a leading `&` in the replacement side of `${var//pat/repl}` is replaced by the matched pattern, corrupting HTML entities (e.g., `&lt;` → `<project>/...`). Fixed with an `esc()` helper that escapes `&` → `\&` before every substitution. Also: `mkdir -p` added for the output subdir; initial version hard-failed if it didn't exist.
     - **What this suggests next:** T2 (tutorial) and T3 (reference) are unblocked — add .adoc files under docs/tutorial/ and docs/reference/, append to docs/manifest.txt, rerun ./scripts/build-docs.sh. T4 (Homebrew formula) can proceed in parallel. T6 (publish hub) should cite build-docs.sh when bumping synced_at SHA.
     - **Key learnings:** The `esc()` pattern (escape `&` before every bash string substitution) is a mandatory invariant for this pipeline; the comment block above the calls in build-docs.sh documents it. docs/reference/ is intentionally empty — git ignores empty dirs, T3 will populate it.
+- id: session-44
+  timestamp: 2026-04-24T08:42:19Z
+  phase: work
+  body: |
+    ### Session 44 (2026-04-24T08:42:19Z) — Add set-dependencies verb; backfill plan deps; extend triage
+
+    - **What was attempted:** All three parts of the `add-set-dependencies-verb-backfill-deps-on-existing-tasks-teach-triage-to-maintain-the-field` task.
+    - **What worked:** Part 1 (verb + tests): `run_set_dependencies` in `src/state/backlog/verbs.rs` with self-reference rejection, unknown-id validation, and DFS cycle detection. Six unit tests plus one CLI integration test covering the `--deps ""` clearing edge case (clap returns `[""]` not `[]`; normalised at dispatch boundary in `src/main.rs`). Part 2 (backfill): set deps on `integrate-testanyware-vm-…` and `publish-new-docs-…`; T1-only deps skipped (T1 already done and removed from backlog — verb correctly refuses unknown ids). Part 3 (triage.md): three-sentence block added inside step 2 of Local triage, pointing at `set-dependencies` and `--deps ""`. All 554 tests pass; clippy clean.
+    - **What didn't work:** One false start: `--deps ""` was expected to parse to an empty vec but clap hands back `[""]`. Fix: filter empty strings at the dispatch boundary rather than in the library, keeping library contract clean.
+    - **What this suggests next:** The `--ready` filter is now trustworthy for this plan. `write-user-guide-…`, `write-reference-page-…`, and `add-ravel-lite-rb-homebrew-formula-…` surface as ready; `integrate-testanyware-vm-…` and `publish-new-docs-…` correctly wait on their deps.
+    - **Key learnings:** The `value_delimiter = ','` + empty-string asymmetry is a clap-specific gotcha that unit tests can't surface (they receive `&[String]` directly) — only the CLI integration test caught it. Normalising at the dispatch layer is the right boundary; the library function should not know about clap's quoting behaviour.

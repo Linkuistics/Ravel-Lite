@@ -24,20 +24,23 @@ tasks:
   title: Integrate TestAnyware VM for capturing interactive ravel-lite commands
   category: infra
   status: not_started
-  dependencies: []
+  dependencies:
+  - add-ravel-lite-rb-homebrew-formula-to-linkuistics-homebrew-taps
   description: |
     Dogfood TestAnyware as the driver for running ravel-lite's interactive commands (create, run) inside a VM so tutorial sections can include real transcripts and — optionally — screenshots without requiring the user to manually drive their own terminal. Scope: (a) start a TestAnyware macOS VM with ravel-lite installed via the brew formula (T4); (b) drive 'ravel-lite create' and 'ravel-lite run' via TestAnyware's VNC + agent (input injection, screen capture, agent exec); (c) capture state files on the VM, extract them to the host, and include them as evidence in the tutorial chapters; (d) optional: capture PNG screenshots of the TUI for the tutorial. Supports T2; depends on T1 (pipeline) and T4 (brew formula) for a clean 'brew install' inside the VM. Scope carefully — this can become a rabbit hole; if VM-driven capture proves too costly, fall back to user-driven capture as originally planned.
 - id: publish-new-docs-update-projects-ravel-lite-html-hub-and-sync-yml
   title: 'Publish new docs: update projects/ravel-lite.html hub and SYNC.yml'
   category: docs
   status: not_started
-  dependencies: []
+  dependencies:
+  - write-user-guide-covering-install-update-init-config-projects-plans-and-running
+  - write-reference-page-covering-all-user-facing-cli-verbs
   description: |
     Finishing task once tutorial (T2) and reference (T3) content is in place. Add a 'Documentation' section near the bottom of /Users/antony/Development/www.linkuistics.com/projects/ravel-lite.html with links to the new tutorial chapters and the reference page. Update /Users/antony/Development/www.linkuistics.com/SYNC.yml so the Ravel-Lite entry's site_pages list mentions the new projects/ravel-lite/*.html files and the synced_at SHA is bumped. Verify rendered output matches site brand. Depends on T2 and T3.
 - id: add-set-dependencies-verb-backfill-deps-on-existing-tasks-teach-triage-to-maintain-the-field
   title: Add set-dependencies verb; backfill deps on existing tasks; teach triage to maintain the field
   category: infra
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Backlog tasks currently have an empty `dependencies: []` field even when the description prose encodes a real dependency (e.g. T3 says "Depends on T1" but the YAML field is empty). This matters for two reasons: (a) the `--ready` filter on `ravel-lite state backlog list` relies on the `dependencies` field, so with empty deps it will happily surface T3 as "ready" even when T1 hasn't landed; (b) downstream tooling (ordering heuristics, cross-plan propagation) has no machine-readable graph to work from.
@@ -57,3 +60,182 @@ tasks:
     3. **Extend the triage phase.** `defaults/phases/triage.md` currently does not instruct the agent to maintain the `dependencies` field. Add an instruction block: when triage adjusts the backlog (adds, renames, promotes from handoffs, or reads prose that names another task), it should keep the structured `dependencies` field in sync with the narrative. Specifically: when a new task's description says "depends on X" / "blocked by X" / "requires X", the triage agent must also pass `--dependencies X` at add time; when retitling or reshuffling, re-read the affected descriptions and call the new `set-dependencies` verb if the prose and field disagree. Keep the instruction surgical — a few sentences pointing at the verb and the invariant, not a new section.
 
     Done when: verb exists with tests green, the six tasks above show correct `dependencies` arrays in `backlog list`, and triage.md mentions the invariant and points at `set-dependencies`.
+  results: |
+    ## What was done
+
+    Shipped all three parts of the scope.
+
+    ### Part 1 — `set-dependencies` CLI verb
+
+    - New handler `run_set_dependencies` in `src/state/backlog/verbs.rs`
+      validates the target task id, rejects self-reference, validates every
+      proposed dep id exists, and runs a cycle check. Cycle detection is a
+      DFS helper `dependency_path_exists` that asks "does the current graph
+      already have a path `d → … → id`?" — if yes, adding `id → d` would
+      close a cycle.
+    - Exported from `state::backlog::mod.rs`; wired into main.rs as
+      `BacklogCommands::SetDependencies { plan_dir, id, deps }`.
+    - CLI shape: `ravel-lite state backlog set-dependencies <plan> <id> --deps <csv>`.
+    - Empty-string CSV quirk: clap parses `--deps ""` as a single-element
+      vec `[""]`, not `[]`. I normalise at the dispatch boundary (`filter
+      |d| !d.is_empty()`) so the documented clearing form works, and the
+      library API stays clean.
+
+    #### Tests added
+
+    **Unit tests (`src/state/backlog/verbs.rs`):**
+
+    - `run_set_dependencies_replaces_the_dependency_list` — happy path (swap
+      bar's deps from `[foo]` to `[qux]`)
+    - `run_set_dependencies_clears_when_empty_slice_is_passed` — empty
+      slice clears
+    - `run_set_dependencies_errors_on_unknown_task_id`
+    - `run_set_dependencies_errors_on_unknown_dependency_id`
+    - `run_set_dependencies_rejects_self_reference`
+    - `run_set_dependencies_rejects_cycles` — also asserts the bad write
+      does not get persisted (error surfaces before write_backlog).
+
+    **CLI integration test (`tests/state_backlog.rs`):**
+
+    - `set_dependencies_round_trips_through_cli` — set deps via CLI, show
+      reflects them; `--deps ""` clears them; show confirms `dependencies: []`.
+
+    All 554 tests pass; `cargo clippy -p ravel-lite --all-targets
+    -- -D warnings` is clean.
+
+    ### Part 2 — backfill LLM_STATE/core deps
+
+    Applied the backfill per the task spec, with one spec-vs-reality
+    adjustment: T1 (doc build pipeline) already shipped earlier (commit
+    `22f0b76`) and was removed from the backlog at that triage. So
+    dependencies-on-T1 are unrepresentable — the verb correctly refuses
+    unknown-id deps, and a dep on a done-and-removed task would be
+    meaningless anyway (the dep can already be considered satisfied).
+
+    Backfills actually written:
+
+    - `integrate-testanyware-vm-for-capturing-interactive-ravel-lite-commands`
+      → `[add-ravel-lite-rb-homebrew-formula-to-linkuistics-homebrew-taps]`
+      (T1 portion dropped — done)
+    - `publish-new-docs-update-projects-ravel-lite-html-hub-and-sync-yml`
+      → `[write-user-guide-..., write-reference-page-...]`
+
+    Skipped (dep was on T1, which is done):
+
+    - `write-reference-page-covering-all-user-facing-cli-verbs` (would
+      depend on T1 only)
+    - `write-user-guide-covering-install-...` (would depend on T1 only)
+
+    Verified: `./target/debug/ravel-lite state backlog list LLM_STATE/core
+    --ready` now excludes `integrate-testanyware-vm-...` and
+    `publish-new-docs-...` (whereas before they were incorrectly surfaced
+    as ready), while still surfacing tutorial, reference, brew-formula,
+    and the set-dependencies task itself.
+
+    ### Part 3 — extend triage.md
+
+    Added a surgical three-sentence block inside step 2 of `Local triage`,
+    right where `add --dependencies` is already mentioned:
+
+    - Names the invariant (structured field must match the prose).
+    - Points at `set-dependencies` for post-hoc reconciliation.
+    - Documents `--deps ""` as the clearing form.
+
+    Kept it inline rather than as a new section — matches the "surgical,
+    a few sentences" instruction in the task brief.
+
+    ## What worked
+
+    - TDD loop was tight: six unit tests → six minimal implementation
+      lines of novel logic (the verb body) → all green in one compile.
+    - Mirroring `run_add`'s dep-validation shape kept the new verb
+      familiar; the only novel code is the cycle-check DFS.
+    - The CLI integration test caught the `value_delimiter = ','` +
+      `""` asymmetry that the unit test would never have surfaced,
+      because the unit test accepts an already-parsed `&[String]`.
+
+    ## What didn't
+
+    - One false start on the integration test: expected `--deps ""` to
+      naturally parse to an empty vec; clap instead hands back
+      `[""]`. Fixed by normalising at the dispatch boundary rather than
+      in the library function — keeps the library contract tight.
+
+    ## What this suggests next
+
+    - The `--ready` filter is now trustworthy against this plan. When
+      picking the next work-phase task, `tutorial`, `reference`,
+      `brew-formula`, and `testanyware-vm` (once brew ships) are all
+      ready; `publish-docs` correctly waits on tutorial + reference.
+    - Triage will now keep the invariant fresh as the backlog evolves.
+      No more drift between prose dependencies and the structured field.
+    - Consider: if a future task ever needs to express a dependency on
+      a *completed-and-removed* task, that is a signal the completed
+      task has follow-up work and should probably be represented in
+      memory or as a new task, rather than as a zombie dep edge.
+- id: audit-llm-work-for-extractable-deterministic-cli-helpers-rust-datalog
+  title: Audit LLM work for extractable deterministic CLI helpers (Rust/Datalog)
+  category: infra
+  status: not_started
+  dependencies: []
+  description: |
+    We have already abstracted plan-state interaction out of the LLM and
+    into the `ravel-lite state …` CLI (backlog, memory, session-log,
+    phase, related-components). The win was real: less context burned per
+    turn, less non-determinism, more auditability, and a codified
+    standing memory — "mechanical ops belong in Rust, not in the LLM".
+
+    Push the same principle across the remaining prompt surface. The LLM
+    still performs a lot of work inside `defaults/phases/*.md` and
+    `defaults/agents/**` that is mechanical, pattern-matchable, or
+    expressible as a deterministic query — counting, diffing, selecting,
+    extracting hand-off markers, reasoning over dependency graphs,
+    selecting cross-plan propagation targets, word/token accounting for
+    dream, etc. Each such sub-task spent in the LLM is context and cost
+    paid for work a CLI could do faster, cheaper, and the same way every
+    time. Goal of this audit: reduce context (hence cost), improve output
+    quality, and push as much behaviour as possible into the deterministic
+    tier.
+
+    Scope — three parts:
+
+    1. **Enumerate.** Read every prompt under `defaults/phases/` and
+       `defaults/agents/`, plus the Rust code that assembles prompt
+       inputs. For each prompt, list the distinct sub-tasks the LLM is
+       being asked to do, and mark each as either (a) genuine judgement
+       ("is this memory entry redundant?", "is this learning worth
+       promoting?") or (b) mechanical/queryable ("count tasks by status",
+       "find tasks whose description names another task id", "list memory
+       entries not referenced by any task", "compute the transitive
+       closure of task dependencies", "detect `[HANDOFF]` markers in
+       Results blocks").
+
+    2. **Propose CLI extractions.** For each mechanical sub-task, propose
+       a deterministic replacement — a `ravel-lite query …` verb (or
+       similar) with typed, composable YAML/JSON output. Where the
+       natural shape is relational (graph reachability, joins across
+       backlog / memory / session-log / related-components), consider a
+       Datalog evaluator (e.g. `ascent`, `crepe`) as the engine; the LLM
+       would then call or write a query expression rather than do the
+       selection by hand. For each candidate, note which prompt section
+       shrinks and roughly by how much context.
+
+    3. **Rank.** Produce a prioritised list of extractable helpers,
+       scored by (expected tokens/context saved per cycle) × (expected
+       quality gain from determinism). Each row: (a) current prompt
+       section it replaces, (b) proposed verb / query shape, (c)
+       input + output types, (d) rough context savings, (e) risk notes
+       (what judgement-call, if any, the extraction would wrongly
+       automate away).
+
+    Deliverable: a single brief at `docs/analysis/llm-work-audit.adoc`
+    (or `.md`) containing the audit, the ranked candidates, and — for
+    the top 1–3 — concrete proposed CLI shapes. Implementation of any
+    extraction is **out of scope** for this task; each top-ranked
+    candidate is promotable to its own backlog task (triage will do so
+    when the audit lands).
+
+    Reference: the standing memory "Never do in an LLM what you can do in
+    code" (Claude-Code auto-memory
+    `feedback_mechanical_ops_in_runner.md`). This task operationalises
+    that principle across the full prompt surface, not just the runner.
