@@ -1,347 +1,109 @@
 tasks:
-- id: add-backlog-render-cli-verb-for-deterministic-markdown-table-output
-  title: Add 'backlog render' CLI verb for deterministic markdown-table output
+- id: wire-orchestrator-baseline-capture-for-reflect-dream-triage-phases
+  title: Wire orchestrator baseline capture for reflect/dream/triage phases
   category: core
-  status: done
+  status: not_started
   dependencies: []
   description: |
-    Extract backlog-table rendering into a CLI verb so phase output is deterministic.
+    Wire orchestrator baseline capture for reflect, dream, and triage phases so `state phase-summary render` can be called with a meaningful `--baseline` SHA.
 
     ## What
 
-    Add a CLI verb that renders `backlog.yaml` as a human-readable markdown
-    table, with stable column choices, grouping, and ordering. The verb
-    becomes the single source of truth for how the backlog is shown to the
-    user in phase output (work, triage) and anywhere else a human-facing
-    summary appears.
+    Today the orchestrator writes `work-baseline` (used by analyse-work) and `dream-baseline` (for compaction-trigger tracking). There is no `reflect-baseline` or `triage-baseline`. Each `git-commit-<phase>` script phase should write `<next-phase>-baseline` with the HEAD SHA it just committed, so the following LLM phase can call:
 
-    Proposed surface — either a new verb or an extension of the existing
-    list verb:
+        ravel-lite state phase-summary render {{PLAN}} --phase <phase> --baseline $(cat {{PLAN}}/<phase>-baseline)
 
-    ```
-    ravel-lite state backlog list <PLAN_DIR> --format markdown
-    # or
-    ravel-lite state backlog render <PLAN_DIR> [--group-by category|status] [--show-deps]
-    ```
+    and emit the result verbatim instead of re-transcribing its own edits.
 
-    Output (markdown): one section per category (or per status, with
-    `--group-by status`); columns `id | title | status | deps`. Stable
-    row ordering: by `not_started` → `in_progress` → `blocked` → `done`,
-    then by dependency topology so that roots appear before leaves.
+    ## Settled design
 
-    ## Why
+    - Pattern: each `git-commit-<phase>` script already runs `git_save_work_baseline` at the tail end; add analogous `write_baseline(plan_dir, "<next-phase>-baseline", new_head_sha)` calls in:
+      - `git-commit-work` → writes `triage-baseline`
+      - `git-commit-triage` → writes `reflect-baseline`
+      - `git-commit-reflect` → writes `dream-baseline` (already exists — just check it matches the pattern)
+      - `git-commit-dream` → writes `work-baseline` (already exists as `git_save_work_baseline`)
+    - File format: plain text, one SHA, no trailing newline, same as `work-baseline` today.
+    - `src/git.rs` already has `git_save_work_baseline`; generalise to `git_save_baseline(plan_dir, filename, sha)` or duplicate the tiny function — up to implementer.
 
-    The work-phase prompt currently instructs the LLM to "display a summary
-    of the current backlog". Every run re-invents the presentation:
-    column choices, whether to show dependencies inline, grouping
-    (by category vs status vs priority), whether to fold `done` tasks,
-    what to omit. Result: inconsistent UX across cycles and wasted tokens
-    rewriting the same view logic.
+    ## Reference examples
 
-    `ravel-lite state backlog list` already emits deterministic YAML. The
-    variability lives in the *re-presentation* step — purely mechanical
-    formatting work. Moving it to Rust removes that variability, saves
-    tokens, and gives the project one canonical backlog view that can
-    evolve under version control rather than per-run LLM taste.
+    - `src/git.rs`: `git_save_work_baseline` (current baseline-write pattern, ~5 lines)
+    - `scripts/git-commit-work` (or wherever `git_save_work_baseline` is called)
+    - `LLM_STATE/core/work-baseline` (file format)
+    - Phase-summary task results: "Wire orchestrator baselines for reflect/dream/triage" section
 
-    This is the same family as the three other LLM-work audit extractions
-    (`lint-dependencies`, `repair-stale-statuses`, `inject-…-counts`),
-    but addresses presentation rather than computation. The principle is
-    the same: "Never do in an LLM what you can do in code".
+    ## Dependencies
 
-    ## Prompt changes
+    None blocking. Should land before the prompt-update task below, though prompt updates can work with `--baseline ""` (first-cycle-safe) while this is pending.
 
-    Update `defaults/phases/work.md` (and any other phase that currently
-    instructs the LLM to render a backlog summary — check triage and the
-    survey prompts): replace the "display a summary" instruction with a
-    one-liner directing the LLM to run the new CLI and reproduce its
-    output verbatim.
+    ## Next task after this one
 
-    Example replacement:
-
-    > Run `ravel-lite state backlog list <PLAN_DIR> --format markdown` and
-    > emit its output directly. Do not reformat or reorder.
-
-    ## Unit tests
-
-    - Empty backlog → a minimal empty-state rendering (no panic, no empty
-      tables)
-    - Tasks across all four statuses → rows ordered `not_started` →
-      `in_progress` → `blocked` → `done`
-    - Tasks with dependency chains → roots render before leaves within
-      their status group
-    - `--group-by category` vs `--group-by status` produce the expected
-      sections
-    - Long task titles and multi-line descriptions → table cells stay
-      single-line (truncate or elide body; never break the table)
-
-    ## Notes / scope
-
-    - Column choices are a matter of taste; picking them in Rust bakes
-      them in, but they remain trivial to change in one place. Prefer a
-      small, opinionated default over a flag-heavy surface.
-    - If other phases render backlog summaries for slightly different
-      purposes, consider one verb with modes (`--mode work | triage |
-      survey`) rather than several near-duplicate verbs.
-    - Related standing memory: "Never do in an LLM what you can do in
-      code". Presentation is mechanical; this extraction fits squarely
-      within that rule.
-  results: |
-    Added `state backlog list --format markdown` as the canonical human-readable backlog view. Moved the "render a summary" step out of `work.md` entirely.
-
-    ## Shape delivered
-
-    - New module `src/state/backlog/render.rs` with `render_markdown(&BacklogFile, GroupBy) -> String` and `GroupBy::{Category, Status}`.
-    - Extended `OutputFormat` with a `Markdown` variant; added `"markdown"` to `OutputFormat::parse`; updated the main.rs error message to mention the new option.
-    - New `--group-by <category|status>` flag on `state backlog list`, default `category`.
-    - Deterministic row ordering: within each section, tasks sort by `(status_rank, dependency_depth, insertion_order)`. Status rank is pinned `not_started → in_progress → blocked → done`. Depth is computed via an iterative Kahn-style pass so cycles (which `set-dependencies` forbids but a hand-edit could still introduce) sort to the end at `usize::MAX` instead of looping the algorithm.
-    - Fixed four columns: `id | title | status | deps`. Long titles stay single-line via `|` escaping and newline→space collapse. Empty dep lists render as `—`; non-empty lists comma-join in declared order.
-    - Empty backlog renders a minimal `_(no tasks)_\n` rather than emitting an empty-table skeleton.
-    - Updated `defaults/phases/work.md` step 1 to run `ravel-lite state backlog list {{PLAN}} --format markdown` and emit its output verbatim.
-
-    ## Verification
-
-    - **9 unit tests** in `src/state/backlog/render.rs` cover: empty backlog, status-section ordering, within-group status-rank sorting, topology-depth ordering (roots before leaves), per-category alphabetical section ordering, em-dash-for-no-deps and comma-list-for-multi-deps, pipe/newline escaping that preserves table structure, cycle graceful handling, and `GroupBy::parse` rejection of unknown values.
-    - **2 unit tests** in `src/state/backlog/verbs.rs`: `run_list_with_markdown_format_does_not_error` and `run_show_rejects_markdown_format_with_clear_error`.
-    - **2 CLI-level integration tests** in `tests/state_backlog.rs`: `list_format_markdown_emits_deterministic_table_grouped_by_category` (end-to-end markdown render via the binary) and `list_format_markdown_with_invalid_group_by_rejects`.
-    - Full library suite: 564 tests, all green.
-    - CLI smoke: ran both `--format markdown` (default category grouping) and `--format markdown --group-by status` against `LLM_STATE/core`. Category output showed `core`→`docs`→`infra` alphabetically, with the completed Task 3 sorting last inside `core`. Status output grouped correctly with `publish-new-docs` (deps on two others) sorting after its roots within the `not_started` section.
-    - Invalid format smoke: `--format xml` errored with the updated message `invalid --format value "xml"; expected \`yaml\`, \`json\`, or \`markdown\``.
-
-    ## Design notes
-
-    - **Exhaustive match enforcement.** Rather than hiding the new `Markdown` variant with a catch-all `_`, I added explicit `Markdown` arms in `emit` (verbs.rs), `run_lint_dependencies`, and `run_repair_stale_statuses` that `bail!` with verb-specific messages. That preserves exhaustiveness checking so any future `OutputFormat` addition is caught at compile time.
-    - **Gate at dispatch, not at parse.** `OutputFormat::parse` accepts `"markdown"` globally, but the non-list verbs return a clean error if someone passes it. This keeps the format surface uniform while preserving clear failure modes — chose this over introducing a second enum (`ListFormat`) because the duplication pressure outweighed the slight loss of type-level narrowness.
-    - **Cycle tolerance.** The topology algorithm uses iterative relaxation: each pass assigns depth to every task whose in-subset deps are already depth-assigned; loop terminates when no progress is made; any remaining tasks are cycle participants and get `usize::MAX` so they sort to the end. This matches the project's "no unwrap, degrade gracefully" pattern.
-
-    ## What this suggests next
-
-    The same shape — deterministic Rust-backed rendering — could be applied to other phase outputs. The companion backlog task `add-phase-summary-render-cli-verb-for-deterministic-triage-reflect-summaries` is the obvious next candidate (I'm picking it up in this same session).
-
-    Two smaller related wins to consider later:
-    - **Triage prompt.** Currently does not emit a backlog summary, but the triage LLM sometimes re-summarises for its own reasoning preamble. A conventional "we have a canonical renderer, use it" note could redirect that.
-    - **Status rank as a library primitive.** `status_rank` is private to `render.rs`; if future callers (survey ranking, etc.) need a canonical ordering, promote it to `schema.rs` as `Status::rank() -> u8`. Not worth extracting speculatively — wait for the second caller.
-- id: add-phase-summary-render-cli-verb-for-deterministic-triage-reflect-summaries
-  title: Add phase-summary render CLI verb for deterministic triage/reflect/dream summaries
+    Update triage/reflect/dream `## Output format` prompt blocks to invoke `state phase-summary render` verbatim (subsumes `triage-should-not-emit-the-no-dispatch-label-in-its-output`).
+- id: update-triage-reflect-dream-prompts-to-invoke-state-phase-summary-render
+  title: Update triage/reflect/dream prompts to invoke state phase-summary render
   category: core
-  status: done
-  dependencies: []
+  status: not_started
+  dependencies:
+  - wire-orchestrator-baseline-capture-for-reflect-dream-triage-phases
   description: |
-    Add `state phase-summary render` CLI verb for deterministic phase operation summaries, covering **triage, reflect, and dream**.
+    Replace the `## Output format` blocks in triage, reflect, and dream prompts with a single directive to run `state phase-summary render` and emit its output verbatim.
 
     ## What
 
-    Add a CLI verb that renders the operation-summary block emitted at the end of the **triage**, **reflect**, and **dream** phases deterministically, from the ground truth of what actually happened — not from what the LLM remembers doing.
+    Each of `defaults/phases/triage.md`, `defaults/phases/reflect.md`, and `defaults/phases/dream.md` currently contains an `## Output format` block instructing the LLM to transcribe its own edits into labelled summary lines. This is mechanical re-transcription — precisely the anti-pattern that `state phase-summary render` was built to replace.
 
-    Proposed surface:
+    Replacement text (exact wording, adjust `{{PLAN}}` template vars):
 
-    ```
-    ravel-lite state phase-summary render <PLAN_DIR> --phase triage|reflect|dream
-        [--baseline <sha>]   # git sha holding the phase-start snapshot
-        [--format text|yaml]
-    ```
+        After your narrative preamble, run:
 
-    The verb computes the difference between the baseline snapshot of `backlog.yaml` / `memory.yaml` (captured at phase start) and the current working-tree state, then emits the labelled lines the phase prompts currently ask the LLM to produce.
+            ravel-lite state phase-summary render {{PLAN}} --phase <phase> \
+                --baseline $(cat {{PLAN}}/<phase>-baseline 2>/dev/null || echo "")
 
-    Triage:
+        and emit its output verbatim. Do not add, remove, or reorder lines.
 
-    ```
-    [DONE] <task title> — …
-    [NEW] <task title> — …
-    [PROMOTED] <hand-off title> — from <completed task title>
-    [ARCHIVED] <hand-off title> — to memory, from <completed task title>
-    [BLOCKER] <task title> — extracted from <parent task>
-    [REPRIORITISED] <task title> — <old → new>
-    [OBSOLETE] <task title> — <why no longer relevant>
-    [DISPATCH] <kind>: <target path> — <summary>
-    ```
+    ## Settled design
 
-    Reflect:
+    - The `--baseline ""` fallback (via `|| echo ""`) is first-cycle-safe: phase-summary render treats empty baseline as "no prior state" and reports only additions.
+    - Intent-required labels (`[PROMOTED]`, `[IMPRECISE]`, `[OVERLAPPING]`, etc.) are deliberately NOT emitted by the CLI; the LLM's narrative preamble (which every phase prompt already preserves) is the right home for those. The replacement does not change the preamble instructions.
+    - Subsumes the sibling task `triage-should-not-emit-the-no-dispatch-label-in-its-output` — once the `## Output format` block is replaced, `[NO DISPATCH]` simply won't appear.
 
-    ```
-    [NEW] <heading> — <body one-liner>
-    [IMPRECISE] <heading> — <body one-liner>
-    [STALE] <heading> — <body one-liner>
-    [OBSOLETE] <heading> — <body one-liner>
-    ```
+    ## Reference examples
 
-    Dream (two-line entries with `→` continuation, see `src/format.rs:238-241` for the existing renderer handling):
+    - `defaults/phases/triage.md`: locate the `## Output format` block (approx lines 120–137 per the task brief)
+    - `defaults/phases/reflect.md`: locate `## Output format` (approx lines 58–71)
+    - `defaults/phases/dream.md`: locate `## Output format` (approx lines 47–67)
+    - `defaults/phases/work.md` step 1: the already-landed pattern for backlog render — mirrors exactly what this task does for phase-summary
 
-    ```
-    [OVERLAPPING] <heading A> + <heading B>
-               → <result heading>
-    [VERBOSE] <heading> — <what was wordy>
-           → <how it's now tightened>
-    [AWKWARD] <heading> — <old phrasing>
-           → <new phrasing>
-    [STATS] <before word count>
-         → <after word count>
-    ```
+    ## Dependencies
 
-    For labels where the reason is ambient (REPRIORITISED, NEW, OBSOLETE, STATS), derive it from the diff itself (before/after position; new id; deleted id; word count). For labels that carry intent the diff can't recover (`[PROMOTED]` vs just `[NEW]`, `[BLOCKER]` vs `[NEW]`, `[IMPRECISE]` vs `[STALE]`, `[OVERLAPPING]` vs `[AWKWARD]`), the LLM still has to tag the operation — see "Intent tagging" below.
-
-    ## Why
-
-    Three adjacent phase prompts (`triage.md` §output-format, `reflect.md` §output-format, `dream.md` §output-format) each contain explicit label lists the LLM is asked to produce after finishing its work. These are pure re-presentations of mutations that the state CLIs already recorded — the LLM is essentially re-transcribing its own tool calls. This costs tokens every run, varies slightly across cycles, and duplicates information the filesystem already holds.
-
-    Exactly the same pattern as task `add-backlog-render-cli-verb-for-deterministic-markdown-table-output`: presentation variability extracted to a canonical Rust renderer. Also subsumes `triage-should-not-emit-the-no-dispatch-label-in-its-output` — the `[NO DISPATCH]` sentinel goes away naturally when a renderer simply emits nothing for an empty dispatch list.
-
-    ## LLM reasoning preamble is preserved
-
-    The LLM's narrative preamble ("what I noticed, what trade-offs drove the mutations") is an intentional feature of reflect/dream/triage output and MUST flow through unchanged when this extraction lands. The renderer replaces only the mechanical label list; the LLM still prints whatever reasoning it wants above the list. See memory entry "LLM reasoning preamble in reflect/dream/triage is a preserved feature" for the durable constraint.
-
-    Prompt wording in all three phases should be updated to explicitly permit a preamble (see companion task `filter-rogue-hr-and-allow-reasoning-preamble-in-headless-phase-output`). This task assumes that change has landed, so the prompt instruction becomes:
-
-    > "After your reasoning preamble, run `ravel-lite state phase-summary render {{PLAN}} --phase <phase>` and emit its output verbatim. Do not author the label list yourself."
-
-    ## Intent tagging
-
-    Some labels carry intent that a pure structural diff can't recover:
-
-    - `[PROMOTED]` / `[ARCHIVED]` vs plain `[NEW]` (triage)
-    - `[BLOCKER]` extracted from a parent task vs plain `[NEW]`
-    - `[IMPRECISE]` vs `[STALE]` for a memory body update
-    - `[OVERLAPPING]` vs `[AWKWARD]` vs `[VERBOSE]` for dream rewrites
-
-    Options:
-
-    1. Add an optional `--intent <label>` flag to the mutating verbs (`state backlog add --intent promoted`, `state memory set-body --intent imprecise`) that annotates the transition in a sidecar `ops.log.yaml` the renderer consumes. Falls back to structural labels when unset.
-    2. Keep intent tagging out of Rust entirely: the renderer emits only labels recoverable from the diff (`[NEW]`, `[OBSOLETE]`, `[REPRIORITISED]`, `[STALE]`, `[STATS]`), and the phase prompts no longer ask for the richer labels at all. Simpler, but loses the promoted/archived/overlapping distinctions.
-
-    Pick (1) if the richer labels are actually consumed anywhere; pick (2) if they exist only for human readability of the phase output.
-
-    ## Prompt changes
-
-    - `defaults/phases/triage.md`: delete the `## Output format` block (lines ~120-137). Replace with the preamble-plus-render directive above.
-    - `defaults/phases/reflect.md`: same treatment for the `## Output format` block (lines ~58-71).
-    - `defaults/phases/dream.md`: same treatment for the `## Output format` block (lines ~47-67).
-
-    ## Unit tests
-
-    - Triage with only `[NEW]` additions → emits one `[NEW]` line per added task, in topological/priority order, nothing else.
-    - Triage with a reorder → emits `[REPRIORITISED]` with `<old index → new index>` or equivalent stable ordinal representation.
-    - Triage with zero mutations → emits nothing (no `[NO DISPATCH]`, no "no changes" line — silence is the answer).
-    - Reflect with a memory body update → emits `[STALE]` (default for body-only changes) unless `--intent imprecise` was passed.
-    - Dream with a word-count reduction → emits `[STATS] <before> → <after>`.
-    - Dream with two merged entries → emits `[OVERLAPPING] A + B → C` (requires intent tagging or falls back to `[NEW] C` + `[OBSOLETE] A` + `[OBSOLETE] B`).
-    - Empty baseline vs non-empty current → handled without panic (first-cycle case).
-
-    ## Related tasks
-
-    - Task `add-backlog-render-cli-verb-for-deterministic-markdown-table-output` — sibling extraction for backlog-table rendering. Same philosophy, different surface.
-    - Task `triage-should-not-emit-the-no-dispatch-label-in-its-output` — subsumed by this task. Close with a cross-reference if this one lands first.
-    - Task `filter-rogue-hr-and-allow-reasoning-preamble-in-headless-phase-output` — must land first so the prompt already permits a preamble when this extraction removes the label-authoring instructions.
-    - Standing memory: "Never do in an LLM what you can do in code".
-    - Standing memory: "LLM reasoning preamble in reflect/dream/triage is a preserved feature".
-  results: |
-    Added `state phase-summary render --phase <triage|reflect|dream> --baseline <sha>` as a deterministic renderer for the labelled summary lines that triage/reflect/dream currently ask the LLM to author. Structural labels only; intent tagging and orchestrator baseline wiring deliberately deferred (rationale below).
-
-    ## Shape delivered
-
-    - New module `src/phase_summary.rs` at top level (mirrors `backlog_transitions.rs`'s layering — diff + render logic for the three phases, a shared baseline-reader, and a `Label` type with optional `continuation` for dream's two-line `→` entries).
-    - Public API: `run_render(plan_dir, phase, baseline_sha, format)`, `compute_labels(plan_dir, phase, baseline_sha)`, plus per-phase `compute_triage_labels` / `compute_reflect_labels` / `compute_dream_labels` that operate on parsed `BacklogFile` / `MemoryFile` for unit testing without filesystem.
-    - CLI: `ravel-lite state phase-summary render <PLAN_DIR> --phase <triage|reflect|dream> --baseline <sha> [--format text|yaml]`. `--baseline ""` (empty) is first-cycle-safe and reports only additions. `text` format is the labelled lines; `yaml` is the structured sequence for tooling.
-    - Baseline reader uses `git ls-files --full-name` + `git show <sha>:<path>` — identical pattern to `backlog_transitions.rs`, so monorepo-subtree behaviour matches.
-
-    ## Labels emitted (structural-only)
-
-    - **Triage** (backlog.yaml diff): `[DONE]` (status flipped to Done), `[NEW]` (task id not in baseline), `[OBSOLETE]` (baseline id missing from current), `[REPRIORITISED]` (index position changed). Ordered `DONE → NEW → REPRIORITISED → OBSOLETE`, deterministic by file order within each group.
-    - **Reflect** (memory.yaml diff): `[NEW]`, `[OBSOLETE]`, `[STALE]` (title or body changed for same id).
-    - **Dream** (memory.yaml diff + word count): `[NEW]`, `[OBSOLETE]`, `[STALE]`, plus a final two-line `[STATS] <before>\n       → <after>` that always emits (unchanged memory still produces STATS so the summary is self-describing).
-
-    ## Labels NOT emitted (intent-required)
-
-    `[PROMOTED]`, `[ARCHIVED]`, `[BLOCKER]` (triage); `[IMPRECISE]` (reflect); `[OVERLAPPING]`, `[VERBOSE]`, `[AWKWARD]` (dream) all require knowledge of operator intent that the file diff alone cannot recover. These stay in the LLM's reasoning preamble, which every phase prompt explicitly preserves. Task brief flagged two options (sidecar ops.log.yaml via `--intent` flags on mutating verbs vs drop-the-distinction); I took option 2 — dropping the distinction from the renderer — because option 1 requires touching every mutating verb and introducing a new plan-state file, which is a much larger surface change than this work phase can absorb cleanly. The renderer is a strict upgrade path: adding intent tagging later doesn't break the structural contract.
-
-    ## Verification
-
-    - **19 unit tests** in `src/phase_summary.rs` cover: triage no-mutations / new / done / obsolete / reprioritised / order-guarantees; reflect new / stale (body) / stale (title) / obsolete / unchanged; dream unchanged-still-emits-STATS, stats-reports-before-and-after, consolidation-as-new-plus-obsolete-plus-stats; output format text vs yaml with both simple and two-line labels; enum parsers for `Phase` and `RenderFormat`.
-    - **4 CLI-level integration tests** in `tests/state_phase_summary.rs` exercise the full `git init` → commit baseline → mutate → verb path: triage DONE/NEW/OBSOLETE, dream STATS, empty-baseline first-cycle behaviour, and unknown-phase error message.
-    - Full library suite: 582 tests, all green.
-    - End-to-end smoke against the real plan: ran all three phases against a 6-commit-ago baseline SHA. Triage correctly reported `[DONE]` for the backlog-render task, `[NEW]` for the docs-sync task, `[REPRIORITISED]` for the phase-summary task itself, and `[OBSOLETE]` for a task that was removed earlier. Reflect and dream showed memory evolution with expected `[STALE]` entries; dream appended `[STATS] 5441 → 5357`.
-
-    ## What was NOT done — explicit deferrals
-
-    1. **No prompt updates yet.** `triage.md`, `reflect.md`, and `dream.md` still contain their original `## Output format` blocks. Updating those to invoke the new verb requires the LLM to know what SHA to pass as `--baseline`, which in turn requires the orchestrator to capture phase-start baselines. The renderer is usable manually and testable in isolation; wiring it into the prompts should follow the baseline-capture change so they land together.
-    2. **No orchestrator baseline tracking for reflect/dream/triage.** Today the orchestrator writes `work-baseline` (for analyse-work's use) and `dream-baseline` (for compaction-trigger tracking), but there is no `reflect-baseline` / `triage-baseline` equivalent. These would be written by the `git-commit-work` / `git-commit-reflect` / `git-commit-dream` script phases respectively — each capturing the just-made HEAD SHA so the next LLM phase can read it.
-    3. **No `[NO DISPATCH]` removal.** The sibling backlog task `triage-should-not-emit-the-no-dispatch-label-in-its-output` (mentioned in the task brief as subsumed) stays as-is; it'll fall out naturally when the prompt update lands.
-
-    ## What this suggests next
-
-    Two concrete follow-up tasks to file in triage:
-
-    1. **Wire orchestrator baselines for reflect/dream/triage.** Pattern: each `git-commit-<phase>` script phase writes `<next-phase>-baseline` with the just-committed HEAD SHA, parallel to how `git_save_work_baseline` is called today. Small change, fully tested on the existing backlog-transitions pattern.
-    2. **Update triage/reflect/dream prompts to invoke `state phase-summary render`.** Depends on (1). Pattern: replace each `## Output format` block with a one-liner directing the LLM to run the CLI after its narrative preamble. This subsumes the sibling `triage-should-not-emit-the-no-dispatch-label-in-its-output` task.
-
-    Both of the above are small once the renderer (this task) has landed.
-
-    ## Design notes worth preserving
-
-    - **Same layering as backlog_transitions.** Both modules diff a YAML file against a baseline commit and emit a string. Refactor opportunity later: extract a generic `read_baseline_yaml<T>(plan_dir, filename, sha)` into a shared `git_baseline.rs` helper. I deliberately did not refactor in this pass — landing the verb as a standalone module keeps the change reviewable.
-    - **`[STATS]` always emits for dream** even when word count is unchanged. This matches the contract: dream's summary exists specifically to confirm the rewrite happened, so silence would be ambiguous ("did dream skip?"). An unchanged count is still informative.
-    - **Reprioritisation detection is index-based**, not a richer "moved from rank N to M" string. That matches what a structural diff can say. An `--intent reprioritised-up` flag is the future upgrade path if we want sharper output.
-- id: sync-docs-analysis-llm-work-audit-md-to-commits-yaml-flow
-  title: Sync docs/analysis/llm-work-audit.md to commits.yaml flow
+    - `wire-orchestrator-baseline-capture-for-reflect-dream-triage-phases` — baseline files must exist before prompts can reliably `cat` them. Prompts still work without baselines (empty fallback), but landing baseline wiring first produces cleaner output from day one.
+- id: fix-stale-references-in-llm-work-audit-md-2-9-and-git-rs-32-doc-comment
+  title: Fix stale references in llm-work-audit.md §2.9 and git.rs:32 doc-comment
   category: core
-  status: done
+  status: not_started
   dependencies: []
   description: |
-    Sync `docs/analysis/llm-work-audit.md` to the commits.yaml flow.
+    Fix two stale references surfaced by the sync-docs cycle.
 
     ## What
 
-    The `docs/analysis/llm-work-audit.md` file contains an audit table for LLM work behaviours.
-    Rows A5 and A9 still reference `commit-message.md` and describe the pre-commits.yaml behaviour
-    (LLM issues `git add` + `git commit` calls; a plan-state `commit-message.md` drives a
-    second commit). Both rows are stale:
+    1. **`docs/analysis/llm-work-audit.md §2.9`** ("analyse-work: commit partitioning helper") describes a proposed `commit-work partition` verb using the framing "the LLM no longer partitions" — but under the current `commits.yaml` flow the LLM still authors the partition structure (paths alongside messages). Reframe §2.9 as "extract partition structure from LLM-authored `commits.yaml` into a Rust-generated preview" rather than "introduce partitioning".
 
-    - The work phase no longer issues any `git add` or `git commit` calls.
-    - `commit-message.md` no longer exists; `commits.yaml` replaced it.
-    - Step 6 (source commit) and step 9 (plan-state commit) descriptions need rewriting.
+    2. **`src/git.rs:32` doc comment** still reads "Stage plan directory and commit with the message from commit-message.md". `commit-message.md` is deleted; the function now applies `commits.yaml` via `apply_commits_spec`. Update the comment to reference the current mechanism.
 
     ## Why
 
-    Human-reference documentation that references deleted files (`commit-message.md`) or
-    removed behaviours erodes trust in the audit doc. Since `llm-work-audit.md` is used to
-    reason about LLM work-phase compliance, stale rows produce false audits.
+    Both are low-cost, high-clarity fixes. The §2.9 framing misdirects any reader considering whether commit partitioning is already done. The `git.rs:32` comment will mislead anyone reading the commit path for the first time.
 
     ## Scope
 
-    - Rewrite rows A5/A9 to describe the commits.yaml spec-authoring step and the Rust apply step.
-    - Any other rows that implicitly assume a two-commit flow should be updated.
-    - No code changes; docs only.
+    - Edit the one prose paragraph in `docs/analysis/llm-work-audit.md §2.9`.
+    - Update the doc comment on `commit_plan_state_dir` (or the relevant function) in `src/git.rs:32`.
+    - No code changes; docs + comment only.
 
     ## Verification
 
-    Read `docs/analysis/llm-work-audit.md` against the current `defaults/phases/analyse-work.md`
-    and `src/git.rs::apply_commits_spec` to confirm all rows are accurate.
-  results: |
-    Rewrote rows A5, A6, and A9 of `§1.2 defaults/phases/analyse-work.md` in `docs/analysis/llm-work-audit.md` to reflect the landed `commits.yaml` flow, and updated the one stale `commit-message.md` reference in §5.
-
-    ## Changes
-
-    - **A5** (was: "Stage + commit every snapshot path outside `{{PLAN}}/`") — now describes the new step 6 work: review the `{{WORK_TREE_STATUS}}` snapshot, revert accidental edits via `git checkout --` / `rm`. Classification changed from `M (structure) + J (message prose)` to `J (identify accidentals) + M (reversion)`. The note explicitly states the LLM no longer stages or commits; `git-commit-work` does both per `commits.yaml`.
-    - **A6** (was: "Justify any snapshot path *not* committed") — tightened to "Justify any snapshot path intentionally left uncovered by `commits.yaml` in the session record". Classification unchanged (`J`). Note mentions that uncovered paths surface as uncommitted residue and trigger a TUI warning.
-    - **A9** (was: "Write `commit-message.md` for the plan-state commit") — now describes the authoring of `{{PLAN}}/commits.yaml` as an ordered list of `{paths, message}` entries. Classification changed from `J` alone to `M (YAML format) + J (partition + message prose)` — the partition structure that used to live in old A5 has consolidated into A9 alongside the message prose. The note references `src/git.rs::apply_commits_spec` as the consumer and explains the historical replacement of the two-commit flow.
-    - **§5 ("What this audit deliberately leaves in the LLM")** — rewrote the `commit-message.md` bullet to reference `commits.yaml` entries and to call out both the prose and the partition as preserved LLM judgement.
-
-    ## Verification
-
-    Checked both source-of-truth artefacts:
-
-    - `defaults/phases/analyse-work.md` — confirmed steps 5-10 match: repair-stale-statuses CLI call (step 5), revert accidentals (step 6), session-log id/ts/body (steps 7-8), commits.yaml authoring (step 9), set-phase (step 10). The prompt explicitly states "You never issue `git commit` yourself" (line 6).
-    - `src/git.rs::apply_commits_spec` (line 100) — confirmed it reads `{plan_dir}/commits.yaml`, applies each entry in order, falls back to a catch-all commit when the spec is missing/malformed, and removes the spec file after apply.
-
-    Ran `grep -n "commit-message\.md\|plan-state commit\|source commit\|two-commit\|Stage + commit"` against the audited file after edits — the only match is the intentional historical reference inside A9's note (explaining what `commits.yaml` replaced).
-
-    ## What this suggests next
-
-    Two adjacent staleness concerns in this file are out of scope for this task but worth tracking:
-
-    1. **§1.2 row A4** is marked `**M**` / "strong extraction candidate" for `repair-stale-statuses`, but that extraction has landed (step 5 of the prompt now calls the CLI). A future sync pass could flip A4 to `— | already CLI` like A3. This is orthogonal to the commits.yaml flow so deliberately untouched here.
-    2. **§2.9 ("analyse-work: commit partitioning helper")** proposes a `commit-work partition` verb whose framing ("the LLM no longer partitions") describes a post-extraction future state. Under the current `commits.yaml` flow the LLM DOES partition (writes paths alongside messages), so §2.9 should be reframed as "extract partition structure out of LLM-authored `commits.yaml` into a Rust-generated preview" rather than "introduce partitioning". Also out of scope here — belongs to a broader §2-proposals refresh.
-
-    There is also a doc-comment in `src/git.rs:32` that still says "Stage plan directory and commit with the message from commit-message.md" — that's source code, not the audit doc, and touches a different function (`commit_plan_state_dir` rather than `apply_commits_spec`). Worth a separate lint pass on git.rs doc-comments but out of scope here.
+    Confirm the updated doc matches `src/git.rs::apply_commits_spec` behaviour and the current `analyse-work.md` step 9 description.
 - id: write-user-guide-covering-install-update-init-config-projects-plans-and-running
   title: 'Write tutorial walk-through: install through further-cycles with worked example'
   category: docs
@@ -410,80 +172,3 @@ tasks:
   - write-reference-page-covering-all-user-facing-cli-verbs
   description: |
     Finishing task once tutorial (T2) and reference (T3) content is in place. Add a 'Documentation' section near the bottom of /Users/antony/Development/www.linkuistics.com/projects/ravel-lite.html with links to the new tutorial chapters and the reference page. Update /Users/antony/Development/www.linkuistics.com/SYNC.yml so the Ravel-Lite entry's site_pages list mentions the new projects/ravel-lite/*.html files and the synced_at SHA is bumped. Verify rendered output matches site brand. Depends on T2 and T3.
-- id: wire-orchestrator-baseline-capture-for-reflect-dream-triage-phases
-  title: Wire orchestrator baseline capture for reflect/dream/triage phases
-  category: core
-  status: not_started
-  dependencies: []
-  description: |
-    Wire orchestrator baseline capture for reflect, dream, and triage phases so `state phase-summary render` can be called with a meaningful `--baseline` SHA.
-
-    ## What
-
-    Today the orchestrator writes `work-baseline` (used by analyse-work) and `dream-baseline` (for compaction-trigger tracking). There is no `reflect-baseline` or `triage-baseline`. Each `git-commit-<phase>` script phase should write `<next-phase>-baseline` with the HEAD SHA it just committed, so the following LLM phase can call:
-
-        ravel-lite state phase-summary render {{PLAN}} --phase <phase> --baseline $(cat {{PLAN}}/<phase>-baseline)
-
-    and emit the result verbatim instead of re-transcribing its own edits.
-
-    ## Settled design
-
-    - Pattern: each `git-commit-<phase>` script already runs `git_save_work_baseline` at the tail end; add analogous `write_baseline(plan_dir, "<next-phase>-baseline", new_head_sha)` calls in:
-      - `git-commit-work` → writes `triage-baseline`
-      - `git-commit-triage` → writes `reflect-baseline`
-      - `git-commit-reflect` → writes `dream-baseline` (already exists — just check it matches the pattern)
-      - `git-commit-dream` → writes `work-baseline` (already exists as `git_save_work_baseline`)
-    - File format: plain text, one SHA, no trailing newline, same as `work-baseline` today.
-    - `src/git.rs` already has `git_save_work_baseline`; generalise to `git_save_baseline(plan_dir, filename, sha)` or duplicate the tiny function — up to implementer.
-
-    ## Reference examples
-
-    - `src/git.rs`: `git_save_work_baseline` (current baseline-write pattern, ~5 lines)
-    - `scripts/git-commit-work` (or wherever `git_save_work_baseline` is called)
-    - `LLM_STATE/core/work-baseline` (file format)
-    - Phase-summary task results: "Wire orchestrator baselines for reflect/dream/triage" section
-
-    ## Dependencies
-
-    None blocking. Should land before the prompt-update task below, though prompt updates can work with `--baseline ""` (first-cycle-safe) while this is pending.
-
-    ## Next task after this one
-
-    Update triage/reflect/dream `## Output format` prompt blocks to invoke `state phase-summary render` verbatim (subsumes `triage-should-not-emit-the-no-dispatch-label-in-its-output`).
-- id: update-triage-reflect-dream-prompts-to-invoke-state-phase-summary-render
-  title: Update triage/reflect/dream prompts to invoke state phase-summary render
-  category: core
-  status: not_started
-  dependencies: []
-  description: |
-    Replace the `## Output format` blocks in triage, reflect, and dream prompts with a single directive to run `state phase-summary render` and emit its output verbatim.
-
-    ## What
-
-    Each of `defaults/phases/triage.md`, `defaults/phases/reflect.md`, and `defaults/phases/dream.md` currently contains an `## Output format` block instructing the LLM to transcribe its own edits into labelled summary lines. This is mechanical re-transcription — precisely the anti-pattern that `state phase-summary render` was built to replace.
-
-    Replacement text (exact wording, adjust `{{PLAN}}` template vars):
-
-        After your narrative preamble, run:
-
-            ravel-lite state phase-summary render {{PLAN}} --phase <phase> \
-                --baseline $(cat {{PLAN}}/<phase>-baseline 2>/dev/null || echo "")
-
-        and emit its output verbatim. Do not add, remove, or reorder lines.
-
-    ## Settled design
-
-    - The `--baseline ""` fallback (via `|| echo ""`) is first-cycle-safe: phase-summary render treats empty baseline as "no prior state" and reports only additions.
-    - Intent-required labels (`[PROMOTED]`, `[IMPRECISE]`, `[OVERLAPPING]`, etc.) are deliberately NOT emitted by the CLI; the LLM's narrative preamble (which every phase prompt already preserves) is the right home for those. The replacement does not change the preamble instructions.
-    - Subsumes the sibling task `triage-should-not-emit-the-no-dispatch-label-in-its-output` — once the `## Output format` block is replaced, `[NO DISPATCH]` simply won't appear.
-
-    ## Reference examples
-
-    - `defaults/phases/triage.md`: locate the `## Output format` block (approx lines 120–137 per the task brief)
-    - `defaults/phases/reflect.md`: locate `## Output format` (approx lines 58–71)
-    - `defaults/phases/dream.md`: locate `## Output format` (approx lines 47–67)
-    - `defaults/phases/work.md` step 1: the already-landed pattern for backlog render — mirrors exactly what this task does for phase-summary
-
-    ## Dependencies
-
-    - `wire-orchestrator-baseline-capture-for-reflect-dream-triage-phases` — baseline files must exist before prompts can reliably `cat` them. Prompts still work without baselines (empty fallback), but landing baseline wiring first produces cleaner output from day one.
