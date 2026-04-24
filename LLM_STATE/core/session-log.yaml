@@ -707,3 +707,16 @@ sessions:
     - Updated `defaults/phases/triage.md`: added a **Preflight** directive at the top of "Local triage" instructing the LLM to run the linter; removed the old "Keep the `dependencies` field in sync with the prose" paragraph that instructed the LLM to rescan prose manually. The linter output is advisory, not authoritative — triage still uses `set-dependencies` to reconcile.
     - 11 unit tests shipped, all passing, covering matching/non-matching prose, structured-is-authoritative invariant, empty backlog, and malformed id edge cases.
     - Task `add-backlog-lint-dependencies-cli-verb` completed and marked `done` with full results block.
+- id: session-47
+  timestamp: 2026-04-24T10:43:29Z
+  phase: work
+  body: |
+    ### Session 47 (2026-04-24T10:43:29Z) — Ship BACKLOG_TRANSITIONS token; defer split-commit hunk work
+
+    - Attempted task `analyse-work-better-analysis-split-commits-by-hunk-better-messages` covering three threads: deterministic inputs (Thread 1), multi-commit hunk splitting (Thread 2), and message quality prompting (Thread 3).
+    - Thread 1 (deterministic inputs via Rust-computed `{{BACKLOG_TRANSITIONS}}` token) and part of Thread 3 (tighter commit-message guidance in analyse-work.md) shipped. Thread 2 (splitting commits by changed hunk) was deferred as a hand-off.
+    - The `{{BACKLOG_TRANSITIONS}}` token is now computed by `src/backlog_transitions.rs`: diffs `backlog.yaml` at the work-baseline SHA against the current state, covering status flips, results additions/modifications, added/deleted tasks, dependency changes, and handoff changes. Soft-fails to a human-readable placeholder on any error.
+    - Wired into `phase_loop.rs` AnalyseWork branch alongside `WORK_TREE_STATUS`; `analyse-work.md` extended with the new token block and caveat about previous-cycle triage appearing in the diff. Step 9 (commit message) now explicitly directs the LLM to draw title and body from the transitions block.
+    - 11 unit tests in the new module; integration guard added to `tests/phase_loop.rs` for the `BACKLOG_TRANSITIONS` token. Full suite (515 lib + integration) passes, clippy clean. Release binary verified against live `LLM_STATE/core` plan.
+    - Work-baseline timing issue discovered: the baseline is the reflect commit of the previous cycle, so triage additions from the prior cycle appear in the transitions block alongside this session's changes. Caveat added to the prompt; a cleaner fix would require a separate session-start baseline snapshot.
+    - Task status was correctly flipped to `done` during work phase; safety-net step was a no-op.
