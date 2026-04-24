@@ -251,44 +251,6 @@ tasks:
     - Related standing memory: "Never do in an LLM what you can do in
       code". Presentation is mechanical; this extraction fits squarely
       within that rule.
-- id: write-user-guide-covering-install-update-init-config-projects-plans-and-running
-  title: 'Write tutorial walk-through: install through further-cycles with worked example'
-  category: docs
-  status: not_started
-  dependencies: []
-  description: |
-    Produce a linear, prose walk-through in AsciiDoc covering install, update, init, re-init, local config, env-var setup, adding projects, the concept of a project, creating a plan, and running a plan through several cycles. Worked example: a non-code reading-list-manager project at ~/Development/ravel-tutorial-example/. Interactive commands (create, run) driven via a TestAnyware VM to capture real transcripts. Source lives in Ravel-Lite/docs/tutorial/*.adoc; generated HTML is emitted into www.linkuistics.com/projects/ravel-lite/ by the build pipeline from T1. Depends on T1 (pipeline) and is supported by T5 (TestAnyware VM integration).
-- id: write-reference-page-covering-all-user-facing-cli-verbs
-  title: Write reference page covering all user-facing CLI verbs
-  category: docs
-  status: not_started
-  dependencies: []
-  description: |
-    Single-page reference-tour in AsciiDoc (docs/reference/index.adoc or docs/reference.adoc). TOC at top, then prose entries for each user-facing verb: run, create, init (+ --force), version, state projects (add/list/rename/remove), state backlog (CRUD), state memory (CRUD), state session-log, state set-phase, state related-components (list/add-edge/discover — briefly; advanced), survey and survey-format (one-liner mention), --config / RAVEL_LITE_CONFIG / --dangerous. Each entry: invocation, flags, what it does, side effects, gotchas. Friendly prose, minimal lists, no emoji. Depends on T1.
-- id: add-ravel-lite-rb-homebrew-formula-to-linkuistics-homebrew-taps
-  title: Add ravel-lite.rb Homebrew formula to linkuistics/homebrew-taps
-  category: infra
-  status: not_started
-  dependencies: []
-  description: |
-    Create Formula/ravel-lite.rb in /Users/antony/Development/homebrew-taps/ so that 'brew install linkuistics/taps/ravel-lite' works. Apache-2.0, from-source cargo build (depends_on 'rust' => :build; install runs 'cargo install --locked --root #{prefix} --path .'). Tag the Ravel-Lite repo at the current release and point the formula's url at github.com/linkuistics/Ravel-Lite with tag: "vX.Y.Z". Basic 'test do' asserting 'ravel-lite --version' prints the crate version. Verify locally with 'brew install --build-from-source linkuistics/taps/ravel-lite' before committing. No GitHub Actions; no pre-built binaries.
-- id: integrate-testanyware-vm-for-capturing-interactive-ravel-lite-commands
-  title: Integrate TestAnyware VM for capturing interactive ravel-lite commands
-  category: infra
-  status: not_started
-  dependencies:
-  - add-ravel-lite-rb-homebrew-formula-to-linkuistics-homebrew-taps
-  description: |
-    Dogfood TestAnyware as the driver for running ravel-lite's interactive commands (create, run) inside a VM so tutorial sections can include real transcripts and — optionally — screenshots without requiring the user to manually drive their own terminal. Scope: (a) start a TestAnyware macOS VM with ravel-lite installed via the brew formula (T4); (b) drive 'ravel-lite create' and 'ravel-lite run' via TestAnyware's VNC + agent (input injection, screen capture, agent exec); (c) capture state files on the VM, extract them to the host, and include them as evidence in the tutorial chapters; (d) optional: capture PNG screenshots of the TUI for the tutorial. Supports T2; depends on T1 (pipeline) and T4 (brew formula) for a clean 'brew install' inside the VM. Scope carefully — this can become a rabbit hole; if VM-driven capture proves too costly, fall back to user-driven capture as originally planned.
-- id: publish-new-docs-update-projects-ravel-lite-html-hub-and-sync-yml
-  title: 'Publish new docs: update projects/ravel-lite.html hub and SYNC.yml'
-  category: docs
-  status: not_started
-  dependencies:
-  - write-user-guide-covering-install-update-init-config-projects-plans-and-running
-  - write-reference-page-covering-all-user-facing-cli-verbs
-  description: |
-    Finishing task once tutorial (T2) and reference (T3) content is in place. Add a 'Documentation' section near the bottom of /Users/antony/Development/www.linkuistics.com/projects/ravel-lite.html with links to the new tutorial chapters and the reference page. Update /Users/antony/Development/www.linkuistics.com/SYNC.yml so the Ravel-Lite entry's site_pages list mentions the new projects/ravel-lite/*.html files and the synced_at SHA is bumped. Verify rendered output matches site brand. Depends on T2 and T3.
 - id: add-phase-summary-render-cli-verb-for-deterministic-triage-reflect-summaries
   title: Add phase-summary render CLI verb for deterministic triage/reflect summaries
   category: core
@@ -401,179 +363,41 @@ tasks:
     - Task `filter-rogue-hr-and-allow-reasoning-preamble-in-headless-phase-output` — must land first so the prompt already permits a preamble when this extraction removes the label-authoring instructions.
     - Standing memory: "Never do in an LLM what you can do in code".
     - Standing memory: "LLM reasoning preamble in reflect/dream/triage is a preserved feature".
-- id: pre-seed-plan-directory-in-rust-before-create-plan-llm-spawn
-  title: Pre-seed plan directory in Rust before create-plan LLM spawn
-  category: core
-  status: done
+- id: write-user-guide-covering-install-update-init-config-projects-plans-and-running
+  title: 'Write tutorial walk-through: install through further-cycles with worked example'
+  category: docs
+  status: not_started
   dependencies: []
   description: |
-    Pre-seed the plan directory in Rust before spawning the create-plan LLM session, so the LLM never has to invoke CLI init verbs or create scaffolding files itself.
-
-    ## Problem
-
-    `src/create.rs::validate_target` creates only the *parent* of the plan directory; the plan directory itself, `phase.md`, and the initial `backlog.yaml`/`memory.yaml` shells are currently delegated to the LLM via prose in `create-plan.md` (see `echo work > {{PLAN}}/phase.md`, `ravel-lite state backlog init …`, `ravel-lite state memory init …`). That is pure mechanical work that violates the standing memory rule "Never do in an LLM what you can do in code".
-
-    A secondary consequence: `create-plan.md` documents the old markdown-bulk-init contract for `state backlog init`, but `backlog init` now expects YAML directly. The prompt has drifted out of sync with the CLI. Pre-seeding in Rust removes the drift surface entirely — the LLM populates content via `state backlog add` / `state memory add` on already-valid empty files.
-
-    ## Settled design
-
-    - **Where**: `src/create.rs::run_create`, between `validate_target` and the claude spawn.
-    - **What to create**:
-      - `{{PLAN}}/` directory itself (currently the LLM's job).
-      - `{{PLAN}}/phase.md` with exactly `work\n`.
-      - `{{PLAN}}/backlog.yaml` with exactly `tasks: []\n`.
-      - `{{PLAN}}/memory.yaml` with exactly `entries: []\n`.
-    - **What NOT to create**: `session-log.yaml` (created on first append), `related-plans.md` (optional, LLM-owned), `prompt-*.md` (optional, LLM-owned).
-    - **Interaction with `validate_target`**: keep `validate_target`'s pre-existence check (refuse to overwrite); the scaffolding step runs only after that check passes.
-    - **Interaction with `backlog init` / `memory init` CLI verbs**: these verbs still exist for manual / test use, but `create-plan.md` no longer references them. The `--body-file` path becomes strictly optional for callers that don't need bulk-load.
-
-    ## Prompt changes
-
-    Rewrite `ravel-lite-config/create-plan.md` §2 "Draft the plan":
-
-    - Remove the `echo work > {{PLAN}}/phase.md`, `state backlog init`, and `state memory init` instructions entirely.
-    - Replace with: "The plan directory and its `phase.md`, `backlog.yaml`, `memory.yaml` files are already scaffolded as empty. Populate the backlog by calling `ravel-lite state backlog add {{PLAN}} --title … --category … --description-file <path>` once per initial task. Populate memory, if any, via `ravel-lite state memory add`."
-    - Update the out-of-date markdown-bulk-format description of `state backlog init` (the CLI now takes YAML directly, not markdown).
-
-    ## Reference examples
-
-    - `src/create.rs:57-84` — `validate_target` (parent-only creation today).
-    - `src/create.rs:139-144` — existing `seed_dream_baseline_if_missing` post-spawn seed; mirror its "runner-owned scaffolding" idiom but hoist it pre-spawn.
-    - `src/state/backlog/schema.rs:45-48` — `BacklogFile` shape; confirms `tasks: []` serialises cleanly.
-    - `src/state/memory/schema.rs:14-17` — `MemoryFile` shape; `entries: []` likewise.
-
-    ## Dependencies
-
-    None; independent cleanup.
-
-    ## Verification
-
-    - New unit test: `run_create` scaffolding path produces the three files with the exact expected bytes before the claude spawn.
-    - End-to-end: run `ravel-lite create …` on a fresh path, Ctrl-C the claude session immediately; confirm the three files still exist and parse cleanly via `ravel-lite state backlog list` / `memory list`.
-    - The "Creating a Multi-Session Plan" doc no longer mentions `state backlog init` / `state memory init`.
-  results: |
-    ## What was done
-
-    1. **New `scaffold_plan_dir` function in `src/create.rs`.** Creates the plan directory (refusing if it already exists) and writes four files with fixed, minimal contents:
-
-       - `phase.md` = `work\n`
-       - `backlog.yaml` = `tasks: []\n`
-       - `memory.yaml` = `entries: []\n`
-       - `dream-baseline` = `0`
-
-    2. **`run_create` rewired.** `scaffold_plan_dir` is called between `validate_target` and the claude subprocess spawn. The previous post-spawn `seed_dream_baseline_if_missing` call was removed (now redundant — dream-baseline is written by the scaffold). The post-spawn verification was updated from "does phase.md exist" (always true now) to "does backlog contain any tasks" — a still-empty backlog signals the LLM session exited before populating anything.
-
-    3. **`create-plan.md` prompt rewritten** (both `defaults/create-plan.md` repo source AND the deployed `ravel-lite-config/create-plan.md`). The §2 "Draft the plan" section now:
-       - Tells the LLM the four scaffolded files already exist with their contracts
-       - Instructs the LLM to populate backlog and memory exclusively through `state backlog add` / `state memory add`, never by raw file writes
-       - Drops the out-of-date references to `state backlog init` (which expected a markdown bulk-init body — the CLI now takes YAML, and the init verb is no longer needed by create-plan at all) and `state memory init`
-
-    4. **Three new unit tests in `src/create.rs`:**
-       - `scaffold_plan_dir_creates_directory_and_required_files` — checks exact byte contents of all four files
-       - `scaffold_plan_dir_writes_cli_parseable_state_files` — round-trips through `read_backlog` / `read_memory` to prove the scaffolded YAML is CLI-compatible
-       - `scaffold_plan_dir_refuses_existing_directory` — the pre-existence guard
-
-    ## What worked
-
-    - TDD: all three scaffold tests failed before implementation (cannot find function `scaffold_plan_dir`), all three pass after the ~20 LoC addition.
-    - The dream-baseline seeder still has its defense-in-depth callers at `src/state/phase.rs:49` (every `state set-phase`) and `src/phase_loop.rs:237` (phase loop entry), so removing the create.rs call did not leave a gap.
-    - Full workspace test suite: 584 tests pass, no regressions. The init.rs drift detection test (`every_file_under_defaults_is_registered_in_embedded_files`) and the `embedded_defaults_are_valid` test both pass after the `defaults/create-plan.md` rewrite, confirming the embedded-content pipeline still parses.
-
-    ## What didn't / scope I chose not to expand
-
-    - I did NOT remove or deprecate `state backlog init` / `state memory init` CLI verbs. They were specifically designed for bulk-init at scaffold time but are no longer on the create-plan critical path. Removing them is a larger, independent decision — a separate backlog item could consider deletion vs keep-for-advanced-use. For now they remain documented only in `--help`.
-    - I did NOT change `state set-phase`'s refusal when `phase.md` does not exist. That check is still sound; pre-seeding just means the check will always pass on fresh plans.
-
-    ## What this suggests next
-
-    - The `state backlog init` / `state memory init` verbs are now unused in the create-plan flow. Consider whether they should be removed (and if so, what tests currently exercise them). That is a low-priority cleanup, not a blocker.
-    - The out-of-project edit to `ravel-lite-config/create-plan.md` lives in a sibling repo. It is not part of the Ravel-Lite project commit that analyse-work will produce — the user should commit that separately in the `ravel-lite-config` repo. The repo-source edit to `defaults/create-plan.md` is what downstream `ravel-lite init` invocations will propagate going forward.
-    - Companion task `filter-rogue-horizontal-rule-…` (done last cycle's earlier work) and this scaffolding task complete the small-cleanup trio of user issues 1, 3, 4. Issue 2 (dream through the CLI) is now fully represented in the expanded `add-phase-summary-render-cli-verb-…` task and remains the next logical core-cluster item.
-- id: filter-rogue-horizontal-rule-in-headless-phase-output-and-permit-reasoning-preamble
-  title: Filter rogue horizontal-rule in headless-phase output and permit reasoning preamble
-  category: core
-  status: done
+    Produce a linear, prose walk-through in AsciiDoc covering install, update, init, re-init, local config, env-var setup, adding projects, the concept of a project, creating a plan, and running a plan through several cycles. Worked example: a non-code reading-list-manager project at ~/Development/ravel-tutorial-example/. Interactive commands (create, run) driven via a TestAnyware VM to capture real transcripts. Source lives in Ravel-Lite/docs/tutorial/*.adoc; generated HTML is emitted into www.linkuistics.com/projects/ravel-lite/ by the build pipeline from T1. Depends on T1 (pipeline) and is supported by T5 (TestAnyware VM integration).
+- id: write-reference-page-covering-all-user-facing-cli-verbs
+  title: Write reference page covering all user-facing CLI verbs
+  category: docs
+  status: not_started
   dependencies: []
   description: |
-    Filter markdown horizontal-rule lines (`---`) from headless-phase result rendering, and align the reflect/dream/triage prompts to explicitly permit a reasoning preamble.
-
-    ## Problem
-
-    `src/format.rs::format_result_text` filters code-fence lines (`line.trim() == "```"`) but not markdown horizontal rules. The reflect/dream/triage prompts each end with "Do not include any other commentary" — but in practice the LLM writes a short reasoning preamble, separates it with `---`, and then emits the labelled summary. The `---` survives the filter and renders as a dim stray line above the action list (see `src/format.rs:341-346` "regular text" fallback).
-
-    The reasoning preamble is a desired feature — it is the LLM's narrative context for why the mutations happened. The current prompt wording suppresses it on paper and the formatter mangles it in practice. Both need to move.
-
-    ## Settled design
-
-    ### Filter fix (src/format.rs)
-
-    Add `line.trim() == "---"` (and optionally any run of 3+ dashes) to the filter list alongside the existing fence filter near `src/format.rs:255-256`:
-
-    ```rust
-    if line.trim() == "```" { continue; }
-    if line.trim_start_matches('-').is_empty() && line.trim().len() >= 3 { continue; }
-    ```
-
-    The second form guards against `----` / `-----` variants. Keep it conservative — don't filter lines that contain any non-dash characters.
-
-    ### Prompt alignment (reflect / dream / triage)
-
-    Replace the "Do not include any other commentary" wording in:
-
-    - `defaults/phases/reflect.md` output-format block (lines ~68-71)
-    - `defaults/phases/dream.md` output-format block (lines ~66-67)
-    - `defaults/phases/triage.md` output-format block (lines ~135-137)
-
-    Replace with explicit permission, e.g.:
-
-    > You may precede the action list with a brief paragraph of reasoning — what you noticed, what trade-offs drove the mutation set. Separate the preamble from the action list with a blank line. Do not introduce other sections.
-
-    This makes the reasoning an official part of the output contract so downstream code (and the next prompt revision) doesn't regress it.
-
-    ## Reference examples
-
-    - `src/format.rs:224-255` — `format_result_text` and the existing code-fence filter.
-    - `src/format.rs:341-346` — the generic "regular text" fallback where the `---` currently lands.
-    - `defaults/phases/{reflect,dream,triage}.md` — the three prompts whose output-format sections need the wording change.
-
-    ## Dependencies
-
-    None.
-
-    ## Verification
-
-    - New unit test in `src/format.rs`: a line of exactly `---` (and one with `-----`) produces no output. A line of `--- something ---` renders as regular text (non-match).
-    - Manual: run one triage cycle post-change; confirm the terminal output shows no stray dim `---` line between the reasoning preamble and the action list.
-    - `cargo test --workspace` green.
-
-    ## Related
-
-    - Existing backlog task `add-phase-summary-render-cli-verb-…` (now expanded to cover dream) will later extract the label portion to Rust. The reasoning preamble stays LLM-owned after that extraction — this task's prompt change establishes that split explicitly.
-  results: |
-    ## What was done
-
-    1. **Filter added in `src/format.rs::format_result_text`.** A new guard next to the existing code-fence filter drops any line that trims to a pure run of 3 or more dashes. `---`, `----`, `-----` etc. are now filtered; lines that contain dashes alongside content (`--- foo`, `foo --- bar`, `-- two-dashes`) are preserved.
-
-    2. **Prompt wording aligned.** The "Do not include any other commentary" wording in `defaults/phases/{reflect,dream,triage}.md` was replaced with an explicit permission for a brief reasoning preamble separated from the action list by a blank line. Each phase's preamble hint is tailored to the phase ("what you noticed in the session" for reflect; "what patterns you noticed across the memory" for dream; "what drove reprioritisations or hand-off decisions" for triage).
-
-    3. **Four new unit tests** in `src/format.rs::tests`:
-       - `format_result_text_filters_markdown_horizontal_rule` — the canonical scenario: preamble + `---` + labels.
-       - `format_result_text_filters_longer_dash_runs` — `----`, `-----` variants.
-       - `format_result_text_preserves_lines_mixing_dashes_and_text` — regression guard for dashes-as-content.
-       - (Plus confirmation that the existing preamble-as-dim-text rendering still works.)
-
-    ## What worked
-
-    - TDD produced a clean evidence trail: both new filter tests failed before the one-line addition (`trimmed.chars().all(|c| c == '-') && trimmed.len() >= 3`), both passed after. The mixed-dashes preservation test passed unchanged — confirming the guard is tight.
-    - All 581 workspace tests pass with the change in place. No regressions in the init.rs drift detection, the pi-prompt dangling-tokens guard, or any other prompt-sensitive test.
-
-    ## What didn't / scope I chose not to expand
-
-    - I did NOT filter `***` or `___` (other markdown HR syntaxes). The reported issue was `---` only; LLMs in these phases don't produce the other forms. YAGNI.
-    - I did NOT add a test that asserts preamble text renders as dim. The existing `format_result_text` "regular text" fallthrough at `src/format.rs:341-346` handles that and is covered by neighbouring tests; explicitly re-asserting it would be belt-and-braces.
-
-    ## What this suggests next
-
-    - The companion backlog task `add-phase-summary-render-cli-verb-for-deterministic-triage-reflect-summaries` (now expanded to also cover dream) can now proceed on a clean footing: the prompts already permit a preamble, so when that task replaces the LLM-authored label lists with CLI-rendered output, the LLM's preamble contract is preserved unchanged.
-    - The companion backlog task `pre-seed-plan-directory-in-rust-before-create-plan-llm-spawn` is unrelated but was added in the same cycle; it is independent and ready for a future work phase.
-    - Standing memory entry "LLM reasoning preamble in reflect/dream/triage is a preserved feature" was added to durably bind future prompt edits against regressing the preamble.
+    Single-page reference-tour in AsciiDoc (docs/reference/index.adoc or docs/reference.adoc). TOC at top, then prose entries for each user-facing verb: run, create, init (+ --force), version, state projects (add/list/rename/remove), state backlog (CRUD), state memory (CRUD), state session-log, state set-phase, state related-components (list/add-edge/discover — briefly; advanced), survey and survey-format (one-liner mention), --config / RAVEL_LITE_CONFIG / --dangerous. Each entry: invocation, flags, what it does, side effects, gotchas. Friendly prose, minimal lists, no emoji. Depends on T1.
+- id: add-ravel-lite-rb-homebrew-formula-to-linkuistics-homebrew-taps
+  title: Add ravel-lite.rb Homebrew formula to linkuistics/homebrew-taps
+  category: infra
+  status: not_started
+  dependencies: []
+  description: |
+    Create Formula/ravel-lite.rb in /Users/antony/Development/homebrew-taps/ so that 'brew install linkuistics/taps/ravel-lite' works. Apache-2.0, from-source cargo build (depends_on 'rust' => :build; install runs 'cargo install --locked --root #{prefix} --path .'). Tag the Ravel-Lite repo at the current release and point the formula's url at github.com/linkuistics/Ravel-Lite with tag: "vX.Y.Z". Basic 'test do' asserting 'ravel-lite --version' prints the crate version. Verify locally with 'brew install --build-from-source linkuistics/taps/ravel-lite' before committing. No GitHub Actions; no pre-built binaries.
+- id: integrate-testanyware-vm-for-capturing-interactive-ravel-lite-commands
+  title: Integrate TestAnyware VM for capturing interactive ravel-lite commands
+  category: infra
+  status: not_started
+  dependencies:
+  - add-ravel-lite-rb-homebrew-formula-to-linkuistics-homebrew-taps
+  description: |
+    Dogfood TestAnyware as the driver for running ravel-lite's interactive commands (create, run) inside a VM so tutorial sections can include real transcripts and — optionally — screenshots without requiring the user to manually drive their own terminal. Scope: (a) start a TestAnyware macOS VM with ravel-lite installed via the brew formula (T4); (b) drive 'ravel-lite create' and 'ravel-lite run' via TestAnyware's VNC + agent (input injection, screen capture, agent exec); (c) capture state files on the VM, extract them to the host, and include them as evidence in the tutorial chapters; (d) optional: capture PNG screenshots of the TUI for the tutorial. Supports T2; depends on T1 (pipeline) and T4 (brew formula) for a clean 'brew install' inside the VM. Scope carefully — this can become a rabbit hole; if VM-driven capture proves too costly, fall back to user-driven capture as originally planned.
+- id: publish-new-docs-update-projects-ravel-lite-html-hub-and-sync-yml
+  title: 'Publish new docs: update projects/ravel-lite.html hub and SYNC.yml'
+  category: docs
+  status: not_started
+  dependencies:
+  - write-user-guide-covering-install-update-init-config-projects-plans-and-running
+  - write-reference-page-covering-all-user-facing-cli-verbs
+  description: |
+    Finishing task once tutorial (T2) and reference (T3) content is in place. Add a 'Documentation' section near the bottom of /Users/antony/Development/www.linkuistics.com/projects/ravel-lite.html with links to the new tutorial chapters and the reference page. Update /Users/antony/Development/www.linkuistics.com/SYNC.yml so the Ravel-Lite entry's site_pages list mentions the new projects/ravel-lite/*.html files and the synced_at SHA is bumped. Verify rendered output matches site brand. Depends on T2 and T3.
