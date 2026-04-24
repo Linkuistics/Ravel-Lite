@@ -1,10 +1,12 @@
 //! Typed backlog.yaml surface and CRUD CLI verbs.
 
+pub mod lint_dependencies;
 pub mod parse_md;
 pub mod schema;
 pub mod verbs;
 pub mod yaml_io;
 
+pub use lint_dependencies::{lint_dependencies, run_lint_dependencies, LintReport, TaskDrift};
 pub use parse_md::parse_backlog_markdown;
 pub use schema::{BacklogFile, Status, TaskCounts};
 pub use verbs::{

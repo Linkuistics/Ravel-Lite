@@ -378,6 +378,14 @@ enum BacklogCommands {
         #[arg(long)]
         force: bool,
     },
+    /// Report drift between prose task-id mentions in task descriptions
+    /// and the structured `dependencies:` field. Read-only; reconciliation
+    /// is still done via `set-dependencies`.
+    LintDependencies {
+        plan_dir: PathBuf,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -992,6 +1000,10 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
                 )
             })?;
             backlog::run_reorder(&plan_dir, &id, pos, &target_id)
+        }
+        BacklogCommands::LintDependencies { plan_dir, format } => {
+            let fmt = parse_output_format(&format)?;
+            backlog::run_lint_dependencies(&plan_dir, fmt)
         }
         BacklogCommands::Delete { plan_dir, id, force } => {
             backlog::run_delete(&plan_dir, &id, force)
