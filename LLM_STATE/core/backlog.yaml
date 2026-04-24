@@ -40,7 +40,7 @@ tasks:
 - id: audit-llm-work-for-extractable-deterministic-cli-helpers-rust-datalog
   title: Audit LLM work for extractable deterministic CLI helpers (Rust/Datalog)
   category: infra
-  status: not_started
+  status: done
   dependencies: []
   description: |
     We have already abstracted plan-state interaction out of the LLM and
@@ -103,3 +103,174 @@ tasks:
     code" (Claude-Code auto-memory
     `feedback_mechanical_ops_in_runner.md`). This task operationalises
     that principle across the full prompt surface, not just the runner.
+  results: |
+    Brief produced at `docs/analysis/llm-work-audit.md`. The audit walks
+    every shipped prompt (`defaults/phases/*.md`, `defaults/create-plan.md`,
+    `defaults/discover-stage*.md`, `defaults/survey*.md`,
+    `defaults/agents/pi/**/*.md`) plus the Rust-side prompt-input
+    marshalling in `src/phase_loop.rs`, `src/prompt.rs`, and
+    `src/discover/*.rs`.
+
+    ## What the audit found
+
+    The codebase has already extracted a lot — every `backlog`/`memory`/
+    `session-log` mutation is a `ravel-lite state` verb, `task_counts`
+    is Rust-injected into survey responses, `should_dream` is a pure
+    function of `memory.yaml`, `append_latest_to_log` runs as a script
+    phase, and stage-2 discovery emits one `add-proposal` call per edge
+    rather than writing a YAML file (that's the reference pattern).
+
+    The remaining extractable work splits into three clusters:
+
+    - **Counts the LLM re-computes.** Survey's `unblocked` / `blocked` /
+      `received` are pure queries on parsed `backlog.yaml` but the LLM
+      still emits them every invocation. Dream's `[STATS]` line asks the
+      LLM for word counts Rust already computes in `dream.rs`.
+    - **Prose-to-structure consistency scans.** Triage scans every
+      description for "depends on X" phrasings and reconciles against
+      the structured `dependencies`; analyse-work scans every task for
+      "Results non-empty + status still not_started" drift. Both are
+      full-backlog walks the LLM pays tokens for every cycle.
+    - **Labels/decisions whose data is fully determined but whose
+      narration is judgement.** `[NO DISPATCH]` in triage output (the
+      runner already knows from the absence of `subagent-dispatch.yaml`);
+      path-based commit partitioning in analyse-work (the path prefix
+      tree is mechanical, the messages are judgement).
+
+    ## Top 3 candidates promoted to concrete shapes
+
+    1. **`ravel-lite state backlog lint-dependencies`** — detects drift
+       between prose "depends on" mentions and the structured
+       `dependencies` field. Replaces triage's full-backlog prose scan.
+    2. **Survey counts injection** — mirror the existing
+       `inject_task_counts` pattern to overwrite `unblocked`/`blocked`/
+       `received` with tool-derived values. Applies to the most-
+       frequently-run LLM invocation in multi-plan mode.
+    3. **`ravel-lite state backlog repair-stale-statuses`** — replaces
+       analyse-work §5's "safety-net: mark completed tasks as done"
+       scan. The current prompt literally says "this is a post-condition
+       check, not a judgement call" — ideal extraction target.
+
+    Each of the top 3 is written at the specificity needed for triage
+    to promote into a standalone backlog task: verb signature, internal
+    algorithm, prompt-side change to land alongside, unit-test list.
+
+    ## Secondary candidates
+
+    §2.5 (add `--has-handoff-marker` filter), §2.8 (drop `[NO DISPATCH]`
+    label — overlaps with the user-added triage task), §2.3 (`--auto-id
+    --auto-timestamp` on `session-log set-latest`), §2.7 (inject
+    `{{DREAM_BEFORE_WORDS}}`), §2.9 (commit partitioning — overlaps with
+    the user-added analyse-work task).
+
+    ## Datalog question
+
+    Deferred. The audit enumerates three cross-artifact queries that
+    could motivate a Datalog evaluator (forward dep-graph walk;
+    unreferenced memory entries; cross-plan edge hints) but only the
+    first is worth building today, and a single-purpose
+    `state backlog unblocks <id>` satisfies it imperatively. Revisit if
+    a future backlog item surfaces a query genuinely spanning three or
+    more artifact kinds.
+
+    ## What this suggests next
+
+    The audit closes with a 3-entry "Promotion checklist" section that
+    names which §§ belong to which future task. Triage should promote
+    the top three (§2.1, §2.4, §2.6) as their own tasks. §2.9 should be
+    linked from the user-added analyse-work-split-commits task; §2.8
+    from the user-added NO-DISPATCH-removal task. The six smaller wins
+    (§2.2 / §2.3 / §2.5 / §2.7) can be bundled opportunistically.
+
+    ## Open questions flagged for triage
+
+    - Is the `## Received` convention still live? If not, drop the
+      field from the survey schema entirely.
+    - `[HANDOFF]` vs `Hand-offs:` / `Followups:` — which is canonical?
+      The `--has-handoff-marker` filter's scope depends on the answer.
+
+    ## Scope-honesty note
+
+    Implementation of any extraction is out of scope for this task. The
+    audit is pure analysis: no Rust changes, no prompt changes. Every
+    extraction candidate becomes a triage-promotable task.
+- id: triage-should-not-emit-the-no-dispatch-label-in-its-output
+  title: Triage should not emit the 'NO DISPATCH' label in its output
+  category: core
+  status: not_started
+  dependencies: []
+  description: |
+    The triage phase currently surfaces a `NO DISPATCH` (or similar) marker in
+    its rendered output when it has no cross-plan subagent dispatches to make.
+    This label is noise — it adds nothing for the user and clutters the
+    phase's visible output.
+
+    Scope:
+
+    - Locate the emission site (likely `defaults/phases/triage.md` or the
+      downstream renderer that assembles the phase's output / session-log
+      entry).
+    - Remove the label. If it currently serves any downstream parser, teach
+      the parser to infer "no dispatch" from the absence of dispatch records
+      rather than from a sentinel string.
+    - Verify by running a triage phase on a plan with no cross-plan edges
+      and confirming the label is gone from the phase output and from the
+      recorded session-log entry.
+- id: analyse-work-better-analysis-split-commits-by-hunk-better-messages
+  title: 'Analyse-work: better analysis, split commits by hunk, better messages'
+  category: core
+  status: not_started
+  dependencies: []
+  description: |
+    Analyse-work currently produces low-information commit messages —
+    `run-plan: triage (core)` is a typical example, which is both misleading
+    (it is the analyse-work phase committing on behalf of the previous
+    phase, not "running" triage) and uninformative (it says nothing about
+    what actually changed).
+
+    Goal: make analyse-work produce commit records that genuinely describe
+    what the previous phase accomplished, drawing on all the evidence the
+    orchestrator has at commit time — `git diff` / `git status`,
+    `latest-session.yaml`, the Results block the work phase wrote, and the
+    backlog transition — and split the commit into multiple commits (using
+    `git add -p` / hunks where necessary) when the diff spans clearly
+    independent concerns.
+
+    Scope — three threads, each dependent on the next:
+
+    1. **Inputs to analyse-work.** Audit what analyse-work currently
+       consumes. At minimum it should see: the full diff (already does),
+       the `latest-session.yaml` Results block written by the work phase,
+       the backlog transition (task id + status change), and the phase
+       that just finished. If any of these is not already wired into the
+       analyse-work prompt, wire it in (deterministically, via the Rust
+       side that assembles prompt inputs — not via the LLM reading files).
+
+    2. **Multi-commit splitting.** Today analyse-work produces a single
+       commit per phase. Teach it to split when the diff spans clearly
+       independent concerns (e.g. a backlog edit plus a source-file fix
+       plus a docs update). Mechanism: either (a) the LLM emits a
+       sequence of commit specs (message + pathspec or hunk spec) and
+       Rust applies them, or (b) a deterministic pre-step partitions the
+       diff by path / hunk and the LLM writes one message per partition.
+       Prefer (b) where the partition is obvious (path-based); reserve
+       (a) for cases where the LLM genuinely needs to reason about
+       which hunks belong together. Use `git add -p` / patch application
+       where hunk-level granularity is required.
+
+    3. **Message quality.** Commit messages should describe *what
+       changed* and *why*, drawn from the Results block and the diff,
+       not the phase name. The phase prefix (`run-plan: <phase>
+       (<plan>)`) is the audit-trail wrapper — keep it, but require a
+       meaningful body. Concretely: a one-line summary that reads like
+       a human-authored commit (imperative mood, names the actual
+       change), followed by a body that cites the task id and briefly
+       explains the motivation from the Results block.
+
+    Verification: run a full work → analyse-work cycle that includes both
+    source changes and LLM_STATE/ changes; confirm the resulting commit(s)
+    partition the diff sensibly and carry informative messages.
+
+    Related standing memory: "Never do in an LLM what you can do in code"
+    — path-based partitioning is mechanical and should live in Rust; the
+    LLM's job is the prose.
