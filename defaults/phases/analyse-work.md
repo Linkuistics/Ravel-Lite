@@ -20,6 +20,24 @@ or justify.
 {{WORK_TREE_STATUS}}
 ```
 
+## Backlog transitions since baseline
+
+The orchestrator computed this diff between `backlog.yaml` at the work
+baseline and `backlog.yaml` right now. Use it to author commit titles
+and bodies that name the specific task ids and status changes rather
+than generic phase-name prose. This is authoritative — do **not**
+re-derive it from the full diff.
+
+```
+{{BACKLOG_TRANSITIONS}}
+```
+
+Caveat: the baseline is the reflect commit of the previous cycle, so
+task additions/deletions from the previous cycle's triage may also
+appear in this block. Anchor your commit title on the status flip and
+results addition for the task that was actually worked on this
+session; treat other entries as baseline context.
+
 ## Required reads
 
 1. The task backlog — run `ravel-lite state backlog list {{PLAN}}`. You
@@ -145,6 +163,16 @@ or justify.
 
    <body — what was done and why, 2-5 lines>
    ```
+
+   **Draw the title and body from the `Backlog transitions since baseline`
+   block above, not from the full diff or your mental model of the
+   session.** The block lists the exact task ids and status flips — use
+   them. A good title names the dominant change (e.g. `Mark <task-id>
+   done, record results`, or `Add <new-task-id> to backlog` when the
+   session's primary effect was adding tasks). The body cites the
+   specific task id(s) and summarises the Results block's key points
+   in one or two sentences — not a restatement of the Results, just
+   enough for `git log` readers to know what the session accomplished.
 
    The title should be specific enough to be useful in `git log --oneline`.
    Do not include plan or phase metadata in the commit message — the

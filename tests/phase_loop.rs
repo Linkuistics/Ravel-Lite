@@ -1054,6 +1054,10 @@ async fn analyse_work_receives_snapshot_and_commits_uncommitted_source() {
         "analyse-work prompt still has unsubstituted WORK_TREE_STATUS token"
     );
     assert!(
+        !analyse_prompt.contains("{{BACKLOG_TRANSITIONS}}"),
+        "analyse-work prompt still has unsubstituted BACKLOG_TRANSITIONS token"
+    );
+    assert!(
         analyse_prompt.contains("abandoned_by_work.rs"),
         "analyse-work prompt should surface the uncommitted source file in the snapshot; got prompt:\n{analyse_prompt}"
     );

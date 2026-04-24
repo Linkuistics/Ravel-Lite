@@ -5,6 +5,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use crate::agent::Agent;
+use crate::backlog_transitions::backlog_transitions;
 use crate::dream::{seed_dream_baseline_if_missing, should_dream, update_dream_baseline};
 use crate::format::phase_info;
 use crate::git::{
@@ -343,6 +344,12 @@ pub async fn phase_loop(
                         work_tree_snapshot(project_dir, &baseline_sha)
                     };
                     augmented.insert("WORK_TREE_STATUS".to_string(), snapshot);
+                    // Backlog delta since baseline: status flips, results
+                    // additions, added/deleted tasks. Computed here rather
+                    // than asked of the LLM because it's a pure YAML diff —
+                    // the "Never do in an LLM what you can do in code" rule.
+                    let transitions = backlog_transitions(plan_dir, &baseline_sha);
+                    augmented.insert("BACKLOG_TRANSITIONS".to_string(), transitions);
                     compose_prompt(config_root, lp, ctx, &augmented)?
                 } else {
                     compose_prompt(config_root, lp, ctx, &tokens)?

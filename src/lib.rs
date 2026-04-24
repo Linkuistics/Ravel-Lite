@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod backlog_transitions;
 pub mod config;
 pub mod create;
 pub mod discover;
