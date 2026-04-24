@@ -1,14 +1,11 @@
-id: session-32
-timestamp: 2026-04-23T12:30:01Z
+id: session-33
+timestamp: 2026-04-23T15:02:09Z
 phase: work
 body: |
-  ### Session 32 (2026-04-23T12:30:01Z) — Audit r7 design doc post-ontology-v2
+  ### Session 33 (2026-04-23T15:02:09Z) — docs/architecture.md v1-vocabulary audit (no-op)
 
-  - Audited `docs/r7-related-projects-discovery-design.md` against the post-ontology-v2 state of the codebase and documentation.
-  - Four classes of drift identified and resolved: (1) file name / CLI verb drift (`related-projects.yaml` → `related-components.yaml`, `state related-projects` → `state related-components`); (2) v1 edge-kind vocabulary superseded by 17-kind v2 ontology — sections updated to cross-reference `component-ontology.md` rather than duplicate; (3) dirty-tree handling: spec said "bail on dirty subtree" but shipped implementation folds dirty state into `dirty_hash` cache key; (4) Agent-trait open question resolved — Stage 1 spawns `claude -p` directly via `spawn_claude_with_cwd`.
-  - Status line updated to "Shipped. Historical design record." and a top-level banner added pointing to `component-ontology.md` and `component-ontology-migration.md` as authoritative vocabulary sources.
-  - §Rust Module Layout rewritten to describe the shipped layout (`src/discover/{mod,cache,stage1,stage2,apply,schema,tree_sha}.rs` + `src/ontology/`); §Open Questions reframed as "Resolved during implementation".
-  - All v1 references either removed, marked with `> _Historical note._` blocks, or placed inside clearly framed transition prose.
-  - No code changes; documentation only. Diff stat: 233 insertions, 101 deletions in a single file.
-  - The companion plan doc (`docs/r7-related-projects-discovery-plan.md`) was not audited — it has ~15 occurrences of `related-projects` and v1 kind references, but as a frozen implementation record it is lower priority.
-  - `docs/architecture.md` was not audited; may carry stale v1 vocabulary.
+  - **What was attempted:** Audited `docs/architecture.md` for stale v1 edge-kind vocabulary (`sibling`, `parent-of`), `related-projects` references, and prose contradicting `docs/component-ontology.md`, per task `audit-docs-architecture-md-for-stale-v1-edge-kind-vocabulary`.
+  - **What worked:** Audit completed cleanly. No edits were required. Surface matches for `sibling`/`parent`/`child` in `docs/architecture.md` are all filesystem or process-context English, not ontology edge kinds. Zero `related-projects` hits. The two documents occupy orthogonal domains (runtime architecture vs. cross-component edge schema), so they cannot contradict each other on vocabulary. Task marked `done`.
+  - **What didn't work:** N/A — the task was resolved in a single pass with no false positives.
+  - **What this suggests trying next:** No follow-up tasks are needed. The `architecture.md` source-tree section (lines 407–435) has generic drift (missing `ontology/`, `state/`, `discover/`, `related_components.rs`, `survey/` subdir), but that is pre-existing doc drift unrelated to v1-vocabulary migration and was intentionally left for a separate concern. Remaining backlog task is `extract-component-ontology-to-workspace-crate-phase-b` (deferred, low priority, entry criteria not yet met).
+  - **Key learnings:** The 2026-04-23 post-ontology-v2 docs pass correctly skipped `architecture.md` — it never carried v1 vocabulary. Auditing it was a reasonable precaution but the file had no attack surface for the migration. No source files were committed this session; this is noted explicitly (no uncommitted paths with missing justification).

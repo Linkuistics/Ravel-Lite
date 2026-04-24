@@ -543,3 +543,14 @@ sessions:
     - No code changes; documentation only. Diff stat: 233 insertions, 101 deletions in a single file.
     - The companion plan doc (`docs/r7-related-projects-discovery-plan.md`) was not audited — it has ~15 occurrences of `related-projects` and v1 kind references, but as a frozen implementation record it is lower priority.
     - `docs/architecture.md` was not audited; may carry stale v1 vocabulary.
+- id: session-33
+  timestamp: 2026-04-23T15:02:09Z
+  phase: work
+  body: |
+    ### Session 33 (2026-04-23T15:02:09Z) — docs/architecture.md v1-vocabulary audit (no-op)
+
+    - **What was attempted:** Audited `docs/architecture.md` for stale v1 edge-kind vocabulary (`sibling`, `parent-of`), `related-projects` references, and prose contradicting `docs/component-ontology.md`, per task `audit-docs-architecture-md-for-stale-v1-edge-kind-vocabulary`.
+    - **What worked:** Audit completed cleanly. No edits were required. Surface matches for `sibling`/`parent`/`child` in `docs/architecture.md` are all filesystem or process-context English, not ontology edge kinds. Zero `related-projects` hits. The two documents occupy orthogonal domains (runtime architecture vs. cross-component edge schema), so they cannot contradict each other on vocabulary. Task marked `done`.
+    - **What didn't work:** N/A — the task was resolved in a single pass with no false positives.
+    - **What this suggests trying next:** No follow-up tasks are needed. The `architecture.md` source-tree section (lines 407–435) has generic drift (missing `ontology/`, `state/`, `discover/`, `related_components.rs`, `survey/` subdir), but that is pre-existing doc drift unrelated to v1-vocabulary migration and was intentionally left for a separate concern. Remaining backlog task is `extract-component-ontology-to-workspace-crate-phase-b` (deferred, low priority, entry criteria not yet met).
+    - **Key learnings:** The 2026-04-23 post-ontology-v2 docs pass correctly skipped `architecture.md` — it never carried v1 vocabulary. Auditing it was a reasonable precaution but the file had no attack surface for the migration. No source files were committed this session; this is noted explicitly (no uncommitted paths with missing justification).
