@@ -1,11 +1,13 @@
-id: session-40
-timestamp: 2026-04-24T06:21:26Z
+id: session-41
+timestamp: 2026-04-24T06:52:19Z
 phase: work
 body: |
-  ### Session 40 (2026-04-24T06:21:26Z) — retire legacy shim + split integration.rs
+  ### Session 41 (2026-04-24T06:52:19Z) — Relative paths in projects.yaml for git-shared catalogs
 
-  - Attempted and completed two tasks: retire the `related-projects.yaml` hard-error shim (`retire-legacy-v1-related-projects-yaml-hard-error-shim`) and split `tests/integration.rs` into topic-scoped files (`split-tests-integration-rs-into-topic-scoped-files`).
-  - **Shim removal**: Deleted `LEGACY_RELATED_PROJECTS_FILE` const, `error_if_legacy_file_present` fn (15 LOC), its call in `load_or_empty`, the unit test `load_rejects_legacy_filename` from `src/related_components.rs`, and the end-to-end test `loading_legacy_v1_filename_hard_errors_with_actionable_message` from `tests/state_related_components.rs`. Module docstring updated to drop legacy-filename clause. Gate override noted: shim was ~24 hours old by wall-clock, but user explicitly named the task.
-  - **Test split**: Deleted 2580-LOC `tests/integration.rs`; redistributed 28 tests across seven topic-scoped files (`tests/dream.rs`, `tests/config.rs`, `tests/survey.rs`, `tests/phase_loop.rs`, `tests/pi_agent.rs`, `tests/cli.rs`, `tests/state_projects.rs`) plus shared helpers in `tests/common/mod.rs`. Two extra files (`cli.rs`, `pi_agent.rs`) created beyond the brief's four, driven by actual test groupings.
-  - Both tasks fully completed; build, clippy, and all 60 integration tests green.
-  - What this suggests next: `phase_loop.rs` at ~1100 LOC is the largest file due to the 250-LOC `ContractMockAgent` fixture. If it ever gains a second user, promote it to `tests/common/contract_mock.rs`.
+  - **What was attempted:** Make `projects.yaml` portable across machines by storing paths relative to the catalog file rather than as absolute paths. The task covered: a serde DTO layer (RawProjectsCatalog/RawProjectEntry), load-time absolute resolution, save-time relativisation via pathdiff, legacy absolute-path migration on first mutating verb, PathClean throughout, and a comprehensive test suite.
+
+  - **What worked:** All deliverables shipped. The in-memory `ProjectEntry.path` contract (always absolute) is preserved unchanged, so downstream consumers (discovery pipeline, orchestrator) required zero changes. Legacy all-absolute catalogs load unmodified and are silently migrated to relative form on the next save. Design questions from the task description were fully resolved during the user brainstorm: no sidecar `original_form` field, no `--relative` CLI flag, `..` segments allowed (needed for sibling-repo layouts), silent migration accepted. 26 pre-existing unit tests pass unmodified; 7 new acceptance tests added; 1 integration test updated.
+
+  - **What this suggests trying next:** Migration tooling is largely moot — automatic migration fires on the next mutating command. A `state projects canonicalise` verb (load-then-save) would cover the case of migrating without a mutation; defer until there is user demand. No schema version bump was needed (the change is additive on-disk).
+
+  - **Key learnings:** The DTO-layer pattern (separate Raw* structs for serde, rich in-memory structs without derive macros) is clean and low-churn; it can be reused if other catalog structs need similar on-disk/in-memory shape divergence. `pathdiff::diff_paths` + `path_clean::PathClean` together handle the round-trip losslessly. `serialise_catalog` extracted as a shared helper prevents divergence between `save_atomic` and `run_list`.
