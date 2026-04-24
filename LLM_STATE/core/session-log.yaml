@@ -720,3 +720,14 @@ sessions:
     - 11 unit tests in the new module; integration guard added to `tests/phase_loop.rs` for the `BACKLOG_TRANSITIONS` token. Full suite (515 lib + integration) passes, clippy clean. Release binary verified against live `LLM_STATE/core` plan.
     - Work-baseline timing issue discovered: the baseline is the reflect commit of the previous cycle, so triage additions from the prior cycle appear in the transitions block alongside this session's changes. Caveat added to the prompt; a cleaner fix would require a separate session-start baseline snapshot.
     - Task status was correctly flipped to `done` during work phase; safety-net step was a no-op.
+- id: session-48
+  timestamp: 2026-04-24T11:23:10Z
+  phase: work
+  body: |
+    ### Session 48 (2026-04-24T11:23:10Z) — Pre-seed plan dir + HR filter + preamble permission
+
+    - **What was attempted**: Two independent tasks from the core cluster: (1) pre-seed the plan directory in Rust before the create-plan LLM spawn (`pre-seed-plan-directory-in-rust-before-create-plan-llm-spawn`), and (2) filter rogue markdown horizontal-rule lines from headless phase output and update prompts to formally permit reasoning preambles (`filter-rogue-horizontal-rule-in-headless-phase-output-and-permit-reasoning-preamble`).
+    - **What worked**: Both tasks completed cleanly. TDD produced clean evidence trails for both: scaffold tests and HR-filter tests failed before implementation and passed after. Full workspace suite (584 tests) passed with no regressions. Two commits landed: one scoping `src/create.rs` + `defaults/create-plan.md`, one scoping `src/format.rs` + `defaults/phases/{reflect,dream,triage}.md`.
+    - **What didn't / scope not expanded**: `state backlog init` / `state memory init` verbs were intentionally left in place — they are no longer on the create-plan critical path but removal is a separate decision. `***` / `___` horizontal-rule variants were not filtered (YAGNI — the reported issue was `---` only).
+    - **What this suggests next**: Companion task `add-phase-summary-render-cli-verb-for-deterministic-triage-reflect-summaries` can proceed on a clean footing; prompts already permit a preamble so that extraction won't regress the preamble contract. The work-baseline timing bug (`fix-work-baseline-timing-move-git-save-work-baseline-after-git-commit-plan`) is the other top-priority core item and has no dependencies.
+    - **Key learnings**: The standing memory rule "Never do in an LLM what you can do in code" drove both tasks. Pre-seeding in Rust eliminated an entire class of format drift (LLM-authored YAML vs CLI-serialised YAML) and removed three scaffolding instructions from the create-plan prompt entirely. The HR filter illustrates the same pattern at the output side: a one-line Rust guard replaced a fragile prose instruction.

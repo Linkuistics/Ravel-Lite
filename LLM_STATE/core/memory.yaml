@@ -507,3 +507,14 @@ entries:
   title: Work-baseline is prior triage commit; triage additions bleed into {{BACKLOG_TRANSITIONS}}
   body: |
     The work-baseline SHA is captured at the triage commit (end of the previous cycle), not at session start. Triage additions from the prior cycle therefore appear in the `{{BACKLOG_TRANSITIONS}}` diff alongside this cycle's work changes. `analyse-work.md` includes a caveat about this. A cleaner fix requires a separate session-start baseline snapshot. See: `Work-baseline seeded atomically in the triage commit`.
+- id: llm-reasoning-preamble-in-reflect-dream-triage-is-a-preserved-feature
+  title: LLM reasoning preamble in reflect/dream/triage is a preserved feature
+  body: |
+    The LLM-authored narrative preamble that appears above the labelled action list in reflect, dream, and triage output is an intentional feature — the LLM's explanation of *what it noticed and why it made the mutations it made*. This preamble MUST be preserved across any future prompt or renderer change.
+
+    **Why:** The mechanical label list is only part of the value of these phase outputs. The preamble is where the reasoning lives — strategic notes, trade-offs, recurring observations — and it is often more useful to a human reviewer than the labels themselves. Suppressing it (as the current "Do not include any other commentary" wording does, on paper) wastes the reasoning the LLM is already doing.
+
+    **How to apply:**
+    - When extracting label rendering to Rust (task `add-phase-summary-render-cli-verb-…`), the renderer replaces only the label list, not the whole output. The LLM still prints its preamble above the CLI's label block.
+    - When editing `defaults/phases/{reflect,dream,triage}.md` output-format sections, the wording must explicitly permit a preamble — do not reintroduce a blanket "no commentary" instruction.
+    - When adjusting `src/format.rs::format_result_text`, ensure generic prose lines above the label list still render (as dim text). Filters should only remove structural noise like `---` separators or stray code fences, never paragraph text.

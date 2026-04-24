@@ -295,21 +295,21 @@ tasks:
   status: not_started
   dependencies: []
   description: |
-    Add `state phase-summary render` CLI verb for deterministic phase operation summaries.
+    Add `state phase-summary render` CLI verb for deterministic phase operation summaries, covering **triage, reflect, and dream**.
 
     ## What
 
-    Add a CLI verb that renders the operation-summary block emitted at the end of the **triage** and **reflect** phases deterministically, from the ground truth of what actually happened — not from what the LLM remembers doing.
+    Add a CLI verb that renders the operation-summary block emitted at the end of the **triage**, **reflect**, and **dream** phases deterministically, from the ground truth of what actually happened — not from what the LLM remembers doing.
 
     Proposed surface:
 
     ```
-    ravel-lite state phase-summary render <PLAN_DIR> --phase triage|reflect
+    ravel-lite state phase-summary render <PLAN_DIR> --phase triage|reflect|dream
         [--baseline <sha>]   # git sha holding the phase-start snapshot
         [--format text|yaml]
     ```
 
-    The verb computes the difference between the baseline snapshot of `backlog.yaml` / `memory.yaml` (captured at phase start) and the current working-tree state, then emits the labelled lines the phase prompts currently ask the LLM to produce:
+    The verb computes the difference between the baseline snapshot of `backlog.yaml` / `memory.yaml` (captured at phase start) and the current working-tree state, then emits the labelled lines the phase prompts currently ask the LLM to produce.
 
     Triage:
 
@@ -333,13 +333,34 @@ tasks:
     [OBSOLETE] <heading> — <body one-liner>
     ```
 
-    For labels where the reason is ambient (REPRIORITISED, NEW, OBSOLETE), derive it from the diff itself (before/after position; new id; deleted id). For labels that carry intent the diff can't recover (`[PROMOTED]` vs just `[NEW]`, `[BLOCKER]` vs `[NEW]`, `[IMPRECISE]` vs `[STALE]` for memory edits), the LLM still has to tag the operation — see "Intent tagging" below.
+    Dream (two-line entries with `→` continuation, see `src/format.rs:238-241` for the existing renderer handling):
+
+    ```
+    [OVERLAPPING] <heading A> + <heading B>
+               → <result heading>
+    [VERBOSE] <heading> — <what was wordy>
+           → <how it's now tightened>
+    [AWKWARD] <heading> — <old phrasing>
+           → <new phrasing>
+    [STATS] <before word count>
+         → <after word count>
+    ```
+
+    For labels where the reason is ambient (REPRIORITISED, NEW, OBSOLETE, STATS), derive it from the diff itself (before/after position; new id; deleted id; word count). For labels that carry intent the diff can't recover (`[PROMOTED]` vs just `[NEW]`, `[BLOCKER]` vs `[NEW]`, `[IMPRECISE]` vs `[STALE]`, `[OVERLAPPING]` vs `[AWKWARD]`), the LLM still has to tag the operation — see "Intent tagging" below.
 
     ## Why
 
-    Two adjacent phase prompts (`triage.md` §output-format, `reflect.md` §output-format) currently contain explicit label lists that the LLM is asked to produce after finishing its work. These are pure re-presentations of mutations that the state CLIs already recorded — the LLM is essentially re-transcribing its own tool calls. This costs tokens every triage and every reflect run, varies slightly across cycles, and duplicates information the filesystem already holds.
+    Three adjacent phase prompts (`triage.md` §output-format, `reflect.md` §output-format, `dream.md` §output-format) each contain explicit label lists the LLM is asked to produce after finishing its work. These are pure re-presentations of mutations that the state CLIs already recorded — the LLM is essentially re-transcribing its own tool calls. This costs tokens every run, varies slightly across cycles, and duplicates information the filesystem already holds.
 
     Exactly the same pattern as task `add-backlog-render-cli-verb-for-deterministic-markdown-table-output`: presentation variability extracted to a canonical Rust renderer. Also subsumes `triage-should-not-emit-the-no-dispatch-label-in-its-output` — the `[NO DISPATCH]` sentinel goes away naturally when a renderer simply emits nothing for an empty dispatch list.
+
+    ## LLM reasoning preamble is preserved
+
+    The LLM's narrative preamble ("what I noticed, what trade-offs drove the mutations") is an intentional feature of reflect/dream/triage output and MUST flow through unchanged when this extraction lands. The renderer replaces only the mechanical label list; the LLM still prints whatever reasoning it wants above the list. See memory entry "LLM reasoning preamble in reflect/dream/triage is a preserved feature" for the durable constraint.
+
+    Prompt wording in all three phases should be updated to explicitly permit a preamble (see companion task `filter-rogue-hr-and-allow-reasoning-preamble-in-headless-phase-output`). This task assumes that change has landed, so the prompt instruction becomes:
+
+    > "After your reasoning preamble, run `ravel-lite state phase-summary render {{PLAN}} --phase <phase>` and emit its output verbatim. Do not author the label list yourself."
 
     ## Intent tagging
 
@@ -348,18 +369,20 @@ tasks:
     - `[PROMOTED]` / `[ARCHIVED]` vs plain `[NEW]` (triage)
     - `[BLOCKER]` extracted from a parent task vs plain `[NEW]`
     - `[IMPRECISE]` vs `[STALE]` for a memory body update
+    - `[OVERLAPPING]` vs `[AWKWARD]` vs `[VERBOSE]` for dream rewrites
 
     Options:
 
     1. Add an optional `--intent <label>` flag to the mutating verbs (`state backlog add --intent promoted`, `state memory set-body --intent imprecise`) that annotates the transition in a sidecar `ops.log.yaml` the renderer consumes. Falls back to structural labels when unset.
-    2. Keep intent tagging out of Rust entirely: the renderer emits only labels recoverable from the diff (`[NEW]`, `[OBSOLETE]`, `[REPRIORITISED]`, `[STALE]`), and the phase prompts no longer ask for the richer labels at all. Simpler, but loses the promoted/archived distinction.
+    2. Keep intent tagging out of Rust entirely: the renderer emits only labels recoverable from the diff (`[NEW]`, `[OBSOLETE]`, `[REPRIORITISED]`, `[STALE]`, `[STATS]`), and the phase prompts no longer ask for the richer labels at all. Simpler, but loses the promoted/archived/overlapping distinctions.
 
     Pick (1) if the richer labels are actually consumed anywhere; pick (2) if they exist only for human readability of the phase output.
 
     ## Prompt changes
 
-    - `defaults/phases/triage.md`: delete the `## Output format` block (lines ~120-137). Replace with: "After completing all mutations, run `ravel-lite state phase-summary render {{PLAN}} --phase triage` and emit its output verbatim."
+    - `defaults/phases/triage.md`: delete the `## Output format` block (lines ~120-137). Replace with the preamble-plus-render directive above.
     - `defaults/phases/reflect.md`: same treatment for the `## Output format` block (lines ~58-71).
+    - `defaults/phases/dream.md`: same treatment for the `## Output format` block (lines ~47-67).
 
     ## Unit tests
 
@@ -367,10 +390,190 @@ tasks:
     - Triage with a reorder → emits `[REPRIORITISED]` with `<old index → new index>` or equivalent stable ordinal representation.
     - Triage with zero mutations → emits nothing (no `[NO DISPATCH]`, no "no changes" line — silence is the answer).
     - Reflect with a memory body update → emits `[STALE]` (default for body-only changes) unless `--intent imprecise` was passed.
+    - Dream with a word-count reduction → emits `[STATS] <before> → <after>`.
+    - Dream with two merged entries → emits `[OVERLAPPING] A + B → C` (requires intent tagging or falls back to `[NEW] C` + `[OBSOLETE] A` + `[OBSOLETE] B`).
     - Empty baseline vs non-empty current → handled without panic (first-cycle case).
 
     ## Related tasks
 
     - Task `add-backlog-render-cli-verb-for-deterministic-markdown-table-output` — sibling extraction for backlog-table rendering. Same philosophy, different surface.
     - Task `triage-should-not-emit-the-no-dispatch-label-in-its-output` — subsumed by this task. Close with a cross-reference if this one lands first.
+    - Task `filter-rogue-hr-and-allow-reasoning-preamble-in-headless-phase-output` — must land first so the prompt already permits a preamble when this extraction removes the label-authoring instructions.
     - Standing memory: "Never do in an LLM what you can do in code".
+    - Standing memory: "LLM reasoning preamble in reflect/dream/triage is a preserved feature".
+- id: pre-seed-plan-directory-in-rust-before-create-plan-llm-spawn
+  title: Pre-seed plan directory in Rust before create-plan LLM spawn
+  category: core
+  status: done
+  dependencies: []
+  description: |
+    Pre-seed the plan directory in Rust before spawning the create-plan LLM session, so the LLM never has to invoke CLI init verbs or create scaffolding files itself.
+
+    ## Problem
+
+    `src/create.rs::validate_target` creates only the *parent* of the plan directory; the plan directory itself, `phase.md`, and the initial `backlog.yaml`/`memory.yaml` shells are currently delegated to the LLM via prose in `create-plan.md` (see `echo work > {{PLAN}}/phase.md`, `ravel-lite state backlog init …`, `ravel-lite state memory init …`). That is pure mechanical work that violates the standing memory rule "Never do in an LLM what you can do in code".
+
+    A secondary consequence: `create-plan.md` documents the old markdown-bulk-init contract for `state backlog init`, but `backlog init` now expects YAML directly. The prompt has drifted out of sync with the CLI. Pre-seeding in Rust removes the drift surface entirely — the LLM populates content via `state backlog add` / `state memory add` on already-valid empty files.
+
+    ## Settled design
+
+    - **Where**: `src/create.rs::run_create`, between `validate_target` and the claude spawn.
+    - **What to create**:
+      - `{{PLAN}}/` directory itself (currently the LLM's job).
+      - `{{PLAN}}/phase.md` with exactly `work\n`.
+      - `{{PLAN}}/backlog.yaml` with exactly `tasks: []\n`.
+      - `{{PLAN}}/memory.yaml` with exactly `entries: []\n`.
+    - **What NOT to create**: `session-log.yaml` (created on first append), `related-plans.md` (optional, LLM-owned), `prompt-*.md` (optional, LLM-owned).
+    - **Interaction with `validate_target`**: keep `validate_target`'s pre-existence check (refuse to overwrite); the scaffolding step runs only after that check passes.
+    - **Interaction with `backlog init` / `memory init` CLI verbs**: these verbs still exist for manual / test use, but `create-plan.md` no longer references them. The `--body-file` path becomes strictly optional for callers that don't need bulk-load.
+
+    ## Prompt changes
+
+    Rewrite `ravel-lite-config/create-plan.md` §2 "Draft the plan":
+
+    - Remove the `echo work > {{PLAN}}/phase.md`, `state backlog init`, and `state memory init` instructions entirely.
+    - Replace with: "The plan directory and its `phase.md`, `backlog.yaml`, `memory.yaml` files are already scaffolded as empty. Populate the backlog by calling `ravel-lite state backlog add {{PLAN}} --title … --category … --description-file <path>` once per initial task. Populate memory, if any, via `ravel-lite state memory add`."
+    - Update the out-of-date markdown-bulk-format description of `state backlog init` (the CLI now takes YAML directly, not markdown).
+
+    ## Reference examples
+
+    - `src/create.rs:57-84` — `validate_target` (parent-only creation today).
+    - `src/create.rs:139-144` — existing `seed_dream_baseline_if_missing` post-spawn seed; mirror its "runner-owned scaffolding" idiom but hoist it pre-spawn.
+    - `src/state/backlog/schema.rs:45-48` — `BacklogFile` shape; confirms `tasks: []` serialises cleanly.
+    - `src/state/memory/schema.rs:14-17` — `MemoryFile` shape; `entries: []` likewise.
+
+    ## Dependencies
+
+    None; independent cleanup.
+
+    ## Verification
+
+    - New unit test: `run_create` scaffolding path produces the three files with the exact expected bytes before the claude spawn.
+    - End-to-end: run `ravel-lite create …` on a fresh path, Ctrl-C the claude session immediately; confirm the three files still exist and parse cleanly via `ravel-lite state backlog list` / `memory list`.
+    - The "Creating a Multi-Session Plan" doc no longer mentions `state backlog init` / `state memory init`.
+  results: |
+    ## What was done
+
+    1. **New `scaffold_plan_dir` function in `src/create.rs`.** Creates the plan directory (refusing if it already exists) and writes four files with fixed, minimal contents:
+
+       - `phase.md` = `work\n`
+       - `backlog.yaml` = `tasks: []\n`
+       - `memory.yaml` = `entries: []\n`
+       - `dream-baseline` = `0`
+
+    2. **`run_create` rewired.** `scaffold_plan_dir` is called between `validate_target` and the claude subprocess spawn. The previous post-spawn `seed_dream_baseline_if_missing` call was removed (now redundant — dream-baseline is written by the scaffold). The post-spawn verification was updated from "does phase.md exist" (always true now) to "does backlog contain any tasks" — a still-empty backlog signals the LLM session exited before populating anything.
+
+    3. **`create-plan.md` prompt rewritten** (both `defaults/create-plan.md` repo source AND the deployed `ravel-lite-config/create-plan.md`). The §2 "Draft the plan" section now:
+       - Tells the LLM the four scaffolded files already exist with their contracts
+       - Instructs the LLM to populate backlog and memory exclusively through `state backlog add` / `state memory add`, never by raw file writes
+       - Drops the out-of-date references to `state backlog init` (which expected a markdown bulk-init body — the CLI now takes YAML, and the init verb is no longer needed by create-plan at all) and `state memory init`
+
+    4. **Three new unit tests in `src/create.rs`:**
+       - `scaffold_plan_dir_creates_directory_and_required_files` — checks exact byte contents of all four files
+       - `scaffold_plan_dir_writes_cli_parseable_state_files` — round-trips through `read_backlog` / `read_memory` to prove the scaffolded YAML is CLI-compatible
+       - `scaffold_plan_dir_refuses_existing_directory` — the pre-existence guard
+
+    ## What worked
+
+    - TDD: all three scaffold tests failed before implementation (cannot find function `scaffold_plan_dir`), all three pass after the ~20 LoC addition.
+    - The dream-baseline seeder still has its defense-in-depth callers at `src/state/phase.rs:49` (every `state set-phase`) and `src/phase_loop.rs:237` (phase loop entry), so removing the create.rs call did not leave a gap.
+    - Full workspace test suite: 584 tests pass, no regressions. The init.rs drift detection test (`every_file_under_defaults_is_registered_in_embedded_files`) and the `embedded_defaults_are_valid` test both pass after the `defaults/create-plan.md` rewrite, confirming the embedded-content pipeline still parses.
+
+    ## What didn't / scope I chose not to expand
+
+    - I did NOT remove or deprecate `state backlog init` / `state memory init` CLI verbs. They were specifically designed for bulk-init at scaffold time but are no longer on the create-plan critical path. Removing them is a larger, independent decision — a separate backlog item could consider deletion vs keep-for-advanced-use. For now they remain documented only in `--help`.
+    - I did NOT change `state set-phase`'s refusal when `phase.md` does not exist. That check is still sound; pre-seeding just means the check will always pass on fresh plans.
+
+    ## What this suggests next
+
+    - The `state backlog init` / `state memory init` verbs are now unused in the create-plan flow. Consider whether they should be removed (and if so, what tests currently exercise them). That is a low-priority cleanup, not a blocker.
+    - The out-of-project edit to `ravel-lite-config/create-plan.md` lives in a sibling repo. It is not part of the Ravel-Lite project commit that analyse-work will produce — the user should commit that separately in the `ravel-lite-config` repo. The repo-source edit to `defaults/create-plan.md` is what downstream `ravel-lite init` invocations will propagate going forward.
+    - Companion task `filter-rogue-horizontal-rule-…` (done last cycle's earlier work) and this scaffolding task complete the small-cleanup trio of user issues 1, 3, 4. Issue 2 (dream through the CLI) is now fully represented in the expanded `add-phase-summary-render-cli-verb-…` task and remains the next logical core-cluster item.
+- id: filter-rogue-horizontal-rule-in-headless-phase-output-and-permit-reasoning-preamble
+  title: Filter rogue horizontal-rule in headless-phase output and permit reasoning preamble
+  category: core
+  status: done
+  dependencies: []
+  description: |
+    Filter markdown horizontal-rule lines (`---`) from headless-phase result rendering, and align the reflect/dream/triage prompts to explicitly permit a reasoning preamble.
+
+    ## Problem
+
+    `src/format.rs::format_result_text` filters code-fence lines (`line.trim() == "```"`) but not markdown horizontal rules. The reflect/dream/triage prompts each end with "Do not include any other commentary" — but in practice the LLM writes a short reasoning preamble, separates it with `---`, and then emits the labelled summary. The `---` survives the filter and renders as a dim stray line above the action list (see `src/format.rs:341-346` "regular text" fallback).
+
+    The reasoning preamble is a desired feature — it is the LLM's narrative context for why the mutations happened. The current prompt wording suppresses it on paper and the formatter mangles it in practice. Both need to move.
+
+    ## Settled design
+
+    ### Filter fix (src/format.rs)
+
+    Add `line.trim() == "---"` (and optionally any run of 3+ dashes) to the filter list alongside the existing fence filter near `src/format.rs:255-256`:
+
+    ```rust
+    if line.trim() == "```" { continue; }
+    if line.trim_start_matches('-').is_empty() && line.trim().len() >= 3 { continue; }
+    ```
+
+    The second form guards against `----` / `-----` variants. Keep it conservative — don't filter lines that contain any non-dash characters.
+
+    ### Prompt alignment (reflect / dream / triage)
+
+    Replace the "Do not include any other commentary" wording in:
+
+    - `defaults/phases/reflect.md` output-format block (lines ~68-71)
+    - `defaults/phases/dream.md` output-format block (lines ~66-67)
+    - `defaults/phases/triage.md` output-format block (lines ~135-137)
+
+    Replace with explicit permission, e.g.:
+
+    > You may precede the action list with a brief paragraph of reasoning — what you noticed, what trade-offs drove the mutation set. Separate the preamble from the action list with a blank line. Do not introduce other sections.
+
+    This makes the reasoning an official part of the output contract so downstream code (and the next prompt revision) doesn't regress it.
+
+    ## Reference examples
+
+    - `src/format.rs:224-255` — `format_result_text` and the existing code-fence filter.
+    - `src/format.rs:341-346` — the generic "regular text" fallback where the `---` currently lands.
+    - `defaults/phases/{reflect,dream,triage}.md` — the three prompts whose output-format sections need the wording change.
+
+    ## Dependencies
+
+    None.
+
+    ## Verification
+
+    - New unit test in `src/format.rs`: a line of exactly `---` (and one with `-----`) produces no output. A line of `--- something ---` renders as regular text (non-match).
+    - Manual: run one triage cycle post-change; confirm the terminal output shows no stray dim `---` line between the reasoning preamble and the action list.
+    - `cargo test --workspace` green.
+
+    ## Related
+
+    - Existing backlog task `add-phase-summary-render-cli-verb-…` (now expanded to cover dream) will later extract the label portion to Rust. The reasoning preamble stays LLM-owned after that extraction — this task's prompt change establishes that split explicitly.
+  results: |
+    ## What was done
+
+    1. **Filter added in `src/format.rs::format_result_text`.** A new guard next to the existing code-fence filter drops any line that trims to a pure run of 3 or more dashes. `---`, `----`, `-----` etc. are now filtered; lines that contain dashes alongside content (`--- foo`, `foo --- bar`, `-- two-dashes`) are preserved.
+
+    2. **Prompt wording aligned.** The "Do not include any other commentary" wording in `defaults/phases/{reflect,dream,triage}.md` was replaced with an explicit permission for a brief reasoning preamble separated from the action list by a blank line. Each phase's preamble hint is tailored to the phase ("what you noticed in the session" for reflect; "what patterns you noticed across the memory" for dream; "what drove reprioritisations or hand-off decisions" for triage).
+
+    3. **Four new unit tests** in `src/format.rs::tests`:
+       - `format_result_text_filters_markdown_horizontal_rule` — the canonical scenario: preamble + `---` + labels.
+       - `format_result_text_filters_longer_dash_runs` — `----`, `-----` variants.
+       - `format_result_text_preserves_lines_mixing_dashes_and_text` — regression guard for dashes-as-content.
+       - (Plus confirmation that the existing preamble-as-dim-text rendering still works.)
+
+    ## What worked
+
+    - TDD produced a clean evidence trail: both new filter tests failed before the one-line addition (`trimmed.chars().all(|c| c == '-') && trimmed.len() >= 3`), both passed after. The mixed-dashes preservation test passed unchanged — confirming the guard is tight.
+    - All 581 workspace tests pass with the change in place. No regressions in the init.rs drift detection, the pi-prompt dangling-tokens guard, or any other prompt-sensitive test.
+
+    ## What didn't / scope I chose not to expand
+
+    - I did NOT filter `***` or `___` (other markdown HR syntaxes). The reported issue was `---` only; LLMs in these phases don't produce the other forms. YAGNI.
+    - I did NOT add a test that asserts preamble text renders as dim. The existing `format_result_text` "regular text" fallthrough at `src/format.rs:341-346` handles that and is covered by neighbouring tests; explicitly re-asserting it would be belt-and-braces.
+
+    ## What this suggests next
+
+    - The companion backlog task `add-phase-summary-render-cli-verb-for-deterministic-triage-reflect-summaries` (now expanded to also cover dream) can now proceed on a clean footing: the prompts already permit a preamble, so when that task replaces the LLM-authored label lists with CLI-rendered output, the LLM's preamble contract is preserved unchanged.
+    - The companion backlog task `pre-seed-plan-directory-in-rust-before-create-plan-llm-spawn` is unrelated but was added in the same cycle; it is independent and ready for a future work phase.
+    - Standing memory entry "LLM reasoning preamble in reflect/dream/triage is a preserved feature" was added to durably bind future prompt edits against regressing the preamble.
