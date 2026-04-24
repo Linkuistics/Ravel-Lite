@@ -2,7 +2,7 @@ tasks:
 - id: project-wide-audit-simplification-cleanup-debt-reduction
   title: 'Project-wide audit: simplification, cleanup, debt reduction'
   category: architecture
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Run a layered audit of the Ravel-Lite codebase looking for simplification, cleanup, and debt-reduction opportunities.
@@ -38,3 +38,161 @@ tasks:
 
     - Do not rewrite large modules during the audit — extract follow-up tasks.
     - Do not touch `LLM_STATE/` or `defaults/` content — those are configuration surfaces, not code debt.
+  results: |
+    Ran the three-layer audit (mechanical, post-migration residue, architectural). The codebase is in better shape than the task brief anticipated — most of the "likely debt" areas turned up nothing actionable, and several items the task brief proposed as candidates were already handled or belong in memory rather than the backlog.
+
+    ## Punch list
+
+    ### Mechanical pass
+
+    - **M1 — Pedantic/nursery clippy: 564 lints, baseline clean.** Shipped lint config (`warnings = "deny"`) is already satisfied. Top buckets: 145 `type-name-repetition`, 114 missing `# Errors` doc sections, 43 missing `#[must_use]`, 25 `Default::default()` → `IndexMap::default()`, 22 `const fn` candidates, 18 redundant closures, 16 `format!` in `push_str`, 13 uninlined format args. Severity: nit. No task — pedantic/nursery is deliberately not in the project's lint baseline; a 564-site sweep for style-only wins would be more noise than value.
+    - **M2 — 4 production `panic!(…)` sites.** `src/ontology/mod.rs:115`, `src/ontology/defaults.rs:197,236`, `src/agent/pi.rs:566`. All guard embedded-default shape assumptions and could become `assert!`/`expect()`. Severity: nit. No task.
+    - **M3 — `cargo-udeps` not installed; nightly required.** Data gap only.
+    - **M4 — No `TODO`/`FIXME`/`XXX`** in source. Clean.
+
+    ### Post-migration residue
+
+    - **P1 — v1 `related-projects.yaml` hard-error shim** (`src/related_components.rs:53,92`). ~15 LOC, runs on every v2 read. Severity: minor. **Task created** (low-priority) — retire when the migration window closes.
+    - **P2 — `state migrate` + 786-LOC `src/state/migrate.rs`** is retained for external consumers; plan-state in this repo is already migrated. Not debt.
+
+    ### Architectural survey
+
+    - **A1 — `run_rename` three-cascade registry** (already in memory). Catalog + `related_components::rename_component_in_edges` + `discover::cache::rename`. Memory-noted trigger ("before fourth cascade") has not fired. Kept in memory, not promoted to a task — materialising now would fire work against a conditional trigger, violating the "don't build for hypothetical requirements" principle.
+    - **A2 — Binary/library double-compilation.** `src/main.rs:1-20` re-declares every library module with `mod xxx;` instead of `use ravel_lite::xxx::…;`. Forces 5+ `#[allow(unused_imports)]` attributes in `src/survey.rs` and `src/ontology/mod.rs`, whose comments explicitly document the workaround. Every new exported API needs a new allow attribute. Severity: major. **Task created.**
+    - **A3 — `src/main.rs` 1238 LOC, 8 clap enums + 6 dispatchers.** Splittable into `src/cli/<area>.rs`. Deliberately deferred: if A2 lands, `main.rs` shape changes and the split decision is cleaner from that new baseline. Severity: minor. No task yet.
+    - **A4 — Generic-drift-guard consolidation** (suggested in task brief). Rejected: `{{TOOL_READ}}` is deliberately scoped to `work.md` only per existing memory, so a universal "substitutes cleanly" test would reject that scoping. Current per-class guards are correct.
+    - **A5 — Agent trait.** 4 methods, common bits already in `src/agent/common.rs`. No abstraction hole.
+    - **A6 — `tests/integration.rs` 2580 LOC, 25 tests.** Pattern of per-area `tests/state_*.rs` already established; continuing the migration is mechanical. Severity: minor. **Task created** (low-priority).
+    - **A7 — `PlanRow` duplicate count fields** (already in memory). Keep until downstream consumers migrate to `task_counts`.
+    - **A8 — `project_root_for_plan` uses `canonicalize` vs `std::path::absolute`** (already in memory). Latent risk only if a new consumer cross-compares; no action until triggered.
+
+    ## Tasks promoted
+
+    Three new backlog tasks:
+    - `eliminate-binary-library-double-compilation-in-main-rs` (category: architecture, major)
+    - `retire-legacy-v1-related-projects-yaml-hard-error-shim` (category: cleanup, minor, low-pri)
+    - `split-tests-integration-rs-into-topic-scoped-files` (category: testing, minor, low-pri)
+
+    ## What this suggests next
+
+    The audit produced one genuine architectural finding (A2). Four items (A1, A7, A8, P2) are already tracked in memory with correct conditional triggers and do not belong in the backlog. The predominant signal is that the project's drift-guard infrastructure — `EMBEDDED_FILES` registration test, ontology-enum bijection tests, `shipped_pi_prompts_have_no_dangling_tokens`, per-phase contract test, `Edge::validate` — is catching regressions before they become debt.
+
+    Recommended next work: pick up A2 (the main-rs refactor) as an architecture task. It's self-contained, removes a load-bearing workaround whose maintenance cost scales linearly with new `pub use` items, and unblocks the A3 judgement (CLI split).
+- id: eliminate-binary-library-double-compilation-in-main-rs
+  title: Eliminate binary/library double-compilation in main.rs
+  category: architecture
+  status: not_started
+  dependencies: []
+  description: |
+    Eliminate the binary/library double-compilation in `src/main.rs`.
+
+    ## Problem
+
+    `src/main.rs:1-20` re-declares every library module with `mod xxx;`:
+
+    ```
+    mod agent;
+    mod config;
+    mod create;
+    ... (17 modules)
+    ```
+
+    `src/lib.rs` re-declares the same modules as `pub mod xxx;`. Every module is therefore compiled twice — once as part of the library crate and once as part of the binary crate. Concretely, this forces **five `#[allow(unused_imports)]` attributes** on `pub use` re-exports in `src/survey.rs` (5) and `src/ontology/mod.rs` (3+), with comments that explicitly document the workaround:
+
+    > `main.rs` declares `mod survey;` of its own, so the binary crate compiles this file alongside the library crate. These re-exports are the library's public API (reached via `ravel_lite::survey::*` from integration tests); the binary never touches them. Silence the bin-side `unused_imports` warning so `deny(warnings)` doesn't reject the build.
+
+    Every new `pub use` item intended for external consumers needs a new `#[allow(unused_imports)]`. The allow-comments have already grown from one file to two and will propagate on each new exported API.
+
+    ## Fix
+
+    Convert `src/main.rs` to consume the library crate instead of re-declaring every module:
+
+    1. Delete lines 1-20 of `src/main.rs` (the `mod xxx;` block).
+    2. Replace `use crate::xxx::…;` imports with `use ravel_lite::xxx::…;`.
+    3. Remove the `#[allow(unused_imports)]` attributes on `pub use` blocks in `src/survey.rs` and `src/ontology/mod.rs` (the comments above each can also go).
+    4. Verify `cargo build`, `cargo test`, and `cargo clippy --all-targets --all-features` still pass.
+
+    ## Exit criteria
+
+    - `src/main.rs` has no `mod xxx;` declarations.
+    - Build and tests pass.
+    - No `#[allow(unused_imports)]` attributes remain on library `pub use` blocks.
+    - Build time for a clean `cargo build` measurably drops (single-compile, not double).
+
+    ## Scope
+
+    - Strictly refactor — no behaviour change.
+    - If any `use crate::` path currently resolves to something `pub` in the module but not `pub use`'d from the parent, the fix is to `pub use` it, not to leave a `mod` declaration behind.
+- id: retire-legacy-v1-related-projects-yaml-hard-error-shim
+  title: Retire legacy v1 related-projects.yaml hard-error shim
+  category: cleanup
+  status: not_started
+  dependencies: []
+  description: |
+    Retire the legacy v1 `related-projects.yaml` hard-error shim.
+
+    ## Current state
+
+    `src/related_components.rs` carries:
+
+    - `pub const LEGACY_RELATED_PROJECTS_FILE: &str = "related-projects.yaml";` (line 53)
+    - `fn error_if_legacy_file_present(config_root: &Path) -> Result<()>` (line 92) — ~15 LOC `bail!` with migration guidance
+    - Called from `load_or_empty` on every v2 read (line 56)
+    - Test `rename_cascade_is_noop_when_file_absent` references the const at `tests/state_related_components.rs:449` and `src/related_components.rs:331`
+
+    Memory records confirm the v2 cutover is complete: "Ravel-Lite has moved to the component-ontology v2 schema; v1 files are not auto-upgraded. Delete '<path>' ... then run `discover --apply`."
+
+    ## Proposal
+
+    Remove the shim when the user judges the migration window has closed (enough time has passed that no in-the-wild config is still holding a legacy `related-projects.yaml` file). The mechanism is:
+
+    1. Delete the `LEGACY_RELATED_PROJECTS_FILE` const.
+    2. Delete `error_if_legacy_file_present` and its call in `load_or_empty`.
+    3. Delete the test that asserts the shim fires (and any test fixture that creates a v1 file).
+    4. Retain the migration-path memory note (it still documents the one-time upgrade steps for any stragglers).
+
+    ## Decision point (defer until executing)
+
+    Before executing, confirm: has sufficient time elapsed since the v2 cutover commit (`7db7307 Migrate related-projects to related-components with ontology v2`) that the shim's guardrail value is lower than the ~20 LOC + read-path overhead cost?
+
+    ## Priority
+
+    Low. The shim is cheap and the blast radius of keeping it is zero. Only act when confident.
+- id: split-tests-integration-rs-into-topic-scoped-files
+  title: Split tests/integration.rs into topic-scoped files
+  category: testing
+  status: not_started
+  dependencies: []
+  description: |
+    Split `tests/integration.rs` into topic-scoped test files.
+
+    ## Current state
+
+    `tests/integration.rs` is 2580 LOC with 25 tests. Peer topic-scoped test files already exist:
+    - `tests/state_backlog.rs`
+    - `tests/state_memory.rs`
+    - `tests/state_session_log.rs`
+    - `tests/state_related_components.rs`
+    - `tests/discover.rs`
+
+    ## Proposal
+
+    Migrate the 25 tests in `integration.rs` into topic-scoped sibling files, following the established pattern. Natural topic groupings visible from the test names:
+
+    - **Dream / reflect / baseline**: `dream_guard_integration`, `git_commit_reflect_seeds_dream_baseline_when_missing`
+    - **Config loading**: `config_loading_integration`, `embedded_defaults_are_valid`
+    - **Survey**: `survey_loads_plans_from_multiple_projects_individually_named`, `survey_yaml_emit_injects_input_hashes_and_round_trips`, `survey_incremental_merge_reuses_unchanged_rows_and_includes_llm_delta`, `survey_incremental_is_noop_when_no_files_changed`, `survey_incremental_rejects_llm_delta_outside_changed_set`, `survey_format_renders_markdown_matching_direct_render`
+    - **Phase loop / handoff**: `phase_loop_triage_cycle_exits_cleanly_on_no_confirm`, `phase_contract_round_trip_writes_expected_files`, and the `[HANDOFF]` tests
+    - **Shared helpers** (`flip_stale_task_statuses`, `inject_handoff_into_task_block`, `extract_handoff_from_block`, `init_test_repo`, `write_memory_yaml_with_word_count`, `write_backlog_yaml_with_marker`) move to a new `tests/common/mod.rs` shared module.
+
+    Target file names: `tests/phase_loop.rs`, `tests/survey.rs`, `tests/dream.rs`, `tests/config.rs`, `tests/common/mod.rs`.
+
+    ## Exit criteria
+
+    - `tests/integration.rs` is deleted (or reduced to a minimal entry-point if something must remain).
+    - All 25 tests pass in their new locations.
+    - No duplicated helper code between test files.
+
+    ## Priority
+
+    Low. The file is navigable today — this is a maintainability improvement, not a bug.
