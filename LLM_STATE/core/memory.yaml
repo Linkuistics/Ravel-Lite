@@ -18,7 +18,7 @@ entries:
 - id: init-rs-drift-detection-test-guards-coding-style-registration
   title: init.rs drift test guards all defaults/ file registration
   body: |
-    every_file_under_defaults_is_registered_in_embedded_files recursively walks the entire defaults/ tree and asserts every file has a matching EmbeddedFile entry in src/init.rs. Adding any file under defaults/ without registering it fails the test. Replaced the narrower every_default_coding_style_file_is_embedded, which only covered defaults/fixed-memory/coding-style-*.md.
+    `every_file_under_defaults_is_registered_in_embedded_files` recursively walks the entire `defaults/` tree and asserts every file has a matching `EmbeddedFile` entry in `src/init.rs`. Adding any file under `defaults/` without registering it fails the test.
 - id: embedded-defaults-are-valid-asserts-non-empty-model-and-provider
   title: '`embedded_defaults_are_valid` asserts non-empty model and provider'
   body: |
@@ -248,7 +248,7 @@ entries:
   body: |
     `ProjectsCatalog` (schema_version 1) maps project names to absolute in-memory paths. On disk, paths are stored relative to the catalog file via the `RawProjectsCatalog`/`RawProjectEntry` DTO layer; resolved to absolute on load, relativised on save. `auto_add` is pure and returns `AlreadyCatalogued`/`Added`/`NameCollision`. `ensure_in_catalog_interactive` is generic over `Read + Write`. Atomic save. See: `projects.yaml DTO layer separates serde from in-memory shape`.
 - id: state-projects-add-rejects-relative-paths
-  title: state projects add resolves relative paths against CWD
+  title: '`state projects add` resolves relative paths against CWD'
   body: |
     `state projects add` resolves relative paths against the caller's CWD via `std::path::absolute`; stores the absolute form. No filesystem access required.
 - id: state-projects-rename-cascades-into-related-projects-yaml
@@ -284,7 +284,7 @@ entries:
   body: |
     `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, or `dispatch_related_components`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
 - id: r7-design-llm-driven-related-projects-discovery
-  title: 'R7 design: LLM-driven related-projects discovery'
+  title: '`discover` runs two-stage fan-out pipeline to `discover-proposals.yaml`'
   body: |
     `state related-components discover` fans out one subagent per project (two-stage pipeline: per-project interaction-surface extraction then global edge proposal) and writes `discover-proposals.yaml`; `discover-apply` merges after human review. Cache key is `(tree_sha, dirty_hash)` pair; see `Discover cache key is tree_sha + dirty_hash pair`.
 - id: state-migrate-force-required-when-yaml-predates-md
@@ -326,7 +326,7 @@ entries:
 - id: find-conflicting-kind-misses-parent-of-direction-reversals
   title: '`find_directional_conflict` requires same-lifecycle for reversed-pair conflicts'
   body: |
-    `src/discover/apply.rs::find_directional_conflict` flags a conflict when a directed-kind edge with the same lifecycle and reversed participants already exists. Cross-lifecycle reversals are not flagged; whether they should be is an open design question deferred to triage. See: `Sibling edges dedup by sorted participants; parent-of by order`.
+    `src/discover/apply.rs::find_directional_conflict` flags a conflict when a directed-kind edge with the same lifecycle and reversed participants already exists. Cross-lifecycle reversals are not flagged; whether they should be is an open design question. See: `Sibling edges dedup by sorted participants; parent-of by order`.
 - id: discover-e2e-uses-a-fake-claude-bash-shim-per-stage
   title: Discover e2e uses a fake-claude bash shim per stage
   body: |
@@ -366,7 +366,7 @@ entries:
 - id: opportunistic-discover-on-catalog-changes-deferred-idea
   title: Opportunistic discover on catalog changes is a deferred idea
   body: |
-    Analyse-work or triage could run `discover` opportunistically when project composition changes (new projects added, catalog membership shifts), keeping `related-projects.yaml` fresher without manual invocation. The ontology v2 design is complete; revisit trigger conditions after the four additive ontology-v2 implementation tasks land and discover re-runs against the new schema.
+    Analyse-work or triage could run `discover` opportunistically when project composition changes (new projects added, catalog membership shifts), keeping `related-projects.yaml` fresher without manual invocation. Ontology v2 design is complete; trigger conditions are not yet defined.
 - id: proposalsfile-source-project-states-stores-full-projectstate
   title: ProposalsFile.source_project_states stores full ProjectState
   body: |
@@ -378,7 +378,7 @@ entries:
 - id: component-ontology-v2-spec-at-docs-component-ontology-md
   title: Component ontology v2 spec at docs/component-ontology.md
   body: |
-    `docs/component-ontology.md` is the canonical v2 inter-component relationship ontology spec (reference section only). Split from monolithic form: spec stays at the original path; migration guidance lives in a separate companion doc. Design-only; four backlog tasks cover additive implementation. See: `Component ontology v2 uses kind × lifecycle × direction axes`.
+    `docs/component-ontology.md` is the canonical v2 inter-component relationship ontology spec (reference section only). Split from monolithic form: spec stays at the original path; migration guidance lives in a separate companion doc. Implementation is pending. See: `Component ontology v2 uses kind × lifecycle × direction axes`.
 - id: component-ontology-v2-uses-kind-lifecycle-direction-axes
   title: Component ontology v2 uses kind × lifecycle × direction axes
   body: |
@@ -498,7 +498,7 @@ entries:
 - id: backlog-transitions-token-computed-by-src-backlog-transitions-rs
   title: '{{BACKLOG_TRANSITIONS}} token computed by src/backlog_transitions.rs'
   body: |
-    `src/backlog_transitions.rs` diffs `backlog.yaml` at the work-baseline SHA against the current state. Covers status flips, result additions/modifications, added/deleted tasks, dependency changes, and handoff changes. Soft-fails to a human-readable placeholder on any error. Wired into `phase_loop.rs` `AnalyseWork` branch alongside `{{WORK_TREE_STATUS}}`; `analyse-work.md` presents the block as context for understanding what moved — the commit title must describe the shape of the changes (e.g., "Extract auth module", "Remove deprecated sync path"), not cite task ids. Step 9 explicitly forbids authoring commit titles or bodies around these task ids.
+    `src/backlog_transitions.rs` diffs `backlog.yaml` at the work-baseline SHA against the current state. Covers status flips, result additions/modifications, added/deleted tasks, dependency changes, and handoff changes. Soft-fails to a human-readable placeholder on any error. Wired into `phase_loop.rs` `AnalyseWork` branch alongside `{{WORK_TREE_STATUS}}`; `analyse-work.md` presents the block as context for understanding what moved — the commit title must describe the shape of the changes (e.g., "Extract auth module", "Remove deprecated sync path"), not cite task ids. The commits.yaml authoring step in `analyse-work.md` explicitly forbids task ids in commit titles or bodies.
 - id: work-baseline-is-prior-triage-commit-triage-additions-bleed-into-backlog-transitions
   title: Work-baseline is prior triage commit; triage additions bleed into {{BACKLOG_TRANSITIONS}}
   body: |
@@ -506,24 +506,15 @@ entries:
 - id: llm-reasoning-preamble-in-reflect-dream-triage-is-a-preserved-feature
   title: LLM reasoning preamble in reflect/dream/triage is a preserved feature
   body: |
-    The LLM-authored narrative preamble that appears above the labelled action list in reflect, dream, and triage output is an intentional feature — the LLM's explanation of *what it noticed and why it made the mutations it made*. This preamble MUST be preserved across any future prompt or renderer change.
-
-    **Why:** The mechanical label list is only part of the value of these phase outputs. The preamble is where the reasoning lives — strategic notes, trade-offs, recurring observations — and it is often more useful to a human reviewer than the labels themselves. Suppressing it (as the current "Do not include any other commentary" wording does, on paper) wastes the reasoning the LLM is already doing.
-
-    **How to apply:**
-    - When extracting label rendering to Rust (task `add-phase-summary-render-cli-verb-…`), the renderer replaces only the label list, not the whole output. The LLM still prints its preamble above the CLI's label block.
-    - When editing `defaults/phases/{reflect,dream,triage}.md` output-format sections, the wording must explicitly permit a preamble — do not reintroduce a blanket "no commentary" instruction.
-    - When adjusting `src/format.rs::format_result_text`, ensure generic prose lines above the label list still render (as dim text). Filters should only remove structural noise like `---` separators or stray code fences, never paragraph text.
+    The LLM-authored prose preamble above the label list in reflect, dream, and triage is intentional — it carries the LLM's reasoning, not just the action list. Preserve it across prompt and renderer changes: label-rendering code replaces only the label block, not the whole output; output-format sections in `defaults/phases/{reflect,dream,triage}.md` must explicitly allow preamble; `format_result_text` must not filter paragraph text, only structural noise (`---` separators, stray code fences).
 - id: run-create-pre-seeds-plan-dir-in-rust-before-llm-spawn
   title: run_create pre-seeds plan dir in Rust before LLM spawn
   body: |
-    run_create pre-seeds plan dir in Rust before LLM spawn
-
-    `src/create.rs` scaffolds the plan directory — creating `backlog.yaml`, `memory.yaml`, and related plan-state files — via CLI calls before the create-plan LLM spawn. Eliminates format drift between LLM-authored YAML and CLI-serialised YAML; removes the corresponding scaffolding instructions from `defaults/create-plan.md`. See: `Pre-initialise output file before CLI-driven spawn`.
+    `src/create.rs` scaffolds the plan directory — creating `backlog.yaml`, `memory.yaml`, and related plan-state files — via CLI calls before the create-plan LLM spawn. Eliminates format drift between LLM-authored YAML and CLI-serialised YAML; `defaults/create-plan.md` carries no scaffolding instructions. See: `Pre-initialise output file before CLI-driven spawn`.
 - id: headless-output-filters-hr-lines-in-rust
   title: Headless output filters `---` HR lines in Rust
   body: |
-    `src/format.rs` strips bare `---` horizontal-rule lines from headless phase output (reflect, dream, triage). Only `---` is filtered; `***` and `___` variants are not (the reported issue was `---` only). Replaces a fragile prose instruction that asked the LLM not to emit HR separators.
+    `src/format.rs` strips bare `---` horizontal-rule lines from headless phase output (reflect, dream, triage). Only `---` is filtered; `***` and `___` variants are not.
 - id: planrowcounts-injects-unblocked-blocked-received-into-survey
   title: PlanRowCounts injects unblocked/blocked/received into survey
   body: |
