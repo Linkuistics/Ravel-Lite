@@ -1,6 +1,6 @@
 [package]
 name = "ravel-lite"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 description = "An orchestration loop for LLM development cycles"
 
