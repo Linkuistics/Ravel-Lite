@@ -134,4 +134,8 @@ After completing all writes, print a brief summary using this structure:
 
 Labels name the **state that caused the change**, not the action taken
 (e.g. OBSOLETE, not REMOVED; DONE, not DELETED). One line per entry.
-Do not include any other commentary.
+
+You may precede the action list with a brief reasoning preamble — what
+patterns you saw across the backlog, what drove reprioritisations or
+hand-off decisions. Separate the preamble from the action list with a
+blank line. Do not introduce other sections.

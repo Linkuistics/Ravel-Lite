@@ -67,5 +67,9 @@ After completing all writes, print a brief summary using this structure:
 ```
 
 Labels name the **state that caused the change**, not the action taken
-(e.g. OBSOLETE, not REMOVED). One line per memory entry. Do not include
-any other commentary — just the action list.
+(e.g. OBSOLETE, not REMOVED). One line per memory entry.
+
+You may precede the action list with a brief reasoning preamble — what
+you noticed in the session, what trade-offs drove your choices. Separate
+the preamble from the action list with a blank line. Do not introduce
+other sections.

@@ -254,6 +254,14 @@ pub fn format_result_text(text: &str) -> Vec<StyledLine> {
         if PHASE_MD_RE.is_match(line) { continue; }
         // Filter code fence lines
         if line.trim() == "```" { continue; }
+        // Filter markdown horizontal-rule separators. LLMs in the headless
+        // phases often place `---` between their reasoning preamble and the
+        // labelled summary; the separator is noise once labels render with
+        // their own visual weight.
+        {
+            let trimmed = line.trim();
+            if trimmed.len() >= 3 && trimmed.chars().all(|c| c == '-') { continue; }
+        }
 
         // Structured action markers
         if let Some(caps) = ACTION_RE.captures(line) {
@@ -504,6 +512,49 @@ mod tests {
         let text = flat_text_all(&lines);
         assert!(!text.contains("phase.md set to"));
         assert!(text.contains("Real content"));
+    }
+
+    #[test]
+    fn format_result_text_filters_markdown_horizontal_rule() {
+        // LLMs in reflect/dream/triage put a `---` separator between the
+        // reasoning preamble and the labelled summary. The separator is
+        // noise once the labels are already visually distinct — filter it.
+        let lines = format_result_text(
+            "I noticed the backlog had drifted.\n\n---\n\n[NEW] Real content",
+        );
+        let text = flat_text_all(&lines);
+        assert!(text.contains("noticed the backlog"), "preamble must survive");
+        assert!(text.contains("Real content"), "label must survive");
+        for line in &lines {
+            let flat = flat_text(line);
+            assert!(flat.trim() != "---", "bare `---` line must be filtered: {flat:?}");
+        }
+    }
+
+    #[test]
+    fn format_result_text_filters_longer_dash_runs() {
+        // Markdown accepts 3+ dashes as a horizontal rule; variants like
+        // `----` or `-----` should filter the same as `---`.
+        let lines = format_result_text("before\n----\nafter\n-----\nend");
+        for line in &lines {
+            let flat = flat_text(line);
+            let trimmed = flat.trim();
+            assert!(
+                !trimmed.chars().all(|c| c == '-') || trimmed.is_empty(),
+                "all-dashes line survived: {flat:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn format_result_text_preserves_lines_mixing_dashes_and_text() {
+        // `--- foo` or `foo --- bar` are content, not separators. Only
+        // pure dash runs are filtered.
+        let lines = format_result_text("--- foo\nfoo --- bar\n-- two dashes only");
+        let text = flat_text_all(&lines);
+        assert!(text.contains("--- foo"), "dashes+text must survive");
+        assert!(text.contains("foo --- bar"), "dashes in middle must survive");
+        assert!(text.contains("-- two dashes"), "two-dash line is not an HR and must survive");
     }
 
     #[test]

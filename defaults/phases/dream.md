@@ -64,4 +64,9 @@ a continuation line beginning with `→` carries the post-change state.
 Labels name the **state that caused the change**, not the action taken
 (e.g. VERBOSE, not TIGHTENED). Two lines per significant change — old
 on top, new under it. Minor prose edits can be omitted. End with the
-STATS entry. Do not include any other commentary.
+STATS entry.
+
+You may precede the action list with a brief reasoning preamble — what
+patterns you noticed across the memory, what consolidations you
+considered. Separate the preamble from the action list with a blank
+line. Do not introduce other sections.
