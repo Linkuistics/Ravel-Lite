@@ -1,24 +1,3 @@
-mod agent;
-mod config;
-mod create;
-mod discover;
-mod dream;
-mod format;
-mod git;
-mod init;
-mod multi_plan;
-mod ontology;
-mod phase_loop;
-mod projects;
-mod prompt;
-mod related_components;
-mod state;
-mod subagent;
-mod survey;
-mod term_title;
-mod types;
-mod ui;
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -26,14 +5,17 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use tokio::sync::mpsc;
 
-use crate::agent::claude_code::ClaudeCodeAgent;
-use crate::agent::pi::PiAgent;
-use crate::agent::Agent;
-use crate::config::{load_agent_config, load_shared_config, resolve_config_dir};
-use crate::git::project_root_for_plan;
-use crate::ontology::cli::{parse_edge_kind, parse_evidence_grade, parse_lifecycle_scope};
-use crate::types::{AgentConfig, LlmPhase, PlanContext};
-use crate::ui::{run_tui, UI};
+use ravel_lite::agent::claude_code::ClaudeCodeAgent;
+use ravel_lite::agent::pi::PiAgent;
+use ravel_lite::agent::Agent;
+use ravel_lite::config::{load_agent_config, load_shared_config, resolve_config_dir};
+use ravel_lite::git::project_root_for_plan;
+use ravel_lite::ontology::cli::{parse_edge_kind, parse_evidence_grade, parse_lifecycle_scope};
+use ravel_lite::types::{AgentConfig, LlmPhase, PlanContext};
+use ravel_lite::ui::{run_tui, UI};
+use ravel_lite::{
+    create, init, multi_plan, phase_loop, projects, related_components, state, survey,
+};
 
 /// Force `dangerous: true` for every known LLM phase, overriding
 /// whatever was loaded from the config file.
@@ -886,22 +868,22 @@ async fn dispatch_related_components(command: RelatedComponentsCommands) -> Resu
             apply: apply_flag,
         } => {
             let config_root = resolve_config_dir(config)?;
-            let options = crate::discover::RunDiscoverOptions {
+            let options = ravel_lite::discover::RunDiscoverOptions {
                 project_filter: project,
                 concurrency,
                 apply: apply_flag,
             };
-            crate::discover::run_discover(&config_root, options).await
+            ravel_lite::discover::run_discover(&config_root, options).await
         }
         RelatedComponentsCommands::DiscoverApply { config } => {
             let config_root = resolve_config_dir(config)?;
-            crate::discover::apply::run_discover_apply(&config_root)
+            ravel_lite::discover::apply::run_discover_apply(&config_root)
         }
     }
 }
 
 fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
-    use crate::state::backlog::{self, ListFilter, ReorderPosition, Status};
+    use ravel_lite::state::backlog::{self, ListFilter, ReorderPosition, Status};
 
     match command {
         BacklogCommands::List {
@@ -1003,18 +985,18 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
     }
 }
 
-fn parse_output_format(input: &str) -> Result<crate::state::backlog::OutputFormat> {
-    crate::state::backlog::OutputFormat::parse(input)
+fn parse_output_format(input: &str) -> Result<ravel_lite::state::backlog::OutputFormat> {
+    ravel_lite::state::backlog::OutputFormat::parse(input)
         .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
 }
 
-fn parse_memory_format(input: &str) -> Result<crate::state::memory::OutputFormat> {
-    crate::state::memory::OutputFormat::parse(input)
+fn parse_memory_format(input: &str) -> Result<ravel_lite::state::memory::OutputFormat> {
+    ravel_lite::state::memory::OutputFormat::parse(input)
         .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
 }
 
 fn dispatch_memory(command: MemoryCommands) -> Result<()> {
-    use crate::state::memory;
+    use ravel_lite::state::memory;
 
     match command {
         MemoryCommands::List { plan_dir, format } => {
@@ -1055,13 +1037,13 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
     }
 }
 
-fn parse_session_log_format(input: &str) -> Result<crate::state::session_log::OutputFormat> {
-    crate::state::session_log::OutputFormat::parse(input)
+fn parse_session_log_format(input: &str) -> Result<ravel_lite::state::session_log::OutputFormat> {
+    ravel_lite::state::session_log::OutputFormat::parse(input)
         .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
 }
 
 fn dispatch_session_log(command: SessionLogCommands) -> Result<()> {
-    use crate::state::session_log;
+    use ravel_lite::state::session_log;
 
     match command {
         SessionLogCommands::List { plan_dir, limit, format } => {
