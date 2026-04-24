@@ -39,7 +39,7 @@ tasks:
 - id: inject-unblocked-blocked-received-survey-counts-from-rust
   title: Inject unblocked/blocked/received survey counts from Rust
   category: core
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Inject `unblocked`/`blocked`/`received` survey counts from Rust rather than LLM derivation.
@@ -76,6 +76,106 @@ tasks:
     - `count_unblocked` returns correct count when some deps satisfied
     - `received` is 0 when no tasks transitioned this cycle
     - `received` increments per transitioned task
+  results: |
+    ## What was done
+
+    Extracted `unblocked`, `blocked`, and `received` from LLM-inferred
+    to Rust-injected, mirroring the existing `task_counts` pattern.
+
+    **Shape:**
+
+    - New `PlanRowCounts` struct (`unblocked`, `blocked`, `received`) alongside
+      the existing `TaskCounts` in `src/state/backlog/schema.rs`.
+    - New `BacklogFile::plan_row_counts()` method computes all three in one
+      pass over parsed tasks.
+    - `PlanSnapshot` now carries `plan_row_counts: Option<PlanRowCounts>`
+      populated by `load_plan`.
+    - New `inject_plan_row_counts()` in `src/survey/schema.rs` overwrites
+      the three `PlanRow` fields from a `plan_key → PlanRowCounts` map.
+    - Wired into both cold and incremental survey paths in
+      `src/survey/invoke.rs`. Crucially, also wired into the `is_noop`
+      fast-path so a pre-extraction prior survey gets migrated to
+      Rust-computed counts the first time a current binary sees it.
+    - Survey prompts (`defaults/survey.md` and
+      `defaults/survey-incremental.md`) updated: the three fields are
+      removed from the LLM's emission schema and the NOTE comment now
+      covers all injected fields. Priority rubric for
+      `recommended_invocation_order` now references the injected
+      `received` count rather than the legacy `## Received` section.
+    - `PlanRow` fields `unblocked`, `blocked`, `received` gained
+      `#[serde(default)]` so LLM output without them parses cleanly.
+      Prior YAML with them still parses identically — no schema bump
+      needed.
+
+    ## Count semantics
+
+    - `unblocked` — `status == NotStarted` AND every dep id resolves to a
+      `Done` task in the same backlog. Unknown dep ids count as unmet
+      (typo-safe).
+    - `blocked` — `status == Blocked` OR (`NotStarted` with ≥1 unmet dep).
+      Matches the existing render key wording at `src/survey/render.rs:20`
+      exactly, so displayed behaviour is preserved.
+    - `received` — tasks with `handoff.is_some()`. `handoff` is the
+      structured YAML-era replacement for the legacy `## Received`
+      dispatches section (triage.md already uses `--has-handoff` to find
+      these). Render key updated to match the new wording.
+
+    ## Verification
+
+    - 9 new unit tests pass:
+      - 7 in `src/state/backlog/schema.rs` covering dep-readiness,
+        unknown-dep-id handling, status=Blocked, in_progress/done
+        exclusion, handoff counting, and empty backlog.
+      - 2 in `src/survey/schema.rs` covering overwrite of LLM-emitted
+        values, skip on unmatched map entries, and the serde-default
+        deserialisation path.
+    - Full `cargo test` — 542 lib tests + all integration suites pass.
+    - `cargo clippy --all-targets -- -D warnings` clean.
+    - Smoke test: `ravel-lite state backlog list LLM_STATE/core` still
+      produces valid YAML.
+
+    ## What didn't work / surprised
+
+    - The task description proposed narrower count semantics
+      (`count_blocked(tasks) = status == blocked` only). Investigation of
+      `src/survey/render.rs` showed the existing U/B/D/R column key
+      documents the broader union (`status=blocked OR not_started with
+      unmet deps`). Preserving the wider meaning keeps the displayed
+      numbers stable across this extraction; the task description's
+      narrower version was the audit author's shorthand, not a load-bearing
+      spec change.
+    - The task description also proposed deriving `received` from
+      `latest-session.yaml` by counting "tasks that transitioned into
+      in_progress or done this cycle". Inspection of `SessionRecord`
+      showed it carries only `id`/`timestamp`/`phase`/`body` — no
+      structured backlog snapshot to diff against. The handoff-based
+      definition is cleaner and matches the semantic that the legacy
+      `## Received` section carried: work-in-flight awaiting triage.
+    - Incremental-survey noop path needed extra care: without injection
+      there, a pre-extraction prior would carry LLM-inferred counts
+      forward indefinitely until some plan changed. Adding injection in
+      the noop branch (using the already-loaded snapshots) is cheap and
+      self-healing.
+
+    ## What this suggests next
+
+    - This is the lightest of the three in-flight "Never do in an LLM
+      what you can do in code" extractions. The sibling tasks
+      `add-backlog-render-cli-verb-for-deterministic-markdown-table-output`
+      and
+      `add-phase-summary-render-cli-verb-for-deterministic-triage-reflect-summaries`
+      are both now unblocked and share the same spirit — the pattern
+      established here (struct + method on the typed source of truth,
+      injector over LLM output, prompt update) is the template for both.
+    - Render key wording was updated inline; if further renderer work
+      lands under the deterministic-backlog-render task, consolidating
+      the key text into a single const exported by the backlog module
+      would reduce duplication between renderer and prompt.
+    - `SCHEMA_VERSION` wasn't bumped because deserialisation semantics
+      didn't change — only population of fields. Worth remembering for
+      future extractions: additive serde-default is a non-breaking
+      change, even when the runtime contract about who fills the field
+      changes.
 - id: add-backlog-render-cli-verb-for-deterministic-markdown-table-output
   title: Add 'backlog render' CLI verb for deterministic markdown-table output
   category: core
