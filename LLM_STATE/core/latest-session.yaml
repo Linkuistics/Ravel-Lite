@@ -1,10 +1,11 @@
-id: session-39
-timestamp: 2026-04-24T05:50:48Z
+id: session-40
+timestamp: 2026-04-24T06:21:26Z
 phase: work
 body: |
-  ### Session 39 (2026-04-24T05:50:48Z) — fix create pivot bug with prompt-layer invariant
+  ### Session 40 (2026-04-24T06:21:26Z) — retire legacy shim + split integration.rs
 
-  - **What was attempted:** Fix the `create` subcommand failure mode where the spawned Claude session would abandon plan-directory creation when the user's first turn described a concrete problem (bug report, feature request) rather than a multi-task scope.
-  - **What worked:** Two prompt-layer edits landed cleanly. `compose_create_prompt` in `src/create.rs` now appends an explicit INVARIANT paragraph after the path instruction, binding the agent against interpreting a concrete description as a pivot signal. `defaults/create-plan.md` gained a §0 "Invariant: this session produces a plan" ahead of the §1 clarification dialogue, so the rule is visible before the agent reads the clarification script. A unit test `compose_prompt_asserts_plan_only_output_invariant` asserts both key phrases are present in the composed prompt. 542 tests pass, clippy clean.
-  - **What this suggests next:** If the failure recurs (phase.md missing after a create session), that's signal to consider: (a) instrumenting the warning path for observability, or (b) a file-read test asserting `defaults/create-plan.md` starts with the §0 invariant heading. Neither is worth a task until recurrence is observed.
-  - **Key learnings:** The root cause was that nothing in the original prompt bound the agent's *purpose* — it described the output format and file paths, but left the agent room to interpret a concrete description as a reason to skip plan creation entirely. An explicit INVARIANT at the top of the runtime-appended block and at the top of the template file eliminates that slack. Single-task plans are explicitly called out as valid to prevent the agent from treating "only one thing to do" as a non-plan.
+  - Attempted and completed two tasks: retire the `related-projects.yaml` hard-error shim (`retire-legacy-v1-related-projects-yaml-hard-error-shim`) and split `tests/integration.rs` into topic-scoped files (`split-tests-integration-rs-into-topic-scoped-files`).
+  - **Shim removal**: Deleted `LEGACY_RELATED_PROJECTS_FILE` const, `error_if_legacy_file_present` fn (15 LOC), its call in `load_or_empty`, the unit test `load_rejects_legacy_filename` from `src/related_components.rs`, and the end-to-end test `loading_legacy_v1_filename_hard_errors_with_actionable_message` from `tests/state_related_components.rs`. Module docstring updated to drop legacy-filename clause. Gate override noted: shim was ~24 hours old by wall-clock, but user explicitly named the task.
+  - **Test split**: Deleted 2580-LOC `tests/integration.rs`; redistributed 28 tests across seven topic-scoped files (`tests/dream.rs`, `tests/config.rs`, `tests/survey.rs`, `tests/phase_loop.rs`, `tests/pi_agent.rs`, `tests/cli.rs`, `tests/state_projects.rs`) plus shared helpers in `tests/common/mod.rs`. Two extra files (`cli.rs`, `pi_agent.rs`) created beyond the brief's four, driven by actual test groupings.
+  - Both tasks fully completed; build, clippy, and all 60 integration tests green.
+  - What this suggests next: `phase_loop.rs` at ~1100 LOC is the largest file due to the 250-LOC `ContractMockAgent` fixture. If it ever gains a second user, promote it to `tests/common/contract_mock.rs`.

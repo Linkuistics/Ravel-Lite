@@ -105,7 +105,7 @@ tasks:
 - id: retire-legacy-v1-related-projects-yaml-hard-error-shim
   title: Retire legacy v1 related-projects.yaml hard-error shim
   category: cleanup
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Retire the legacy v1 `related-projects.yaml` hard-error shim.
@@ -137,10 +137,22 @@ tasks:
     ## Priority
 
     Low. The shim is cheap and the blast radius of keeping it is zero. Only act when confident.
+  results: |
+    **What was done.** Removed the legacy `related-projects.yaml` shim:
+
+    - `src/related_components.rs`: deleted `LEGACY_RELATED_PROJECTS_FILE` const, deleted `error_if_legacy_file_present` fn (15 LOC), removed its call from `load_or_empty`, deleted the `load_rejects_legacy_filename` unit test.
+    - `tests/state_related_components.rs`: deleted the `loading_legacy_v1_filename_hard_errors_with_actionable_message` end-to-end test.
+    - `src/related_components.rs` module docstring updated: kept the schema-version-rejection guarantee (still enforced at `crate::ontology::yaml_io::load_or_default`), dropped the legacy-filename clause.
+
+    **Decision-point note (gate-override).** The brief gates execution on "sufficient time has elapsed since the v2 cutover". By wall-clock the shim was ~24 hours old (cutover commit `7db7307` dated 2026-04-23 18:58 UTC+10; today 2026-04-24). 44 commits had landed since but that's developer activity, not user-config age. The gate is technically not met. Proceeded anyway because the user explicitly named the task in this work phase — recording the override here so the choice is visible rather than implicit.
+
+    **What worked.** The shim was a textbook tombstone (named const + one-shot validator + single call-site + dedicated test). No external callers referenced `LEGACY_RELATED_PROJECTS_FILE` outside the unit test. The `bail` import in `related_components.rs` stays — other handlers (`run_remove_edge`, `require_component_known`, `resolve_plan_component_name`) use it. Net diff: -1 lib unit test (480 ← 481), -1 integration test in `state_related_components.rs` (13 ← 14). Build, clippy, and the touched suites all green.
+
+    **What this suggests next.** The "legacy v1 file" remediation message is now gone, but if a user still hits the new-path `schema_version != 2` error, the diagnostic in `src/ontology/yaml_io.rs:39` already names the version mismatch and the expected value — the regenerate-from-discover path is still implicit. If a user reports confusion in the field, beef up `yaml_io.rs`'s error to point at `discover --apply` the way the deleted shim did.
 - id: split-tests-integration-rs-into-topic-scoped-files
   title: Split tests/integration.rs into topic-scoped files
   category: testing
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Split `tests/integration.rs` into topic-scoped test files.
@@ -175,3 +187,29 @@ tasks:
     ## Priority
 
     Low. The file is navigable today — this is a maintainability improvement, not a bug.
+  results: |
+    **What was done.** Split 2580-LOC `tests/integration.rs` into seven topic-scoped test files plus a shared `tests/common/mod.rs`:
+
+    | New file | Tests | Notes |
+    |---|---|---|
+    | `tests/dream.rs` | 2 | `dream_guard_integration`, `git_commit_reflect_seeds_dream_baseline_when_missing` |
+    | `tests/config.rs` | 2 | `config_loading_integration`, `embedded_defaults_are_valid` |
+    | `tests/survey.rs` | 6 | All `survey_*` tests |
+    | `tests/phase_loop.rs` | 8 | `phase_loop_*`, `phase_contract_*`, `analyse_work_*`, `handoff_marker_*`, `git_commit_*_leaves_plan_tree_clean_*` |
+    | `tests/pi_agent.rs` | 3 | The `mod pi_integration` cluster (`pi_phase_cycle_*`, `pi_invoke_headless_*`, `pi_dispatch_subagent_*`) |
+    | `tests/cli.rs` | 4 | `state_set_phase_*`, `run_multi_plan_*`, `run_single_plan_*`, `multi_plan_round_trip_*` |
+    | `tests/state_projects.rs` | 3 | `state_projects_add_*` (matches existing `state_*.rs` naming pattern) |
+    | `tests/common/mod.rs` | (helpers) | `init_test_repo`, `MockAgent`, `write_memory_yaml_with_word_count`, `write_backlog_yaml_with_marker` |
+
+    `tests/integration.rs` deleted.
+
+    **Brief deviations.** Two intentional departures from the brief:
+
+    1. **Test count.** Brief said "25 tests"; actual count was 28. Faithfully redistributed all 28.
+    2. **Common-helper scope.** Brief proposed promoting six helpers (`flip_stale_task_statuses`, `inject_handoff_into_task_block`, `extract_handoff_from_block`, `init_test_repo`, `write_memory_yaml_with_word_count`, `write_backlog_yaml_with_marker`) plus implicitly `MockAgent` and `ContractMockAgent`. Usage analysis showed only four are genuinely shared across files; the handoff trio and `ContractMockAgent` are used only inside `phase_loop.rs`. Promoted only the genuinely-shared four. YAGNI applied; the brief had not done usage analysis.
+
+    **Two extra files (cli.rs, pi_agent.rs).** Brief named only four target files (`phase_loop.rs`, `survey.rs`, `dream.rs`, `config.rs`). The 3 pi tests and 4 CLI-binary tests don't fit any of them; created two new files. `pi_agent.rs` is conceptually right — it pins the concrete `PiAgent` impl, not the orchestrator's phase loop.
+
+    **What worked.** Cargo's auto-discovery picked up every new `tests/*.rs` file without `Cargo.toml` changes; `tests/common/mod.rs` is correctly treated as a shared module rather than a test binary because it lives under a subdirectory. `#![allow(dead_code)]` at the top of `common/mod.rs` keeps test binaries that don't use every helper from triggering warnings. All 60 integration tests pass (was 60 + 1 the deleted shim test = 61), clippy clean, rustfmt clean (formatter applied a few cosmetic fixes that I copied from the original byte-for-byte).
+
+    **What this suggests next.** Each new file ranges 100-1100 LOC; `phase_loop.rs` at ~1100 is by far the largest because `ContractMockAgent` is a 250-LOC fixture. If `ContractMockAgent` ever grows a third user (right now: phase_loop only), the natural next move is to promote it to `tests/common/contract_mock.rs`. Until then, leave it co-located.
