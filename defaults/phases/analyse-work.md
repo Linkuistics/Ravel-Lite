@@ -23,10 +23,10 @@ or justify.
 ## Backlog transitions since baseline
 
 The orchestrator computed this diff between `backlog.yaml` at the work
-baseline and `backlog.yaml` right now. Use it to author commit titles
-and bodies that name the specific task ids and status changes rather
-than generic phase-name prose. This is authoritative — do **not**
-re-derive it from the full diff.
+baseline and `backlog.yaml` right now. Use it to understand which
+backlog entries moved during the session — what was completed, added,
+deleted, or reprioritised. This is authoritative — do **not** re-derive
+it from the full diff.
 
 ```
 {{BACKLOG_TRANSITIONS}}
@@ -34,9 +34,12 @@ re-derive it from the full diff.
 
 Caveat: the baseline is the reflect commit of the previous cycle, so
 task additions/deletions from the previous cycle's triage may also
-appear in this block. Anchor your commit title on the status flip and
-results addition for the task that was actually worked on this
-session; treat other entries as baseline context.
+appear in this block. Treat entries outside the current session's focus
+as baseline context.
+
+**Do not author commit titles or bodies around these task ids.** Commit
+messages describe the work that happened in the tree, not the backlog
+bookkeeping that framed it — see step 6 and step 9 for the full rule.
 
 ## Required reads
 
@@ -68,9 +71,11 @@ session; treat other entries as baseline context.
    `ravel-lite state backlog repair-stale-statuses {{PLAN}}`. The verb
    flips `in_progress` tasks with non-empty results to `done` and
    unblocks `blocked` tasks whose structural dependencies are all now
-   `done`. It emits a YAML report of any repairs applied — include the
-   reported task ids in the plan-state commit message (step 9). If no
-   drift is present this step is a no-op.
+   `done`. It emits a YAML report of any repairs applied — if a repair
+   occurred and it materially changed the backlog shape, note the
+   *kind* of repair in the plan-state commit body (step 9) without
+   naming specific task ids. If no drift is present this step is a
+   no-op.
 
 6. **Commit the source-file changes.** The work phase no longer commits
    its own source edits — that is this phase's responsibility. Using the
@@ -80,8 +85,16 @@ session; treat other entries as baseline context.
      with `git add <path>` (or `git add -A -- :!{{PLAN}}` if the set is
      large — but explicit paths are preferred).
    - Commit with a descriptive message in the imperative mood that
-     summarises the session's code changes (not the plan-bookkeeping
-     commit, which happens separately from `commit-message.md`).
+     summarises the session's code/docs/config changes. The message
+     describes what changed in the tree — the function added, the
+     behaviour fixed, the file renamed. **Do not reference backlog
+     task ids, session numbers, or phase names** (no
+     `fix-work-baseline`, no `session 47`, no
+     `during analyse-work`). Those belong to the plan state, not the
+     source history. This is the commit that must make sense to anyone
+     reading `git log` a year from now; it stands on its own without
+     the plan-execution context. The plan-bookkeeping commit happens
+     separately from `commit-message.md` (step 9).
    - If any path in the snapshot is intentionally **not** committed
      (e.g. a user scratch file, an accidental edit that should be
      reverted), you MUST name each such path explicitly in the session
@@ -151,29 +164,43 @@ session; treat other entries as baseline context.
    **plan-state commit** (the one `git-commit-work` will make next).
    `commit-message.md` is a one-shot scratch file, not a
    state-CLI-managed one, so write it directly. This is distinct from
-   the source-file commit you made in step 6 and should narrate the
-   plan bookkeeping: safety-net status flips, backlog `Results:`
-   additions, phase transitions. Keep it tight:
+   the source-file commit you made in step 6 and narrates the plan
+   bookkeeping itself — the *kinds* of mutations that happened in
+   `backlog.yaml`, `memory.yaml`, and the session log. Keep it tight:
 
    ```
-   <title — imperative mood, max 72 chars, summarises plan-state updates>
+   <title — imperative mood, max 72 chars, describes the kind of bookkeeping>
 
-   <body — what was done and why, 2-5 lines>
+   <body — what kinds of bookkeeping and why, 2-5 lines>
    ```
 
-   **Draw the title and body from the `Backlog transitions since baseline`
-   block above, not from the full diff or your mental model of the
-   session.** The block lists the exact task ids and status flips — use
-   them. A good title names the dominant change (e.g. `Mark <task-id>
-   done, record results`, or `Add <new-task-id> to backlog` when the
-   session's primary effect was adding tasks). The body cites the
-   specific task id(s) and summarises the Results block's key points
-   in one or two sentences — not a restatement of the Results, just
-   enough for `git log` readers to know what the session accomplished.
+   **Describe the change by shape, not by slot.** Use the
+   `Backlog transitions since baseline` block above to understand what
+   moved, then summarise in generic terms — the *kind* of change, not
+   the identities it applied to. Good titles:
 
-   The title should be specific enough to be useful in `git log --oneline`.
-   Do not include plan or phase metadata in the commit message — the
-   git history provides that context.
+   - `Record results and flip status for the completed task`
+   - `Add two new backlog tasks and update one description`
+   - `Promote a hand-off to the backlog`
+   - `Update backlog and memory` (fine as a catch-all for mixed sessions)
+
+   Bad titles — do NOT use these patterns:
+
+   - `Mark fix-work-baseline done, record results` — names a task id
+   - `Add add-backlog-repair-stale-statuses to backlog` — names a task id
+   - `run-plan: triage (core)` — names a phase and plan name
+   - `Session 47 bookkeeping` — names a session number
+
+   The body expands on the kinds of bookkeeping that happened and why,
+   in one or two sentences. It does not name specific task ids, session
+   numbers, phase names, or plan slugs. If the only way to describe the
+   change is by task id, the commit scope is wrong — split the underlying
+   work along semantic lines first.
+
+   The title should still be specific enough to be useful in
+   `git log --oneline` — it describes the *shape* of the bookkeeping
+   (new tasks added, statuses flipped, a hand-off promoted), just not
+   the identities involved.
 
 10. Run `ravel-lite state set-phase {{PLAN}} git-commit-work`.
 
