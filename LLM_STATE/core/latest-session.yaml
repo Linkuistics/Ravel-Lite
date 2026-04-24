@@ -1,11 +1,11 @@
-id: session-37
-timestamp: 2026-04-24T02:50:44Z
+id: session-38
+timestamp: 2026-04-24T05:42:52Z
 phase: work
 body: |
-  ### Session 37 (2026-04-24T02:50:44Z) — Triage: project-wide audit completed, three new tasks promoted
+  ### Session 38 (2026-04-24T05:42:52Z) — Eliminate binary/library double-compilation
 
-  - **What was attempted**: Ran triage phase after the previous work session had run the `project-wide-audit-simplification-cleanup-debt-reduction` task. Triage reconciled the backlog: removed two previously-completed tasks, marked the audit task done with full results, and promoted three new tasks discovered during the audit.
-  - **What worked**: The audit was thorough — mechanical pass (clippy pedantic/nursery: 564 lints but nit-only, no TODOs, 4 panic sites), post-migration residue (v1 shim still present but low-cost), and architectural survey (binary/library double-compilation identified as the one major finding). Three backlog tasks created from the audit; four items correctly kept in memory rather than promoted (conditional triggers not yet fired).
-  - **What didn't work**: No blockers. The audit found the codebase in better shape than the task brief expected.
-  - **What this suggests next**: Pick up `eliminate-binary-library-double-compilation-in-main-rs` — self-contained refactor, removes a load-bearing workaround that scales linearly with new `pub use` items, and unblocks the later CLI-split judgement (A3). The two low-priority tasks (`retire-legacy-v1-related-projects-yaml-hard-error-shim`, `split-tests-integration-rs-into-topic-scoped-files`) can wait.
-  - **Key learnings**: The drift-guard infrastructure (EMBEDDED_FILES test, ontology bijection tests, per-phase contract test) is actively catching regressions — the codebase health signal is strong. The generic-drift-guard consolidation idea from the audit brief was correctly rejected: `{{TOOL_READ}}` scoping in `work.md` means a universal "substitutes cleanly" test would produce false negatives.
+  - Executed task `eliminate-binary-library-double-compilation-in-main-rs`: converted `src/main.rs` from a parallel crate root into a thin consumer of the library crate.
+  - Deleted the 20-line `mod xxx;` block from `src/main.rs`, replaced all `crate::` imports with `ravel_lite::` (20 call-sites), and added `use ravel_lite::{create, init, multi_plan, phase_loop, projects, related_components, state, survey};` for bare module paths.
+  - Removed five `#[allow(unused_imports)]` attributes and their 6-line explanatory comment from `src/survey.rs`; removed three `#[allow(unused_imports)]` attributes and their 7-line comment from `src/ontology/mod.rs`.
+  - All verification passed: `cargo build` clean, `cargo clippy --all-targets --all-features` clean under `deny(warnings)`, `cargo test` 541 tests pass, `cargo build -vv` confirmed exactly two `rustc` invocations (one lib, one bin), `grep '#\[allow(unused_imports)\]' src` yields 0 matches.
+  - The pattern is now clean: the propagating `#[allow(unused_imports)]` debt on pub-use blocks is fully eliminated; future pub-use additions in library surface need no per-item workaround.

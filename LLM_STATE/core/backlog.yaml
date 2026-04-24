@@ -2,7 +2,7 @@ tasks:
 - id: eliminate-binary-library-double-compilation-in-main-rs
   title: Eliminate binary/library double-compilation in main.rs
   category: architecture
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Eliminate the binary/library double-compilation in `src/main.rs`.
@@ -44,6 +44,81 @@ tasks:
 
     - Strictly refactor — no behaviour change.
     - If any `use crate::` path currently resolves to something `pub` in the module but not `pub use`'d from the parent, the fix is to `pub use` it, not to leave a `mod` declaration behind.
+  results: |
+    ## What was done
+
+    Converted `src/main.rs` from a parallel-crate-root into a thin consumer
+    of the library crate, eliminating the binary/library double-compilation.
+
+    ### Edits
+
+    - **`src/main.rs`**: deleted the 20-line `mod xxx;` block at the top
+      of the file; added `use ravel_lite::{create, init, multi_plan,
+      phase_loop, projects, related_components, state, survey};` to bring
+      bare module paths into scope; renamed every `crate::` reference to
+      `ravel_lite::` (20 call-sites in total).
+    - **`src/survey.rs`**: removed the five `#[allow(unused_imports)]`
+      attributes on `pub use` re-exports and their explanatory 6-line
+      comment.
+    - **`src/ontology/mod.rs`**: removed the three `#[allow(unused_imports)]`
+      attributes on `pub use` re-exports and their explanatory 7-line
+      comment.
+
+    ### Verification
+
+    - `cargo build` → clean (single compile pass).
+    - `cargo clippy --all-targets --all-features` → clean under
+      `deny(warnings)`.
+    - `cargo test` → 541 tests pass, 0 failed.
+    - `cargo build -vv` → exactly two `rustc` invocations for this crate:
+      one `--crate-type lib` from `src/lib.rs`, one `--crate-type bin` from
+      `src/main.rs` with `--extern ravel_lite=libravel_lite-*.rlib`. No
+      module source file is compiled twice.
+    - `grep -rn '#\[allow(unused_imports)\]' src` → 0 matches. The
+      propagating-debt workaround pattern is fully gone.
+
+    ## What worked
+
+    - Every item `main.rs` reaches (including through previously bare
+      references like `projects::run_list`) was already `pub` on the
+      library surface, because integration tests exercise them via
+      `ravel_lite::*`. The switch was a pure visibility reshuffle with
+      no API changes.
+    - `Edit` with `replace_all: true` on the literal `crate::` token
+      handled the 20 rewrites in one shot; a pre-grep confirmed zero
+      doc-comment matches, so the replace was safe.
+
+    ## What didn't
+
+    - First build failed because several references in `main.rs` used
+      bare module names (`projects::...`, `phase_loop::...`, etc.) rather
+      than `crate::`-prefixed paths. Those had relied on the binary
+      crate's now-deleted `mod` declarations to seed the namespace. Fix
+      was a single `use ravel_lite::{...}` statement.
+    - First attempt included `discover` in that import list even though
+      all its call-sites were fully qualified via `ravel_lite::discover::`;
+      clippy flagged the unused import under `deny(warnings)` and it
+      was removed.
+
+    ## What this suggests next
+
+    - **The `pub use` re-exports in `src/survey.rs` and
+      `src/ontology/mod.rs` are now load-bearing for the library surface
+      only.** There is no longer a reason to be defensive about them. If
+      future audits find any of these re-exports have no out-of-crate
+      consumer, they can be deleted cleanly (they'd then just be
+      unused lib surface, not bin-visible warnings).
+    - **Follow-up opportunity: shape of `use ravel_lite::{...}` in
+      `main.rs`.** The bin now has two import shapes — specific items
+      (e.g. `use ravel_lite::config::{load_agent_config, ...}`) and bare
+      module imports (e.g. `use ravel_lite::{create, init, ...}`). Worth
+      considering whether to pick one style for consistency, though the
+      mix reflects real usage (some modules accessed only through a
+      handful of functions, others used pervasively).
+    - **The pattern is transplantable.** Any other binary-plus-library
+      crate in the broader ecosystem that re-declares `mod xxx;` in
+      `main.rs` exhibits the same double-compile. This is the canonical
+      fix.
 - id: retire-legacy-v1-related-projects-yaml-hard-error-shim
   title: Retire legacy v1 related-projects.yaml hard-error shim
   category: cleanup
@@ -117,3 +192,211 @@ tasks:
     ## Priority
 
     Low. The file is navigable today — this is a maintainability improvement, not a bug.
+- id: support-relative-paths-in-projects-yaml-for-git-shared-catalogs
+  title: Support relative paths in projects.yaml for git-shared catalogs
+  category: architecture
+  status: not_started
+  dependencies: []
+  description: |
+    Support paths in `projects.yaml` being either absolute or relative to
+    the location of `projects.yaml` itself. This enables the catalog file
+    to be committed to git and shared between users whose home directories
+    and project checkouts live at different absolute paths.
+
+    ## Current state
+
+    `src/projects.rs` stores every `ProjectEntry.path` as an absolute
+    `PathBuf`:
+
+    - `run_add` (line 195) forces the input through `std::path::absolute`
+      before storing.
+    - `auto_add` / `try_add_named` accept whatever the caller passes but
+      all current callers hand them absolute paths.
+    - The `save_then_load_round_trips` and `run_add_canonicalises_*`
+      tests assert on absolute-path storage.
+
+    Consumers downstream (discovery pipeline, orchestrator directory
+    resolution, edge participant lookup) read `ProjectEntry.path` and use
+    it as-is to open files on disk.
+
+    ## Problem
+
+    An absolute-paths-only catalog cannot be checked into a shared
+    repository. Two users collaborating on the same cross-project ontology
+    necessarily have different home/project roots, so the YAML diverges
+    per machine. This blocks using git to share catalog state.
+
+    ## Proposed shape
+
+    The on-disk schema accepts either absolute paths **or** paths
+    relative to the directory containing `projects.yaml`. At load time,
+    relative paths are resolved against `<config_root>` (which is already
+    passed to `load_or_empty`) to yield the absolute path the rest of the
+    code currently expects.
+
+    On write, preserve the form the user supplied: if a `ProjectEntry`
+    was loaded with a relative path, save it back relative; if it was
+    added via `run_add` with an absolute path, save it absolute. Don't
+    silently rewrite users' paths.
+
+    Design questions to resolve during execution:
+
+    1. **Representation in the in-memory struct.** Two options:
+       - Keep `path: PathBuf` as absolute (the post-resolve form) and
+         carry a sibling `original_form: Option<PathBuf>` for round-trip
+         fidelity.
+       - Change `path` to an enum `{ Absolute(PathBuf), Relative(PathBuf) }`
+         and resolve at each consumer. More invasive.
+
+       The first is less churn but risks losing the original on
+       re-serialize; decide based on how many downstream sites care.
+
+    2. **`run_add` CLI surface.** Today `run_add` always canonicalises
+       input to absolute. Add a `--relative` flag (or make relative the
+       default when the path is already inside `<config_root>`'s project
+       tree) so users can opt into committable entries. Default behaviour
+       should not change silently.
+
+    3. **Validation.** Reject `..` segments that escape `<config_root>`'s
+       intended scope? Or allow them (the point is relative-from-yaml,
+       which naturally implies `..` is fine)? Lean: allow, since a shared
+       monorepo checkout may need `../sibling-repo`.
+
+    4. **Portability of `projects.yaml` itself.** If the file is committed
+       to the repo and all listed paths are relative to its directory,
+       the catalog is portable. Document this invariant in the module
+       docstring at `src/projects.rs:1-11` (which currently asserts
+       "paths are absolute").
+
+    ## Exit criteria
+
+    - `projects.yaml` accepts both absolute and relative `path:` values.
+    - Relative paths resolve against the directory containing
+      `projects.yaml` at load time.
+    - `run_add` grows an explicit way to store a relative form (exact
+      flag name TBD at implementation time).
+    - Round-trip: a catalog with a mix of absolute and relative entries
+      preserves the original form across save/load.
+    - Existing all-absolute catalogs continue to load and behave
+      identically (backwards compatible on-disk).
+    - Module docstring updated to reflect the dual-form semantics.
+    - New tests cover: relative-path load resolution, relative-path
+      round-trip preservation, mixed catalog, and a committed-catalog
+      scenario where the same YAML loads correctly from two different
+      `<config_root>` absolute paths.
+
+    ## Scope boundary
+
+    This task is scoped to the catalog format and its loader/writer. It
+    does NOT cover:
+
+    - Migration tooling to bulk-convert existing absolute entries to
+      relative form (deferred — add as a follow-up task if there's
+      demand).
+    - Any schema version bump: the change is additive (relative paths
+      are a new valid input form), so `SCHEMA_VERSION` stays at 1.
+- id: create-must-always-produce-a-plan-even-when-user-pastes-a-bug-report
+  title: create must always produce a plan even when user pastes a bug report
+  category: bug
+  status: not_started
+  dependencies: []
+  description: |
+    The `create` subcommand must always produce a plan directory,
+    regardless of how the user phrases their initial description.
+
+    ## Observed bug
+
+    When invoking `ravel-lite create <plan-dir>`, if the user's initial
+    prompt describes a concrete bug (e.g. pastes a screenshot and says
+    "this is broken, fix it") rather than a multi-task plan scope, the
+    spawned Claude session interprets the turn as a *pivot* — treating
+    the bug report as a new task to address — and skips the plan-creation
+    work entirely. Result: no plan directory is created, and the user has
+    to start over.
+
+    The user's mental model is reasonable: "fixing this bug *is* the
+    plan." A single-task plan is a valid plan. The create flow must not
+    silently abandon its job when the user's description happens to look
+    like a single unit of work.
+
+    ## Current state
+
+    `src/create.rs:30-40` (`compose_create_prompt`) appends these
+    instructions to the `create-plan.md` template body:
+
+    > Create a new plan at this absolute path:
+    >
+    >   {target}
+    >
+    > The directory does not exist yet. Create it, then create the plan
+    > files inside it according to the conventions above. When the plan
+    > is ready, confirm with the user by listing what you created.
+
+    This is sound, but it does not bind the agent against the failure
+    mode observed: when the user describes a *specific* problem (bug,
+    feature, question) in turn 1, the agent reads the "conventions above"
+    (the full `create-plan.md` clarification flow) as optional and jumps
+    to doing the work.
+
+    `defaults/create-plan.md` currently says (§1 "Clarify the scope"):
+
+    > This is a conversation — ask follow-up questions until the scope
+    > is clear. Don't ask all questions at once; one at a time.
+
+    The framing is "gather scope, then write files." Nothing says "even
+    if the user hands you a single concrete thing, that is your scope —
+    create a single-task plan and stop."
+
+    `src/create.rs:128-143` has a post-hoc check: if `phase.md` does not
+    exist after the session ends, it emits a warning. That warning is
+    the right trailing signal, but the better fix is upstream — prevent
+    the pivot in the first place.
+
+    ## Proposed fix
+
+    Two changes, in the create-plan prompt layer:
+
+    1. **Strengthen the post-template instructions emitted by
+       `compose_create_prompt`.** Add an explicit invariant: "Your ONLY
+       output from this session is a plan directory at `{target}`. If the
+       user's description sounds like a single concrete task, that is the
+       plan's initial task — capture it in the backlog and scaffold the
+       plan around it. Do not attempt to do the work described; your job
+       is to write plan files, not to solve the problem the user
+       described."
+
+    2. **Mirror the invariant inside `defaults/create-plan.md`.** Add a
+       short §0 ahead of §1 ("Clarify the scope") that asserts the same
+       rule at the top of the prompt, so it's in front of the agent
+       before it reads the clarification script. Current §1 assumes the
+       user's first turn invites a back-and-forth; §0 should instead
+       say: whatever the user describes in turn 1, treat it as plan
+       scope — if concrete, create a single-task plan; if abstract, run
+       the clarification dialogue.
+
+    ## Exit criteria
+
+    - `compose_create_prompt` emits the "always output a plan" invariant
+      as part of the appended instructions.
+    - `defaults/create-plan.md` has a top-of-document section asserting
+      the same rule before the clarification questions.
+    - A unit test over `compose_create_prompt` asserts the new
+      invariant string is present in the composed prompt.
+    - No behaviour change to `validate_target` or the post-hoc
+      `phase.md` check — those remain the belt-and-suspenders layer.
+
+    ## Open question (decide at implementation time)
+
+    Whether to also tighten the post-hoc check in `run_create`: today
+    it emits a `warning:` on missing `phase.md`. An alternative is to
+    hard-error (`bail!`), forcing the user to re-run. Lean against
+    escalating to hard-error: the warning already makes the situation
+    visible, and the session may have produced useful conversation
+    state the user wants to preserve.
+
+    ## Priority
+
+    Medium. The bug is self-recoverable (the user can re-run with a
+    more plan-shaped description), but it wastes one headful claude
+    session per occurrence and the failure mode is not obvious to a
+    first-time user. Low-LOC fix with straightforward exit criteria.
