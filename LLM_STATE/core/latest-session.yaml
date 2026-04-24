@@ -1,11 +1,14 @@
-id: session-45
-timestamp: 2026-04-24T09:11:06Z
+id: session-46
+timestamp: 2026-04-24T10:10:37Z
 phase: work
 body: |
-  ### Session 45 (2026-04-24T09:11:06Z) — LLM-work audit: enumerate and rank extractable deterministic helpers
+  ### Session 46 (2026-04-24T10:10:37Z) — Ship backlog lint-dependencies CLI verb
 
-  - **What was attempted:** Produced the `audit-llm-work-for-extractable-deterministic-cli-helpers-rust-datalog` deliverable: a brief at `docs/analysis/llm-work-audit.md` walking every shipped prompt and Rust-side marshalling code to identify mechanical work still being done in the LLM.
-  - **What worked:** Full audit completed within scope. The brief walks `defaults/phases/*.md`, `defaults/create-plan.md`, `defaults/discover-stage*.md`, `defaults/survey*.md`, `defaults/agents/pi/**/*.md`, plus `src/phase_loop.rs`, `src/prompt.rs`, and `src/discover/*.rs`. Three high-value extraction candidates were identified with concrete verb signatures: `backlog lint-dependencies`, survey-counts injection, and `backlog repair-stale-statuses`. Six secondary wins documented. Datalog evaluator deferred — imperative verbs cover all current query needs. Two new backlog tasks were added by triage from the audit's findings: `triage-should-not-emit-the-no-dispatch-label-in-its-output` and `analyse-work-better-analysis-split-commits-by-hunk-better-messages`. One completed task (`add-set-dependencies-verb-...`) was pruned from the backlog.
-  - **What didn't work:** Nothing failed; this was a pure analysis task with no Rust changes.
-  - **What this suggests next:** Triage should promote the top three audit candidates (§2.1 lint-dependencies, §2.4 survey-counts, §2.6 repair-stale-statuses) to standalone backlog tasks. The two user-added tasks (`triage-should-not-emit-no-dispatch`, `analyse-work-split-commits`) are already in the backlog and can be picked up in any order.
-  - **Key learnings:** The codebase has already extracted a significant fraction of mechanical work (all state mutations, `task_counts` injection, `should_dream` as a pure function). The remaining surface is dominated by LLM-re-derived counts (survey `unblocked`/`blocked`/`received`, dream word-count stats) and two full-backlog consistency scans (triage prose-dep reconciliation, analyse-work stale-status repair) that are textbook deterministic query candidates.
+  - Implemented `ravel-lite state backlog lint-dependencies <PLAN_DIR>` as a new read-only CLI verb that reports drift between prose task-id mentions in task descriptions and the structured `dependencies:` field.
+  - New module `src/state/backlog/lint_dependencies.rs` with pure `lint_dependencies(&BacklogFile) -> LintReport` function and `run_lint_dependencies` CLI runner. Byte-scan whole-word matching for task id slugs (`[a-zA-Z0-9_-]` chars; any other byte is a boundary).
+  - Public types `TaskDrift` and `LintReport` are serde-derived for YAML/JSON output matching the audit brief spec.
+  - Clap wiring added to `src/main.rs`: `BacklogCommands::LintDependencies { plan_dir, format }` with `--format` defaulting to yaml.
+  - Module exports threaded through `src/state/backlog/mod.rs`.
+  - Updated `defaults/phases/triage.md`: added a **Preflight** directive at the top of "Local triage" instructing the LLM to run the linter; removed the old "Keep the `dependencies` field in sync with the prose" paragraph that instructed the LLM to rescan prose manually. The linter output is advisory, not authoritative — triage still uses `set-dependencies` to reconcile.
+  - 11 unit tests shipped, all passing, covering matching/non-matching prose, structured-is-authoritative invariant, empty backlog, and malformed id edge cases.
+  - Task `add-backlog-lint-dependencies-cli-verb` completed and marked `done` with full results block.
