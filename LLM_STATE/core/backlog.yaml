@@ -2,7 +2,7 @@ tasks:
 - id: check-dev-machine-for-stray-v1-related-projects-yaml-files
   title: Check dev machine for stray v1 related-projects.yaml files
   category: maintenance
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Run the one-shot maintainer check from the retired migration doc §9 condition 2: confirm no v1 `related-projects.yaml` files remain in user config directories.
@@ -29,3 +29,123 @@ tasks:
     ## Exit criteria
 
     - The find command returns zero matches (other than any intentional test fixtures under source-controlled paths, which are not user config files).
+  results: |
+    User ran the `find ~ -name 'related-projects.yaml' ...` sweep on the main
+    dev machine manually and reported **zero hits**. Exit criteria from the
+    task body are therefore satisfied:
+
+    - No stray v1 `related-projects.yaml` files remain in user config
+      directories the maintainer can reach.
+    - Combined with conditions 1 and 3 (already satisfied by code changes
+      per `docs/component-ontology-migration.md` §9), the v1 sunset is now
+      fully complete.
+
+    No code changes in this session. Note: during verification the user hit
+    an unrelated error running `ravel-lite state related-components discover
+    --config ../ravel-lite-config` — the hard-error guard at
+    `src/discover/stage2.rs` rejected an unresolved `{{PROPOSALS_OUTPUT_PATH}}`
+    token in the user's local copy of `discover-stage2.md`. Root cause: that
+    file predates the ontology-driven kinds refactor and the CLI-based
+    proposal emission. User will resolve by reinstalling and re-running
+    `init` to refresh their config from shipped defaults — no Ravel-Lite
+    source change required, and no drift-detection backlog item requested.
+- id: project-wide-audit-simplification-cleanup-debt-reduction
+  title: 'Project-wide audit: simplification, cleanup, debt reduction'
+  category: architecture
+  status: not_started
+  dependencies: []
+  description: |
+    Run a layered audit of the Ravel-Lite codebase looking for simplification, cleanup, and debt-reduction opportunities.
+
+    ## Suggested structure
+
+    1. **Mechanical pass** — objective, cheap:
+       - `cargo clippy --all-targets --all-features -- -W clippy::pedantic -W clippy::nursery`
+       - `cargo-udeps` (flags unused dependencies in `Cargo.toml`)
+       - TODO / FIXME / `unimplemented!()` / `todo!()` grep
+       - Module-size ranking (`tokei`, `wc -l`); flag files > 600 LOC for subdivision candidates
+       - Dead-code surface: `#[allow(dead_code)]`, unused `pub` items, `cargo --message-format=json` warnings
+       - Duplicate string-literal / error-message scans
+    2. **Post-migration residue** — the v1 `related-projects.yaml` sunset and the Atlas-owned ontology extraction likely left:
+       - Hard-error shims kept only for detection; safe to delete once the migration window closed
+       - `bail!` / error messages naming retired paths
+       - Dead re-exports and compatibility aliases
+    3. **Architectural survey** — judgment required:
+       - Rename-cascade registry decision (already flagged in memory: three cascade points in `run_rename`; add registry before the fourth)
+       - Phase module boundaries vs. shared substitution surface (`prompt::substitute_tokens`, `discover::stage2::assert_no_dangling_tokens`)
+       - Agent trait: shared vs. backend-specific concerns between claude-code and pi
+       - CLI surface: `state` subcommand proliferation, consistency of `--config` handling, overlap between `backlog` and `memory` subcommand shapes
+       - Error-handling patterns: `anyhow::Context` usage, `bail!` call sites, structured vs. free-text error text
+       - Drift-guard tests: today each file class has its own drift test; a single generic "every file in defaults/ is registered + substitutes cleanly" test would subsume the coding-style guard and prevent bugs like the `discover-stage2.md` missing registration
+
+    ## Exit criteria
+
+    - A written punch list of findings, each with severity (nit / minor / major) and estimated effort (S / M / L).
+    - Backlog tasks created for every **major** finding and any **minor** finding that the user opts into.
+    - No code changes in the audit itself beyond mechanical fixes the user approves inline (e.g. clippy auto-fixes).
+
+    ## Non-goals
+
+    - Do not rewrite large modules during the audit — extract follow-up tasks.
+    - Do not touch `LLM_STATE/` or `defaults/` content — those are configuration surfaces, not code debt.
+- id: init-force-silently-skips-discover-stage2-md-missing-from-embedded-files
+  title: init --force silently skips discover-stage2.md (missing from EMBEDDED_FILES)
+  category: bug
+  status: done
+  dependencies: []
+  description: |
+    `ravel-lite init` and `ravel-lite init --force` silently fail to scaffold `discover-stage2.md` because the file is **not registered in `EMBEDDED_FILES`** at `src/init.rs:13-42`.
+
+    ## Symptom
+
+    After reinstalling ravel-lite and running `ravel-lite init --force ../ravel-lite-config`, a stale pre-refactor copy of `discover-stage2.md` persists. Running `ravel-lite state related-components discover --config ../ravel-lite-config` then fails:
+
+    ```
+    Error: composing Stage 2 prompt
+    Caused by:
+        Stage 2 prompt has unresolved token(s) after substitution: {{PROPOSALS_OUTPUT_PATH}}
+    ```
+
+    The hard-error guard at `src/discover/stage2.rs:94-117` correctly rejects the stale token, but the user cannot resolve the error via the documented `init --force` workflow.
+
+    ## Root cause
+
+    `defaults/discover-stage2.md` is shipped on disk (and embedded via `include_str!` at `src/discover/stage2.rs:183` for tests). But the `EMBEDDED_FILES` list in `src/init.rs` has 28 entries and this one is missing. `init` and `init --force` both iterate `EMBEDDED_FILES` — anything not listed is invisible to both scaffolding and overwriting.
+
+    The existing drift-guard test (`every_default_coding_style_file_is_embedded`, `src/init.rs:187`) only covers `defaults/fixed-memory/coding-style-*.md`. The class of bugs it protects against — unregistered defaults — is wider than coding-style files.
+
+    ## Fix
+
+    1. Add `EmbeddedFile { path: "discover-stage2.md", content: include_str!("../defaults/discover-stage2.md") },` to `EMBEDDED_FILES`.
+    2. Broaden the drift-guard test to walk the entire `defaults/` tree and assert every file on disk has a matching entry in `EMBEDDED_FILES` (with a short denylist for anything intentionally excluded). This subsumes the coding-style-specific test and prevents recurrence for any future `defaults/*` addition.
+    3. Run `cargo test` to verify.
+
+    ## Exit criteria
+
+    - `cargo test` passes.
+    - A fresh `init --force` into a directory containing a stale `discover-stage2.md` overwrites it with the shipped version.
+    - The generalised drift test fails if any `defaults/` file is added without a matching `EMBEDDED_FILES` entry.
+  results: |
+    ## What changed
+
+    **`src/init.rs`**:
+
+    1. Added `EmbeddedFile { path: "discover-stage2.md", content: include_str!("../defaults/discover-stage2.md") }` to `EMBEDDED_FILES` alongside `discover-stage1.md`.
+    2. Replaced `every_default_coding_style_file_is_embedded` with a broader `every_file_under_defaults_is_registered_in_embedded_files` drift guard. The new test walks the entire `defaults/` tree recursively and asserts every file has a matching `EMBEDDED_FILES` entry. This subsumes the coding-style-specific guard and protects against the same class of bug anywhere under `defaults/`.
+
+    Added a small `collect_files_recursively` helper inside the `tests` module (no new dependency — the tree is shallow).
+
+    ## Why the test was insufficient before
+
+    `discover-stage2.md` was already embedded into the compiled binary via `include_str!` at `src/discover/stage2.rs:183` — but only for the Stage 2 drift tests. Embedding-for-tests and registration-in-init are independent, so a file could ship in the binary (tested) but still be invisible to `init` (unscaffolded). The old coding-style-only drift test happened to cover its slice of `defaults/` by convention but left every other subtree unguarded. The new test ties the single source of truth (`defaults/` on disk at build time) to the only consumer that matters at install time (`EMBEDDED_FILES`).
+
+    ## What worked
+
+    - `cargo test --all`: 541 tests pass (unchanged from baseline modulo the test replacement).
+    - `cargo clippy --all-targets`: clean.
+    - Synthetic end-to-end: wrote a stale `discover-stage2.md` containing `{{PROPOSALS_OUTPUT_PATH}}` into a temp dir; `cargo run -- init --force <tmp>` reported `↻ Overwritten: discover-stage2.md`; the file afterwards starts with `# Discovery — Stage 2: Infer Cross-Project Edges` and contains zero stale tokens.
+
+    ## What this suggests next
+
+    - **This is a concrete data point for the planned project-wide audit** (`project-wide-audit-simplification-cleanup-debt-reduction`): drift-guard tests in this repo have tended to be file-class-specific rather than generic. A sweep could find other places where the same generalisation applies (e.g. embedded ontology validation, prompt-substitution-token registration). The audit's architectural-survey section should include "drift-guard generalisations" as a theme.
+    - **User still needs to rebuild their installed binary** to consume this fix (their current `~/.cargo/bin/ravel-lite` was built at 2026-04-24T02:25:56Z, before this change). After `cargo install --path .` and `ravel-lite init --force ../ravel-lite-config`, the stale copy will be overwritten automatically. Their current config file is already in sync through some out-of-band mechanism, so the immediate discover invocation they hit the error on should now work even without the rebuild.

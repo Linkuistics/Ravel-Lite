@@ -577,3 +577,19 @@ sessions:
     - `docs/architecture.md` and `docs/component-ontology.md` were updated for accuracy (expanded file tree, corrected stale descriptions).
     - Key learning from the `cli.rs` extraction: the new module uses `super::{EdgeKind, LifecycleScope, EvidenceGrade}` rather than going through `related_components`'s re-exports, which avoids a subtle dependency inversion if/when Atlas extracts a standalone ontology crate.
     - No blockers. Backlog is now empty after these two completions.
+- id: session-36
+  timestamp: 2026-04-24T02:37:57Z
+  phase: work
+  body: |
+    ### Session 36 (2026-04-24T02:37:57Z) — Register discover-stage2.md in EMBEDDED_FILES; broaden drift guard
+
+    - Addressed bug `init-force-silently-skips-discover-stage2-md-missing-from-embedded-files`: `discover-stage2.md` was absent from the `EMBEDDED_FILES` list in `src/init.rs`, causing `init` and `init --force` to silently skip scaffolding it.
+    - Added `EmbeddedFile { path: "discover-stage2.md", content: include_str!("../defaults/discover-stage2.md") }` alongside `discover-stage1.md` in `EMBEDDED_FILES`.
+    - Replaced the narrow `every_default_coding_style_file_is_embedded` drift test with `every_file_under_defaults_is_registered_in_embedded_files`, which walks the entire `defaults/` tree recursively and asserts every file has a matching entry — preventing the same class of bug for any future addition anywhere under `defaults/`.
+    - Added `collect_files_recursively` helper inside the test module (no new dependency).
+    - `cargo test --all` passes (541 tests); `cargo clippy --all-targets` clean.
+    - Synthetic end-to-end verified: stale `discover-stage2.md` with `{{PROPOSALS_OUTPUT_PATH}}` token in a temp dir was correctly overwritten by `init --force`.
+
+    - What worked: the fix is minimal (one line added to `EMBEDDED_FILES`, one test replaced). The broader drift guard is a strict improvement — it subsumes the old test and covers all future `defaults/` additions automatically.
+    - What didn't: nothing; the task exited cleanly on first attempt.
+    - What this suggests next: the project-wide audit (`project-wide-audit-simplification-cleanup-debt-reduction`) should include "drift-guard generalisations" as a theme — this fix is a concrete example of where class-specific guards had gaps that a generic guard would have caught.
