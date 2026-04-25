@@ -547,3 +547,11 @@ entries:
   title: '`init.rs` drift sentinel checks phase prompts for `state phase-summary render`'
   body: |
     `src/init.rs` contains a drift-guard sentinel asserting phase prompt templates include the substring `state phase-summary render`. Any change to how phase prompts emit their output requires updating this sentinel.
+- id: ops-log-yaml-mechanism-for-intent-label-capture-deferred
+  title: ops.log.yaml mechanism for intent-label capture (deferred)
+  body: |
+    `src/phase_summary.rs:21-23` docstring describes an `ops.log.yaml` mechanism: mutating verbs record `--intent <label>` and `--reason "<text>"` at mutation time; the renderer merges structural diff with intent records, removing the LLM's responsibility for emitting intent labels.
+
+    This aligns with the "code over LLM for mechanical work" rule and is the proper long-term architecture for intent-label capture.
+
+    **Deferred** because intent is currently *reasoning* (the LLM is the right author); the prompt-level fix in `restore-intent-label-richness-in-headless-phase-preamble-for-action-renderer` is correct for now. Only worth pursuing if intent capture becomes truly mechanical — i.e., the verb caller already holds the intent value in hand before calling the verb, making LLM authorship redundant.
