@@ -46,7 +46,7 @@ entries:
 - id: phase-contract-test-validates-per-phase-file-writes
   title: Phase contract test validates per-phase file writes
   body: |
-    `phase_contract_round_trip_writes_expected_files` runs `phase_loop` from `analyse-work` via `ContractMockAgent`; assertions cover latest-session.md, memory.md updated, backlog.md updated, phase.md ends at `work`, and git log subjects. `commit-message.md` is no longer part of the flow; analyse-work now authors `commits.yaml` instead. See: `Analyse-work writes commits.yaml; git-commit-work applies it`.
+    `phase_contract_round_trip_writes_expected_files` runs `phase_loop` from `analyse-work` via `ContractMockAgent`; assertions cover latest-session.md, memory.md updated, backlog.md updated, phase.md ends at `work`, and git log subjects. `commit-message.md` is absent from the flow; analyse-work authors `commits.yaml` instead. See: `Analyse-work writes commits.yaml; git-commit-work applies it`.
 - id: tool-read-token-scoped-to-work-md-only
   title: '`{{TOOL_READ}}` token scoped to `work.md` only'
   body: |
@@ -106,7 +106,7 @@ entries:
 - id: dream-baseline-seeded-from-three-call-sites
   title: dream-word-count seeded from three call sites
   body: |
-    `seed_dream_word_count_if_missing` in `src/dream.rs` is called from `run_create` (post-session scaffolding), `run_set_phase` (every LLM phase transition including coordinators), and `GitCommitReflect`. Seeds `dream-word-count` to 0 ("never dreamed"), not current word count; seeding to current count silently delays the first dream by `headroom` words on populated plans. Migration: if `dream-word-count` is missing and `dream-baseline` parses as a usize, the value is copied and the legacy file is deleted. `dream-baseline` is now a SHA file; `dream-word-count` is the word-count store.
+    `seed_dream_word_count_if_missing` in `src/dream.rs` is called from `run_create` (post-session scaffolding), `run_set_phase` (every LLM phase transition including coordinators), and `GitCommitReflect`. Seeds `dream-word-count` to 0, not current word count; seeding to current count silently delays the first dream by `headroom` words on populated plans. Legacy migration: if `dream-word-count` is missing and `dream-baseline` parses as a usize, the value is copied and the legacy file is deleted. `dream-baseline` is a SHA file; `dream-word-count` is the word-count store.
 - id: phase-prompts-use-ravel-lite-state-cli-verbs
   title: Phase prompts use `ravel-lite state` CLI verbs
   body: |
@@ -246,7 +246,7 @@ entries:
 - id: src-projects-rs-holds-projectscatalog
   title: '`src/projects.rs` holds `ProjectsCatalog`'
   body: |
-    `ProjectsCatalog` (schema_version 1) maps project names to absolute in-memory paths. On disk, paths are stored relative to the catalog file via the `RawProjectsCatalog`/`RawProjectEntry` DTO layer; resolved to absolute on load, relativised on save. `auto_add` is pure and returns `AlreadyCatalogued`/`Added`/`NameCollision`. `ensure_in_catalog_interactive` is generic over `Read + Write`. Atomic save. See: `projects.yaml DTO layer separates serde from in-memory shape`.
+    `ProjectsCatalog` (schema_version 1) maps project names to absolute in-memory paths; on disk, paths are relative via `RawProjectsCatalog`/`RawProjectEntry` (resolved on load, relativised on save). `auto_add` is pure and returns `AlreadyCatalogued`/`Added`/`NameCollision`. `ensure_in_catalog_interactive` is generic over `Read + Write`. Saves are atomic. See: `projects.yaml DTO layer separates serde from in-memory shape`.
 - id: state-projects-add-rejects-relative-paths
   title: '`state projects add` resolves relative paths against CWD'
   body: |
@@ -378,7 +378,7 @@ entries:
 - id: component-ontology-v2-spec-at-docs-component-ontology-md
   title: Component ontology v2 spec at docs/component-ontology.md
   body: |
-    `docs/component-ontology.md` is the canonical v2 inter-component relationship ontology spec (reference section only). Split from monolithic form: spec stays at the original path; migration guidance lives in a separate companion doc. Implementation is pending. See: `Component ontology v2 uses kind × lifecycle × direction axes`.
+    `docs/component-ontology.md` is the canonical v2 ontology spec (reference section only); migration guidance is in a separate companion doc. Implementation pending. See: `Component ontology v2 uses kind × lifecycle × direction axes`.
 - id: component-ontology-v2-uses-kind-lifecycle-direction-axes
   title: Component ontology v2 uses kind × lifecycle × direction axes
   body: |
@@ -434,7 +434,7 @@ entries:
 - id: stage-2-hints-as-priors-enforcement-is-prose-only-hard-assertion-deferred
   title: Stage 2 hints-as-priors enforcement is prose-only; hard assertion deferred
   body: |
-    Stage 2 `priors-not-verdicts` section is currently prose only. If real discover runs show Stage 2 over-weighting `interaction_role_hints` (e.g., proposing `strong` edges where the only evidence is a hint), consider adding a per-edge hard assertion: "evidence_fields must include at least one non-hint field for strong-grade proposals." Hold off until there is real discover output to judge; the prompt change alone may be sufficient.
+    Stage 2 `priors-not-verdicts` section is prose only. If real discover runs show Stage 2 over-weighting `interaction_role_hints` (e.g., proposing `strong` edges where the only evidence is a hint), consider adding a per-edge hard assertion: `evidence_fields must include at least one non-hint field for strong-grade proposals`. The prompt change alone may be sufficient.
 - id: docs-architecture-md-not-audited-for-v1-vocabulary
   title: docs/architecture.md has no v1 edge-kind vocabulary
   body: |
@@ -518,7 +518,7 @@ entries:
 - id: planrowcounts-injects-unblocked-blocked-received-into-survey
   title: PlanRowCounts injects unblocked/blocked/received into survey
   body: |
-    `PlanRowCounts { unblocked, blocked, received }` lives in `state::backlog::schema`. `BacklogFile::plan_row_counts()` computes all three in one dep-traversal pass. `inject_plan_row_counts()` in `survey/schema.rs` writes them onto `PlanRow`; wired into cold path, incremental path, and the `is_noop` fast-path so stale priors self-heal on first contact with a current binary. Survey prompts forbid the LLM from emitting `unblocked`, `blocked`, or `received`. See: `survey blocked count is status-blocked-or-dep-unmet union`; `survey received count is handoff-based not session-diff`.
+    `PlanRowCounts { unblocked, blocked, received }` lives in `state::backlog::schema`. `BacklogFile::plan_row_counts()` computes all three in one dep-traversal pass. `inject_plan_row_counts()` in `survey/schema.rs` writes them onto `PlanRow` across cold, incremental, and `is_noop` fast paths. Survey prompts forbid the LLM from emitting these fields. See: `survey blocked count is status-blocked-or-dep-unmet union`; `survey received count is handoff-based not session-diff`.
 - id: survey-received-count-is-handoff-based-not-session-diff
   title: survey received count is handoff-based not session-diff
   body: |
@@ -536,9 +536,9 @@ entries:
   body: |
     `state phase-summary render` computes structural labels only. Intent-required labels (e.g., a purposeful `[REPRIORITISED]`) are excluded because a diff alone cannot distinguish a deliberate reorder from an accidental one; the LLM preamble carries that reasoning. Structural label sets: `[DONE]`, `[NEW]`, `[OBSOLETE]`, `[REPRIORITISED]` (triage); `[NEW]`, `[OBSOLETE]`, `[STALE]` (reflect/dream); `[STATS]` (dream). Implementation in `src/phase_summary.rs`. See: `LLM reasoning preamble in reflect/dream/triage is a preserved feature`.
 - id: phase-summary-render-prompt-wiring-needs-orchestrator-baseline
-  title: phase-summary render prompt wiring is unblocked
+  title: phase-summary render wired into all cycle baselines
   body: |
-    `state phase-summary render --baseline $(cat <plan>/<phase>-baseline)` is now callable from reflect, dream, and triage phase prompts. All orchestrator baseline files are wired: `GitCommitWork` → `reflect-baseline`; `GitCommitReflect` → `dream-baseline` (or `triage-baseline` when skipping dream); `GitCommitDream` → `triage-baseline`; `GitCommitTriage` → `work-baseline`. Task `update-triage-reflect-dream-prompts-to-invoke-state-phase-summary-render` is next.
+    `state phase-summary render --baseline $(cat <plan>/<phase>-baseline)` is callable from reflect, dream, and triage phase prompts. Baseline wiring: `GitCommitWork` → `reflect-baseline`; `GitCommitReflect` → `dream-baseline` (or `triage-baseline` when skipping dream); `GitCommitDream` → `triage-baseline`; `GitCommitTriage` → `work-baseline`.
 - id: each-phase-baseline-holds-the-sha-from-the-preceding-commit
   title: Each <phase>-baseline holds the SHA from the preceding commit
   body: |
