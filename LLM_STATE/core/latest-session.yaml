@@ -1,12 +1,10 @@
-id: session-58
-timestamp: 2026-04-25T11:05:14Z
+id: session-59
+timestamp: 2026-04-25T12:01:36Z
 phase: work
 body: |
-  ### Session 58 (2026-04-25T11:05:14Z) — Remove commit-message.md branch from git_commit_plan
+  ### Session 59 (2026-04-25T12:01:36Z) — Highlight rule fix, clippy cleanup, reference skeleton
 
-  - Removed the legacy `commit-message.md` read-and-delete branch from `git_commit_plan` in `src/git.rs`. The function now always uses the default `run-plan: {phase_name} ({plan_name})` message; the custom-message path for the work phase is handled entirely by `apply_commits_spec` against `commits.yaml`.
-  - Removed the `HighlightRule` for `commit-message.md` ("Writing commit message") from `PHASE_HIGHLIGHTS[LlmPhase::AnalyseWork]` in `src/format.rs`.
-  - Updated `tests/phase_loop.rs` (`ContractMockAgent`) and `tests/pi_agent.rs` (fake-pi shell script) to write `commits.yaml` instead of `commit-message.md`, matching the current mechanism.
-  - Full test suite passes (586 unit + all integration tests). `grep -rn "commit-message" src/ tests/ defaults/` returns zero matches.
-  - Key wrinkle: the task described the branch as "dead in production" but the test fixtures kept it alive via a side-effect chain (the file lingered through `apply_commits_spec` and was consumed by `git_commit_plan` on the next phase call). The branch was reachable, just only through tests. Future "dead code" tasks should always include `tests/` in the precondition grep scope.
-  - The `AnalyseWork` highlight list now has only one rule (`latest-session.md`). Adding a `commits.yaml` highlight rule ("Writing commit spec") would improve TUI feedback during analyse-work — filed as a backlog task.
+  - **What was attempted:** Two backlog tasks: add `commits.yaml` highlight rule to the AnalyseWork TUI phase and fix the `unnecessary_sort_by` clippy lint in `render.rs`. Additionally bootstrapped the reference mini-site skeleton with directory layout, manifest entries, an index page, and a concepts page.
+  - **What worked:** Both Rust tasks completed cleanly. `src/format.rs` gained a `commits.yaml` HighlightRule for the AnalyseWork phase. `src/state/backlog/render.rs` had its `sort_by` replaced with `sort_by_key`. All 50 tests pass; clippy is clean. The reference skeleton landed as `docs/reference/` with `index.adoc` (full content, 32 lines) and `concepts.adoc` (substantive, 73 lines) plus seven 5-line stubs for the remaining pages. `docs/manifest.txt` gained AsciiDoc conventions commentary and the nine reference page entries.
+  - **What to try next:** The reference pages listed in the new backlog tasks (`reference-concepts-page-*`, `reference-phase-cycle-page-*`, etc.) are the natural continuation. Each page has a corresponding stub file already in place.
+  - **Key learnings:** The pre-existing `latest-session.md` highlight rule in `src/format.rs` does not match the actual file produced by Ravel-Lite (`latest-session.yaml`), so the "Writing session log" label has never fired. Added a fix task to the backlog.

@@ -1,0 +1,5 @@
+= CLI: state commands
+
+This page is a placeholder. When complete it will document `ravel-lite state` and every subcommand: `state projects`, `state backlog` (the dense CRUD surface), `state memory`, `state session-log`, `state set-phase`, and `state related-components`. Each entry covers invocation, flags, what the command does, side effects, and gotchas.
+
+The corresponding backlog task is `reference-cli-state-commands-projects-backlog-memory-session-log-set-phase-related-components`.

@@ -1,0 +1,5 @@
+= Phase cycle
+
+This page is a placeholder. When complete it will document every phase in the work → analyse-work → git-commit-work → reflect → git-commit-reflect → [dream?] → dream → git-commit-dream → triage → git-commit-triage cycle, with each phase's input and output contract, the dream-trigger condition, the triage subagent dispatch mechanism, and the per-phase git-commit audit trail.
+
+The corresponding backlog task is `reference-phase-cycle-page-per-phase-contracts-dream-trigger-triage-dispatch-git-commit-audit-trail`. Until it ships, the link:tutorial-00-overview.html[tutorial overview] sketches the cycle at a high level.

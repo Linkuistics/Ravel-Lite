@@ -1,0 +1,5 @@
+= CLI: survey commands
+
+This page is a placeholder. When complete it will document `ravel-lite survey` and `ravel-lite survey-format` — the advanced utilities used during cross-plan discovery. Survey verbs are advanced surface area, not core lifecycle, so the page is expected to be short.
+
+The corresponding backlog task is `reference-cli-survey-commands-survey-survey-format`.

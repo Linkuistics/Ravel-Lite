@@ -1,0 +1,5 @@
+= Configuration and prompts
+
+This page is a placeholder. When complete it will document how `config.yaml` and `*.local.yaml` overlays compose (the `load_with_optional_overlay` deep-merge), where embedded defaults sit, the canonical token-substitution path used by every prompt-loading route, and how to customise per-phase prompts and subagent definitions.
+
+The corresponding backlog task is `reference-configuration-and-prompt-file-formats-config-yaml-local-yaml-overlays-embedded-defaults-token-substitution-per-phase-prompts`.

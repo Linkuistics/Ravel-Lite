@@ -1,0 +1,5 @@
+= State files
+
+This page is a placeholder. When complete it will document the durable plan-state files in full: schema, examples, and read/write call sites for `backlog.yaml`, `memory.yaml`, `session-log.yaml`, `latest-session.*`, `phase.md`, and `commits.yaml`.
+
+The corresponding backlog task is `reference-state-file-formats-backlog-yaml-memory-yaml-session-log-yaml-latest-session-phase-md-commits-yaml`.

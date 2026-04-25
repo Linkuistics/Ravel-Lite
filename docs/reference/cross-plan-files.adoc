@@ -1,0 +1,5 @@
+= Cross-plan files
+
+This page is a placeholder. When complete it will document `subagent-dispatch.yaml` (the triage hand-off mechanism) and `related-components.yaml` (peer-project edges with kind, lifecycle, participants, evidence grade, evidence fields, and rationale), plus the evidence-grade vocabulary used by the discover and triage flows.
+
+The corresponding backlog task is `reference-cross-plan-file-formats-subagent-dispatch-yaml-related-components-yaml-evidence-grades`.

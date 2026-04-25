@@ -1,0 +1,5 @@
+= CLI: lifecycle commands
+
+This page is a placeholder. When complete it will document `ravel-lite run`, `create`, `init` (and `--force`), `version` (and `--version`), and the global flags (`--config`, `RAVEL_LITE_CONFIG`, `--dangerous`) that apply across every command. Each entry covers invocation, flags, what the command does, what it writes, side effects, exit codes, and gotchas.
+
+The corresponding backlog task is `reference-cli-lifecycle-commands-run-create-init-version-global-flags`.

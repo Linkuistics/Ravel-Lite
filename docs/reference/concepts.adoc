@@ -1,0 +1,73 @@
+= Concepts
+
+This page collects the foundational vocabulary the rest of the reference assumes. It's aimed at someone who has installed Ravel-Lite and run it once — enough to know what the TUI looks like — but who hasn't yet read source. Every later reference page leans on the terms defined here.
+
+== Project
+
+A project is the subtree Ravel-Lite controls during a cycle. It is not derived from where `.git` sits; it's pure path math from where the plan lives. Given a plan directory at `<subtree>/<state-dir>/<plan>` (typically `<subtree>/LLM_STATE/<plan>`), Ravel-Lite computes the project as `<plan_dir>/../..` and treats that subtree as everything it's allowed to read, write, and commit.
+
+The decoupling matters because the project can be a checked-out repository's root, but it can equally be a subtree inside a larger monorepo. Ravel-Lite scopes its git operations — dirty-tree checks, baseline diffs, the analyse-work snapshot — using a pathspec on the project subtree, so sibling subtrees in the same monorepo are invisible. The baseline SHA itself is repo-wide (git can't track anything finer), but every query against the baseline is filtered to the subtree. Commit-message conventions a monorepo enforces (conventional-commits prefixes, for example) aren't automated by Ravel-Lite — the per-commit message authored by the analyse-work phase is the customisation point.
+
+One consequence worth knowing: a single repository can host many subtrees, each with its own plans. Ravel-Lite stays out of their way as long as their plans live at the right two-level depth.
+
+== Plan
+
+A plan is a directory of state files representing an in-flight body of work. Conventionally it sits at `<project>/LLM_STATE/<plan>/`, though the state-directory name is configurable. Inside it, every piece of state Ravel-Lite needs lives as a readable file:
+
+[source,text]
+----
+LLM_STATE/<plan>/
+├── backlog.yaml         # tasks, statuses, dependencies, results
+├── memory.yaml          # distilled learnings, carried across cycles
+├── session-log.yaml     # one record per completed phase
+├── latest-session.yaml  # most recent session's summary, fed to git-commit-work
+├── phase.md             # one-line file: the phase to run next
+└── commits.yaml         # the analyse-work commit spec, transient between phases
+----
+
+A project can host multiple plans. Each is its own directory under `LLM_STATE/` and runs its own cycle independently. Distinct plans may share backlog conventions but never share state — `<plan_a>/backlog.yaml` and `<plan_b>/backlog.yaml` are two different files with two different lifecycles. The link:reference-state-files.html[State files] reference documents the schema and lifecycle of every file above.
+
+== Agent backends
+
+Ravel-Lite spawns a coding agent as a subprocess for every reasoning phase. Two backends ship today:
+
+* https://claude.ai/code[Claude Code], Anthropic's CLI. Selected by setting `agent: claude-code` in the project's `config.yaml`. Needs the `claude` binary on `PATH`.
+* https://github.com/mariozechner/pi-coding-agent[Pi], a smaller alternative. Selected with `agent: pi`. Needs the `pi` binary on `PATH`.
+
+Selection happens once, when Ravel-Lite is invoked. The orchestrator constructs the matching agent implementation, hands it the per-phase prompt, and streams its JSON output. Switching agents mid-cycle isn't supported — pick one, run a cycle, switch in the next cycle if you want.
+
+Each backend has its own configuration directory under `agents/<name>/`, sibling to the project's `config.yaml`. Pi additionally carries a `subagents/` directory with definitions for the brainstorming, TDD, and writing-plans skills the orchestrator dispatches against during specific phases. The link:reference-config-and-prompts.html[Configuration and prompts] reference covers the per-backend layout in full.
+
+== The principles
+
+Ravel-Lite is built around three principles. They're worth understanding before digging into specifics, because every design choice further down the reference is downstream of one of them.
+
+. *No magic.* All config, prompts, phase state, and memory are readable files on disk. Nothing is embedded or hidden in the running orchestrator. If you want to know what Ravel-Lite is about to do, you can read the file it's about to read; if you want to change what it does, you can edit the file it'll act on.
+
+. *Visible, auditable, adjustable.* Every input is a file the user can inspect and edit. Every state transition writes to the filesystem. The git-commit-* phases between reasoning phases produce an audit trail of every change — `git log` is a complete record of every cycle the orchestrator has run.
+
+. *Agents are subprocesses.* The orchestrator spawns CLI processes, reads their JSON stream output, and renders progress through a https://ratatui.rs[Ratatui] TUI. It never calls LLM APIs directly. Ravel-Lite is therefore agnostic to the agent's billing, transport, or model — the agent owns those decisions, the orchestrator owns the loop.
+
+These principles play out in practice in two visible ways. First, there is no opaque state — every YAML file under `LLM_STATE/` can be edited by hand between phases, and a hand-edit is just another input the next phase will read. Second, every cycle leaves a complete history. The git-commit-* phases tag commits with their phase name, so a later reader can scrub through a cycle the same way they'd scrub through a video.
+
+== Glossary
+
+The terms collected here recur throughout the rest of the reference. Each entry defines the term briefly and points at the page that specifies it in detail.
+
+Phase:: A discrete agent invocation against a specific prompt file. There are five reasoning phases (work, analyse-work, reflect, dream, triage) plus the four `git-commit-*` phases that audit-log them. The link:reference-phase-cycle.html[Phase cycle] reference documents each one's input and output contract.
+
+Cycle:: One full pass through the phase sequence — work to triage and back. The cycle restarts at `work` unless the user stops, the backlog is empty, or a phase asks to halt.
+
+Dispatch:: The triage phase spawning a subagent — either against a sibling plan (to propagate cross-plan learnings) or against a brainstorming, TDD, or writing-plans skill (to delegate focused thinking). Triage writes `subagent-dispatch.yaml`; the orchestrator spawns the described subagents. See the link:reference-cross-plan-files.html[Cross-plan files] reference.
+
+Baseline:: A git SHA captured before a reasoning phase, used as the diff anchor for the analyse-work phase that follows. Baselines are recorded as `run-plan: save-<phase>-baseline` commits, visible in `git log`.
+
+Plan-state files:: The on-disk files inside a plan directory — `backlog.yaml`, `memory.yaml`, `session-log.yaml`, `latest-session.*`, `phase.md`, `commits.yaml`. Editable by hand. Documented in the link:reference-state-files.html[State files] reference.
+
+Durable memory:: The contents of `memory.yaml`. Distilled learnings carried across cycles. Reflect appends; dream rewrites losslessly when memory grows past a configured `headroom` threshold; triage occasionally archives a completed task's hand-off into it. The dream-trigger mechanics live on the link:reference-phase-cycle.html[Phase cycle] page.
+
+Hand-off:: A task's hand-off block — extra context attached to a task that triage may promote into a new task, archive into memory, or dispatch to a sibling plan. Cleared after triage acts on it.
+
+Related component:: A peer project linked via `related-components.yaml`, with an edge kind (`orchestrates`, `depends-on`, etc.), a lifecycle scope (`dev-workflow`, `build`, `runtime`), and an evidence grade. The discover phase proposes edges; the user accepts via `state related-components add-edge`. See the link:reference-cross-plan-files.html[Cross-plan files] reference.
+
+Evidence grade:: One of `strong`, `medium`, or `weak`. Strong means concrete cross-references in both projects' surface metadata; weak means inferred from indirect signals. Triage uses the grade to decide which related components are confident enough to dispatch to.
