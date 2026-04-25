@@ -555,3 +555,11 @@ entries:
     This aligns with the "code over LLM for mechanical work" rule and is the proper long-term architecture for intent-label capture.
 
     **Deferred** because intent is currently *reasoning* (the LLM is the right author); the prompt-level fix in `restore-intent-label-richness-in-headless-phase-preamble-for-action-renderer` is correct for now. Only worth pursuing if intent capture becomes truly mechanical — i.e., the verb caller already holds the intent value in hand before calling the verb, making LLM authorship redundant.
+- id: commit-message-md-branch-in-git-commit-plan-is-dead
+  title: '`commit-message.md` branch in `git_commit_plan` is dead'
+  body: |
+    No current phase prompts author `commit-message.md`; the branch inside `git_commit_plan` is unreachable in production. Only remaining code reference is `src/format.rs:101` as a UI highlight rule. Removal is a pending task.
+- id: triage-reprioritised-requires-an-llm-authored-reason
+  title: Triage `[REPRIORITISED]` requires an LLM-authored reason
+  body: |
+    `defaults/phases/triage.md` requires a ` — <reason>` suffix on every `[REPRIORITISED]` action line. The renderer at `src/format.rs:134` classifies `REPRIORITISED` as `Intent::Changed`; a missing reason collapses to single-row output with no dim reason row. See: `action-lines-split-title-reason-into-two-row-layout`.
