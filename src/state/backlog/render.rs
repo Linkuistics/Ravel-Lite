@@ -1,10 +1,18 @@
 //! Markdown-table rendering for `state backlog list --format markdown`.
 //!
-//! The canonical human-readable backlog view. Fixed four columns
-//! (`id | title | status | deps`); one section per group; deterministic
+//! The canonical human-readable backlog view. Fixed three columns
+//! (`title | status | deps`); one section per group; deterministic
 //! ordering (status rank, then dependency depth, then insertion order).
 //! Moving presentation into Rust removes per-cycle variability from
 //! phase prompts that previously asked the LLM to render a summary.
+//!
+//! Ids are intentionally not shown: they bloat the table width — the
+//! widest column was always `id`, and the bloat caused some downstream
+//! TUI consumers to fall back from box-drawn tables to a per-row list
+//! layout, breaking visual consistency across sections. Phases that
+//! need ids (for `set-status`, `set-results`, etc.) derive them from
+//! titles deterministically (the `allocate_id` mapping is stable) or
+//! call `--format yaml`/`--format json`, both of which still emit `id`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -60,12 +68,11 @@ pub fn render_markdown(backlog: &BacklogFile, group_by: GroupBy) -> String {
             out.push('\n');
         }
         out.push_str(&format!("## {section}\n\n"));
-        out.push_str("| id | title | status | deps |\n");
-        out.push_str("|---|---|---|---|\n");
+        out.push_str("| title | status | deps |\n");
+        out.push_str("|---|---|---|\n");
         for task in section_tasks {
             out.push_str(&format!(
-                "| {id} | {title} | {status} | {deps} |\n",
-                id = escape_cell(&task.id),
+                "| {title} | {status} | {deps} |\n",
                 title = escape_cell(&task.title),
                 status = status_to_cli_str(task.status),
                 deps = render_deps(&task.dependencies),
@@ -250,10 +257,10 @@ mod tests {
         };
         let out = render_markdown(&backlog, GroupBy::Category);
 
-        let i_n = out.find("| n |").expect("row n missing");
-        let i_i = out.find("| i |").expect("row i missing");
-        let i_b = out.find("| b |").expect("row b missing");
-        let i_d = out.find("| d |").expect("row d missing");
+        let i_n = out.find("| N |").expect("row N missing");
+        let i_i = out.find("| I |").expect("row I missing");
+        let i_b = out.find("| B |").expect("row B missing");
+        let i_d = out.find("| D |").expect("row D missing");
         assert!(i_n < i_i, "not_started row must come before in_progress");
         assert!(i_i < i_b, "in_progress row must come before blocked");
         assert!(i_b < i_d, "blocked row must come before done");
@@ -274,9 +281,9 @@ mod tests {
         };
         let out = render_markdown(&backlog, GroupBy::Category);
 
-        let i_root = out.find("| root |").expect("row root missing");
-        let i_mid = out.find("| mid |").expect("row mid missing");
-        let i_leaf = out.find("| leaf |").expect("row leaf missing");
+        let i_root = out.find("| Root |").expect("row Root missing");
+        let i_mid = out.find("| Mid |").expect("row Mid missing");
+        let i_leaf = out.find("| Leaf |").expect("row Leaf missing");
         assert!(i_root < i_mid, "root must render before mid: got\n{out}");
         assert!(i_mid < i_leaf, "mid must render before leaf: got\n{out}");
     }
@@ -310,9 +317,9 @@ mod tests {
             extra: Default::default(),
         };
         let out = render_markdown(&backlog, GroupBy::Category);
-        assert!(out.contains("| root | Root | done | — |"), "no-dep row must show em dash:\n{out}");
+        assert!(out.contains("| Root | done | — |"), "no-dep row must show em dash:\n{out}");
         assert!(
-            out.contains("| leaf | Leaf | not_started | root, other |"),
+            out.contains("| Leaf | not_started | root, other |"),
             "multi-dep cell must comma-join in declared order:\n{out}"
         );
     }
@@ -354,8 +361,8 @@ mod tests {
             extra: Default::default(),
         };
         let out = render_markdown(&backlog, GroupBy::Category);
-        let i_z = out.find("| z |").expect("row z missing");
-        let i_a = out.find("| a |").expect("row a missing");
+        let i_z = out.find("| Z |").expect("row Z missing");
+        let i_a = out.find("| A |").expect("row A missing");
         assert!(i_z < i_a, "non-cycle root must precede cycle participants:\n{out}");
     }
 

@@ -568,9 +568,9 @@ fn list_format_markdown_emits_deterministic_table_grouped_by_category() {
     );
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.starts_with("## maintenance"), "missing category heading:\n{stdout}");
-    assert!(stdout.contains("| id | title | status | deps |"), "header row missing:\n{stdout}");
+    assert!(stdout.contains("| title | status | deps |"), "header row missing:\n{stdout}");
     assert!(
-        stdout.contains("| add-clippy-d-warnings-ci-gate |"),
+        stdout.contains("| Add clippy `-D warnings` CI gate |"),
         "task row missing:\n{stdout}"
     );
 }
