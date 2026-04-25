@@ -1,12 +1,15 @@
-id: session-55
-timestamp: 2026-04-25T09:10:25Z
+id: session-56
+timestamp: 2026-04-25T09:39:58Z
 phase: work
 body: |
-  ### Session 55 (2026-04-25T09:10:25Z) — Replace Output format blocks with phase-summary render directives
+  ### Session 56 (2026-04-25T09:39:58Z) — Drop id column from backlog render; restore intent labels in headless-phase prompts
 
-  - Replaced the `## Output format` block in `defaults/phases/triage.md`, `defaults/phases/reflect.md`, and `defaults/phases/dream.md` with a single directive invoking `ravel-lite state phase-summary render {{PLAN}} --phase <phase> --baseline $(cat {{PLAN}}/<phase>-baseline 2>/dev/null || echo "")` — mechanical label transcription is now the CLI renderer's job
-  - Preamble guidance paragraphs preserved verbatim in all three prompts; intent-required labels (`[PROMOTED]`, `[ARCHIVED]`, etc.) remain the LLM's responsibility via the narrative preamble
-  - Updated `src/init.rs:279` test sentinel from `[NEW]`/`[IMPRECISE]` to `state phase-summary render` — the old sentinel checked for labels that no longer appear in the refreshed prompt template
-  - All 585 lib + 71 integration tests pass; `phase-summary render` verified to exit 0 on the first-cycle (empty-baseline) path
-  - Sibling task `triage-should-not-emit-the-no-dispatch-label-in-its-output` was subsumed — `[NO DISPATCH]` only lived in the removed structural template
-  - Small wording tension remains at `defaults/phases/triage.md:70` — step 3 still says "emit `[ARCHIVED]` in the summary" but "the summary" now means renderer output; a one-line clarification pass could resolve this next cycle
+  - Attempted two tasks in the same work phase: dropping the id column from the markdown backlog renderer, and restoring intent-label richness in the headless-phase prompt templates.
+  - Both tasks completed successfully. The original `fix-triage-step-3-wording` task was subsumed by the larger intent-label task and closed with a results block.
+  - No regressions; all 585 lib tests and integration groups passed.
+  - The `id` column removal resolved inconsistent TUI rendering (the docs section was falling back to a per-row list layout because id strings bloated table width past the consumer's threshold). Remaining width pressure is in the `deps` cell for tasks with many long dep ids — a follow-up task could ellipsis-trim dep ids in display.
+  - The intent-label fix revealed that the upstream regression (ce240f9) was purely at the prompt layer: `format_result_text` in `src/format.rs` already understood every intent label; the prompts had simply stopped asking the LLM to emit them. The fix adds a two-part Output format contract to triage, reflect, and dream: narrative preamble (with intent labels) + verbatim renderer output.
+
+  Key learnings:
+  - The id-column removal required changing unit test assertions from id-bracketed patterns (`| n |`, `| root |`) to title-bracketed ones (`| N |`, `| Root |`) — the test data used single-letter titles that matched the ids, so no fixture data changed.
+  - The dream prompt's `[OVERLAPPING]`/`[VERBOSE]`/`[AWKWARD]` labels use a two-line continuation form (`→`) that the renderer's `CONTINUATION_RE` already handles; "any leading whitespace" before `→` is accepted, so the prompt was simplified.
