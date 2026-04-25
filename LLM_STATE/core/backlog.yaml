@@ -2,7 +2,7 @@ tasks:
 - id: fix-triage-step-3-wording-emit-in-summary-include-in-narrative-preamble
   title: 'Fix triage step 3 wording: ''emit in summary'' → ''include in narrative preamble'''
   category: core
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Fix the wording tension left in `defaults/phases/triage.md` step 3 after the
@@ -38,6 +38,12 @@ tasks:
     - Re-read the edited step 3 and confirm that "narrative preamble" is the home
       for `[PROMOTED]`/`[ARCHIVED]` labels, matching the pattern established by
       `## Output format` in the same file.
+  results: |
+    Subsumed by `restore-intent-label-richness-in-headless-phase-preamble-for-action-renderer` in the same work phase.
+
+    That task did the wording fix this task asked for (triage.md step 3: `[PROMOTED]` and `[ARCHIVED]` instructions now point at the narrative preamble rather than "the summary") and extended the same pattern to step 6 (`[BLOCKER]`), the cross-plan dispatch section (`[DISPATCH]`), and the reflect/dream prompts (`[IMPRECISE]`, `[OVERLAPPING]`, `[VERBOSE]`, `[AWKWARD]`). The two-part Output format contract now formalises the preamble-vs-renderer split that this task identified.
+
+    No additional changes needed.
 - id: fix-stale-references-in-llm-work-audit-md-2-9-and-git-rs-32-doc-comment
   title: Fix stale references in llm-work-audit.md §2.9 and git.rs:32 doc-comment
   category: core
@@ -133,3 +139,88 @@ tasks:
   - write-reference-page-covering-all-user-facing-cli-verbs
   description: |
     Finishing task once tutorial (T2) and reference (T3) content is in place. Add a 'Documentation' section near the bottom of /Users/antony/Development/www.linkuistics.com/projects/ravel-lite.html with links to the new tutorial chapters and the reference page. Update /Users/antony/Development/www.linkuistics.com/SYNC.yml so the Ravel-Lite entry's site_pages list mentions the new projects/ravel-lite/*.html files and the synced_at SHA is bumped. Verify rendered output matches site brand. Depends on T2 and T3.
+- id: drop-id-column-from-backlog-markdown-render-to-fix-inconsistent-table-layout
+  title: Drop id column from backlog markdown render to fix inconsistent table layout
+  category: core
+  status: done
+  dependencies: []
+  description: |
+    The `id` column in `render_markdown` (`src/state/backlog/render.rs`) is the widest column and the primary cause of inconsistent rendering when the markdown table is wider than the consumer's display threshold (Claude Code TUI silently falls back to a YAML-style list per section once the table is too wide).
+
+    Drop the `id` column from the markdown view. Titles are descriptive enough for human and LLM consumption; phases that need ids for `set-status` / `set-results` / etc. can derive them from titles deterministically (id is generated from title) or fall back to `--format yaml`.
+
+    Scope:
+    - `src/state/backlog/render.rs`: header `| id | title | status | deps |` → `| title | status | deps |`; remove `escape_cell(&task.id)` from the row format.
+    - Update tests that match on `| n |` / `| root |` / etc. to match on titles instead.
+    - Confirm `--format yaml` and `--format json` still emit `id` (they're authoritative formats and id is structural).
+  results: |
+    Dropped the `id` column from `render_markdown` (`src/state/backlog/render.rs:62-72`). Fixed columns are now `title | status | deps`. Module docstring updated to spell out the rationale (id bloated table width, drove inconsistent TUI rendering, structural id remains in `--format yaml`/`--format json`).
+
+    Tests touched:
+    - Unit tests in `render.rs` that pin row order/content via id-bracketed cells (`| n |`, `| root |`, `| z |`, `| a |`, `| leaf |`, `| mid |`) migrated to title-bracketed cells (`| N |`, `| Root |`, etc.). The inputs were `task("n", "N", …)`, so titles already supplied unique single-letter discriminants — no test data changes were needed.
+    - `dependency_cell_shows_em_dash_when_no_deps_and_comma_list_otherwise` literal `| root | Root | done | — |` → `| Root | done | — |` and the leaf row similarly.
+    - Integration test in `tests/state_backlog.rs:571,573` updated: header check now asserts `| title | status | deps |`; row check now asserts `| Add clippy \`-D warnings\` CI gate |` instead of the id.
+
+    Verification:
+    - `cargo test --lib state::backlog::render` → 9/9 passing.
+    - `cargo test --test state_backlog` → 16/16 passing.
+    - `target/release/ravel-lite state backlog list LLM_STATE/core --format markdown` shows narrower tables — the `core` and `docs` sections both now fit terminal width without wrap. The `publish-new-docs` row still has wide `deps` content because deps still carry full ids (structural references — kept on purpose).
+
+    What this resolves:
+    - Observation 1 (id column not needed): direct fix.
+    - Observation 3 (inconsistent rendering across sections): expected to be resolved as a side-effect — the docs section was the one falling back to a list layout, and its widest content was the long id strings. After this change, docs renders the same way as core and infra. The remaining width-pressure is the long dep-id list on `publish-new-docs`; if that resurfaces TUI fallback in a different consumer, the right next move is shortening dep ids in display (e.g. show only the leading slug) — leave for a future task.
+
+    What this suggests next:
+    - The long-id pressure in `deps` cells is the next likely TUI fallback trigger. A `truncate-ids-in-deps-cell` task could ellipsis-trim each dep id to a fixed prefix while keeping the canonical form available via `--format yaml`. Not urgent.
+- id: restore-intent-label-richness-in-headless-phase-preamble-for-action-renderer
+  title: Restore intent-label richness in headless-phase preamble for action renderer
+  category: core
+  status: done
+  dependencies: []
+  description: |
+    Commit ce240f9 ("Delegate phase summary output to CLI renderer in triage/reflect/dream") moved structural-label emission from the LLM into `ravel-lite state phase-summary render`. The mechanical transcription gain is correct (per the "code over LLM for mechanical work" memory rule), but the move dropped two kinds of richness that `format_result_text` in `src/format.rs` is built to render:
+
+    1. **Reason text.** Previously each label carried `— <reason>` after the subject (e.g. `[NEW] foo — added because of …`). The renderer splits ` — ` into a styled title row + dim reason row. Today the structural renderer emits `[NEW] foo` only, so the reason row is gone.
+    2. **Intent-bearing labels.** `[PROMOTED]`, `[ARCHIVED]`, `[BLOCKER]`, `[DISPATCH]` (triage); `[IMPRECISE]` (reflect); `[OVERLAPPING]`, `[VERBOSE]`, `[AWKWARD]` (dream) cannot be derived from a structural diff — they encode operator intent. They were dropped from the prompts entirely; they now appear only as plain prose in the narrative preamble (if at all), which the renderer can't style.
+
+    Fix path (prompt-only, no schema changes): in `defaults/phases/triage.md`, `defaults/phases/reflect.md`, `defaults/phases/dream.md`, instruct the LLM in the narrative-preamble section to emit `[INTENT_LABEL] subject — reason` lines for the intent-bearing labels relevant to that phase, alongside the verbatim renderer output. The action renderer (`format.rs:ACTION_RE` + `ACTION_INTENTS`) already handles those labels — just feed it the right input.
+
+    For dream, the `→ continuation` two-line pattern needs to be preserved on `[OVERLAPPING] / [VERBOSE] / [AWKWARD]` lines so the renderer's `CONTINUATION_RE` branch fires.
+
+    This subsumes the existing `fix-triage-step-3-wording-…` task: that task is the wording slice of the same problem.
+  results: |
+    Updated all three headless-phase prompts (`defaults/phases/triage.md`, `defaults/phases/reflect.md`, `defaults/phases/dream.md`) so the LLM emits intent-bearing labels in its narrative preamble alongside the renderer's structural output.
+
+    ## What changed
+
+    Each prompt's `## Output format` section was rewritten to spell out a two-part contract:
+
+    1. **Narrative preamble** — brief paragraph + one labelled line per intent-bearing action.
+    2. **Blank line, then verbatim renderer output** — produced by `ravel-lite state phase-summary render`, unchanged from before.
+
+    Per-phase intent labels:
+    - **Triage:** `[PROMOTED] / [ARCHIVED] / [BLOCKER] / [DISPATCH]` — each `<subject> — <reason>` form. The prompt body (steps 3, 6, and the dispatch section) was also updated so the per-action instructions tell the LLM *what to write* and *where it appears* (preamble, not summary).
+    - **Reflect:** `[IMPRECISE] <heading> — <what was vague, how it is now sharper>` — the only intent-bearing reflect label that the structural diff cannot reconstruct.
+    - **Dream:** `[OVERLAPPING] / [VERBOSE] / [AWKWARD]` in the two-line `→ continuation` form. The renderer's `CONTINUATION_RE` accepts any leading whitespace before `→`, so the prompt was simplified to "any leading whitespace; the renderer realigns".
+
+    ## Why it works
+
+    The action renderer in `src/format.rs` (`format_result_text`) has always understood every label in `ACTION_INTENTS` (NEW, DONE, STALE, OBSOLETE, REPRIORITISED, IMPRECISE, PROMOTED, ARCHIVED, BLOCKER, DISPATCH, OVERLAPPING, VERBOSE, AWKWARD, STATS). The regression introduced by ce240f9 was *upstream*: the prompts stopped asking the LLM to emit intent labels at all, and `phase-summary render` only emits structural labels (per its own design — operator intent isn't recoverable from a file diff). The fix doesn't touch the renderer or the CLI; it restores prompt-level instruction so the renderer is fed the rich input it always knew how to style.
+
+    ## Verification
+
+    - `cargo test` → 585 lib tests + all integration groups passing (no test changes needed in this task; the format.rs and phase_summary.rs tests already cover label classification).
+    - `cargo build` clean.
+    - `init.rs` sentinel (`state phase-summary render` substring check) still satisfied — that string remains in all three prompts.
+
+    ## Subsumed task
+
+    The existing `fix-triage-step-3-wording-emit-in-summary-include-in-narrative-preamble` core task asked for exactly the wording slice of this fix in step 3 of triage.md. This change does that and more (steps 6, dispatch, and the reflect/dream prompts too). That task is closed in the same work phase with a Results block pointing here.
+
+    ## What this suggests next
+
+    The richness now flows through prompts. Two follow-ups worth considering, but not urgent:
+
+    1. **Test coverage for the new contract.** `format_result_text` has tests for individual labels but no end-to-end test that pins the two-part output shape against an example LLM response. Adding such a snapshot test would catch future drift.
+
+    2. **An `ops.log.yaml` mechanism** (described in the docstring at `src/phase_summary.rs:21-23`). It would let mutating verbs record `--intent <label>` and `--reason "<text>"` at mutation time; the renderer could then merge structural diff with intent records and remove the LLM's responsibility for emitting these labels. This is the proper long-term fix per the "code over LLM for mechanical work" memory rule — but the prompt-level fix in this task is correct for now because intent is *reasoning*, not mechanical, so the LLM is the right author. The ops-log path is only worth pursuing if intent capture becomes truly mechanical (e.g. the verb caller already holds the intent in hand).
