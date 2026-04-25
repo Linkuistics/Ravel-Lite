@@ -53,7 +53,7 @@ but valid:
 - `{{PLAN}}/phase.md` containing exactly `work`
 - `{{PLAN}}/backlog.yaml` containing `tasks: []`
 - `{{PLAN}}/memory.yaml` containing `entries: []`
-- `{{PLAN}}/dream-baseline` containing `0`
+- `{{PLAN}}/dream-word-count` containing `0`
 
 **Do not overwrite these files directly.** Populate them through the
 state CLI only. This keeps the typed YAML as the source of truth from

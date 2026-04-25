@@ -6,10 +6,10 @@ use anyhow::{Context, Result};
 
 use crate::agent::Agent;
 use crate::backlog_transitions::backlog_transitions;
-use crate::dream::{seed_dream_baseline_if_missing, should_dream, update_dream_baseline};
+use crate::dream::{seed_dream_word_count_if_missing, should_dream, update_dream_word_count};
 use crate::format::phase_info;
 use crate::git::{
-    apply_commits_spec, git_commit_plan, git_save_work_baseline, paths_changed_since_baseline,
+    apply_commits_spec, git_commit_plan, git_save_baseline, paths_changed_since_baseline,
     work_tree_snapshot, working_tree_status,
 };
 use crate::prompt::compose_prompt;
@@ -230,27 +230,52 @@ async fn handle_script_phase(
             for result in &results {
                 log_commit(ui, "work", &scope, result);
             }
+
+            // Capture HEAD post-work-commits as `reflect-baseline` so the
+            // reflect phase can render its memory.yaml diff via
+            // `state phase-summary render --baseline $(cat reflect-baseline)`.
+            // A follow-on commit lands the file (mirrors the
+            // save-work-baseline pattern in GitCommitTriage); amending
+            // would orphan the SHA the file just captured.
+            git_save_baseline(plan_dir, "reflect-baseline");
+            let baseline_result = git_commit_plan(plan_dir, &name, "save-reflect-baseline")?;
+            log_commit(ui, "save-reflect-baseline", &scope, &baseline_result);
+
             warn_if_project_tree_dirty(ui, project_dir, plan_dir);
             Ok(true)
         }
         ScriptPhase::GitCommitReflect => {
-            // First-run fallback for plans created before `dream-baseline`
+            // First-run fallback for plans created before `dream-word-count`
             // was seeded by plan-creation. Without this, `should_dream`
             // returns `false` on every cycle (missing-file short-circuit),
-            // and `update_dream_baseline` never fires (it runs only after
-            // a dream phase) — a permanent deadlock. Seeding to the
-            // current word count means the first dream triggers after
-            // memory grows by `headroom` from here, matching the
-            // post-dream steady state.
-            seed_dream_baseline_if_missing(plan_dir);
+            // and `update_dream_word_count` never fires (it runs only after
+            // a dream phase) — a permanent deadlock. Seeding to zero (or
+            // migrating a legacy `dream-baseline` word-count file) means
+            // the first dream triggers after memory grows by `headroom`
+            // from here, matching the post-dream steady state.
+            seed_dream_word_count_if_missing(plan_dir);
             let skip_dream = !should_dream(plan_dir, headroom);
-            if skip_dream {
+            // The next-phase baseline file is named after the LLM phase
+            // that will read it: `dream-baseline` if dream runs next,
+            // `triage-baseline` if dream is skipped. Both hold the
+            // post-reflect-commit SHA so the consumer's
+            // `phase-summary render --baseline` shows changes since
+            // reflect finished.
+            let next_baseline = if skip_dream {
                 write_phase(plan_dir, Phase::Llm(LlmPhase::Triage))?;
+                "triage-baseline"
             } else {
                 write_phase(plan_dir, Phase::Llm(LlmPhase::Dream))?;
-            }
+                "dream-baseline"
+            };
             let result = git_commit_plan(plan_dir, &name, "reflect")?;
             log_commit(ui, "reflect", &scope, &result);
+
+            git_save_baseline(plan_dir, next_baseline);
+            let save_label = format!("save-{next_baseline}");
+            let baseline_result = git_commit_plan(plan_dir, &name, &save_label)?;
+            log_commit(ui, &save_label, &scope, &baseline_result);
+
             if skip_dream {
                 // Render a full DREAM header with a skip description so the
                 // absence-of-work is as legible as the other phases.
@@ -266,6 +291,13 @@ async fn handle_script_phase(
             write_phase(plan_dir, Phase::Llm(LlmPhase::Triage))?;
             let result = git_commit_plan(plan_dir, &name, "dream")?;
             log_commit(ui, "dream", &scope, &result);
+
+            // Capture HEAD post-dream-commit as `triage-baseline` so
+            // triage can render its backlog.yaml diff.
+            git_save_baseline(plan_dir, "triage-baseline");
+            let baseline_result = git_commit_plan(plan_dir, &name, "save-triage-baseline")?;
+            log_commit(ui, "save-triage-baseline", &scope, &baseline_result);
+
             Ok(true)
         }
         ScriptPhase::GitCommitTriage => {
@@ -292,7 +324,7 @@ async fn handle_script_phase(
             // at the post-cycle user prompt. A follow-on commit is
             // simpler than `git commit --amend`, which would orphan the
             // pre-amend SHA that `work-baseline` names.
-            git_save_work_baseline(plan_dir);
+            git_save_baseline(plan_dir, "work-baseline");
             let baseline_result = git_commit_plan(plan_dir, &name, "save-work-baseline")?;
             log_commit(ui, "save-work-baseline", &scope, &baseline_result);
 
@@ -345,7 +377,7 @@ pub async fn phase_loop(
                 // triage, `work-baseline` doesn't exist yet — seed it so
                 // analyse-work has a baseline SHA to diff against.
                 if lp == LlmPhase::Work && !plan_dir.join("work-baseline").exists() {
-                    git_save_work_baseline(plan_dir);
+                    git_save_baseline(plan_dir, "work-baseline");
                 }
 
                 // analyse-work needs a live snapshot of the work tree so the
@@ -393,7 +425,7 @@ pub async fn phase_loop(
                 }
 
                 if lp == LlmPhase::Dream {
-                    update_dream_baseline(plan_dir);
+                    update_dream_word_count(plan_dir);
                 }
 
                 if lp == LlmPhase::Triage {

@@ -89,7 +89,7 @@ pub fn validate_target(plan_dir: &Path) -> Result<PathBuf> {
 /// - `phase.md` = `work\n`
 /// - `backlog.yaml` = `tasks: []\n`
 /// - `memory.yaml` = `entries: []\n`
-/// - `dream-baseline` = `0`
+/// - `dream-word-count` = `0`
 ///
 /// Parent directories are NOT created here — `validate_target` handles
 /// that — so this function only succeeds when called against a freshly
@@ -111,7 +111,7 @@ pub fn scaffold_plan_dir(abs_plan_dir: &Path) -> Result<()> {
         ("phase.md", b"work\n"),
         ("backlog.yaml", b"tasks: []\n"),
         ("memory.yaml", b"entries: []\n"),
-        ("dream-baseline", b"0"),
+        ("dream-word-count", b"0"),
     ];
     for (name, bytes) in writes {
         let path = abs_plan_dir.join(name);
@@ -138,7 +138,7 @@ pub async fn run_create(config_root: &Path, plan_dir: PathBuf) -> Result<()> {
 
     // Runner-owned scaffolding runs BEFORE the claude spawn so the LLM
     // never has to create mechanical files (phase.md, empty YAML shells,
-    // dream-baseline). The create-plan prompt directs it to populate
+    // dream-word-count). The create-plan prompt directs it to populate
     // backlog/memory exclusively through `state backlog add` /
     // `state memory add` — no raw writes, no `state backlog init`.
     scaffold_plan_dir(&abs_plan_dir)?;
@@ -291,7 +291,7 @@ mod tests {
         assert_eq!(fs::read_to_string(plan.join("phase.md")).unwrap(), "work\n");
         assert_eq!(fs::read_to_string(plan.join("backlog.yaml")).unwrap(), "tasks: []\n");
         assert_eq!(fs::read_to_string(plan.join("memory.yaml")).unwrap(), "entries: []\n");
-        assert_eq!(fs::read_to_string(plan.join("dream-baseline")).unwrap(), "0");
+        assert_eq!(fs::read_to_string(plan.join("dream-word-count")).unwrap(), "0");
     }
 
     #[test]

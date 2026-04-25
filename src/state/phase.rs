@@ -9,7 +9,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
-use crate::dream::seed_dream_baseline_if_missing;
+use crate::dream::seed_dream_word_count_if_missing;
 use crate::types::Phase;
 
 /// Enumerated for error messages so a typo'd phase string comes back
@@ -42,11 +42,13 @@ pub fn run_set_phase(plan_dir: &Path, phase: &str) -> Result<()> {
     }
     atomic_write(&target, phase.as_bytes())?;
     // Every LLM phase transition funnels through this CLI verb, so
-    // seeding here guarantees a baseline exists on any plan the driver
-    // touches — including coordinator plans that never reach the
-    // `GitCommitReflect` handler, and plans whose baseline was lost
-    // between cycles. Idempotent no-op in steady state.
-    seed_dream_baseline_if_missing(plan_dir);
+    // seeding here guarantees a dream-word-count file exists on any
+    // plan the driver touches — including coordinator plans that
+    // never reach the `GitCommitReflect` handler, and plans whose
+    // file was lost between cycles. Also doubles as the migration
+    // point for plans that pre-date the rename from `dream-baseline`
+    // to `dream-word-count`. Idempotent no-op in steady state.
+    seed_dream_word_count_if_missing(plan_dir);
     Ok(())
 }
 
@@ -99,35 +101,57 @@ mod tests {
     }
 
     #[test]
-    fn set_phase_seeds_dream_baseline_when_missing() {
+    fn set_phase_seeds_dream_word_count_when_missing() {
         // Defense-in-depth: any LLM phase transition must leave the
-        // plan with a baseline on disk. Coordinator plans never reach
-        // `GitCommitReflect`, so this is their only seed path.
+        // plan with a dream-word-count file on disk. Coordinator plans
+        // never reach `GitCommitReflect`, so this is their only seed
+        // path.
         let tmp = TempDir::new().unwrap();
         let plan = tmp.path();
         std::fs::write(plan.join("phase.md"), "work").unwrap();
-        assert!(!plan.join("dream-baseline").exists());
+        assert!(!plan.join("dream-word-count").exists());
 
         run_set_phase(plan, "analyse-work").unwrap();
 
-        let baseline = std::fs::read_to_string(plan.join("dream-baseline")).unwrap();
+        let baseline = std::fs::read_to_string(plan.join("dream-word-count")).unwrap();
         assert_eq!(baseline.trim(), "0");
     }
 
     #[test]
-    fn set_phase_preserves_existing_dream_baseline() {
+    fn set_phase_preserves_existing_dream_word_count() {
         // Idempotence: the seed must not clobber an already-written
-        // baseline. Otherwise every phase transition would reset
-        // progress toward the dream threshold.
+        // value. Otherwise every phase transition would reset progress
+        // toward the dream threshold.
         let tmp = TempDir::new().unwrap();
         let plan = tmp.path();
         std::fs::write(plan.join("phase.md"), "work").unwrap();
-        std::fs::write(plan.join("dream-baseline"), "1234").unwrap();
+        std::fs::write(plan.join("dream-word-count"), "1234").unwrap();
 
         run_set_phase(plan, "analyse-work").unwrap();
 
-        let baseline = std::fs::read_to_string(plan.join("dream-baseline")).unwrap();
+        let baseline = std::fs::read_to_string(plan.join("dream-word-count")).unwrap();
         assert_eq!(baseline.trim(), "1234");
+    }
+
+    #[test]
+    fn set_phase_migrates_legacy_dream_baseline_word_count_file() {
+        // Plans created before the rename store the word count at
+        // `dream-baseline`. set-phase is the earliest call site that
+        // funnels every cycle, so it's the natural migration point —
+        // the file is moved to `dream-word-count` and removed from
+        // its old name to free that name for the SHA writer.
+        let tmp = TempDir::new().unwrap();
+        let plan = tmp.path();
+        std::fs::write(plan.join("phase.md"), "work").unwrap();
+        std::fs::write(plan.join("dream-baseline"), "5678").unwrap();
+
+        run_set_phase(plan, "analyse-work").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(plan.join("dream-word-count")).unwrap().trim(),
+            "5678"
+        );
+        assert!(!plan.join("dream-baseline").exists());
     }
 
     #[test]

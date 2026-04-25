@@ -19,7 +19,7 @@ fn dream_guard_integration() {
     assert!(!ravel_lite::dream::should_dream(plan, 1500));
 
     write_memory_yaml_with_word_count(plan, 100);
-    ravel_lite::dream::update_dream_baseline(plan);
+    ravel_lite::dream::update_dream_word_count(plan);
 
     write_memory_yaml_with_word_count(plan, 200);
     assert!(!ravel_lite::dream::should_dream(plan, 1500));
@@ -27,21 +27,21 @@ fn dream_guard_integration() {
     write_memory_yaml_with_word_count(plan, 2000);
     assert!(ravel_lite::dream::should_dream(plan, 1500));
 
-    ravel_lite::dream::update_dream_baseline(plan);
+    ravel_lite::dream::update_dream_word_count(plan);
     assert!(!ravel_lite::dream::should_dream(plan, 1500));
 }
 
-/// Bootstrap regression: a plan without a `dream-baseline` file must
+/// Bootstrap regression: a plan without a `dream-word-count` file must
 /// have one seeded when the loop enters `git-commit-reflect`. Before
 /// this was wired in, `should_dream` returned `false` unconditionally
-/// on any plan whose baseline file was never created — and since
-/// `update_dream_baseline` only fires *after* a dream runs, that's a
+/// on any plan whose word-count file was never created — and since
+/// `update_dream_word_count` only fires *after* a dream runs, that's a
 /// permanent deadlock that keeps dream from ever triggering.
 ///
 /// (State-level redundant seeding also happens in `run_set_phase`;
 /// this test pins the `GitCommitReflect` layer independently.)
 #[tokio::test]
-async fn git_commit_reflect_seeds_dream_baseline_when_missing() {
+async fn git_commit_reflect_seeds_dream_word_count_when_missing() {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();
     init_test_repo(root);
@@ -55,8 +55,8 @@ async fn git_commit_reflect_seeds_dream_baseline_when_missing() {
     // seeded to 0 the guard still returns false (300 > 0 + 1500 is
     // false) and the loop proceeds to triage rather than dream.
     write_memory_yaml_with_word_count(&plan_dir, 300);
-    // Critical precondition: no dream-baseline on disk.
-    assert!(!plan_dir.join("dream-baseline").exists());
+    // Critical precondition: no dream-word-count on disk.
+    assert!(!plan_dir.join("dream-word-count").exists());
 
     let config_root = root.join("config");
     fs::create_dir_all(config_root.join("phases")).unwrap();
@@ -106,14 +106,14 @@ async fn git_commit_reflect_seeds_dream_baseline_when_missing() {
 
     assert!(result.is_ok(), "phase_loop returned error: {result:?}");
 
-    // Core assertion: git-commit-reflect seeded the baseline file
-    // to 0 (the "never-dreamed" sentinel).
-    let baseline = fs::read_to_string(plan_dir.join("dream-baseline"))
-        .expect("dream-baseline must exist after git-commit-reflect");
+    // Core assertion: git-commit-reflect seeded the dream-word-count
+    // file to 0 (the "never-dreamed" sentinel).
+    let baseline = fs::read_to_string(plan_dir.join("dream-word-count"))
+        .expect("dream-word-count must exist after git-commit-reflect");
     assert_eq!(
         baseline.trim(),
         "0",
-        "baseline must be seeded to 0 — the 'never dreamed' sentinel"
+        "value must be seeded to 0 — the 'never dreamed' sentinel"
     );
 
     // Secondary assertion: with baseline=0 and memory=300 < headroom,

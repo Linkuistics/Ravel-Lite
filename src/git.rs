@@ -227,9 +227,12 @@ fn unstage_subtree(project_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Save the current HEAD sha as the work baseline.
-pub fn git_save_work_baseline(plan_dir: &Path) {
-    let baseline_path = plan_dir.join("work-baseline");
+/// Capture the current HEAD sha into `<plan_dir>/<filename>` as a
+/// phase-summary baseline. Used to write `<phase>-baseline` files
+/// (work, reflect, dream, triage) that downstream LLM phases pass to
+/// `state phase-summary render --baseline`.
+pub fn git_save_baseline(plan_dir: &Path, filename: &str) {
+    let baseline_path = plan_dir.join(filename);
     let sha = Command::new("git")
         .current_dir(plan_dir)
         .args(["rev-parse", "HEAD"])
