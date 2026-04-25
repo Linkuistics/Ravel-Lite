@@ -536,10 +536,14 @@ entries:
   body: |
     `state phase-summary render` computes structural labels only. Intent-required labels (e.g., a purposeful `[REPRIORITISED]`) are excluded because a diff alone cannot distinguish a deliberate reorder from an accidental one; the LLM preamble carries that reasoning. Structural label sets: `[DONE]`, `[NEW]`, `[OBSOLETE]`, `[REPRIORITISED]` (triage); `[NEW]`, `[OBSOLETE]`, `[STALE]` (reflect/dream); `[STATS]` (dream). Implementation in `src/phase_summary.rs`. See: `LLM reasoning preamble in reflect/dream/triage is a preserved feature`.
 - id: phase-summary-render-prompt-wiring-needs-orchestrator-baseline
-  title: phase-summary render wired into all cycle baselines
+  title: Phase prompts invoke `phase-summary render` via CLI directive
   body: |
-    `state phase-summary render --baseline $(cat <plan>/<phase>-baseline)` is callable from reflect, dream, and triage phase prompts. Baseline wiring: `GitCommitWork` → `reflect-baseline`; `GitCommitReflect` → `dream-baseline` (or `triage-baseline` when skipping dream); `GitCommitDream` → `triage-baseline`; `GitCommitTriage` → `work-baseline`.
+    `defaults/phases/{reflect,dream,triage}.md` `## Output format` sections each contain a single CLI directive: `ravel-lite state phase-summary render {{PLAN}} --phase <phase> --baseline $(cat {{PLAN}}/<phase>-baseline 2>/dev/null || echo "")`. Emitting that directive's output verbatim is the LLM's only structural obligation; the narrative preamble and intent-required labels remain the LLM's authoring responsibility. Baseline wiring: `GitCommitWork` → `reflect-baseline`; `GitCommitReflect` → `dream-baseline` (or `triage-baseline` when skipping dream); `GitCommitDream` → `triage-baseline`; `GitCommitTriage` → `work-baseline`.
 - id: each-phase-baseline-holds-the-sha-from-the-preceding-commit
   title: Each <phase>-baseline holds the SHA from the preceding commit
   body: |
     Each `<phase>-baseline` file holds the commit SHA from just before that phase started — written by the preceding `git-commit-*` step, not by the phase itself. Mapping: `reflect-baseline` ← `GitCommitWork`; `dream-baseline` ← `GitCommitReflect`; `triage-baseline` ← `GitCommitDream` (or `GitCommitReflect` when `should_dream` is false); `work-baseline` ← `GitCommitTriage`. Enables `state phase-summary render --baseline $(cat <phase>-baseline)` calls from phase prompts.
+- id: init-rs-drift-sentinel-checks-phase-prompts-for-state-phase-summary-render
+  title: '`init.rs` drift sentinel checks phase prompts for `state phase-summary render`'
+  body: |
+    `src/init.rs` contains a drift-guard sentinel asserting phase prompt templates include the substring `state phase-summary render`. Any change to how phase prompts emit their output requires updating this sentinel.
