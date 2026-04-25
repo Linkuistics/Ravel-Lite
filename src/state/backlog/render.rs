@@ -92,7 +92,7 @@ fn group_by_category(tasks: &[Task]) -> Vec<(String, Vec<&Task>)> {
         }
         by_cat.entry(key).or_default().push(task);
     }
-    order.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    order.sort_by_key(|a| a.to_lowercase());
     order
         .into_iter()
         .map(|cat| {
