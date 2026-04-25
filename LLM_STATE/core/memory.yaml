@@ -506,7 +506,7 @@ entries:
 - id: llm-reasoning-preamble-in-reflect-dream-triage-is-a-preserved-feature
   title: LLM reasoning preamble in reflect/dream/triage is a preserved feature
   body: |
-    The LLM-authored prose preamble above the label list in reflect, dream, and triage is intentional — it carries the LLM's reasoning, not just the action list. Preserve it across prompt and renderer changes: label-rendering code replaces only the label block, not the whole output; output-format sections in `defaults/phases/{reflect,dream,triage}.md` must explicitly allow preamble; `format_result_text` must not filter paragraph text, only structural noise (`---` separators, stray code fences).
+    The LLM-authored prose preamble above the label list in reflect, dream, and triage is intentional — it carries the LLM's reasoning, not just the action list. Preserve it across prompt and renderer changes: label-rendering code replaces only the label block, not the whole output; `format_result_text` must not filter paragraph text, only structural noise (`---` separators, stray code fences). Output-format sections in `defaults/phases/{reflect,dream,triage}.md` must explicitly list every intent label the LLM is expected to emit in the preamble — omitting the list causes the LLM to silently drop them. `format_result_text` handles all intent labels; a missing label in output is always a prompt omission, not a renderer gap.
 - id: run-create-pre-seeds-plan-dir-in-rust-before-llm-spawn
   title: run_create pre-seeds plan dir in Rust before LLM spawn
   body: |
