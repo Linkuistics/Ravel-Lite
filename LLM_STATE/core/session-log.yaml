@@ -875,3 +875,13 @@ sessions:
     - **What worked:** Both Rust tasks completed cleanly. `src/format.rs` gained a `commits.yaml` HighlightRule for the AnalyseWork phase. `src/state/backlog/render.rs` had its `sort_by` replaced with `sort_by_key`. All 50 tests pass; clippy is clean. The reference skeleton landed as `docs/reference/` with `index.adoc` (full content, 32 lines) and `concepts.adoc` (substantive, 73 lines) plus seven 5-line stubs for the remaining pages. `docs/manifest.txt` gained AsciiDoc conventions commentary and the nine reference page entries.
     - **What to try next:** The reference pages listed in the new backlog tasks (`reference-concepts-page-*`, `reference-phase-cycle-page-*`, etc.) are the natural continuation. Each page has a corresponding stub file already in place.
     - **Key learnings:** The pre-existing `latest-session.md` highlight rule in `src/format.rs` does not match the actual file produced by Ravel-Lite (`latest-session.yaml`), so the "Writing session log" label has never fired. Added a fix task to the backlog.
+- id: session-60
+  timestamp: 2026-04-26T22:53:35Z
+  phase: work
+  body: |
+    ### Session 60 (2026-04-26T22:53:35Z) — Fix stale .md → .yaml extension in highlight rules
+
+    - **Attempted:** Fix the `latest-session\.md$` highlight rule in `src/format.rs` that never matched because the file was renamed to `.yaml`. The task named one rule but the full audit revealed four sibling rules with the same drift.
+    - **What worked:** All four `PHASE_HIGHLIGHTS` regex patterns updated to `.yaml` extensions (`latest-session\.yaml$`, `memory\.yaml$` ×2, `backlog\.yaml$`). Three tests in `src/format.rs` and one in `src/agent/claude_code.rs` that hardcoded the stale `.md` paths were updated to reflect the real on-disk names. `cargo test --lib --quiet` passes (586 tests), `cargo clippy --lib --all-targets` is clean.
+    - **What this surfaces:** The highlight rules are now correct but may still not fire in practice — `format_tool_call` matches on `Write`/`Edit` paths, but ravel-lite state commands write via `--body-file <tmp>` with no extension match, and Bash calls lack shell-redirect markers. End-to-end verification of whether the labels actually appear during real runs is a follow-up.
+    - **Key learnings:** When a test's input hardcodes the same stale value as the implementation, the test cannot catch drift. Three tests were mirroring the broken extension; they only caught the bug when the fix changed the regex and they immediately failed, surfacing the second class of stale references.
