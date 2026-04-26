@@ -1,87 +1,79 @@
 tasks:
-- id: fix-latest-session-yaml-highlight-rule-extension-in-format-rs
-  title: Fix latest-session.yaml highlight rule extension in format.rs
+- id: audit-and-fix-remaining-md-yaml-filename-drift-in-source-and-prompts
+  title: Audit and fix remaining .md → .yaml filename drift in source and prompts
   category: core
-  status: done
+  status: not_started
   dependencies: []
   description: |
-    Fix the `latest-session.md` highlight rule in `src/format.rs` — the pattern `latest-session\.md$` has never matched because Ravel-Lite writes `latest-session.yaml`. Change to `latest-session\.yaml$` so the "Writing session log" TUI label actually fires during analyse-work.
+    Audit and fix all remaining `.md → .yaml` filename references scattered across the codebase. The `.yaml` storage rename was propagated to `src/format.rs` highlight rules (session 60) but not to the following locations:
 
-    ## Problem
+    ## Active correctness bug
 
-    `PHASE_HIGHLIGHTS[LlmPhase::AnalyseWork]` contains:
+    - `src/subagent.rs:35-36` — prompt sent to dispatched subagents reads "Read the target plan's backlog.md and memory.md" and "add/modify tasks in backlog.md, update memory.md if needed". Subagents are being told to read files that don't exist; this is a live behavioural bug.
 
-    ```rust
-    HighlightRule { pattern: Regex::new(r"latest-session\.md$").unwrap(), label: "Writing session log" },
-    ```
+    ## Documentation drift (no runtime impact)
 
-    But `ravel-lite state session-log set-latest` writes to `LLM_STATE/core/latest-session.yaml` (confirmed by `ls LLM_STATE/core/latest-session*`). The `.md` extension was written when the file was `.md`; a later rename to `.yaml` wasn't reflected here.
+    - `src/main.rs:221-222` — survey-command CLI doc comment lists "backlog.md, memory.md, session-log.md and latest-session.md"
+    - `src/phase_loop.rs:304` — comment "`latest-session.md` is intentionally NOT touched here"
+    - `src/format.rs:132,602` — comments and ARCHIVED test text reference "memory.md"
+    - `src/survey/schema.rs:72,86,90,91,92,202` — doc comments reference `backlog.md`/`memory.md`
+    - `src/survey/invoke.rs:200` — doc comment references `backlog.md`/`memory.md`
+    - `src/ui.rs:454,457` — UI test uses "Read memory.md" as example progress text
 
-    ## Fix
+    ## Fix approach
 
-    ```rust
-    HighlightRule { pattern: Regex::new(r"latest-session\.yaml$").unwrap(), label: "Writing session log" },
-    ```
-
-    One-line change in `src/format.rs`.
-
-    ## Verification
-
-    - `cargo test --quiet` passes.
-    - Manual analyse-work run shows "Writing session log" label.
-  results: |
-    ## What was done
-
-    Fixed all four stale highlight-rule extensions in `src/format.rs` (line ~100 onwards) — the task named one (`latest-session\.md$` → `\.yaml$`), but the same rename drift was present for three siblings in the same `PHASE_HIGHLIGHTS` table:
-
-    - `latest-session\.md$` → `latest-session\.yaml$` (AnalyseWork)
-    - `memory\.md$` → `memory\.yaml$` (Reflect)
-    - `memory\.md$` → `memory\.yaml$` (Dream)
-    - `backlog\.md$` → `backlog\.yaml$` (Triage)
-
-    Confirmed against on-disk truth: `LLM_STATE/core/` contains `backlog.yaml`, `memory.yaml`, `latest-session.yaml` — no `.md` siblings. The task focused on one rule but all four had the same cause (the `.md → .yaml` storage rename was never propagated to this file).
-
-    Three test inputs that hardcoded `/plan/memory.md` were also updated — they were tracking the implementation's stale extension rather than the real on-disk contract, so they couldn't have caught this drift:
-
-    - `src/format.rs::format_tool_call_highlight_memory`
-    - `src/format.rs::format_tool_call_deduplicates_highlights`
-    - `src/agent/claude_code.rs::parse_highlight_write_memory`
+    Fix `src/subagent.rs` first (active bug). For the rest, grep for `\.md` references near filenames `backlog`, `memory`, `session-log`, `latest-session` and update to `.yaml`. All runtime and test files should use the `.yaml` extension; this is a mechanical find-and-replace within comments and string literals.
 
     ## Verification
 
-    - `cargo test --lib --quiet`: 586 passed, 0 failed
-    - `cargo clippy --lib --all-targets`: clean (no warnings)
-    - Manual inspection: all four highlight rules now match real on-disk filenames
+    - `cargo test --lib --quiet` passes
+    - `cargo clippy --lib --all-targets` clean
+    - `grep -r 'backlog\.md\|memory\.md\|session-log\.md\|latest-session\.md' src/` returns no hits
+- id: verify-phase-highlights-tui-labels-fire-during-real-runs
+  title: Verify PHASE_HIGHLIGHTS TUI labels fire during real runs
+  category: core
+  status: not_started
+  dependencies:
+  - audit-and-fix-remaining-md-yaml-filename-drift-in-source-and-prompts
+  description: |
+    Verify that the `PHASE_HIGHLIGHTS` TUI labels — "Writing session log", "Updating memory", "Updating backlog" — actually fire during real runs of the analyse-work, reflect, dream, and triage phases, and fix the detection logic if they do not.
 
-    ## What worked
+    ## Background
 
-    The fix is mechanical and low-risk: regex literal change, no logic touched. Tests gave immediate signal — `parse_highlight_write_memory` failed the moment the regex became correct, surfacing the second mirror-the-bug test that needed updating.
+    The `.yaml` extensions in `src/format.rs` highlight rules were fixed in a prior cycle. However, `format_tool_call` matches only `Write`/`Edit` tool calls by file path, or `Bash` calls with shell-redirect markers (`cat > `, `echo > `). Because ravel-lite state commands write plan-state files via `ravel-lite state ... set-* --body-file <tmp>` (where the temp file has no `.yaml` extension and no redirect markers), the regex fix was necessary but may not be sufficient.
 
-    ## What didn't / what this surfaces
+    ## Fix candidates
 
-    **The highlight may still not fire under the current invocation pattern, even after this fix.** `format_tool_call` only triggers on `Write`/`Edit` tool calls or `Bash` calls whose detail contains `cat ` + `> ` or `echo ` + `> `. But ravel-lite writes these YAML files via subcommands like `ravel-lite state session-log set-latest --body-file <tmp>`, where the LLM's `Write` tool call targets a temp `.md` file (no extension match) and the `Bash` call has no shell-redirect markers. So the user-visible "Writing session log" / "Updating memory" / "Updating backlog" labels likely never fire in practice today — the regex was a necessary-but-not-sufficient piece. Worth a follow-up task to either:
+    1. Extend `is_bash_write` to parse the `--body-file` destination argument from `ravel-lite state` subcommand calls and match on the inferred destination path.
+    2. Detect `ravel-lite state session-log set-latest`, `ravel-lite state memory`, `ravel-lite state backlog` subcommand patterns directly and map them to the corresponding label.
 
-    1. extend `is_bash_write` to recognise `ravel-lite state ... set-* --body-file` as a write, or
-    2. inspect the temp file's *destination* (parsed from the bash command) rather than the bash detail itself.
+    ## Verification
 
-    **Other call sites with the same `.md → .yaml` drift, out of scope here but worth a follow-up task:**
+    - Run a full phase cycle and confirm "Writing session log", "Updating memory", "Updating backlog" labels appear in the TUI at the expected moments.
+    - Or add an integration test exercising the actual `ravel-lite state --body-file` Bash call pattern through `format_tool_call`.
+- id: adopt-shared-constants-for-state-filenames-to-eliminate-rename-drift-bug-class
+  title: Adopt shared constants for state filenames to eliminate rename-drift bug class
+  category: core
+  status: not_started
+  dependencies:
+  - audit-and-fix-remaining-md-yaml-filename-drift-in-source-and-prompts
+  description: |
+    Replace scattered string literals for state filenames (`backlog.yaml`, `memory.yaml`, `latest-session.yaml`, `session-log.yaml`) with named constants exported from one module.
 
-    - `src/subagent.rs:35-36` — the prompt sent to dispatched subagents reads "Read the target plan's backlog.md and memory.md" and "add/modify tasks in backlog.md, update memory.md if needed". This is an active correctness bug — subagents are being told to read files that don't exist under the current naming.
-    - `src/main.rs:221-222` — survey-command CLI doc comment lists "backlog.md, memory.md, session-log.md and latest-session.md" as covered files; stale.
-    - `src/phase_loop.rs:304` — comment "`latest-session.md` is intentionally NOT touched here" — informational but stale (file is `.yaml`).
-    - `src/format.rs:132,602` — comments and ARCHIVED test text reference "memory.md" as the destination of archived items.
-    - `src/survey/schema.rs:72,86,90,91,92,202` and `src/survey/invoke.rs:200` — multiple doc comments reference `backlog.md`/`memory.md` as the parsed source; stale.
-    - `src/ui.rs:454,457` — UI test using "Read memory.md" as example progress text; cosmetic.
+    ## Why
 
-    These are all the same single-rename drift across the codebase. A "backlog/memory/session-log filename references audit" task would close the bug class.
+    The `.md → .yaml` rename drift (fixed piecemeal across multiple sessions) demonstrates the bug class: when a canonical filename lives only in scattered string literals across source, prompts, comments, and tests, any rename creates invisible drift. Named constants (`BACKLOG_FILENAME`, `MEMORY_FILENAME`, `LATEST_SESSION_FILENAME`, `SESSION_LOG_FILENAME`) make a future rename a single-file change.
 
-    **Test anti-pattern to flag for future hardening:** three of the highlight tests hardcoded the stale extension that matched the broken implementation. When the implementation's wrong value and the test's input both come from the same uninspected source, drift is invisible. Either (a) anchor highlight tests to a shared constant that the implementation also uses, or (b) parameterise the test inputs from the actual on-disk filenames produced by the state-write CLI commands.
+    ## Scope
 
-    ## Suggested next tasks
+    - Define constants in a new module or an existing central one (e.g., `src/state/filenames.rs`)
+    - Replace occurrences in: format.rs highlight rule patterns, subagent prompt construction in `src/subagent.rs`, doc comments in `src/survey/schema.rs`, `src/survey/invoke.rs`, `src/main.rs`, `src/phase_loop.rs`, `src/ui.rs`, and test inputs that directly embed filename strings
 
-    1. **Audit and fix the remaining `.md → .yaml` filename drift** across `src/subagent.rs`, `src/main.rs`, `src/phase_loop.rs`, `src/format.rs` (comments), `src/survey/{schema,invoke}.rs`, `src/ui.rs`. The `subagent.rs` instance is the only one with active behavioural impact (subagents misled by the prompt); the rest are documentation drift.
-    2. **Verify the highlight code path end-to-end** — confirm whether the regex fixes here actually surface "Writing session log" / "Updating memory" / "Updating backlog" labels during real runs. If not, extend `is_bash_write` detection or change which path is checked.
-    3. **Adopt shared constants for state filenames** — `BACKLOG_FILENAME`, `MEMORY_FILENAME`, `LATEST_SESSION_FILENAME` exposed from one module and consumed everywhere (regex tables, prompts, doc comments, tests). Eliminates the entire bug class structurally.
+    ## Verification
+
+    - `cargo test --lib --quiet` passes
+    - `cargo clippy --lib --all-targets` clean
+    - `grep -rn '"backlog\.yaml"\|"memory\.yaml"\|"session-log\.yaml"\|"latest-session\.yaml"' src/` returns only the constant definitions themselves
 - id: add-minimal-github-actions-ci-workflow-build-test-clippy
   title: 'Add minimal GitHub Actions CI workflow: build, test, clippy'
   category: infra
@@ -113,11 +105,36 @@ tasks:
     - Workflow runs green on a test push to a branch.
     - A deliberate clippy violation introduced on a branch causes the workflow to fail.
     - Merge to main only after the workflow passes.
+- id: set-up-asciidoc-to-html-build-pipeline-for-ravel-lite-docs
+  title: Set up AsciiDoc-to-HTML build pipeline for Ravel-Lite docs
+  category: infra
+  status: not_started
+  dependencies: []
+  description: |
+    Set up an AsciiDoc-to-HTML build pipeline so that `docs/tutorial/*.adoc` and `docs/reference/*.adoc` can be converted to HTML and published to `www.linkuistics.com/projects/ravel-lite/`.
+
+    ## Why
+
+    The tutorial (T2) and reference pages (T3) are authored in AsciiDoc. Without a build step, they cannot be published. This task is a prerequisite for the tutorial content task and the docs publish task.
+
+    ## Scope
+
+    - Script or Makefile target that runs `asciidoctor` over source files under `docs/`
+    - Output HTML lands in the sibling `www.linkuistics.com/projects/ravel-lite/` directory
+    - Integrates with or establishes the `SYNC.yml` publication pattern for Ravel-Lite doc pages
+    - Should be repeatable and idempotent
+
+    ## Verification
+
+    - Running the build script produces one HTML file per AsciiDoc source
+    - Pages render correctly in a browser and match site brand
+    - The sibling www repo's `SYNC.yml` lists the output pages so they sync correctly
 - id: write-user-guide-covering-install-update-init-config-projects-plans-and-running
   title: 'Write tutorial walk-through: install through further-cycles with worked example'
   category: docs
   status: not_started
-  dependencies: []
+  dependencies:
+  - set-up-asciidoc-to-html-build-pipeline-for-ravel-lite-docs
   description: |
     Produce a linear, prose walk-through in AsciiDoc covering install, update, init, re-init, local config, env-var setup, adding projects, the concept of a project, creating a plan, and running a plan through several cycles. Worked example: a non-code reading-list-manager project at ~/Development/ravel-tutorial-example/. Interactive commands (create, run) driven via a TestAnyware VM to capture real transcripts. Source lives in Ravel-Lite/docs/tutorial/*.adoc; generated HTML is emitted into www.linkuistics.com/projects/ravel-lite/ by the build pipeline from T1. Depends on T1 (pipeline) and is supported by T5 (TestAnyware VM integration).
 - id: add-ravel-lite-rb-homebrew-formula-to-linkuistics-homebrew-taps
@@ -408,33 +425,3 @@ tasks:
 
     - Page builds and renders.
     - Verbs and flags cross-checked against the `clap` derive structure.
-- id: audit-and-fix-remaining-md-yaml-filename-drift-in-source-and-prompts
-  title: Audit and fix remaining .md → .yaml filename drift in source and prompts
-  category: core
-  status: not_started
-  dependencies: []
-  description: |
-    Audit and fix all remaining `.md → .yaml` filename references scattered across the codebase. The `.yaml` storage rename was propagated to `src/format.rs` highlight rules (session 60) but not to the following locations:
-
-    ## Active correctness bug
-
-    - `src/subagent.rs:35-36` — prompt sent to dispatched subagents reads "Read the target plan's backlog.md and memory.md" and "add/modify tasks in backlog.md, update memory.md if needed". Subagents are being told to read files that don't exist; this is a live behavioural bug.
-
-    ## Documentation drift (no runtime impact)
-
-    - `src/main.rs:221-222` — survey-command CLI doc comment lists "backlog.md, memory.md, session-log.md and latest-session.md"
-    - `src/phase_loop.rs:304` — comment "`latest-session.md` is intentionally NOT touched here"
-    - `src/format.rs:132,602` — comments and ARCHIVED test text reference "memory.md"
-    - `src/survey/schema.rs:72,86,90,91,92,202` — doc comments reference `backlog.md`/`memory.md`
-    - `src/survey/invoke.rs:200` — doc comment references `backlog.md`/`memory.md`
-    - `src/ui.rs:454,457` — UI test uses "Read memory.md" as example progress text
-
-    ## Fix approach
-
-    Fix `src/subagent.rs` first (active bug). For the rest, grep for `\.md` references near filenames `backlog`, `memory`, `session-log`, `latest-session` and update to `.yaml`. All runtime and test files should use the `.yaml` extension; this is a mechanical find-and-replace within comments and string literals.
-
-    ## Verification
-
-    - `cargo test --lib --quiet` passes
-    - `cargo clippy --lib --all-targets` clean
-    - `grep -r 'backlog\.md\|memory\.md\|session-log\.md\|latest-session\.md' src/` returns no hits
