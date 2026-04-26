@@ -1,0 +1,71 @@
+<div id="preamble">
+<div class="sectionbody">
+<div class="paragraph">
+<p>Ravel-Lite is an orchestration loop for LLM development cycles. You hand it a plan — a directory of YAML files describing tasks, memory, and phase — and it runs a fixed cycle of phases against that plan, spawning a coding agent as a subprocess for each one. The loop repeats until the backlog is empty or you stop it.</p>
+</div>
+<div class="paragraph">
+<p>This tutorial walks through the concepts you need to run Ravel-Lite on real work: installing the binary, creating a project, initialising a plan, and stepping through a full cycle with a worked example.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_what_ravel_lite_is_not">What Ravel-Lite is not</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Ravel-Lite is not an IDE, an LLM, or a daemon. It is a Rust CLI that shells out to <a href="https://claude.ai/code">Claude Code</a> or <a href="https://github.com/mariozechner/pi-coding-agent">Pi</a>, reads their JSON stream output, renders progress in a <a href="https://ratatui.rs">Ratatui</a> TUI, and writes every state transition to disk as a file you can inspect or edit.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_the_shape_of_a_cycle">The shape of a cycle</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Every cycle runs the same ordered sequence of phases:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>work → analyse-work → git-commit-work →
+reflect → git-commit-reflect → [dream trigger?] →
+dream → git-commit-dream →
+triage → git-commit-triage → [continue?] → work</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Each phase is a separate agent invocation driven by a prompt file under <code>defaults/phases/</code>. The orchestrator spawns the agent, streams its output, and on exit records the result. The phases split cleanly into two kinds:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><strong>Interactive phases</strong> (just <code>work</code>) ask you to steer task selection before anything is written.</p>
+</li>
+<li>
+<p><strong>Headless phases</strong> run on their own against the phase prompt and the plan state — no conversation.</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The git-commit phases between reasoning phases build an audit trail: every state change the orchestrator makes lands in a commit you can diff later.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_state_you_can_read">State you can read</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>A plan lives at <code>&lt;project&gt;/LLM_STATE/&lt;plan-name&gt;/</code>. Its shape:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-text" data-lang="text">LLM_STATE/&lt;plan-name&gt;/
+├── backlog.yaml         # tasks, status, dependencies, results
+├── memory.yaml          # distilled learnings kept across cycles
+├── session-log.yaml     # one record per completed phase
+├── latest-session.yaml  # most recent session, handed to git-commit-work
+└── phase.md             # the phase to run next</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Everything Ravel-Lite does ends up in one of these files. Nothing is embedded in the binary, nothing lives only in an agent&#8217;s head: the next chapter walks through how to inspect these files from the command line while a cycle is running.</p>
+</div>
+</div>
+</div>

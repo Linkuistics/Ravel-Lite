@@ -1,0 +1,31 @@
+name: Ravel-Lite
+slug: ravel-lite
+tagline: An orchestration loop for LLM development cycles. Compose. Reflect. Dream. Triage. Repeat.
+summary: |
+  Multi-agent orchestrator for backlog-driven LLM development.
+  Ravel-Lite runs a fixed phase cycle — work, reflect, dream, triage — against a plan directory,
+  spawning Claude Code or Pi as a subprocess for each phase and writing every state transition to
+  readable files on disk. No magic; everything is auditable.
+
+status: active
+github_url: https://github.com/Linkuistics/Ravel-Lite
+tags: [ai-tools, ai-orchestration]
+versioning: tags
+
+nav:
+  - title: Overview
+    page: index
+  - section: Tutorials
+    pages:
+      - tutorials/00-overview
+  - section: Reference
+    pages:
+      - docs/index
+      - docs/concepts
+      - docs/phase-cycle
+      - docs/state-files
+      - docs/cross-plan-files
+      - docs/config-and-prompts
+      - docs/cli-lifecycle
+      - docs/cli-state
+      - docs/cli-survey
