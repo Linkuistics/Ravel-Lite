@@ -922,3 +922,13 @@ sessions:
     - **First release not yet cut**: requires `cargo release patch --execute && git push --follow-tags && ./scripts/release-build.sh && ./scripts/release-publish.sh`. Deferred as an explicit operator action. This also unblocks end-to-end smoke-testing of the capture script (which calls `brew install linkuistics/taps/ravel-lite`).
     - **Known approximations in capture script**: `testanyware vm list --format json` flag is inferred from README, not validated against a live install; `VNC_ENDPOINT`/`AGENT_ENDPOINT` env overrides are in place for first-run tuning.
     - What this suggests: cut the first manual release to surface any friction in the script choreography; then smoke-test the capture script end-to-end.
+- id: session-64
+  timestamp: 2026-04-27T03:41:06Z
+  phase: work
+  body: |
+    ### Session 64 (2026-04-27T03:41:06Z) — Cut first manual release v1.0.2
+
+    - **What was attempted:** Execute the first manual release end-to-end using the committed release scripts.
+    - **What worked:** Full pipeline completed successfully. Installed missing prerequisites (zig, cargo-zigbuild, Linux cross-compile targets). `cargo release patch --execute --no-confirm` bumped Cargo.toml from 1.0.1 to 1.0.2, committed (`78f0d9c`) and tagged (`v1.0.2`). `scripts/release-build.sh` produced four tarballs and a rendered Homebrew formula with correct checksums. `scripts/release-publish.sh` created the GitHub Release and pushed the formula to `Linkuistics/homebrew-taps` (`790e7a4`). End-user smoke test passed: `brew install linkuistics/taps/ravel-lite && ravel-lite --version` returned 1.0.2.
+    - **What this suggests trying next:** The release pipeline is validated; future releases are mechanical. The triage surfaced a redesign direction: replace YAML config + on-disk prompt files with Lua (mlua) config and embedded defaults. New tasks were added for that cluster.
+    - **Key learnings:** `release.toml` has `push = false` so the release commit and tag are local-only until `git push --follow-tags` is called explicitly. The Linux cross-compile targets (aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu) and cargo-zigbuild were absent on the dev box — these are now documented implicitly via the release results.

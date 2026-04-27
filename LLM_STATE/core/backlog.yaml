@@ -33,7 +33,7 @@ tasks:
 - id: cut-first-manual-release-end-to-end
   title: Cut first manual release end-to-end
   category: infra
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Cut the first manual release end-to-end using the scripts landed in the homebrew pivot:
@@ -64,6 +64,100 @@ tasks:
     - GitHub Release page shows four tarballs + checksum file.
     - `brew install linkuistics/taps/ravel-lite` completes on a clean machine.
     - `ravel-lite --version` output matches the pushed tag.
+  results: |
+    First manual release executed end-to-end. Tag `v1.0.2`. GitHub
+    Release: https://github.com/Linkuistics/Ravel-Lite/releases/tag/v1.0.2.
+    Formula pushed to `Linkuistics/homebrew-taps@790e7a4`.
+
+    ## What was done
+
+    1. Pushed 24 backlog commits to `origin/main` (no release-related
+       commits among them — just orchestrator iteration).
+    2. Installed the README's "one-time" prerequisites that were absent on
+       the dev box: `brew install zig` (0.16.0), `cargo install
+       cargo-zigbuild` (0.22.3), `rustup target add x86_64-apple-darwin
+       aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu`. Only
+       `aarch64-apple-darwin` was already present.
+    3. `cargo release patch --execute --no-confirm` → `Cargo.toml` 1.0.1 →
+       1.0.2, commit `78f0d9c chore: release v1.0.2`, tag `v1.0.2`.
+       `release.toml`'s `push = false` kept this local-only.
+    4. `git push origin main --follow-tags` — release commit + tag landed
+       on origin.
+    5. `./scripts/release-build.sh` — built four tarballs in
+       `target/dist/` (1.4–1.7 MB each), rendered `ravel-lite.rb` from the
+       template with version + four checksums substituted. Linux targets
+       built via `cargo zigbuild` with glibc pinned at 2.17. Total wall
+       time ≈ 90s.
+    6. Inspected the rendered formula: no `@TOKEN@` leftovers, all four
+       `sha256` lines match the tarball checksums.
+    7. Native-arch binary smoke test: extracted
+       `ravel-lite-v1.0.2-aarch64-apple-darwin.tar.xz` and ran
+       `--version` → `ravel-lite 1.0.2 (v1.0.2, built 2026-04-27T02:50:32Z)`.
+    8. `./scripts/release-publish.sh` — created GitHub Release `v1.0.2`
+       with all four tarballs uploaded; copied formula to
+       `~/Development/homebrew-taps/Formula/ravel-lite.rb`, committed
+       (`ravel-lite v1.0.2`, sha `790e7a4`), pushed.
+    9. End-user smoke test: `brew update && brew install
+       linkuistics/taps/ravel-lite` → `/opt/homebrew/Cellar/ravel-lite/1.0.2`.
+       `/opt/homebrew/bin/ravel-lite --version` → `ravel-lite 1.0.2
+       (v1.0.2, built 2026-04-27T02:50:32Z)`. Tag matches the running
+       binary.
+    10. `brew test linkuistics/taps/ravel-lite` ran the formula's
+        `assert_match "ravel-lite"` against `--version` → pass.
+
+    ## What worked
+
+    - The `release.toml` choice to leave `push = false` was correct on
+      first run — the local commit+tag was inspectable before any remote
+      side-effect.
+    - `release-build.sh`'s gate on `git describe --exact-match HEAD`
+      caught nothing (HEAD was tagged) but is the right load-bearing
+      check; without it, drift between tarballs and tag would be silent.
+    - The literal `@TOKEN@` + `sed`-substitution template is trivially
+      auditable — easier than a Liquid/handlebars renderer.
+    - `cargo zigbuild --target <triple>.2.17` cross-compiled both Linux
+      targets from macOS without docker/QEMU. Glibc pin works as
+      documented.
+    - `gh release create` accepted the tag without us pre-pushing it (we
+      pushed anyway, per documented flow).
+
+    ## What didn't work / friction
+
+    - The README's "one-time setup" was accurate but had never been
+      executed on this machine — three rustup targets and two binaries
+      missing. `release-build.sh` would have failed on first
+      cross-compile. Pre-flight on prereqs (machine bootstrap) is not
+      surfaced anywhere automated.
+    - The orphan tags `v1.0.0` and `v1.0.1` exist on origin from a prior
+      cargo-dist attempt with no GitHub Releases attached. Left in place
+      per direction; they remain visible in `git tag` and on the
+      GitHub /tags page but produce no `gh release list` rows.
+    - Minor: `cargo-zigbuild` does not respond to `--version`; the
+      README's verification habit (`tool --version`) doesn't apply here.
+      Use `cargo zigbuild --help` instead.
+
+    ## What this suggests next
+
+    - **Unblocks `write-tutorial-walk-through`**: the dependency on
+      `cut-first-manual-release-end-to-end` is now satisfied. The
+      tutorial can describe `brew install linkuistics/taps/ravel-lite`
+      as the canonical install path.
+    - **Smoke-testing `scripts/capture/ravel-lite-tutorial.sh`** inside a
+      TestAnyware VM is now possible — the `brew install` in that script
+      has a real formula to fetch.
+    - **Consider a `scripts/release-doctor.sh`** (or just an upfront
+      check inside `release-build.sh`) that verifies the four prereqs
+      (`zig`, `cargo-zigbuild`, three rustup targets, `gh auth status`)
+      and emits a punch-list if any are missing. Would have saved one
+      failed run had this not been the first attempt.
+    - **Orphan tag cleanup** is deferred. If `v1.0.0`/`v1.0.1` start
+      showing up confusingly in `gh release list` UIs or release-notes
+      generators, delete them from origin (`git push origin :refs/tags/v1.0.0`
+      etc.). Not blocking anything today.
+    - **Subsequent releases** should be straightforward: clean tree →
+      `cargo release patch --execute` → `git push --follow-tags` →
+      `./scripts/release-build.sh` → inspect → `./scripts/release-publish.sh`.
+      No bootstrap needed now that prereqs are installed.
 - id: write-user-guide-covering-install-update-init-config-projects-plans-and-running
   title: 'Write tutorial walk-through: install through further-cycles with worked example'
   category: docs
@@ -182,7 +276,8 @@ tasks:
 - id: reference-configuration-and-prompt-file-formats-config-yaml-local-yaml-overlays-embedded-defaults-token-substitution-per-phase-prompts
   title: 'Reference: configuration and prompt-file formats (config.yaml, .local.yaml overlays, embedded defaults, token substitution, per-phase prompts)'
   category: docs
-  status: not_started
+  status: blocked
+  blocked_reason: superseded by lua-config redesign; replaced by rewrite-config-and-prompts-reference-page-for-lua-api
   dependencies: []
   description: |
     Write the configuration and prompt-file reference page: how `config.yaml` and `*.local.yaml` overlays compose (deep-merge semantics), where embedded defaults sit, how token substitution works in prompts, and how to customise per-phase prompts.
@@ -315,3 +410,414 @@ tasks:
 
     - Page builds and renders.
     - Verbs and flags cross-checked against the `clap` derive structure.
+- id: add-repo-and-website-urls-to-help-output
+  title: Add repo and website URLs to --help output
+  category: feature
+  status: not_started
+  dependencies: []
+  description: |
+    Add the open-source repository URL and the project website URL to
+    `ravel-lite --help` so users can discover the source and the docs
+    without having to remember either.
+
+    ## Why
+
+    Ravel-Lite is open source but doesn't surface its own repo URL anywhere
+    in the running binary's help. The website
+    (`https://www.linkuistics.com/projects/ravel-lite/`) is the canonical
+    docs landing page; the repo
+    (`https://github.com/Linkuistics/Ravel-Lite`) is the source. Both
+    should be one `--help` away.
+
+    ## Scope
+
+    - Top-level `--help` shows both URLs in an `after_help` block (or the
+      equivalent clap derive attribute).
+    - Subcommand `--help` outputs do not need to repeat them.
+    - URLs are constants in source; not driven from `Cargo.toml`'s
+      `repository` field. Help text is a separate, deliberate string.
+
+    ## Decisions already made
+
+    - Hard-coded constants are fine — these URLs do not change between
+      releases.
+    - Both URLs appear together; no flag or env var to suppress.
+
+    ## Verification
+
+    - `ravel-lite --help` output contains both
+      `https://github.com/Linkuistics/Ravel-Lite` and
+      `https://www.linkuistics.com/projects/ravel-lite/`.
+    - A snapshot test of the top-level help output asserts the two lines
+      are present.
+
+    ## Independence
+
+    This task ships independently of the lua-config redesign and could
+    land in `v1.0.3`.
+- id: switch-prompt-and-agent-reads-to-embedded-defaults-slim-init-to-plan-state-skeleton-only
+  title: Switch prompt and agent reads to embedded defaults; slim init to plan-state skeleton only
+  category: feature
+  status: not_started
+  dependencies: []
+  description: |
+    Stop materialising tool-shipped defaults to disk. Read prompts and
+    agent definitions from the embedded set at runtime; `init` writes
+    only user-owned plan-state. Combines the read-side flip and the
+    write-side slim into one landing because they describe the same
+    change to the materialisation model.
+
+    ## Why
+
+    `init` currently dual-ships defaults: embedded into the binary AND
+    copied to disk via `EmbeddedFile` entries in `src/init.rs`. Runtime
+    reads from disk. This forces users to re-run `init --force` after
+    every release, which is a footgun (it overwrites local edits with no
+    warning) and an upgrade tax (users must remember to re-run for every
+    release).
+
+    Removing the disk copy means: one source of truth (the embedded set);
+    upgrades just install a new binary; no `--force` reset to remember.
+    Customisation moves to the Lua config layer (separate task), which
+    is finer-grained and append-only — it cannot break the embedded
+    prompts the runtime parses.
+
+    The drift guard
+    `every_file_under_defaults_is_registered_in_embedded_files` already
+    ensures the embedded set is complete; this task makes it the *only*
+    source.
+
+    ## Scope
+
+    Read-side (audit and flip):
+
+    - Every `read_to_string(...)` (or equivalent) under `src/` that
+      resolves into the resolved config dir or a `defaults/`-shaped path.
+    - `substitute_tokens` callers and prompt loaders.
+    - Pi subagent definition reads (`agents/pi/subagents/`).
+    - Replace each with the embedded-bytes accessor exposed from
+      `src/init.rs`.
+
+    Write-side (`init.rs`):
+
+    - Drop the materialisation step.
+    - Plan dir: `init` writes only `backlog.yaml`, `memory.yaml`,
+      `phase.md`, `latest-session.yaml`, `commits.yaml`, `session-log.yaml`.
+    - Global config dir: created empty (or with a starter `config.lua`
+      comment-only stub — decide during implementation).
+
+    Drift guard:
+
+    - Extend
+      `every_file_under_defaults_is_registered_in_embedded_files` so
+      registration also implies "no path reads from disk for this file"
+      — i.e. fail the test if any `src/` reader resolves into a path that
+      matches an embedded file.
+
+    Tests:
+
+    - Add coverage for every flipped reader: assert the runtime still
+      works against a plan/config dir with no disk-materialised default
+      files present.
+
+    ## Decisions already made
+
+    - Customisation is append-only via Lua hooks (separate task). Users
+      cannot replace embedded prompts on disk.
+    - Existing on-disk materialised files remain on disk after upgrade
+      until the v1→v2 migration runs (separate task) — this task does
+      not delete anything from existing user dirs.
+    - This task does not touch `config.yaml` / `*.local.yaml` reading.
+      Prompts and agent definitions only. The Lua config replacement is
+      the separate task.
+
+    ## Verification
+
+    - All existing tests pass.
+    - `every_file_under_defaults_is_registered_in_embedded_files` passes.
+    - A new test (or fixture) confirms that spawning Claude Code / Pi for
+      any phase succeeds against a plan dir + config dir that contain
+      only user-owned plan-state (no `prompts/`, no agent definitions
+      materialised).
+    - `ravel-lite init <fresh-dir>` produces a plan dir whose file list
+      matches the user-owned set above and nothing else.
+- id: replace-yaml-config-with-lua-mlua-and-layered-global-plan-resolution
+  title: Replace YAML config with Lua (mlua) and layered global+plan resolution
+  category: feature
+  status: not_started
+  dependencies: []
+  description: |
+    Replace the YAML config (`config.yaml` + `*.local.yaml` deep-merge
+    overlay) with Lua-based config (`config.lua`). Layer global → plan
+    (plan extends/overrides global). Drop the YAML overlay code path
+    entirely.
+
+    ## Why
+
+    YAML is fine for declarative settings but cannot express hooks. The
+    customisation primitive we want — `ravel.append_prompt(phase, text)`,
+    appended *after* the embedded prompt — is naturally a Lua function
+    call, not a YAML scalar. Going Lua now (with zero current users)
+    means no migration burden for end users, and the config layer
+    becomes a real extension surface that future hooks (post-phase
+    callbacks, task filters, custom model selection logic) can join
+    without churn.
+
+    The `*.local.yaml` deep-merge overlay disappears in the same step:
+    its semantic (per-machine override of the tool-shipped defaults) is
+    now expressed in Lua at either the global or plan layer, with full
+    imperative power.
+
+    ## Scope
+
+    Dependency:
+
+    - Add `mlua` to `Cargo.toml`. Feature flags TBD; LuaJIT-capable is
+      preferred but not required at v1.
+
+    Lua API surface (initial):
+
+    - `ravel.config` table with the top-level fields matching today's
+      `SharedConfig` (e.g. `agent`, `headroom`).
+    - `ravel.set_model(phase, name)` — replaces today's `models.<phase>`
+      keys per agent.
+    - `ravel.set_agent(name)` and per-phase agent override hook (shape
+      TBD).
+    - `ravel.append_prompt(phase, text)` — the append-only prompt
+      customisation hook. Multiple registrations accumulate.
+    - `ravel.config.config_version` integer field — auto-stamped to
+      current on write/migration; absence implies "current binary's
+      version".
+
+    Layered resolution:
+
+    - Resolve `<global>` via the existing chain in `src/config.rs`
+      (`--config` flag → `RAVEL_LITE_CONFIG` → `dirs::config_dir()/ravel-lite`).
+      This unchanged piece is `resolve_config_dir`.
+    - Run `<global>/config.lua` (if present) in a Lua state.
+    - Run `<plan>/config.lua` (if present) in the same Lua state, after
+      global. Setters last-write-wins; `append_prompt` accumulates.
+    - Read final `ravel.config` table and registered hooks.
+
+    Removals:
+
+    - `load_shared_config`, `load_agent_config`, `load_tokens` and their
+      `*.local.yaml` overlay paths in `src/config.rs` — gone.
+    - `merge_yaml` helper — keep available for the migration task only;
+      delete in a follow-up once migration ships.
+    - Tokens (`tokens.yaml` / `tokens.local.yaml`): map onto the Lua API
+      (per-token setter) or drop if redundant — decide during
+      implementation.
+
+    Tests:
+
+    - Golden: a `config.lua` mirroring an old `config.yaml` produces the
+      same `SharedConfig`/`AgentConfig` values as the YAML did.
+    - Layering: global sets X; plan-level overrides X; plan-level
+      appends a prompt; final state includes the override + the appended
+      prompt and not the original X.
+    - Missing-file fallthrough: no `config.lua` at either layer
+      produces sensible defaults (or a clear error, per design choice).
+
+    ## Decisions already made
+
+    - Append-only prompt customisation; never replace.
+    - No sandboxing — config is trusted code (wezterm/nvim threat
+      model).
+    - API versioning is by binary; removed/renamed functions surface a
+      clear runtime error. There is no schema migration of Lua files.
+    - Single `config.lua` per layer; no glob or multiple files.
+    - The existing `--config` / `RAVEL_LITE_CONFIG` / XDG-default chain
+      for finding the *global* dir is preserved verbatim.
+
+    ## Verification
+
+    - Building and running ravel-lite works against a hand-authored
+      `config.lua` that sets `agent`, one model, and one
+      `append_prompt`.
+    - Unit tests for the Lua bindings (every `ravel.*` function) pass.
+    - Layering test: plan-level config produces overrides without losing
+      global settings on unrelated keys.
+    - `append_prompt` text appears appended to (not replacing) the
+      embedded prompt that the spawned agent receives.
+
+    ## Dependencies
+
+    None at the code level — this task can land in parallel with the
+    embedded-defaults flip. The migration task depends on this.
+- id: v1-to-v2-migration-with-auto-cleanup-of-materialised-defaults
+  title: v1 to v2 migration with auto-cleanup of materialised defaults
+  category: feature
+  status: not_started
+  dependencies:
+  - switch-prompt-and-agent-reads-to-embedded-defaults-slim-init-to-plan-state-skeleton-only
+  - replace-yaml-config-with-lua-mlua-and-layered-global-plan-resolution
+  description: |
+    On the first command that consumes config in a legacy v1 plan/config
+    dir, detect the v1 layout, translate `config.yaml` (+ optional
+    `*.local.yaml` deep-merged) into `config.lua`, delete every
+    tool-materialised file, and stamp `config_version = 2`. Idempotent;
+    runs at most once per dir.
+
+    ## Why
+
+    When the lua-config + embedded-defaults landings ship (separate
+    tasks), every existing config dir on disk is in v1 layout: it
+    contains materialised prompts, agent definitions, `config.yaml`, and
+    possibly `config.local.yaml`. Without cleanup, those files become
+    dead clutter the new binary ignores. Auto-migration on first run
+    gives the user a zero-step upgrade and a clean disk.
+
+    Zero current users → migration code only handles one transition
+    (v1 → v2) and only runs once per dir. After the first cycle past
+    this landing, every dir in existence is v2; the migration code can
+    be deleted in a future v3.
+
+    ## Scope
+
+    Detection:
+
+    - A config dir is v1 iff `config.lua` is absent AND any of
+      (`config.yaml` exists, any `*.local.yaml` exists, `prompts/` dir
+      exists, `agents/` dir exists with materialised content) is true.
+    - Otherwise v2 (or fresh, indistinguishable for our purposes).
+
+    Translation:
+
+    - Read `<config>/config.yaml` deep-merged with
+      `<config>/config.local.yaml` using the existing `merge_yaml`
+      logic. The YAML reader stays available specifically for
+      migration.
+    - Same for each `<config>/agents/<name>/config.yaml` and
+      `tokens.yaml` (+ their `.local.yaml` overlays).
+    - Translate the merged maps into a single Lua source string: emit
+      setter calls / table assignments equivalent to the YAML keys, plus
+      `ravel.config.config_version = 2`.
+    - Write `<config>/config.lua` first (with version stamp).
+
+    Deletion:
+
+    - Delete every file in the embedded-defaults set that exists on disk
+      under the config dir, plus `config.yaml`, `config.local.yaml`, all
+      agent `config.yaml` / `config.local.yaml` / `tokens.yaml` /
+      `tokens.local.yaml` files, and any now-empty directories.
+    - Order: write new `config.lua` first; delete legacy files last. If
+      a deletion step fails, the next run re-detects v1 (because legacy
+      files still exist) and retries cleanly.
+
+    Tests:
+
+    - Golden directory transformation: a captured v1 fixture dir → run
+      migration → assert the resulting v2 dir matches an expected file
+      list and the `config.lua` content matches a golden string.
+    - Idempotency: re-running migration on a v2 dir is a no-op.
+    - Crash recovery: simulate a crash between writing `config.lua` and
+      deleting legacy files; assert the next run completes the migration
+      cleanly.
+
+    ## Decisions already made
+
+    - One-jump migration (v1 → v2 directly). No intermediate v1.5 step.
+    - Customised prompt content (rare/nonexistent given zero current
+      users) is deleted without warning. Acceptable simplification.
+    - `config_version = 2` stored in `config.lua` is the only marker
+      needed; there is no separate sentinel file.
+    - Migration is unconditional and silent (no prompt). Cost of
+      upgrading.
+
+    ## Verification
+
+    - A captured v1 fixture dir migrates to a v2 dir whose only files
+      are `config.lua` (new) plus, for the global dir, anything that's
+      truly user-owned (in practice: just `config.lua`).
+    - Re-running migration on a v2 dir is a no-op (same file mtimes
+      acceptable, same content required).
+    - A crash injected between writing `config.lua` and deleting legacy
+      files leaves the dir in a state where the next run completes the
+      migration without losing data.
+
+    ## Dependencies
+
+    Depends on the lua-config landing (the Lua reader must exist) and
+    the embedded-defaults landing (so we know which paths to delete).
+- id: rewrite-config-and-prompts-reference-page-for-lua-api
+  title: Rewrite config-and-prompts reference page for Lua API
+  category: docs
+  status: not_started
+  dependencies:
+  - switch-prompt-and-agent-reads-to-embedded-defaults-slim-init-to-plan-state-skeleton-only
+  - replace-yaml-config-with-lua-mlua-and-layered-global-plan-resolution
+  - v1-to-v2-migration-with-auto-cleanup-of-materialised-defaults
+  description: |
+    Rewrite the `config-and-prompts` reference page for the Lua-based
+    config and append-only prompt customisation API. Supersedes the
+    existing "Reference: configuration and prompt-file formats" backlog
+    task, which describes the now-defunct YAML config model.
+
+    ## Why
+
+    The shipped reference page (or its placeholder) describes the
+    YAML + `*.local.yaml` overlay model and the on-disk prompt files.
+    After the lua-config + embedded-defaults landings, none of that
+    matches reality. Users need a single page that describes the new
+    layout: what's embedded, what's user-owned, and how to customise
+    via `config.lua`.
+
+    ## Scope
+
+    File:
+
+    - `docs/reference/config-and-prompts.adoc` (or the path that matches
+      the existing reference docs convention; check `docs/manifest.txt`).
+
+    Cover:
+
+    - The two-layer config model: global
+      (`<config-dir>/config.lua`) and per-plan (`<plan>/config.lua`).
+      Show the precedence chain for finding `<config-dir>`
+      (`--config` → `RAVEL_LITE_CONFIG` → `dirs::config_dir()/ravel-lite`).
+      Describe composition semantics: setters last-write-wins,
+      registrators (`append_prompt`) accumulate.
+    - The `ravel` global table API — every public function, with one
+      minimal `config.lua` example per entry.
+    - Prompt customisation via `ravel.append_prompt(phase, text)`,
+      including the contract that user text is *appended* and cannot
+      replace the embedded prompt.
+    - Prompts themselves are not on disk; link to the embedded source on
+      GitHub for reading
+      (`https://github.com/Linkuistics/Ravel-Lite/tree/main/defaults`).
+    - `config.config_version` field — what it is, why it's auto-stamped,
+      when it bumps. Link to the migration behaviour for old
+      installations.
+
+    Manifest + build:
+
+    - Update `docs/manifest.txt` if the page path or order changes.
+    - Run `./scripts/build-docs.sh` to confirm the page renders cleanly
+      into the linkuistics site.
+
+    ## Decisions already made
+
+    - Single page (not split per layer or per API function).
+    - Prose + worked examples; no auto-generated reference table.
+    - The existing
+      `reference-configuration-and-prompt-file-formats-config-yaml-local-yaml-overlays-embedded-defaults-token-substitution-per-phase-prompts`
+      task should be marked `blocked` with reason "superseded by
+      lua-config redesign" once this task is in flight.
+
+    ## Verification
+
+    - Page renders without AsciiDoc errors via
+      `./scripts/build-docs.sh`.
+    - Every `ravel.*` function listed in the reference has a working
+      code example.
+    - A reader landing cold on the page can write a minimal
+      `config.lua` that sets one model and registers one
+      `append_prompt`, with no other knowledge.
+
+    ## Dependencies
+
+    Depends on the lua-config replacement (API surface must be settled),
+    the embedded-defaults landing (so the doc accurately describes what's
+    on disk vs embedded), and the migration landing (so upgrade
+    behaviour can be documented from observed reality).

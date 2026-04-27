@@ -1,13 +1,10 @@
-id: session-63
-timestamp: 2026-04-27T02:28:30Z
+id: session-64
+timestamp: 2026-04-27T03:41:06Z
 phase: work
 body: |
-  ### Session 63 (2026-04-27T02:28:30Z) — Replace cargo-dist CI with manual release scripts; add TestAnyware capture tooling
+  ### Session 64 (2026-04-27T03:41:06Z) — Cut first manual release v1.0.2
 
-  - **Release pipeline pivot**: brainstorming determined that delegating releases to cargo-dist CI was wrong for operator-visibility requirements. Removed `.github/workflows/release.yml` (343 lines) and the `[workspace.metadata.dist]` + `[profile.dist]` blocks from `Cargo.toml`. Replaced with two local scripts: `scripts/release-build.sh` (builds 4 target tarballs using native `cargo build` for Darwin and `cargo zigbuild` at glibc 2.17 floor for Linux) and `scripts/release-publish.sh` (`gh release create` + formula commit to the sibling homebrew-taps clone). Formula is rendered from `scripts/templates/ravel-lite.rb.tmpl` via `sed` placeholder substitution.
-  - **TestAnyware capture script**: landed `scripts/capture/ravel-lite-tutorial.sh` — drives a TestAnyware macOS VM to install ravel-lite via Homebrew, run the tutorial scenario interactively, take screenshots, and pull the resulting LLM_STATE tree. Structured into eight named sections with `[STEP-NAME]` log markers for LLM driver correlation. This is intended as the template for all future documentation-with-real-results capture scripts.
-  - **AsciiDoc docs pipeline**: closed as already-done; `scripts/build-docs.sh`, `docs/build-config.sh`, `docs/manifest.txt`, and `docs/templates/page-shell.html` landed in a prior session and were missed by triage.
-  - **Other**: added `docs/captures/` to `.gitignore` (raw capture outputs not tracked); updated `README.md` Releasing section for the manual flow; added `docs/superpowers/specs/2026-04-27-manual-release-and-capture-tooling-design.md` as a design record.
-  - **First release not yet cut**: requires `cargo release patch --execute && git push --follow-tags && ./scripts/release-build.sh && ./scripts/release-publish.sh`. Deferred as an explicit operator action. This also unblocks end-to-end smoke-testing of the capture script (which calls `brew install linkuistics/taps/ravel-lite`).
-  - **Known approximations in capture script**: `testanyware vm list --format json` flag is inferred from README, not validated against a live install; `VNC_ENDPOINT`/`AGENT_ENDPOINT` env overrides are in place for first-run tuning.
-  - What this suggests: cut the first manual release to surface any friction in the script choreography; then smoke-test the capture script end-to-end.
+  - **What was attempted:** Execute the first manual release end-to-end using the committed release scripts.
+  - **What worked:** Full pipeline completed successfully. Installed missing prerequisites (zig, cargo-zigbuild, Linux cross-compile targets). `cargo release patch --execute --no-confirm` bumped Cargo.toml from 1.0.1 to 1.0.2, committed (`78f0d9c`) and tagged (`v1.0.2`). `scripts/release-build.sh` produced four tarballs and a rendered Homebrew formula with correct checksums. `scripts/release-publish.sh` created the GitHub Release and pushed the formula to `Linkuistics/homebrew-taps` (`790e7a4`). End-user smoke test passed: `brew install linkuistics/taps/ravel-lite && ravel-lite --version` returned 1.0.2.
+  - **What this suggests trying next:** The release pipeline is validated; future releases are mechanical. The triage surfaced a redesign direction: replace YAML config + on-disk prompt files with Lua (mlua) config and embedded defaults. New tasks were added for that cluster.
+  - **Key learnings:** `release.toml` has `push = false` so the release commit and tag are local-only until `git push --follow-tags` is called explicitly. The Linux cross-compile targets (aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu) and cargo-zigbuild were absent on the dev box — these are now documented implicitly via the release results.
