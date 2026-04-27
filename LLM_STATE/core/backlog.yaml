@@ -30,140 +30,99 @@ tasks:
     - Workflow runs green on a test push to a branch.
     - A deliberate clippy violation introduced on a branch causes the workflow to fail.
     - Merge to main only after the workflow passes.
-- id: cut-first-manual-release-end-to-end
-  title: Cut first manual release end-to-end
-  category: infra
-  status: done
+- id: add-repo-and-website-urls-to-help-output
+  title: Add repo and website URLs to --help output
+  category: feature
+  status: not_started
   dependencies: []
   description: |
-    Cut the first manual release end-to-end using the scripts landed in the homebrew pivot:
-    `cargo release patch --execute && git push --follow-tags && ./scripts/release-build.sh && ./scripts/release-publish.sh`.
+    Add the open-source repository URL and the project website URL to
+    `ravel-lite --help` so users can discover the source and the docs
+    without having to remember either.
 
     ## Why
 
-    The release pipeline scripts (`scripts/release-build.sh`, `scripts/release-publish.sh`, `scripts/templates/ravel-lite.rb.tmpl`) are committed and `bash -n` clean, but the end-to-end flow has never been executed. The `Linkuistics/homebrew-taps` repo already exists. The first run is needed to:
-    - Surface any choreography friction (zigbuild flags, formula substitution edge cases, `gh release create` auth, tap push)
-    - Publish the Homebrew formula so `brew install linkuistics/taps/ravel-lite` works
-    - Unblock smoke-testing of `scripts/capture/ravel-lite-tutorial.sh` (which calls `brew install` inside a TestAnyware VM)
+    Ravel-Lite is open source but doesn't surface its own repo URL anywhere
+    in the running binary's help. The website
+    (`https://www.linkuistics.com/projects/ravel-lite/`) is the canonical
+    docs landing page; the repo
+    (`https://github.com/Linkuistics/Ravel-Lite`) is the source. Both
+    should be one `--help` away.
 
     ## Scope
 
-    1. Run `cargo release patch --execute` on a clean `main` (bumps version in `Cargo.toml`, commits, tags).
-    2. `git push --follow-tags` to push commit + tag.
-    3. `./scripts/release-build.sh` — produces four tarballs and a rendered `ravel-lite.rb` formula in `target/dist/`.
-    4. `./scripts/release-publish.sh` — creates the GitHub Release and commits the formula to the sibling `homebrew-taps` clone.
-    5. On a clean Homebrew prefix: `brew install linkuistics/taps/ravel-lite && ravel-lite --version` matches the tag.
+    - Top-level `--help` shows both URLs in an `after_help` block (or the
+      equivalent clap derive attribute).
+    - Subcommand `--help` outputs do not need to repeat them.
+    - URLs are constants in source; not driven from `Cargo.toml`'s
+      `repository` field. Help text is a separate, deliberate string.
 
-    ## Known risks on first run
+    ## Decisions already made
 
-    - `testanyware vm list --format json` inside the capture script is unvalidated — not relevant here, but unblocking this release is a prerequisite for that smoke test.
-    - `release-publish.sh` expects a sibling `~/Development/homebrew-taps` clone; override via `RAVEL_TAP_DIR` if needed.
+    - Hard-coded constants are fine — these URLs do not change between
+      releases.
+    - Both URLs appear together; no flag or env var to suppress.
 
     ## Verification
 
-    - GitHub Release page shows four tarballs + checksum file.
-    - `brew install linkuistics/taps/ravel-lite` completes on a clean machine.
-    - `ravel-lite --version` output matches the pushed tag.
-  results: |
-    First manual release executed end-to-end. Tag `v1.0.2`. GitHub
-    Release: https://github.com/Linkuistics/Ravel-Lite/releases/tag/v1.0.2.
-    Formula pushed to `Linkuistics/homebrew-taps@790e7a4`.
+    - `ravel-lite --help` output contains both
+      `https://github.com/Linkuistics/Ravel-Lite` and
+      `https://www.linkuistics.com/projects/ravel-lite/`.
+    - A snapshot test of the top-level help output asserts the two lines
+      are present.
 
-    ## What was done
+    ## Independence
 
-    1. Pushed 24 backlog commits to `origin/main` (no release-related
-       commits among them — just orchestrator iteration).
-    2. Installed the README's "one-time" prerequisites that were absent on
-       the dev box: `brew install zig` (0.16.0), `cargo install
-       cargo-zigbuild` (0.22.3), `rustup target add x86_64-apple-darwin
-       aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu`. Only
-       `aarch64-apple-darwin` was already present.
-    3. `cargo release patch --execute --no-confirm` → `Cargo.toml` 1.0.1 →
-       1.0.2, commit `78f0d9c chore: release v1.0.2`, tag `v1.0.2`.
-       `release.toml`'s `push = false` kept this local-only.
-    4. `git push origin main --follow-tags` — release commit + tag landed
-       on origin.
-    5. `./scripts/release-build.sh` — built four tarballs in
-       `target/dist/` (1.4–1.7 MB each), rendered `ravel-lite.rb` from the
-       template with version + four checksums substituted. Linux targets
-       built via `cargo zigbuild` with glibc pinned at 2.17. Total wall
-       time ≈ 90s.
-    6. Inspected the rendered formula: no `@TOKEN@` leftovers, all four
-       `sha256` lines match the tarball checksums.
-    7. Native-arch binary smoke test: extracted
-       `ravel-lite-v1.0.2-aarch64-apple-darwin.tar.xz` and ran
-       `--version` → `ravel-lite 1.0.2 (v1.0.2, built 2026-04-27T02:50:32Z)`.
-    8. `./scripts/release-publish.sh` — created GitHub Release `v1.0.2`
-       with all four tarballs uploaded; copied formula to
-       `~/Development/homebrew-taps/Formula/ravel-lite.rb`, committed
-       (`ravel-lite v1.0.2`, sha `790e7a4`), pushed.
-    9. End-user smoke test: `brew update && brew install
-       linkuistics/taps/ravel-lite` → `/opt/homebrew/Cellar/ravel-lite/1.0.2`.
-       `/opt/homebrew/bin/ravel-lite --version` → `ravel-lite 1.0.2
-       (v1.0.2, built 2026-04-27T02:50:32Z)`. Tag matches the running
-       binary.
-    10. `brew test linkuistics/taps/ravel-lite` ran the formula's
-        `assert_match "ravel-lite"` against `--version` → pass.
+    This task ships independently of the lua-config redesign and could
+    land in `v1.0.3`.
+- id: add-scripts-release-doctor-sh-prereq-verification-before-release-pipeline
+  title: 'Add scripts/release-doctor.sh: prereq verification before release pipeline'
+  category: infra
+  status: not_started
+  dependencies: []
+  description: |
+    Add a `scripts/release-doctor.sh` script (or integrate an upfront check into `release-build.sh`) that verifies all four prerequisites for running the release pipeline and emits a punch-list of anything missing.
 
-    ## What worked
+    ## Why
 
-    - The `release.toml` choice to leave `push = false` was correct on
-      first run — the local commit+tag was inspectable before any remote
-      side-effect.
-    - `release-build.sh`'s gate on `git describe --exact-match HEAD`
-      caught nothing (HEAD was tagged) but is the right load-bearing
-      check; without it, drift between tarballs and tag would be silent.
-    - The literal `@TOKEN@` + `sed`-substitution template is trivially
-      auditable — easier than a Liquid/handlebars renderer.
-    - `cargo zigbuild --target <triple>.2.17` cross-compiled both Linux
-      targets from macOS without docker/QEMU. Glibc pin works as
-      documented.
-    - `gh release create` accepted the tag without us pre-pushing it (we
-      pushed anyway, per documented flow).
+    The first end-to-end release run (v1.0.2) found that three rustup targets (`x86_64-apple-darwin`, `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-gnu`) and two binaries (`zig`, `cargo-zigbuild`) were absent from the dev machine. The README lists them under "one-time setup" but nothing automated enforces their presence before `release-build.sh` is invoked. A doctor script surfaces missing prereqs immediately rather than failing partway through the build.
 
-    ## What didn't work / friction
+    ## Scope
 
-    - The README's "one-time setup" was accurate but had never been
-      executed on this machine — three rustup targets and two binaries
-      missing. `release-build.sh` would have failed on first
-      cross-compile. Pre-flight on prereqs (machine bootstrap) is not
-      surfaced anywhere automated.
-    - The orphan tags `v1.0.0` and `v1.0.1` exist on origin from a prior
-      cargo-dist attempt with no GitHub Releases attached. Left in place
-      per direction; they remain visible in `git tag` and on the
-      GitHub /tags page but produce no `gh release list` rows.
-    - Minor: `cargo-zigbuild` does not respond to `--version`; the
-      README's verification habit (`tool --version`) doesn't apply here.
-      Use `cargo zigbuild --help` instead.
+    Prerequisites to verify:
 
-    ## What this suggests next
+    - `zig` is installed and on PATH (`which zig` or `zig version`)
+    - `cargo-zigbuild` is installed (`cargo zigbuild --help` exits 0)
+    - rustup targets present: `aarch64-apple-darwin`, `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-gnu` (via `rustup target list --installed`)
+    - `gh auth status` exits 0 (GitHub CLI authenticated)
 
-    - **Unblocks `write-tutorial-walk-through`**: the dependency on
-      `cut-first-manual-release-end-to-end` is now satisfied. The
-      tutorial can describe `brew install linkuistics/taps/ravel-lite`
-      as the canonical install path.
-    - **Smoke-testing `scripts/capture/ravel-lite-tutorial.sh`** inside a
-      TestAnyware VM is now possible — the `brew install` in that script
-      has a real formula to fetch.
-    - **Consider a `scripts/release-doctor.sh`** (or just an upfront
-      check inside `release-build.sh`) that verifies the four prereqs
-      (`zig`, `cargo-zigbuild`, three rustup targets, `gh auth status`)
-      and emits a punch-list if any are missing. Would have saved one
-      failed run had this not been the first attempt.
-    - **Orphan tag cleanup** is deferred. If `v1.0.0`/`v1.0.1` start
-      showing up confusingly in `gh release list` UIs or release-notes
-      generators, delete them from origin (`git push origin :refs/tags/v1.0.0`
-      etc.). Not blocking anything today.
-    - **Subsequent releases** should be straightforward: clean tree →
-      `cargo release patch --execute` → `git push --follow-tags` →
-      `./scripts/release-build.sh` → inspect → `./scripts/release-publish.sh`.
-      No bootstrap needed now that prereqs are installed.
+    Output format:
+
+    - Print each check with a pass/fail marker
+    - If any fail, print a remediation command for each missing item and exit non-zero
+    - If all pass, print "All prerequisites met" and exit 0
+
+    Integration option:
+
+    - Standalone `scripts/release-doctor.sh` is the primary deliverable
+    - Optionally invoke it as the first step of `release-build.sh` so the check is automatic; gate on exit code
+
+    ## Decisions
+
+    - Check-only; the script never installs anything itself
+    - Standalone invocability required (user should be able to run it before committing to a release attempt)
+    - Minimal dependencies; pure bash, no external tools beyond those already on the release path
+
+    ## Verification
+
+    - Running `scripts/release-doctor.sh` on a clean machine with all prereqs missing prints four failure lines and exits 1
+    - Running it on the dev machine (all prereqs present since v1.0.2) prints four pass lines and exits 0
+    - `release-build.sh` (if wired) fails fast with the doctor output rather than progressing to a build failure
 - id: write-user-guide-covering-install-update-init-config-projects-plans-and-running
   title: 'Write tutorial walk-through: install through further-cycles with worked example'
   category: docs
   status: not_started
-  dependencies:
-  - cut-first-manual-release-end-to-end
+  dependencies: []
   description: |
     Produce a linear, prose walk-through in AsciiDoc covering install, update, init, re-init, local config, env-var setup, adding projects, the concept of a project, creating a plan, and running a plan through several cycles. Worked example: a non-code reading-list-manager project at ~/Development/ravel-tutorial-example/. Interactive commands (create, run) driven via a TestAnyware VM to capture real transcripts. Source lives in Ravel-Lite/docs/tutorial/*.adoc; generated HTML is emitted into www.linkuistics.com/projects/ravel-lite/ by the build pipeline from T1. Depends on T1 (pipeline) and is supported by T5 (TestAnyware VM integration).
 - id: publish-new-docs-update-projects-ravel-lite-html-hub-and-sync-yml
@@ -410,51 +369,6 @@ tasks:
 
     - Page builds and renders.
     - Verbs and flags cross-checked against the `clap` derive structure.
-- id: add-repo-and-website-urls-to-help-output
-  title: Add repo and website URLs to --help output
-  category: feature
-  status: not_started
-  dependencies: []
-  description: |
-    Add the open-source repository URL and the project website URL to
-    `ravel-lite --help` so users can discover the source and the docs
-    without having to remember either.
-
-    ## Why
-
-    Ravel-Lite is open source but doesn't surface its own repo URL anywhere
-    in the running binary's help. The website
-    (`https://www.linkuistics.com/projects/ravel-lite/`) is the canonical
-    docs landing page; the repo
-    (`https://github.com/Linkuistics/Ravel-Lite`) is the source. Both
-    should be one `--help` away.
-
-    ## Scope
-
-    - Top-level `--help` shows both URLs in an `after_help` block (or the
-      equivalent clap derive attribute).
-    - Subcommand `--help` outputs do not need to repeat them.
-    - URLs are constants in source; not driven from `Cargo.toml`'s
-      `repository` field. Help text is a separate, deliberate string.
-
-    ## Decisions already made
-
-    - Hard-coded constants are fine — these URLs do not change between
-      releases.
-    - Both URLs appear together; no flag or env var to suppress.
-
-    ## Verification
-
-    - `ravel-lite --help` output contains both
-      `https://github.com/Linkuistics/Ravel-Lite` and
-      `https://www.linkuistics.com/projects/ravel-lite/`.
-    - A snapshot test of the top-level help output asserts the two lines
-      are present.
-
-    ## Independence
-
-    This task ships independently of the lua-config redesign and could
-    land in `v1.0.3`.
 - id: switch-prompt-and-agent-reads-to-embedded-defaults-slim-init-to-plan-state-skeleton-only
   title: Switch prompt and agent reads to embedded defaults; slim init to plan-state skeleton only
   category: feature
