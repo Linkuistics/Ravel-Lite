@@ -9,6 +9,7 @@ pub mod dream;
 pub mod format;
 pub mod git;
 pub mod init;
+pub mod migrate_v1_to_v2;
 pub mod multi_plan;
 pub mod ontology;
 pub mod phase_loop;

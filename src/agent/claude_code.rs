@@ -171,10 +171,13 @@ impl Agent for ClaudeCodeAgent {
         // (per `claude --help`). In interactive mode it puts claude into
         // a hybrid state where the TUI silently fails to render. Leave
         // interactive output to claude's default TUI.
-        let mut args = vec![
-            "--add-dir".to_string(),
-            ctx.plan_dir.clone(),
-        ];
+        //
+        // No `--add-dir <plan_dir>`: the plan dir is always a descendant
+        // of `ctx.project_dir`, which is the cwd claude is launched in.
+        // Claude already trusts its launch cwd, so the flag adds no
+        // permission and on a fresh machine it can trigger an unseen
+        // trust-grant modal that hangs the work phase after the banner.
+        let mut args: Vec<String> = Vec::new();
 
         if let Some(model) = self.config.models.get("work") {
             if !model.is_empty() {

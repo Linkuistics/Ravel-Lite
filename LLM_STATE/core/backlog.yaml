@@ -2,7 +2,7 @@ tasks:
 - id: fix-double-slash-path-join-in-work-phase-prompt-body-composition
   title: Fix double-slash path join in work-phase prompt body composition
   category: infra
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Fix the path-concatenation bug that produces double-slash paths (e.g., `//Users/.../ravel-lite-config//fixed-memory/...`) in the work-phase prompt body.
@@ -19,10 +19,44 @@ tasks:
 
     - Work-phase prompt contains no `//` path sequences.
     - The colleague's future localSettings no longer accumulates double-slash Read rules from ravel-lite spawns.
+  results: |
+    ## What was done
+
+    The trailing-slash bug was at the boundary, not in the template. When
+    `RAVEL_LITE_CONFIG=/path/` (trailing slash) was passed in, the value
+    flowed through `resolve_config_dir` verbatim, then string substitution
+    into `{{ORCHESTRATOR}}/fixed-memory/...` produced `//fixed-memory/...`.
+
+    Fix: in `src/config.rs::select_config_dir`, normalise the resolved
+    candidate with `candidate.components().collect::<PathBuf>()` — pure path
+    math that strips trailing separators portably without touching
+    symlinks or filesystem state. Applies to all three precedence sources
+    (explicit flag, env var, XDG default).
+
+    Added test `trailing_slash_in_candidate_is_normalised_away` that feeds a
+    trailing-slashed path and asserts the resolved `PathBuf` does not end
+    in `/`.
+
+    ## What worked
+
+    - The fix is at the single point where every config-dir candidate is
+      selected, so the entire codebase sees a normalised path with no
+      scattered defensive trimming.
+    - All 614 existing tests continue to pass.
+
+    ## What this suggests next
+
+    - Worth auditing other path-as-string surfaces (`plan_dir`,
+      `project_dir`) for the same hazard. They are derived from
+      filesystem walks rather than user-set env vars, so trailing
+      slashes are unlikely, but a one-line sweep is cheap insurance.
+    - The colleague's accumulated `Read(//Users/...)` permission rules in
+      their `localSettings` will continue to exist until they prune them
+      manually — the fix prevents new ones, not retroactive cleanup.
 - id: remove-redundant-add-dir-from-invoke-interactive-work-phase-spawn
   title: Remove redundant --add-dir from invoke_interactive work-phase spawn
   category: infra
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Remove the redundant `--add-dir <plan_dir>` argument from `invoke_interactive` in `src/agent/claude_code.rs` (work-phase spawn only).
@@ -42,6 +76,37 @@ tasks:
     - Work-phase claude spawn no longer passes `--add-dir <plan_dir>`.
     - Headless phase spawns are unaffected.
     - On the affected colleague's machine, work phase no longer hangs after the banner.
+  results: |
+    ## What was done
+
+    Removed the `--add-dir <plan_dir>` argument from `invoke_interactive`
+    in `src/agent/claude_code.rs`. The plan dir is always a descendant of
+    `ctx.project_dir`, which is the cwd claude is launched in. Claude
+    implicitly trusts its launch cwd, so the flag added no permission and
+    on a fresh machine could trigger an unseen trust-grant modal that
+    hangs the work phase after the banner.
+
+    Updated the inline comment to record the reasoning so the flag does
+    not get re-added by reflex.
+
+    Headless-phase spawn args (`build_headless_args`) are unchanged —
+    those legitimately need `--add-dir` and `--allowed-tools` for `-p`
+    mode file writes.
+
+    ## What worked
+
+    - Surgical change: a single function and its preceding comment.
+    - Existing test suite still green (614 tests, no regressions).
+
+    ## What this suggests next
+
+    - The remaining infra task in this category —
+      `diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine`
+      — is the colleague-reported hang this is the leading hypothesis
+      for. Now that the redundant `--add-dir` is gone, that diagnosis
+      task should re-test on the affected machine before doing more
+      forensics; if the hang clears, the diagnosis task can be closed
+      with a pointer back to this commit.
 - id: diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine
   title: 'Diagnose: claude TUI invisible after work-phase banner on a fresh machine'
   category: infra
@@ -186,7 +251,7 @@ tasks:
 - id: v1-to-v2-migration-with-auto-cleanup-of-materialised-defaults
   title: v1 to v2 migration with auto-cleanup of materialised defaults
   category: feature
-  status: not_started
+  status: done
   dependencies: []
   description: |
     On the first command that consumes config in a legacy v1 plan/config
@@ -276,6 +341,127 @@ tasks:
 
     Depends on the lua-config landing (the Lua reader must exist) and
     the embedded-defaults landing (so we know which paths to delete).
+  results: |
+    ## What was done
+
+    Added `src/migrate_v1_to_v2.rs` and wired
+    `migrate_v1_to_v2::migrate_if_needed` into the top of
+    `config_lua::resolve`, so every config-consuming entry point
+    (`load_shared_config`, `load_agent_config`, `load_tokens`,
+    `phase_loop`, `multi_plan`, `discover`, `survey`) drives the
+    migration on first touch.
+
+    ### Detection
+
+    Detection is driven by **legacy-file presence**, not by the version
+    marker. This deliberately diverges from a literal reading of the
+    task's "v1 iff `config.lua` is absent" rule, because that rule
+    contradicts the task's crash-recovery requirement (a crash between
+    the lua-write and the legacy-delete steps leaves `config.lua`
+    present but legacy files still on disk — must complete on next
+    run). The reconciled rule:
+
+    - Walk every embedded-defaults path: any that exists on disk is a
+      v1 indicator.
+    - Walk known overlay paths (`config.local.yaml`,
+      `agents/<name>/config.local.yaml`, `agents/<name>/tokens.local.yaml`):
+      same.
+    - Empty indicator set → no-op return.
+
+    ### Translation
+
+    If `config.lua` is absent, the merged YAMLs are translated into a
+    fresh `config.lua`:
+
+    - `config.yaml` deep-merged with `config.local.yaml` for shared
+      scalars (`agent`, `headroom`).
+    - For each `KNOWN_AGENT` (`claude-code`, `pi`):
+      - `agents/<name>/config.yaml` deep-merged with
+        `agents/<name>/config.local.yaml` → `set_model_for` /
+        `set_provider_for`.
+      - `agents/<name>/tokens.yaml` deep-merged with
+        `agents/<name>/tokens.local.yaml` → `set_token`.
+    - Output is sorted (BTreeMap over phase / token names) for
+      deterministic golden-test output.
+    - Setter values are routed through `lua_quote` to escape `\`, `'`,
+      `\n`, `\r` (defensive — production values are simple identifiers).
+    - A `ravel.config.config_version = 2` marker is stamped on the
+      first non-comment line.
+
+    If `config.lua` is present without the marker, the user's content is
+    **preserved verbatim** and the marker is appended at the end (with a
+    brief comment). The legacy YAMLs are not re-translated — the user's
+    existing Lua is treated as their source of truth.
+
+    ### Cleanup
+
+    - Files: every embedded path on disk + the listed overlay paths are
+      removed. `NotFound` errors are tolerated (idempotent across
+      partial runs).
+    - Dirs: a hard-coded set of legacy-only subdirs
+      (`agents/claude-code`, `agents/pi/{prompts,subagents}`, `agents`,
+      `phases`, `fixed-memory`) is pruned deepest-first, but only when
+      empty — a user-owned file under any of them blocks the prune.
+    - A defence-in-depth check refuses to delete any path outside the
+      config dir.
+    - Atomic write of the new `config.lua` via `path.lua.tmp` +
+      `rename`, so a partial write cannot leave a half-baked file.
+
+    ## Tests added (all passing)
+
+    - `empty_dir_is_a_noop` — fresh dir is not v1.
+    - `v2_dir_with_marker_is_a_noop` — already-migrated dir is left
+      alone, no spurious legacy work.
+    - `pristine_v1_dir_translates_yaml_and_deletes_legacy` — golden
+      end-to-end: deep-merge wins for `headroom` (overlay) and `work`
+      model (overlay), siblings preserved, tokens emitted, all legacy
+      files and emptied dirs gone.
+    - `second_run_on_v2_is_a_noop` — idempotency.
+    - `crash_between_lua_write_and_legacy_delete_recovers_on_next_run` —
+      user content preserved, no duplicate marker, leftover legacy is
+      cleaned up.
+    - `existing_lua_without_marker_gets_marker_appended_user_content_preserved`
+      — post-init weird state path: stub `config.lua` survives, only
+      marker added.
+    - `user_owned_file_under_legacy_dir_blocks_prune` — non-embedded
+      files inside legacy dirs are preserved.
+    - `lua_quote_escapes_special_characters` — escape correctness.
+    - `deep_merge_yaml_overlays_nested_maps` — overlay semantics.
+
+    ## End-to-end verification
+
+    Manufactured a v1 fixture in `/tmp`, set `RAVEL_LITE_CONFIG`, ran
+    `ravel-lite survey` against an empty plan dir. Migration ran
+    correctly: deep-merge resolved (overlay-win for `headroom: 4242` and
+    `work: ''`), tokens emitted, all legacy files removed, only
+    `config.lua` remained. Subsequent runtime read the migrated agent
+    selection (`pi`) and emitted the expected agent-mismatch error,
+    proving the new Lua was actually being read.
+
+    ## Edge cases noted but not addressed
+
+    - The actual user config dir at
+      `/Users/antony/Development/ravel-lite-config/` is in the "weird
+      post-init" state (has both `config.lua` with a customisation and
+      legacy YAMLs). On their next config-consuming command the
+      migration will preserve their `ravel.set_model("work", "")` and
+      delete the legacy clutter — verified logically against the
+      `existing_lua_without_marker_gets_marker_appended_user_content_preserved`
+      test path.
+    - I did not run the migration against their real config dir during
+      this work phase, since deletion is destructive and the user
+      hadn't explicitly authorised the live run.
+
+    ## Follow-ups suggested
+
+    - Add a dedicated `KNOWN_AGENTS` re-export note in
+      `migrate_v1_to_v2.rs` if a third agent is ever added — the agent
+      list dependency is intentional, not coincidental.
+    - The migration code is a clear deletion candidate for v3: the file
+      header says so, the unit tests double as a record of what the v1
+      shape was, and `KNOWN_AGENTS` is the only ongoing dependency.
+    - Reference docs for `config-and-prompts` (already a backlog item,
+      blocked on this landing) can now proceed.
 - id: write-user-guide-covering-install-update-init-config-projects-plans-and-running
   title: 'Write tutorial walk-through: install through further-cycles with worked example'
   category: docs
@@ -561,3 +747,90 @@ tasks:
     the embedded-defaults landing (so the doc accurately describes what's
     on disk vs embedded), and the migration landing (so upgrade
     behaviour can be documented from observed reality).
+- id: capture-full-claude-stdio-under-a-pty-in-debug-log-for-tui-hang-diagnosis
+  title: Capture full claude stdio under a PTY in debug log for TUI-hang diagnosis
+  category: infra
+  status: not_started
+  dependencies: []
+  description: |
+    Capture every byte exchanged between ravel-lite and the interactive
+    `claude` subprocess to the debug log, so we can diagnose the
+    "claude TUI invisible after work-phase banner" hang on a fresh
+    machine without losing the TUI.
+
+    ## Why
+
+    The current `invoke_interactive` in `src/agent/claude_code.rs`
+    inherits stdin/stdout/stderr from ravel-lite, which means claude
+    talks directly to the user's terminal and ravel-lite sees nothing.
+    The debug log records the spawn args, cwd, and prompt, but not what
+    claude actually prints back — so on the affected colleague's
+    machine we cannot tell whether claude (a) is printing nothing, (b)
+    is showing a trust-grant modal that's invisible somehow, (c) is
+    printing escape sequences the terminal isn't honouring, or (d)
+    exited silently.
+
+    Removing the redundant `--add-dir` (separate task, already done) is
+    the leading hypothesis, but a real diagnostic capture is the
+    durable fix — it lets future TUI bugs be triaged from logs rather
+    than by re-instrumenting each time.
+
+    ## Approach
+
+    Spawn claude under a pseudo-terminal (PTY) via `portable-pty` (or
+    equivalent) instead of using inherited stdio:
+
+    - The PTY slave is wired to claude as its controlling terminal, so
+      claude still sees a real TTY and renders its TUI normally.
+    - ravel-lite copies bytes from the user's real stdin → PTY master,
+      and from PTY master → both the user's stdout AND the debug log
+      file. Stdout and stderr are merged as one stream (PTYs do not
+      separate them).
+    - Set the user's terminal to raw mode for the duration so
+      keystrokes pass through unbuffered; restore on exit.
+    - Forward SIGWINCH so resizing the terminal resizes the PTY.
+    - Gate the PTY path behind `debug_log::is_enabled()` — when debug
+      logging is off, the existing inherit-stdio path stays. This
+      keeps the perturbation small for normal users.
+
+    The headless (`-p`) spawn already pipes stdout/stderr and is
+    unrelated to this task.
+
+    ## Scope
+
+    - New dependency: `portable-pty` (cross-platform: Unix `posix_openpt`
+      / Windows ConPTY). Pin to a recent version; document the choice
+      in the module-level comment.
+    - Refactor `invoke_interactive`:
+      - When debug logging is enabled, allocate a PTY pair, spawn
+        claude on the slave, run two copy loops on tasks, write a
+        delimited block (`<<<claude stdout>>>`) into the debug log
+        surrounding the live capture.
+      - When debug logging is disabled, behave exactly as today.
+    - Tests:
+      - Unit-test the byte-tee logic against an in-memory writer and a
+        canned input buffer (no real PTY required).
+      - Integration test that exercises the PTY path with a minimal
+        fake claude shim that prints a known sequence and exits — assert
+        the debug log captures that sequence verbatim.
+    - Manual verification on the colleague's affected machine: run
+      with `RAVEL_DEBUG=1` (or whatever the existing toggle is), reproduce
+      the hang, attach the log to this task's Results.
+
+    ## Verification
+
+    - Normal (non-debug) work phase: TUI renders identically to current
+      behaviour, no behaviour change observable to the user.
+    - Debug-enabled work phase: TUI renders identically AND the debug
+      log file ends up containing the byte stream claude printed plus
+      the existing spawn metadata.
+    - Resize the terminal during a debug-enabled work phase: claude's
+      TUI re-flows correctly.
+
+    ## Dependencies
+
+    Best done after (or alongside)
+    `diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine`,
+    since the PTY capture is the diagnostic tool that diagnosis task
+    needs. If diagnosis ships first using ad-hoc tracing, this task
+    becomes the durable replacement.

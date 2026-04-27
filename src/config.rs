@@ -55,6 +55,14 @@ fn select_config_dir(
         );
     };
 
+    // Normalise away any trailing path separators. A user-set
+    // RAVEL_LITE_CONFIG=/path/ would otherwise flow into prompt
+    // substitution where templates write `{{ORCHESTRATOR}}/fixed-memory/...`
+    // and produce `//fixed-memory/...` — cosmetically wrong in the prompt
+    // body and, more critically, leaks into claude's per-machine
+    // permission rules as `Read(//path/**)` entries.
+    let candidate: PathBuf = candidate.components().collect();
+
     if !candidate.is_dir() {
         anyhow::bail!(
             "Ravel-Lite config directory {} (from {}) does not exist or is not a directory.\n\
@@ -243,5 +251,30 @@ mod tests {
         let err = select_config_dir(Some(file_path.clone()), None, None).unwrap_err();
         let message = format!("{err:#}");
         assert!(message.contains("not a directory") || message.contains("does not exist"));
+    }
+
+    #[test]
+    fn trailing_slash_in_candidate_is_normalised_away() {
+        // Regression: `RAVEL_LITE_CONFIG=/path/` (trailing slash) used
+        // to flow through verbatim. String substitution into prompt
+        // templates that join with literal `/` then produced `//`,
+        // which leaks into claude's per-machine permission rules as
+        // `Read(//path/**)` entries.
+        let dir = TempDir::new().unwrap();
+        let with_trailing = format!("{}/", dir.path().display());
+
+        let resolved = select_config_dir(
+            Some(PathBuf::from(&with_trailing)),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let resolved_str = resolved.to_string_lossy();
+        assert!(
+            !resolved_str.ends_with('/'),
+            "resolved config dir must not end with a path separator: {resolved_str}"
+        );
+        assert_eq!(resolved, dir.path());
     }
 }

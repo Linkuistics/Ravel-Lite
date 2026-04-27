@@ -29,6 +29,7 @@ use anyhow::{Context, Result};
 use mlua::{Lua, Table};
 
 use crate::init::require_embedded;
+use crate::migrate_v1_to_v2;
 use crate::types::{AgentConfig, SharedConfig};
 
 /// Names that the Rust side knows how to construct embedded defaults
@@ -84,6 +85,12 @@ struct Accumulator {
 /// both may lack a `config.lua`, which is fine — the embedded base
 /// surfaces unchanged.
 pub fn resolve(global_dir: &Path, plan_dir: Option<&Path>) -> Result<ResolvedConfig> {
+    // First-touch v1 → v2 migration: rewrite legacy materialised
+    // defaults to the Lua surface before reading any layer. Idempotent
+    // and a no-op for fresh or already-v2 dirs.
+    migrate_v1_to_v2::migrate_if_needed(global_dir)
+        .context("v1\u{2192}v2 config-dir migration")?;
+
     let acc = Arc::new(Mutex::new(seed_from_embedded()?));
 
     let lua = Lua::new();

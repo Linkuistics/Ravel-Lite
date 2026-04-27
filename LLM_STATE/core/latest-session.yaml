@@ -1,16 +1,16 @@
-id: session-68
-timestamp: 2026-04-27T09:18:48Z
+id: session-69
+timestamp: 2026-04-27T09:48:00Z
 phase: work
 body: |
-  ### Session 68 (2026-04-27T00:00:00Z) — Add --debug flag to ravel-lite run
+  ### Session 69 (2026-04-27T09:48:00Z) — Fix path normalisation, remove redundant --add-dir, add v1→v2 config migration
 
-  - Implemented `--debug` flag on `ravel-lite run` to instrument all ravel ↔ claude interaction
-  - Added `src/debug_log.rs`: a `OnceLock<DebugLog>` singleton with `enable`, `is_enabled`, `log`, `log_stream_line`, and `format_argv`; constants `CLAUDE_DEBUG_FILE` and `EMBEDDING_DEBUG_FILE` centralise the `/tmp/` paths so spawn sites and the CLI handler share one source of truth
-  - Instrumented four spawn sites: `src/agent/claude_code.rs` (interactive and headless), `src/agent/pi.rs` (interactive and headless), `src/agent/common.rs` (`pump_stdout_to_ui` + `spawn_stderr_drain` + exit in `run_streaming_child`), `src/survey/invoke.rs::spawn_claude_and_read`
-  - For interactive (TUI) paths, stdio is inherited and not capturable; the log entry explicitly records "stdio: inherited (no transcript available)" to avoid silent lossiness
-  - `cargo build` clean; 604 tests pass including 3 new tests in `debug_log`; smoke test confirmed `/tmp/ravel-embedding-debug.log` is created and truncated on `ravel-lite run --debug`
-  - `create::run_create` and `discover::stage1` were explicitly left uninstrumented — they are not reachable from `run`, and `--debug` is a `run` flag only
-  - Singleton approach chosen over threading `Option<Arc<DebugLog>>` through the call graph because debug-on/off is process-wide state; the alternative would have changed five-plus function signatures across unrelated call sites
-
-  - The hang-diagnosis task (`diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine`) is now more tractable: a colleague can re-run with `--debug` and share both files for offline root-cause analysis
-  - The `remove-redundant-add-dir-from-invoke-interactive-work-phase-spawn` task can now be validated empirically: run with `--debug`, apply the change, confirm the trust-grant modal disappears on a fresh machine
+  - **Attempted:** Three tasks from the backlog: (1) fix double-slash paths from trailing-slash config dirs, (2) remove redundant `--add-dir <plan_dir>` from interactive work-phase spawn, (3) implement v1→v2 migration that rewrites legacy materialised YAML defaults to the Lua surface and prunes dead files/dirs.
+  - **What worked:**
+    - Path normalisation fix landed in `src/config.rs::select_config_dir` — `candidate.components().collect::<PathBuf>()` strips trailing separators at the single normalisation point before any path reaches the rest of the system. Regression test added (`trailing_slash_in_candidate_is_normalised_away`). All 614 existing tests passed.
+    - `--add-dir <plan_dir>` removed from `invoke_interactive` in `src/agent/claude_code.rs`. The plan dir is always a descendant of the cwd claude launches in; the flag added no permission and on a fresh machine could trigger an unseen trust-grant modal that hangs the work phase after the banner. Inline comment records the reasoning to prevent reflex re-addition.
+    - `src/migrate_v1_to_v2.rs` (new file, ~600 lines including tests) implements the migration: detects legacy layout by intersecting embedded-defaults paths with what's actually on disk, translates merged `config.yaml` + `config.local.yaml` + per-agent `config.yaml` / `tokens.yaml` into a `config.lua` with version marker, then deletes the legacy files and prunes newly-empty dirs. Crash recovery is safe: writes happen before deletes, so a crash between the two leaves legacy files on disk and the next call completes cleanup. Seven unit tests covering: empty dir no-op, already-v2 no-op, full v1 translation + deletion + dir prune, idempotency, crash recovery, existing-lua marker append, user-owned file blocks dir prune, deep-merge logic, `lua_quote` escaping.
+    - Migration wired into `src/config_lua.rs::resolve` as the first-touch call before any config layer is read. Module exported from `src/lib.rs`.
+  - **What this suggests next:**
+    - The colleague's hang diagnosis is the next priority: the `--add-dir` removal is the leading hypothesis; the new `--debug` PTY capture task (`capture-full-claude-stdio-under-a-pty-in-debug-log-for-tui-hang-diagnosis`) is the durable fallback for offline diagnosis.
+    - The reference doc task (`reference-config-and-prompts-docs`) can now be authored against observed reality — migration behaviour, Lua API, and two-layer config model are all settled.
+    - Other path-as-string surfaces (`plan_dir`, `project_dir`) are derived from filesystem walks rather than user-set env vars so trailing slashes are unlikely, but a one-line sweep is cheap insurance.
