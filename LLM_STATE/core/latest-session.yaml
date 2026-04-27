@@ -1,17 +1,11 @@
-id: session-70
-timestamp: 2026-04-27T12:05:03Z
+id: session-71
+timestamp: 2026-04-27T12:50:30Z
 phase: work
 body: |
-  ### Session 70 (2026-04-27T12:05:03Z) — PTY capture for claude interactive debug log
+  ### Session 71 (2026-04-27T12:50:30Z) — Expand phase-cycle reference page from placeholder to full documentation
 
-  - Implemented PTY-based capture of the claude work-phase subprocess, gated behind `--debug`.
-  - Added `src/agent/pty_capture.rs`: new module with `tee_to` (byte-copy primitive with tap closure), `pump_stdin_with_shutdown` (libc::poll-based stdin pump with AtomicBool shutdown), `drive_pty_io` (three-thread orchestrator: stdout pump, stdin pump, SIGWINCH forwarder), `run_pty_session` (production entry with raw-mode RAII guard), and `current_terminal_size` (TIOCGWINSZ with 24x80 fallback).
-  - Modified `src/agent/claude_code.rs::invoke_interactive`: when `debug_log::is_enabled()`, routes through new `spawn_claude_via_pty` async helper (calls `pty_capture::run_pty_session` via `spawn_blocking`). Existing inherit-stdio path unchanged for normal users.
-  - Added `log_pty_chunk` and `render_pty_bytes` to `src/debug_log.rs`: PTY bytes rendered with caret notation for control chars, newlines/tabs/CRs preserved so ANSI output is readable.
-  - Added `portable-pty = "0.9"` and `libc = "0.2"` as direct Cargo dependencies.
-  - All tests pass (700+ across lib + integration files, including five new tests in `pty_capture::tests`).
-
-  - What worked: MasterPty `Send`-but-not-`Sync` constraint cleanly resolved by moving the master into the resize thread and taking reader/writer before the move. The `libc::poll` + AtomicBool shutdown pattern avoided the spawn_blocking cancellation problem.
-  - What didn't: No e2e test for `log_pty_chunk` writing to the actual singleton debug log file (OnceLock singleton makes per-test isolation expensive); renderer is unit-tested in isolation instead. No SIGWINCH unit test (interacts with test runner's terminal). Pi agent not converted (out of scope for this task).
-
-  - What this suggests next: Live verification with `--debug` on a real claude run (confirm TUI renders identically, log captures the byte stream, resize reflows). Then report back on the `diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine` task with findings. If PTY capture proves its value, promote pi.rs to parity (same shape, smaller patch).
+  - Attempted: Write the full phase-cycle reference page (`docs/reference/phase-cycle.adoc`) replacing the placeholder stub with comprehensive documentation of every phase in the cycle.
+  - What worked: The page was written in full, covering all five reasoning phases (work, analyse-work, reflect, dream, triage), all four audit-trail phases (git-commit-work, git-commit-reflect, git-commit-dream, git-commit-triage), the dream trigger mechanism, cross-plan dispatch, baseline files, and recovery/inspection guidance. The corresponding HTML rendering at `website/docs/phase-cycle.html` was also updated. The version bump from 1.0.2 to 1.0.3 in Cargo.toml/Cargo.lock was a release artifact from the prior session included in the diff.
+  - What didn't: Nothing failed; the task was completed in full.
+  - What this suggests next: The remaining docs reference pages (config-and-prompts, CLI state commands, CLI survey commands) can be tackled in subsequent cycles.
+  - Key learnings: The phase-cycle page was the foundational reference needed before the CLI pages can cross-link to it. The page structure (shape diagram → reasoning phases → audit-trail phases → cross-cutting mechanisms → baselines → recovery) proved clean and navigable.

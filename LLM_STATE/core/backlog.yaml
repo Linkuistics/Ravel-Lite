@@ -2,7 +2,8 @@ tasks:
 - id: diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine
   title: 'Verify fix: re-test work-phase TUI hang on fresh machine after removing --add-dir and fixing path normalisation'
   category: infra
-  status: not_started
+  status: blocked
+  blocked_reason: No fresh-machine access right now; revisit when colleague is available to re-test
   dependencies: []
   description: |
     ## Status
@@ -129,7 +130,7 @@ tasks:
 - id: reference-phase-cycle-page-per-phase-contracts-dream-trigger-triage-dispatch-git-commit-audit-trail
   title: 'Reference: phase cycle page (per-phase contracts, dream trigger, triage dispatch, git-commit-* audit trail)'
   category: docs
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Write the phase cycle reference page: every phase in the work → analyse-work → git-commit-work → reflect → git-commit-reflect → [dream?] → dream → git-commit-dream → triage → git-commit-triage cycle, with each phase's input/output contract, the dream-trigger condition, the triage subagent dispatch mechanism, and the per-phase git-commit audit trail.
@@ -156,6 +157,30 @@ tasks:
     - Page builds and renders.
     - Each phase claim cross-checked against `src/orchestrator/`, `src/state/phase.rs`, and the on-disk per-phase prompt files under `defaults/agents/.../*.md`.
     - Dream-trigger threshold value cross-checked against the actual constant in source.
+  results: |
+    ## What was done
+
+    Wrote `docs/reference/phase-cycle.adoc` (~165 lines of AsciiDoc) covering every reasoning phase (work, analyse-work, reflect, dream, triage) and every audit-trail phase (git-commit-work, git-commit-reflect, git-commit-dream, git-commit-triage), each with a uniform Reads/Writes/Decisions/Transition shape. Added cross-cutting sections on the dream trigger (default headroom 1500 words, baseline mechanics, three-layer defensive seeding), cross-plan dispatch (subagent-dispatch.yaml shape and lifecycle), the four `<phase>-baseline` files threading the cycle, and recovery semantics. Regenerated `website/docs/phase-cycle.html` via `asciidoctor --embedded` so the published mini-site picks up the new content.
+
+    Source-grounded throughout — wrote the page after reading `src/phase_loop.rs`, `src/dream.rs`, `src/state/phase.rs`, `src/git.rs`, `src/subagent.rs`, and every prompt under `defaults/phases/`. Every claim about file paths, baseline order, and decision points is verifiable against current code.
+
+    ## What worked
+
+    - **Per-phase uniform shape (Reads / Writes / Decisions / Transition)** matches the style the existing `concepts.adoc` set and lets readers scan rather than read sequentially.
+    - **Source-grounded baseline ordering** — git-commit-triage's order-of-ops (commit *then* save baseline) is a load-bearing detail with a comment in the source explaining the rationale; surfacing that explanation in the reference saves a future reader from re-deriving it.
+    - **AsciiDoc render produced clean HTML** with no `<style>` / `<script>` / `<link>` tags (forbidden by spec §5.10) and no asciidoctor warnings.
+
+    ## What didn't work / drift surfaced
+
+    - **Backlog task descriptions reference the legacy build pipeline.** Every reference-page task in the backlog still says "run `./scripts/build-docs.sh` to confirm the page renders cleanly into the linkuistics site" and "Update `docs/manifest.txt`" — both belong to the pre-2026-04-26 mechanism. The new pipeline (per `www.linkuistics.com/docs/superpowers/specs/2026-04-25-per-project-website-pipeline-design.md`) reads `<project>/website/` directly via `git archive` and never invokes asciidoctor. The legacy `scripts/build-docs.sh` and `docs/build-config.sh` still write to `../www.linkuistics.com/projects/ravel-lite/`, which is now legacy/orphan output. The remaining docs tasks should have their descriptions updated, or the discrepancy will trip future work phases.
+    - **Internal-link convention is broken across all rendered HTML fragments.** The existing `website/docs/concepts.html` uses `<a href="reference-state-files.html">`-style flattened-name links from the legacy URL scheme. Under the new URL scheme (`/projects/ravel-lite/docs/<page>/`) those resolve nowhere. My new `phase-cycle.html` uses the slightly less broken `<a href="state-files.html">` (sibling-relative without the `reference-` prefix), but both forms are wrong. The correct relative form is `state-files/` (no `.html`, trailing slash) — assuming pages render at the directory URL the spec promises. **This affects every reference fragment and every cross-link inside them**; a single follow-up pass should normalise them after the URL-resolution behaviour is empirically verified against a published deploy.
+
+    ## What this suggests next
+
+    1. **Pick the next reference page** — `state-files`, `cross-plan-files`, `cli-lifecycle`, `cli-state`, or `cli-survey`. State-files is the natural next pick: it's referenced from both phase-cycle and concepts, and its schema work is grounded in `src/state/backlog/`, `src/state/memory/`, etc.
+    2. **Add a backlog task to fix the link convention** across all rendered fragments — including the existing `concepts.html` and `index.html` — once a deployed page confirms the canonical URL form.
+    3. **Add a backlog task to retire `scripts/build-docs.sh`, `docs/build-config.sh`, `docs/manifest.txt`, and `docs/templates/`** — they belong to the legacy pipeline and now mislead the existing reference-page backlog descriptions. A small follow-up could either delete them or replace them with a `scripts/render-docs.sh` that runs `asciidoctor --embedded` over `docs/reference/*.adoc` → `website/docs/*.html` (the actual workflow this session followed by hand).
+    4. **Update the remaining reference-page backlog descriptions** to point at `website/docs/<page>.html` as the deliverable rather than the linkuistics paths in the old descriptions.
 - id: reference-state-file-formats-backlog-yaml-memory-yaml-session-log-yaml-latest-session-phase-md-commits-yaml
   title: 'Reference: state-file formats (backlog.yaml, memory.yaml, session-log.yaml, latest-session, phase.md, commits.yaml)'
   category: docs
@@ -320,7 +345,8 @@ tasks:
 - id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
   title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
   category: infra
-  status: not_started
+  status: blocked
+  blocked_reason: Not needed yet; defer until pi-side TUI debugging actually requires it
   dependencies: []
   description: |
     Add the same PTY-capture path to `pi.rs::invoke_interactive` that was
