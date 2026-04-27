@@ -49,11 +49,16 @@ const VERSION: &str = concat!(
     ")"
 );
 
+const AFTER_HELP: &str = "\
+Source:  https://github.com/Linkuistics/Ravel-Lite
+Docs:    https://www.linkuistics.com/projects/ravel-lite/";
+
 #[derive(Parser)]
 #[command(
     name = "ravel-lite",
     about = "An orchestration loop for LLM development cycles",
     version = VERSION,
+    after_help = AFTER_HELP,
 )]
 struct Cli {
     #[command(subcommand)]

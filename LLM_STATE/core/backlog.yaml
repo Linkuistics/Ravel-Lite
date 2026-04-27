@@ -1,39 +1,8 @@
 tasks:
-- id: add-minimal-github-actions-ci-workflow-build-test-clippy
-  title: 'Add minimal GitHub Actions CI workflow: build, test, clippy'
-  category: infra
-  status: not_started
-  dependencies: []
-  description: |
-    Add a minimal `.github/workflows/ci.yml` that runs on every push and pull request targeting `main`, exercising the three gates: `cargo build`, `cargo test --quiet`, and `cargo clippy --lib --all-targets`.
-
-    ## Why
-
-    `Cargo.toml` already declares `[lints.rust] warnings = "deny"`, which makes `cargo clippy` strict for any developer who runs it locally. But nothing forces a developer to run it before pushing. The `fix-clippy` cycle surfaced this gap: the first GitHub Actions workflow closes the automatic enforcement loop without requiring any changes to the manifest-level strictness settings.
-
-    ## Scope
-
-    - One file: `.github/workflows/ci.yml`
-    - Triggers: `push` and `pull_request` on `main`
-    - Steps: checkout → `actions/cache` for `~/.cargo` and `target/` → `cargo build` → `cargo test --quiet` → `cargo clippy --lib --all-targets`
-    - No matrix (single `ubuntu-latest` runner is sufficient for enforcement; the binary is cross-compiled for release separately via cargo-dist)
-    - Rust toolchain: `stable`; pin to a channel, not a specific version
-
-    ## Decisions already made
-
-    - No `--no-deps` on clippy; all-targets is the right scope.
-    - The `[lints.rust] warnings = "deny"` manifest setting already propagates `-D warnings` to clippy lint evaluation, so no extra flags are needed in the workflow body.
-    - `cargo-dist` will supply its own release workflow via `cargo dist generate`; this CI workflow is strictly for correctness gating on every commit, not for release automation.
-
-    ## Verification
-
-    - Workflow runs green on a test push to a branch.
-    - A deliberate clippy violation introduced on a branch causes the workflow to fail.
-    - Merge to main only after the workflow passes.
 - id: add-repo-and-website-urls-to-help-output
   title: Add repo and website URLs to --help output
   category: feature
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Add the open-source repository URL and the project website URL to
@@ -75,6 +44,46 @@ tasks:
 
     This task ships independently of the lua-config redesign and could
     land in `v1.0.3`.
+  results: |
+    Added `AFTER_HELP` const containing the source-repo and docs-site URLs and wired it
+    into the top-level `#[command(...)]` block in `src/main.rs` via clap's `after_help`
+    attribute. URLs are hard-coded literals (per the task's "decisions already made"
+    section) rather than driven from `Cargo.toml`'s `repository` field.
+
+    ## What worked
+
+    - The clap `after_help` attribute appends to the bottom of the top-level `--help`
+      output only — subcommand `--help` outputs are untouched, matching the scope
+      ("Subcommand --help outputs do not need to repeat them").
+    - Hard-coding the URLs as literal strings inside a single `const &str` keeps the
+      formatting (alignment, spacing) auditable in source rather than scattered.
+    - Test (`top_level_help_shows_repo_and_website_urls` in `tests/cli.rs`) shells
+      out to the built binary via `env!("CARGO_BIN_EXE_ravel-lite")` — same harness
+      as the existing `state set-phase` and `run` validation tests. No new test
+      infrastructure needed.
+
+    ## False starts
+
+    Initially introduced `REPO_URL`/`WEBSITE_URL` constants alongside `AFTER_HELP` and
+    attempted to compose them with `concat!`. Two issues: (a) `concat!` only accepts
+    literals, so the named constants would have been duplicates of the literals
+    inside the macro; (b) clippy under `[lints.rust] warnings = "deny"` would have
+    flagged them as unused. Collapsed to a single `AFTER_HELP` literal.
+
+    ## Verification
+
+    - New test `top_level_help_shows_repo_and_website_urls` passes.
+    - Full `cargo test` green.
+    - `cargo clippy --lib --all-targets` clean.
+    - Manual `cargo run -- --help` shows both URLs at the bottom of the help block.
+
+    ## What this suggests next
+
+    The two remaining feature items (`switch-prompt-and-agent-reads-to-embedded-defaults-...`
+    and `replace-yaml-config-with-lua-mlua-...`) are both substantial refactors that
+    need brainstorming — they touch the materialisation model and the config
+    substrate respectively. They should each be one full work cycle (or split into
+    sub-tasks during their work cycle), not bundled into the tail of this one.
 - id: add-scripts-release-doctor-sh-prereq-verification-before-release-pipeline
   title: 'Add scripts/release-doctor.sh: prereq verification before release pipeline'
   category: infra

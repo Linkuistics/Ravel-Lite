@@ -1,10 +1,21 @@
-id: session-64
-timestamp: 2026-04-27T03:41:06Z
+id: session-65
+timestamp: 2026-04-27T04:09:43Z
 phase: work
 body: |
-  ### Session 64 (2026-04-27T03:41:06Z) — Cut first manual release v1.0.2
+  ### Session 65 (2026-04-27T04:09:43Z) — Add repo and website URLs to --help output
 
-  - **What was attempted:** Execute the first manual release end-to-end using the committed release scripts.
-  - **What worked:** Full pipeline completed successfully. Installed missing prerequisites (zig, cargo-zigbuild, Linux cross-compile targets). `cargo release patch --execute --no-confirm` bumped Cargo.toml from 1.0.1 to 1.0.2, committed (`78f0d9c`) and tagged (`v1.0.2`). `scripts/release-build.sh` produced four tarballs and a rendered Homebrew formula with correct checksums. `scripts/release-publish.sh` created the GitHub Release and pushed the formula to `Linkuistics/homebrew-taps` (`790e7a4`). End-user smoke test passed: `brew install linkuistics/taps/ravel-lite && ravel-lite --version` returned 1.0.2.
-  - **What this suggests trying next:** The release pipeline is validated; future releases are mechanical. The triage surfaced a redesign direction: replace YAML config + on-disk prompt files with Lua (mlua) config and embedded defaults. New tasks were added for that cluster.
-  - **Key learnings:** `release.toml` has `push = false` so the release commit and tag are local-only until `git push --follow-tags` is called explicitly. The Linux cross-compile targets (aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu) and cargo-zigbuild were absent on the dev box — these are now documented implicitly via the release results.
+  - Implemented `after_help` in the top-level clap `#[command(...)]` block to surface
+    the source repo (`https://github.com/Linkuistics/Ravel-Lite`) and docs site
+    (`https://www.linkuistics.com/projects/ravel-lite/`) in `ravel-lite --help`.
+  - Added a `const AFTER_HELP: &str` literal in `src/main.rs` rather than composing
+    separate `REPO_URL`/`WEBSITE_URL` constants (the latter caused clippy dead-code
+    warnings under `[lints.rust] warnings = "deny"`).
+  - Added snapshot-style test `top_level_help_shows_repo_and_website_urls` in
+    `tests/cli.rs` using the same `env!("CARGO_BIN_EXE_ravel-lite")` harness as existing
+    CLI tests; no new test infrastructure required.
+  - All CI gates (cargo test, cargo clippy --lib --all-targets) passed clean.
+  - The GitHub Actions CI workflow task was deleted from the backlog (out of scope for
+    this cycle).
+  - What this suggests next: the two remaining substantial feature tasks
+    (embedded-defaults switch and lua/mlua config replacement) are each their own full
+    work cycle; neither should be bundled into a tail of a smaller task.

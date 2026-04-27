@@ -184,3 +184,23 @@ fn multi_plan_round_trip_preserves_selection_mapping() {
     .unwrap();
     assert_eq!(picked2, Some(plan_a));
 }
+
+/// Top-level `--help` must surface the source repo and the docs site
+/// so a user reading help can find both without remembering the URLs.
+#[test]
+fn top_level_help_shows_repo_and_website_urls() {
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .arg("--help")
+        .output()
+        .expect("binary must spawn");
+    assert!(out.status.success(), "--help must exit 0");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("https://github.com/Linkuistics/Ravel-Lite"),
+        "--help must contain the repo URL: {stdout}"
+    );
+    assert!(
+        stdout.contains("https://www.linkuistics.com/projects/ravel-lite/"),
+        "--help must contain the website URL: {stdout}"
+    );
+}
