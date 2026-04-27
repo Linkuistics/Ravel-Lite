@@ -1,467 +1,116 @@
 tasks:
-- id: fix-double-slash-path-join-in-work-phase-prompt-body-composition
-  title: Fix double-slash path join in work-phase prompt body composition
-  category: infra
-  status: done
-  dependencies: []
-  description: |
-    Fix the path-concatenation bug that produces double-slash paths (e.g., `//Users/.../ravel-lite-config//fixed-memory/...`) in the work-phase prompt body.
-
-    ## What
-
-    The `fixed-memory` section of the work-phase prompt is composed by concatenating `<config_root>/` with a path that already starts with a `/`-prefixed segment, rather than using a proper `Path::join`. The resulting double-slash paths are cosmetically wrong in the prompt body and, more critically, leak into claude's saved per-machine permission rules — observed in a colleague's `localSettings` as a `Read(//Users/.../ravel-lite-config/**)` rule.
-
-    ## Where
-
-    Likely `src/prompt.rs` or wherever `coding-style.md` (or any fixed-memory path) is referenced in the embedded work-phase template. Track down the join site and replace concatenation with `Path::join` or `path.join(segment)`.
-
-    ## Verification
-
-    - Work-phase prompt contains no `//` path sequences.
-    - The colleague's future localSettings no longer accumulates double-slash Read rules from ravel-lite spawns.
-  results: |
-    ## What was done
-
-    The trailing-slash bug was at the boundary, not in the template. When
-    `RAVEL_LITE_CONFIG=/path/` (trailing slash) was passed in, the value
-    flowed through `resolve_config_dir` verbatim, then string substitution
-    into `{{ORCHESTRATOR}}/fixed-memory/...` produced `//fixed-memory/...`.
-
-    Fix: in `src/config.rs::select_config_dir`, normalise the resolved
-    candidate with `candidate.components().collect::<PathBuf>()` — pure path
-    math that strips trailing separators portably without touching
-    symlinks or filesystem state. Applies to all three precedence sources
-    (explicit flag, env var, XDG default).
-
-    Added test `trailing_slash_in_candidate_is_normalised_away` that feeds a
-    trailing-slashed path and asserts the resolved `PathBuf` does not end
-    in `/`.
-
-    ## What worked
-
-    - The fix is at the single point where every config-dir candidate is
-      selected, so the entire codebase sees a normalised path with no
-      scattered defensive trimming.
-    - All 614 existing tests continue to pass.
-
-    ## What this suggests next
-
-    - Worth auditing other path-as-string surfaces (`plan_dir`,
-      `project_dir`) for the same hazard. They are derived from
-      filesystem walks rather than user-set env vars, so trailing
-      slashes are unlikely, but a one-line sweep is cheap insurance.
-    - The colleague's accumulated `Read(//Users/...)` permission rules in
-      their `localSettings` will continue to exist until they prune them
-      manually — the fix prevents new ones, not retroactive cleanup.
-- id: remove-redundant-add-dir-from-invoke-interactive-work-phase-spawn
-  title: Remove redundant --add-dir from invoke_interactive work-phase spawn
-  category: infra
-  status: done
-  dependencies: []
-  description: |
-    Remove the redundant `--add-dir <plan_dir>` argument from `invoke_interactive` in `src/agent/claude_code.rs` (work-phase spawn only).
-
-    ## Why
-
-    The plan directory is always a descendant of `ctx.project_dir`, which is the cwd claude is launched in. Claude already implicitly trusts its launch cwd, so `--add-dir <plan_dir>` adds nothing for trust purposes on the interactive work phase. Keeping it may trigger an unseen trust-grant modal on fresh machines, which is the leading hypothesis for the work-phase hang described in `diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine`.
-
-    Headless phases (`-p` mode) legitimately need `--add-dir` and `--allowed-tools` (per memory: "Claude spawn with file-write needs --allowed-tools"). The interactive work phase does not — removing it from `invoke_interactive` is safe and is a correct simplification regardless of whether it resolves the hang.
-
-    ## Where
-
-    `src/agent/claude_code.rs` — `invoke_interactive` function, approximately line 39. Remove the `--add-dir <plan_dir>` arg; leave headless-phase spawn args untouched.
-
-    ## Verification
-
-    - Work-phase claude spawn no longer passes `--add-dir <plan_dir>`.
-    - Headless phase spawns are unaffected.
-    - On the affected colleague's machine, work phase no longer hangs after the banner.
-  results: |
-    ## What was done
-
-    Removed the `--add-dir <plan_dir>` argument from `invoke_interactive`
-    in `src/agent/claude_code.rs`. The plan dir is always a descendant of
-    `ctx.project_dir`, which is the cwd claude is launched in. Claude
-    implicitly trusts its launch cwd, so the flag added no permission and
-    on a fresh machine could trigger an unseen trust-grant modal that
-    hangs the work phase after the banner.
-
-    Updated the inline comment to record the reasoning so the flag does
-    not get re-added by reflex.
-
-    Headless-phase spawn args (`build_headless_args`) are unchanged —
-    those legitimately need `--add-dir` and `--allowed-tools` for `-p`
-    mode file writes.
-
-    ## What worked
-
-    - Surgical change: a single function and its preceding comment.
-    - Existing test suite still green (614 tests, no regressions).
-
-    ## What this suggests next
-
-    - The remaining infra task in this category —
-      `diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine`
-      — is the colleague-reported hang this is the leading hypothesis
-      for. Now that the redundant `--add-dir` is gone, that diagnosis
-      task should re-test on the affected machine before doing more
-      forensics; if the hang clears, the diagnosis task can be closed
-      with a pointer back to this commit.
 - id: diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine
-  title: 'Diagnose: claude TUI invisible after work-phase banner on a fresh machine'
+  title: 'Verify fix: re-test work-phase TUI hang on fresh machine after removing --add-dir and fixing path normalisation'
   category: infra
   status: not_started
   dependencies: []
   description: |
-    ## Symptom
+    ## Status
 
-    On a colleague's machine (macOS, local terminal, no multiplexer),
-    running `ravel-lite run` past the work-phase banner produces a hang:
-    the banner prints, then nothing more renders, and the terminal appears
-    frozen. `ps aux | grep claude` confirms a claude process is alive.
-    Claude version 2.1.119 on the affected machine. Same plan, same repo,
-    same orchestrator binary work normally on the maintainer's machine, so
-    the bug is environmental, not a deterministic code defect.
+    Both leading-hypothesis fixes have shipped:
 
-    ## What we already know rules out
+    1. **Double-slash path-join bug** (`select_config_dir` now normalises trailing slashes via `components().collect()`).
+    2. **Redundant `--add-dir <plan_dir>`** removed from `invoke_interactive` in `src/agent/claude_code.rs`.
 
-    - **Not a multiplexer/handoff layer issue**: local terminal, no tmux,
-      no screen, no mosh, no nested ssh.
-    - **Not claude itself broken**: `claude` invoked standalone in the
-      same project dir works fine.
-    - **Not a process-death issue**: claude is alive (ps confirms), so
-      ravel-lite's `std::process::Command::new("claude").status()` in
-      `src/agent/claude_code.rs:183` is correctly blocked waiting for
-      claude to exit. The hang is on claude's side.
-    - **Not "no further log lines = hung"**: claude's debug log emits
-      init events only; once it transitions to its Ink TUI the absence of
-      log lines is expected.
+    These were the two most likely causes of the invisible trust-grant modal (hypothesis A) that hung the work phase on a fresh machine.
 
-    ## Working hypothesis ladder
+    ## Required action
 
-    **(A) — strongest** — Trust/permission modal claude renders that the
-    user can't see. Trust state lives in `~/.claude.json` per machine and
-    accumulates as users approve directories over time. The
-    maintainer's machine has every directory ravel-lite has ever passed
-    already trusted; a fresh machine doesn't. The colleague's debug log
-    shows claude *applying* a stored rule (`Read(//Users/.../ravel-lite-
-    config/**)`) into localSettings during init — partial pre-existing
-    trust, possibly inconsistent. If `--add-dir <plan_dir>` triggers a
-    fresh modal, the user can't answer it because the modal isn't
-    visible (cursor-position state at handoff with ratatui's inline
-    viewport).
+    Have the affected colleague (macOS, local terminal, no multiplexer, Claude 2.1.119) pull the latest binary and re-run `ravel-lite run` from their launcher-web project.
 
-    **(B)** — Inline-viewport handoff bug. ratatui in `src/ui.rs:244` runs
-    in `Viewport::Inline(1)` mode, never enters alt-screen. Modern
-    Claude Code (Ink-based) also draws inline. They compete for cursor-
-    anchored rendering in the same main-screen region. The suspend
-    volley in `src/ui.rs:298` was tuned by trial and error; it may miss
-    a reset that matters on this specific terminal/scrollback state.
+    Expected outcome: work phase proceeds normally with no hang after the banner.
 
-    **(C)** — Stale/corrupt entry in the colleague's `~/.claude.json` that
-    puts claude into a bad waiting state on first contact with `--add-
-    dir`. Cousin of (A), distinguished only by remediation: (A) needs
-    the user to grant trust, (C) needs the user to delete a corrupt
-    record.
+    ## If the hang persists
 
-    ## Side-discovery worth landing regardless
+    Pivot to hypothesis B (inline-viewport handoff bug in `src/ui.rs:298` reset volley). Investigation path:
 
-    - **Path-concatenation bug** producing the literal double-slash
-      `/Users/.../ravel-lite-config//fixed-memory/...` in the work-phase
-      prompt body. Whoever composes the fixed-memory section concatenates
-      `<config_root>/` with `/fixed-memory/...` instead of joining
-      cleanly. Cosmetic in the prompt, but the path leaks into claude's
-      saved permission rules — the colleague's localSettings already
-      contains a double-slash `Read(//Users/.../ravel-lite-config/**)`
-      rule that originated from this. Hunt down the join site (likely
-      `src/prompt.rs` or wherever `coding-style.md` is referenced in the
-      embedded work-phase template) and use a proper path join.
-    - **Redundant `--add-dir <plan_dir>` on the work phase**. The plan
-      directory is always a descendant of `ctx.project_dir`, which is the
-      cwd claude is launched in. claude already trusts cwd implicitly. The
-      `--add-dir` adds nothing for trust purposes and may be the trigger
-      for the unseen modal in hypothesis (A). Headless phases use `-p`
-      and need `--add-dir` for their own reasons (per memory note
-      `Claude spawn with file-write needs --allowed-tools`); the work
-      phase does not. Removing it from `invoke_interactive` in
-      `src/agent/claude_code.rs:39` (work-phase only) is a safe
-      simplification and may be a complete fix on its own.
+    - Check colleague's `~/.claude.json` for the project path to see if trust is already granted.
+    - Run `dangerous: true` in their plan's config (appends `--dangerously-skip-permissions`); if hang disappears, a remaining trust-grant modal is the cause.
+    - If B, inspect `src/ui.rs:244` Viewport::Inline and the `suspend` volley at line 298.
 
-    ## Decisive next test
+    The `capture-full-claude-stdio-under-a-pty-in-debug-log-for-tui-hang-diagnosis` task provides the full diagnostic capture tool if further investigation is needed.
 
-    Have the affected user run, by hand, the spawn ravel-lite would
-    issue, in a fresh terminal:
+    ## What "done" looks like
 
-    ```bash
-    cd ~/.dev/dull/frontend/apps/launcher-web
-    claude --add-dir ~/.dev/dull/frontend/apps/launcher-web/LLM_STATE/<plan>
-    ```
-
-    Three outcomes:
-
-    - **Locks up identically** → not a ravel-lite handoff bug. The
-      combination of `--add-dir` and their environment alone reproduces
-      it. Fix is on the spawn-args side: drop the redundant `--add-dir`
-      and/or pre-grant trust.
-    - **Works fine** → the bug is in ravel-lite's terminal handoff
-      specifically. Investigation pivots to `src/ui.rs:298` reset volley
-      and the `terminal.clear() + disable_raw_mode()` ordering.
-    - **Shows a visible y/n modal once, then proceeds** → first-run trust
-      is the cause; document a one-time trust acceptance step or fix in
-      ravel-lite by dropping the redundant `--add-dir`.
-
-    ## Cheap parallel bypasses they can try
-
-    1. Inspect their trust state:
-
-       ```bash
-       jq '.projects | keys' ~/.claude.json | grep launcher-web
-       ```
-
-       Absence of the plan-dir path is evidence for (A).
-
-    2. Set `dangerous: true` for the work phase in their plan's
-       `config.lua` so ravel-lite appends `--dangerously-skip-
-       permissions` (read path: `params[<phase>][dangerous]` in
-       `src/agent/claude_code.rs:32-37`). If the lockup disappears, (A) is
-       confirmed. If it persists, dig into (B).
-
-    ## What "done" looks like for this task
-
-    - Root cause identified by either the manual-spawn test or the
-      `dangerous: true` test above.
-    - Either ravel-lite changes (most likely: drop `--add-dir` from
-      `invoke_interactive`, fix the double-slash join in prompt
-      composition) or a documented user-side remediation (one-time
-      trust step).
-    - Regression catch: a smoke note or test that exercises a fresh-
-      trust-state scenario, since the bug is invisible from the
-      maintainer's machine where trust is already granted.
-
-    ## Notes for the next session
-
-    - The colleague has Claude 2.1.119; verify maintainer's version is
-      compatible (mismatched versions can change `--add-dir` semantics).
-    - The colleague's env: macOS, local terminal, no multiplexer, plan
-      at `~/.dev/dull/frontend/apps/launcher-web/LLM_STATE/<plan>`,
-      ravel-lite-config at `~/.dev/ravel-lite-config/`.
-    - Their localSettings already contains a malformed double-slash
-      `Read(//Users/.../ravel-lite-config/**)` rule from a prior run.
-      When fixed, they may want to clean that up too.
-- id: v1-to-v2-migration-with-auto-cleanup-of-materialised-defaults
-  title: v1 to v2 migration with auto-cleanup of materialised defaults
-  category: feature
-  status: done
+    Colleague confirms the hang is gone. Or, if hang persists: root cause identified and a follow-up fix landed.
+- id: rewrite-config-and-prompts-reference-page-for-lua-api
+  title: Rewrite config-and-prompts reference page for Lua API
+  category: docs
+  status: not_started
   dependencies: []
   description: |
-    On the first command that consumes config in a legacy v1 plan/config
-    dir, detect the v1 layout, translate `config.yaml` (+ optional
-    `*.local.yaml` deep-merged) into `config.lua`, delete every
-    tool-materialised file, and stamp `config_version = 2`. Idempotent;
-    runs at most once per dir.
+    Rewrite the `config-and-prompts` reference page for the Lua-based
+    config and append-only prompt customisation API. Supersedes the
+    existing "Reference: configuration and prompt-file formats" backlog
+    task, which describes the now-defunct YAML config model.
 
     ## Why
 
-    When the lua-config + embedded-defaults landings ship (separate
-    tasks), every existing config dir on disk is in v1 layout: it
-    contains materialised prompts, agent definitions, `config.yaml`, and
-    possibly `config.local.yaml`. Without cleanup, those files become
-    dead clutter the new binary ignores. Auto-migration on first run
-    gives the user a zero-step upgrade and a clean disk.
-
-    Zero current users → migration code only handles one transition
-    (v1 → v2) and only runs once per dir. After the first cycle past
-    this landing, every dir in existence is v2; the migration code can
-    be deleted in a future v3.
+    The shipped reference page (or its placeholder) describes the
+    YAML + `*.local.yaml` overlay model and the on-disk prompt files.
+    After the lua-config + embedded-defaults landings, none of that
+    matches reality. Users need a single page that describes the new
+    layout: what's embedded, what's user-owned, and how to customise
+    via `config.lua`.
 
     ## Scope
 
-    Detection:
+    File:
 
-    - A config dir is v1 iff `config.lua` is absent AND any of
-      (`config.yaml` exists, any `*.local.yaml` exists, `prompts/` dir
-      exists, `agents/` dir exists with materialised content) is true.
-    - Otherwise v2 (or fresh, indistinguishable for our purposes).
+    - `docs/reference/config-and-prompts.adoc` (or the path that matches
+      the existing reference docs convention; check `docs/manifest.txt`).
 
-    Translation:
+    Cover:
 
-    - Read `<config>/config.yaml` deep-merged with
-      `<config>/config.local.yaml` using the existing `merge_yaml`
-      logic. The YAML reader stays available specifically for
-      migration.
-    - Same for each `<config>/agents/<name>/config.yaml` and
-      `tokens.yaml` (+ their `.local.yaml` overlays).
-    - Translate the merged maps into a single Lua source string: emit
-      setter calls / table assignments equivalent to the YAML keys, plus
-      `ravel.config.config_version = 2`.
-    - Write `<config>/config.lua` first (with version stamp).
+    - The two-layer config model: global
+      (`<config-dir>/config.lua`) and per-plan (`<plan>/config.lua`).
+      Show the precedence chain for finding `<config-dir>`
+      (`--config` → `RAVEL_LITE_CONFIG` → `dirs::config_dir()/ravel-lite`).
+      Describe composition semantics: setters last-write-wins,
+      registrators (`append_prompt`) accumulate.
+    - The `ravel` global table API — every public function, with one
+      minimal `config.lua` example per entry.
+    - Prompt customisation via `ravel.append_prompt(phase, text)`,
+      including the contract that user text is *appended* and cannot
+      replace the embedded prompt.
+    - Prompts themselves are not on disk; link to the embedded source on
+      GitHub for reading
+      (`https://github.com/Linkuistics/Ravel-Lite/tree/main/defaults`).
+    - `config.config_version` field — what it is, why it's auto-stamped,
+      when it bumps. Link to the migration behaviour for old
+      installations.
 
-    Deletion:
+    Manifest + build:
 
-    - Delete every file in the embedded-defaults set that exists on disk
-      under the config dir, plus `config.yaml`, `config.local.yaml`, all
-      agent `config.yaml` / `config.local.yaml` / `tokens.yaml` /
-      `tokens.local.yaml` files, and any now-empty directories.
-    - Order: write new `config.lua` first; delete legacy files last. If
-      a deletion step fails, the next run re-detects v1 (because legacy
-      files still exist) and retries cleanly.
-
-    Tests:
-
-    - Golden directory transformation: a captured v1 fixture dir → run
-      migration → assert the resulting v2 dir matches an expected file
-      list and the `config.lua` content matches a golden string.
-    - Idempotency: re-running migration on a v2 dir is a no-op.
-    - Crash recovery: simulate a crash between writing `config.lua` and
-      deleting legacy files; assert the next run completes the migration
-      cleanly.
+    - Update `docs/manifest.txt` if the page path or order changes.
+    - Run `./scripts/build-docs.sh` to confirm the page renders cleanly
+      into the linkuistics site.
 
     ## Decisions already made
 
-    - One-jump migration (v1 → v2 directly). No intermediate v1.5 step.
-    - Customised prompt content (rare/nonexistent given zero current
-      users) is deleted without warning. Acceptable simplification.
-    - `config_version = 2` stored in `config.lua` is the only marker
-      needed; there is no separate sentinel file.
-    - Migration is unconditional and silent (no prompt). Cost of
-      upgrading.
+    - Single page (not split per layer or per API function).
+    - Prose + worked examples; no auto-generated reference table.
+    - The existing
+      `reference-configuration-and-prompt-file-formats-config-yaml-local-yaml-overlays-embedded-defaults-token-substitution-per-phase-prompts`
+      task should be marked `blocked` with reason "superseded by
+      lua-config redesign" once this task is in flight.
 
     ## Verification
 
-    - A captured v1 fixture dir migrates to a v2 dir whose only files
-      are `config.lua` (new) plus, for the global dir, anything that's
-      truly user-owned (in practice: just `config.lua`).
-    - Re-running migration on a v2 dir is a no-op (same file mtimes
-      acceptable, same content required).
-    - A crash injected between writing `config.lua` and deleting legacy
-      files leaves the dir in a state where the next run completes the
-      migration without losing data.
+    - Page renders without AsciiDoc errors via
+      `./scripts/build-docs.sh`.
+    - Every `ravel.*` function listed in the reference has a working
+      code example.
+    - A reader landing cold on the page can write a minimal
+      `config.lua` that sets one model and registers one
+      `append_prompt`, with no other knowledge.
 
     ## Dependencies
 
-    Depends on the lua-config landing (the Lua reader must exist) and
-    the embedded-defaults landing (so we know which paths to delete).
-  results: |
-    ## What was done
-
-    Added `src/migrate_v1_to_v2.rs` and wired
-    `migrate_v1_to_v2::migrate_if_needed` into the top of
-    `config_lua::resolve`, so every config-consuming entry point
-    (`load_shared_config`, `load_agent_config`, `load_tokens`,
-    `phase_loop`, `multi_plan`, `discover`, `survey`) drives the
-    migration on first touch.
-
-    ### Detection
-
-    Detection is driven by **legacy-file presence**, not by the version
-    marker. This deliberately diverges from a literal reading of the
-    task's "v1 iff `config.lua` is absent" rule, because that rule
-    contradicts the task's crash-recovery requirement (a crash between
-    the lua-write and the legacy-delete steps leaves `config.lua`
-    present but legacy files still on disk — must complete on next
-    run). The reconciled rule:
-
-    - Walk every embedded-defaults path: any that exists on disk is a
-      v1 indicator.
-    - Walk known overlay paths (`config.local.yaml`,
-      `agents/<name>/config.local.yaml`, `agents/<name>/tokens.local.yaml`):
-      same.
-    - Empty indicator set → no-op return.
-
-    ### Translation
-
-    If `config.lua` is absent, the merged YAMLs are translated into a
-    fresh `config.lua`:
-
-    - `config.yaml` deep-merged with `config.local.yaml` for shared
-      scalars (`agent`, `headroom`).
-    - For each `KNOWN_AGENT` (`claude-code`, `pi`):
-      - `agents/<name>/config.yaml` deep-merged with
-        `agents/<name>/config.local.yaml` → `set_model_for` /
-        `set_provider_for`.
-      - `agents/<name>/tokens.yaml` deep-merged with
-        `agents/<name>/tokens.local.yaml` → `set_token`.
-    - Output is sorted (BTreeMap over phase / token names) for
-      deterministic golden-test output.
-    - Setter values are routed through `lua_quote` to escape `\`, `'`,
-      `\n`, `\r` (defensive — production values are simple identifiers).
-    - A `ravel.config.config_version = 2` marker is stamped on the
-      first non-comment line.
-
-    If `config.lua` is present without the marker, the user's content is
-    **preserved verbatim** and the marker is appended at the end (with a
-    brief comment). The legacy YAMLs are not re-translated — the user's
-    existing Lua is treated as their source of truth.
-
-    ### Cleanup
-
-    - Files: every embedded path on disk + the listed overlay paths are
-      removed. `NotFound` errors are tolerated (idempotent across
-      partial runs).
-    - Dirs: a hard-coded set of legacy-only subdirs
-      (`agents/claude-code`, `agents/pi/{prompts,subagents}`, `agents`,
-      `phases`, `fixed-memory`) is pruned deepest-first, but only when
-      empty — a user-owned file under any of them blocks the prune.
-    - A defence-in-depth check refuses to delete any path outside the
-      config dir.
-    - Atomic write of the new `config.lua` via `path.lua.tmp` +
-      `rename`, so a partial write cannot leave a half-baked file.
-
-    ## Tests added (all passing)
-
-    - `empty_dir_is_a_noop` — fresh dir is not v1.
-    - `v2_dir_with_marker_is_a_noop` — already-migrated dir is left
-      alone, no spurious legacy work.
-    - `pristine_v1_dir_translates_yaml_and_deletes_legacy` — golden
-      end-to-end: deep-merge wins for `headroom` (overlay) and `work`
-      model (overlay), siblings preserved, tokens emitted, all legacy
-      files and emptied dirs gone.
-    - `second_run_on_v2_is_a_noop` — idempotency.
-    - `crash_between_lua_write_and_legacy_delete_recovers_on_next_run` —
-      user content preserved, no duplicate marker, leftover legacy is
-      cleaned up.
-    - `existing_lua_without_marker_gets_marker_appended_user_content_preserved`
-      — post-init weird state path: stub `config.lua` survives, only
-      marker added.
-    - `user_owned_file_under_legacy_dir_blocks_prune` — non-embedded
-      files inside legacy dirs are preserved.
-    - `lua_quote_escapes_special_characters` — escape correctness.
-    - `deep_merge_yaml_overlays_nested_maps` — overlay semantics.
-
-    ## End-to-end verification
-
-    Manufactured a v1 fixture in `/tmp`, set `RAVEL_LITE_CONFIG`, ran
-    `ravel-lite survey` against an empty plan dir. Migration ran
-    correctly: deep-merge resolved (overlay-win for `headroom: 4242` and
-    `work: ''`), tokens emitted, all legacy files removed, only
-    `config.lua` remained. Subsequent runtime read the migrated agent
-    selection (`pi`) and emitted the expected agent-mismatch error,
-    proving the new Lua was actually being read.
-
-    ## Edge cases noted but not addressed
-
-    - The actual user config dir at
-      `/Users/antony/Development/ravel-lite-config/` is in the "weird
-      post-init" state (has both `config.lua` with a customisation and
-      legacy YAMLs). On their next config-consuming command the
-      migration will preserve their `ravel.set_model("work", "")` and
-      delete the legacy clutter — verified logically against the
-      `existing_lua_without_marker_gets_marker_appended_user_content_preserved`
-      test path.
-    - I did not run the migration against their real config dir during
-      this work phase, since deletion is destructive and the user
-      hadn't explicitly authorised the live run.
-
-    ## Follow-ups suggested
-
-    - Add a dedicated `KNOWN_AGENTS` re-export note in
-      `migrate_v1_to_v2.rs` if a third agent is ever added — the agent
-      list dependency is intentional, not coincidental.
-    - The migration code is a clear deletion candidate for v3: the file
-      header says so, the unit tests double as a record of what the v1
-      shape was, and `KNOWN_AGENTS` is the only ongoing dependency.
-    - Reference docs for `config-and-prompts` (already a backlog item,
-      blocked on this landing) can now proceed.
+    Depends on the lua-config replacement (API surface must be settled),
+    the embedded-defaults landing (so the doc accurately describes what's
+    on disk vs embedded), and the migration landing (so upgrade
+    behaviour can be documented from observed reality).
 - id: write-user-guide-covering-install-update-init-config-projects-plans-and-running
   title: 'Write tutorial walk-through: install through further-cycles with worked example'
   category: docs
@@ -668,90 +317,12 @@ tasks:
 
     - Page builds and renders.
     - Verbs and flags cross-checked against the `clap` derive structure.
-- id: rewrite-config-and-prompts-reference-page-for-lua-api
-  title: Rewrite config-and-prompts reference page for Lua API
-  category: docs
-  status: not_started
-  dependencies:
-  - v1-to-v2-migration-with-auto-cleanup-of-materialised-defaults
-  description: |
-    Rewrite the `config-and-prompts` reference page for the Lua-based
-    config and append-only prompt customisation API. Supersedes the
-    existing "Reference: configuration and prompt-file formats" backlog
-    task, which describes the now-defunct YAML config model.
-
-    ## Why
-
-    The shipped reference page (or its placeholder) describes the
-    YAML + `*.local.yaml` overlay model and the on-disk prompt files.
-    After the lua-config + embedded-defaults landings, none of that
-    matches reality. Users need a single page that describes the new
-    layout: what's embedded, what's user-owned, and how to customise
-    via `config.lua`.
-
-    ## Scope
-
-    File:
-
-    - `docs/reference/config-and-prompts.adoc` (or the path that matches
-      the existing reference docs convention; check `docs/manifest.txt`).
-
-    Cover:
-
-    - The two-layer config model: global
-      (`<config-dir>/config.lua`) and per-plan (`<plan>/config.lua`).
-      Show the precedence chain for finding `<config-dir>`
-      (`--config` → `RAVEL_LITE_CONFIG` → `dirs::config_dir()/ravel-lite`).
-      Describe composition semantics: setters last-write-wins,
-      registrators (`append_prompt`) accumulate.
-    - The `ravel` global table API — every public function, with one
-      minimal `config.lua` example per entry.
-    - Prompt customisation via `ravel.append_prompt(phase, text)`,
-      including the contract that user text is *appended* and cannot
-      replace the embedded prompt.
-    - Prompts themselves are not on disk; link to the embedded source on
-      GitHub for reading
-      (`https://github.com/Linkuistics/Ravel-Lite/tree/main/defaults`).
-    - `config.config_version` field — what it is, why it's auto-stamped,
-      when it bumps. Link to the migration behaviour for old
-      installations.
-
-    Manifest + build:
-
-    - Update `docs/manifest.txt` if the page path or order changes.
-    - Run `./scripts/build-docs.sh` to confirm the page renders cleanly
-      into the linkuistics site.
-
-    ## Decisions already made
-
-    - Single page (not split per layer or per API function).
-    - Prose + worked examples; no auto-generated reference table.
-    - The existing
-      `reference-configuration-and-prompt-file-formats-config-yaml-local-yaml-overlays-embedded-defaults-token-substitution-per-phase-prompts`
-      task should be marked `blocked` with reason "superseded by
-      lua-config redesign" once this task is in flight.
-
-    ## Verification
-
-    - Page renders without AsciiDoc errors via
-      `./scripts/build-docs.sh`.
-    - Every `ravel.*` function listed in the reference has a working
-      code example.
-    - A reader landing cold on the page can write a minimal
-      `config.lua` that sets one model and registers one
-      `append_prompt`, with no other knowledge.
-
-    ## Dependencies
-
-    Depends on the lua-config replacement (API surface must be settled),
-    the embedded-defaults landing (so the doc accurately describes what's
-    on disk vs embedded), and the migration landing (so upgrade
-    behaviour can be documented from observed reality).
 - id: capture-full-claude-stdio-under-a-pty-in-debug-log-for-tui-hang-diagnosis
   title: Capture full claude stdio under a PTY in debug log for TUI-hang diagnosis
   category: infra
   status: not_started
-  dependencies: []
+  dependencies:
+  - diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine
   description: |
     Capture every byte exchanged between ravel-lite and the interactive
     `claude` subprocess to the debug log, so we can diagnose the
