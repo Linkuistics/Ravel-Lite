@@ -1,0 +1,36 @@
+class RavelLite < Formula
+  desc "An orchestration loop for LLM development cycles"
+  homepage "https://github.com/Linkuistics/Ravel-Lite"
+  version "@VERSION@"
+  license "Apache-2.0"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/Linkuistics/Ravel-Lite/releases/download/v@VERSION@/ravel-lite-v@VERSION@-aarch64-apple-darwin.tar.xz"
+      sha256 "@SHA_AARCH64_APPLE_DARWIN@"
+    end
+    on_intel do
+      url "https://github.com/Linkuistics/Ravel-Lite/releases/download/v@VERSION@/ravel-lite-v@VERSION@-x86_64-apple-darwin.tar.xz"
+      sha256 "@SHA_X86_64_APPLE_DARWIN@"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/Linkuistics/Ravel-Lite/releases/download/v@VERSION@/ravel-lite-v@VERSION@-aarch64-unknown-linux-gnu.tar.xz"
+      sha256 "@SHA_AARCH64_UNKNOWN_LINUX_GNU@"
+    end
+    on_intel do
+      url "https://github.com/Linkuistics/Ravel-Lite/releases/download/v@VERSION@/ravel-lite-v@VERSION@-x86_64-unknown-linux-gnu.tar.xz"
+      sha256 "@SHA_X86_64_UNKNOWN_LINUX_GNU@"
+    end
+  end
+
+  def install
+    bin.install "ravel-lite"
+  end
+
+  test do
+    assert_match "ravel-lite", shell_output("#{bin}/ravel-lite --version")
+  end
+end
