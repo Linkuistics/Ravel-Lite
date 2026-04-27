@@ -591,3 +591,15 @@ entries:
   title: Shipped defaults read from embedded binary, not disk
   body: |
     All call sites for shipped prompts and agent-definitions use `init::require_embedded` / `init::embedded_entries_with_prefix`; disk reads of embedded-path files are prohibited. `run_init` writes only a commented-out `config.lua` stub and prunes `RETIRED_PATHS` — no shipped defaults are written to disk. `tests/embedded_defaults_drift.rs` enforces that no source file reads an embedded path from disk.
+- id: debug-log-rs-uses-oncelock-singleton-paths-are-constants
+  title: '`debug_log.rs` uses OnceLock singleton; paths are constants'
+  body: |
+    `OnceLock<DebugLog>` singleton with `enable`, `is_enabled`, `log`, `log_stream_line`, and `format_argv`. Constants `CLAUDE_DEBUG_FILE` and `EMBEDDING_DEBUG_FILE` centralise `/tmp/` paths so spawn sites and the CLI handler share one source of truth. Singleton chosen over threading `Option<Arc<DebugLog>>` through the call graph because debug-on/off is process-wide state.
+- id: debug-instruments-run-spawn-sites-only
+  title: '`--debug` instruments `run` spawn sites only'
+  body: |
+    `--debug` is a `run` flag; `create::run_create` and `discover::stage1` are intentionally uninstrumented because they are unreachable from `ravel-lite run`. Four instrumented spawn sites: `src/agent/claude_code.rs` (interactive + headless), `src/agent/pi.rs` (interactive + headless), `src/agent/common.rs` (`pump_stdout_to_ui`, `spawn_stderr_drain`, exit in `run_streaming_child`), and `src/survey/invoke.rs` (`spawn_claude_and_read`).
+- id: interactive-tui-paths-log-stdio-inherited-not-transcript
+  title: 'Interactive TUI paths log stdio: inherited, not transcript'
+  body: |
+    For interactive (TUI) spawn paths, stdio is inherited and not capturable; `--debug` records "stdio: inherited (no transcript available)" to avoid silent lossiness. Headless paths capture full output to the debug file. Applies to both `claude_code` and `pi` interactive modes.
