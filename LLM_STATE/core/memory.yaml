@@ -7,10 +7,6 @@ entries:
   title: '`shipped_pi_prompts_have_no_dangling_tokens` test guards pi prompts'
   body: |
     The test iterates every on-disk pi prompt file and asserts no unresolved tokens remain. Enforcement mechanism for the canonical-substitution-path rule.
-- id: config-overlays-use-deep-merge-via-load-with-optional-overlay-t
-  title: Config overlays use deep-merge via `load_with_optional_overlay<T>()`
-  body: |
-    `src/config.rs` implements `*.local.yaml` overlays. Deep-merge: scalar collisions go to overlay, map collisions recurse. A `models.work: ""` overlay blanks only that key without losing sibling keys.
 - id: pi-subagent-definitions-live-at-agents-pi-subagents
   title: Pi subagent definitions live at `agents/pi/subagents/`
   body: |
@@ -331,10 +327,6 @@ entries:
   title: Discover e2e uses a fake-claude bash shim per stage
   body: |
     Discover e2e tests use a fake-claude bash shim that distinguishes Stage 1 vs Stage 2 by grepping the prompt header. Stage 1: extracts the YAML surface-file path from the prompt body and writes a canned YAML surface response. Stage 2: issues `ravel-lite state discover-proposals add-proposal` CLI calls for each canned proposal edge; no YAML path extraction.
-- id: sharedconfig-headroom-has-no-serde-default-tests-must-supply-it
-  title: SharedConfig.headroom has no serde default; tests must supply it
-  body: |
-    `SharedConfig` has no `#[serde(default)]` on the `headroom: usize` field. Minimal config YAML snippets in e2e tests must include `headroom: <usize>` or deserialization fails.
 - id: discover-cache-key-is-tree-sha-dirty-hash-pair
   title: Discover cache key is tree_sha + dirty_hash pair
   body: |
@@ -591,3 +583,11 @@ entries:
   title: after_help const avoids dead-code warnings; no intermediate URL consts
   body: |
     `src/main.rs` exposes repo and docs URLs via clap's `after_help` field. Defined as a single `AFTER_HELP: &str` string literal rather than separate `REPO_URL`/`WEBSITE_URL` constants; intermediate named string constants with no other consumers trigger dead-code warnings under `[lints.rust] warnings = "deny"`.
+- id: config-model-is-layered-lua-config-lua-rs-owns-it
+  title: Config model is layered Lua; `config_lua.rs` owns it
+  body: |
+    `src/config_lua.rs` implements the `ravel` Lua global table (`set_agent`, `set_headroom`, `set_model_for`, `set_token`, `append_prompt`, `config`). Backed by `mlua` (vendored Lua 5.4). Global + plan layers resolve in order; `append_prompt` accumulates across both layers in registration order. All config loaders delegate to `config_lua::resolve`; `src/config.rs` no longer contains `merge_yaml` or overlay machinery.
+- id: shipped-defaults-read-from-embedded-binary-not-disk
+  title: Shipped defaults read from embedded binary, not disk
+  body: |
+    All call sites for shipped prompts and agent-definitions use `init::require_embedded` / `init::embedded_entries_with_prefix`; disk reads of embedded-path files are prohibited. `run_init` writes only a commented-out `config.lua` stub and prunes `RETIRED_PATHS` — no shipped defaults are written to disk. `tests/embedded_defaults_drift.rs` enforces that no source file reads an embedded path from disk.
