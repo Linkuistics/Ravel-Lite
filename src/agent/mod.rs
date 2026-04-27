@@ -2,6 +2,7 @@
 pub mod claude_code;
 pub mod common;
 pub mod pi;
+pub mod pty_capture;
 
 use anyhow::Result;
 use async_trait::async_trait;

@@ -1,16 +1,17 @@
-id: session-69
-timestamp: 2026-04-27T09:48:00Z
+id: session-70
+timestamp: 2026-04-27T12:05:03Z
 phase: work
 body: |
-  ### Session 69 (2026-04-27T09:48:00Z) — Fix path normalisation, remove redundant --add-dir, add v1→v2 config migration
+  ### Session 70 (2026-04-27T12:05:03Z) — PTY capture for claude interactive debug log
 
-  - **Attempted:** Three tasks from the backlog: (1) fix double-slash paths from trailing-slash config dirs, (2) remove redundant `--add-dir <plan_dir>` from interactive work-phase spawn, (3) implement v1→v2 migration that rewrites legacy materialised YAML defaults to the Lua surface and prunes dead files/dirs.
-  - **What worked:**
-    - Path normalisation fix landed in `src/config.rs::select_config_dir` — `candidate.components().collect::<PathBuf>()` strips trailing separators at the single normalisation point before any path reaches the rest of the system. Regression test added (`trailing_slash_in_candidate_is_normalised_away`). All 614 existing tests passed.
-    - `--add-dir <plan_dir>` removed from `invoke_interactive` in `src/agent/claude_code.rs`. The plan dir is always a descendant of the cwd claude launches in; the flag added no permission and on a fresh machine could trigger an unseen trust-grant modal that hangs the work phase after the banner. Inline comment records the reasoning to prevent reflex re-addition.
-    - `src/migrate_v1_to_v2.rs` (new file, ~600 lines including tests) implements the migration: detects legacy layout by intersecting embedded-defaults paths with what's actually on disk, translates merged `config.yaml` + `config.local.yaml` + per-agent `config.yaml` / `tokens.yaml` into a `config.lua` with version marker, then deletes the legacy files and prunes newly-empty dirs. Crash recovery is safe: writes happen before deletes, so a crash between the two leaves legacy files on disk and the next call completes cleanup. Seven unit tests covering: empty dir no-op, already-v2 no-op, full v1 translation + deletion + dir prune, idempotency, crash recovery, existing-lua marker append, user-owned file blocks dir prune, deep-merge logic, `lua_quote` escaping.
-    - Migration wired into `src/config_lua.rs::resolve` as the first-touch call before any config layer is read. Module exported from `src/lib.rs`.
-  - **What this suggests next:**
-    - The colleague's hang diagnosis is the next priority: the `--add-dir` removal is the leading hypothesis; the new `--debug` PTY capture task (`capture-full-claude-stdio-under-a-pty-in-debug-log-for-tui-hang-diagnosis`) is the durable fallback for offline diagnosis.
-    - The reference doc task (`reference-config-and-prompts-docs`) can now be authored against observed reality — migration behaviour, Lua API, and two-layer config model are all settled.
-    - Other path-as-string surfaces (`plan_dir`, `project_dir`) are derived from filesystem walks rather than user-set env vars so trailing slashes are unlikely, but a one-line sweep is cheap insurance.
+  - Implemented PTY-based capture of the claude work-phase subprocess, gated behind `--debug`.
+  - Added `src/agent/pty_capture.rs`: new module with `tee_to` (byte-copy primitive with tap closure), `pump_stdin_with_shutdown` (libc::poll-based stdin pump with AtomicBool shutdown), `drive_pty_io` (three-thread orchestrator: stdout pump, stdin pump, SIGWINCH forwarder), `run_pty_session` (production entry with raw-mode RAII guard), and `current_terminal_size` (TIOCGWINSZ with 24x80 fallback).
+  - Modified `src/agent/claude_code.rs::invoke_interactive`: when `debug_log::is_enabled()`, routes through new `spawn_claude_via_pty` async helper (calls `pty_capture::run_pty_session` via `spawn_blocking`). Existing inherit-stdio path unchanged for normal users.
+  - Added `log_pty_chunk` and `render_pty_bytes` to `src/debug_log.rs`: PTY bytes rendered with caret notation for control chars, newlines/tabs/CRs preserved so ANSI output is readable.
+  - Added `portable-pty = "0.9"` and `libc = "0.2"` as direct Cargo dependencies.
+  - All tests pass (700+ across lib + integration files, including five new tests in `pty_capture::tests`).
+
+  - What worked: MasterPty `Send`-but-not-`Sync` constraint cleanly resolved by moving the master into the resize thread and taking reader/writer before the move. The `libc::poll` + AtomicBool shutdown pattern avoided the spawn_blocking cancellation problem.
+  - What didn't: No e2e test for `log_pty_chunk` writing to the actual singleton debug log file (OnceLock singleton makes per-test isolation expensive); renderer is unit-tested in isolation instead. No SIGWINCH unit test (interacts with test runner's terminal). Pi agent not converted (out of scope for this task).
+
+  - What this suggests next: Live verification with `--debug` on a real claude run (confirm TUI renders identically, log captures the byte stream, resize reflows). Then report back on the `diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine` task with findings. If PTY capture proves its value, promote pi.rs to parity (same shape, smaller patch).

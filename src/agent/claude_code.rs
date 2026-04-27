@@ -11,6 +11,7 @@ use super::common::{
     STREAM_SNIPPET_BYTES, StreamLineOutcome, build_dispatch_plan_context, run_streaming_child,
     truncate_snippet,
 };
+use super::pty_capture;
 use crate::config::load_tokens;
 use crate::debug_log;
 use crate::format::{
@@ -199,15 +200,12 @@ impl Agent for ClaudeCodeAgent {
         args.push(prompt.to_string());
 
         if debug_log::is_enabled() {
-            debug_log::log(
-                "claude spawn (interactive, work)",
-                &format!(
-                    "cwd: {}\nstdio: inherited (no transcript available)\n{}\nprompt:\n{}",
-                    ctx.project_dir,
-                    debug_log::format_argv("claude", &args),
-                    indent_block(prompt),
-                ),
-            );
+            // PTY path: claude still owns a real tty (the slave), but
+            // ravel-lite tees every byte through to the debug log. This
+            // is what lets us diagnose "claude TUI invisible after the
+            // banner" hangs from logs alone instead of needing the bug
+            // to reproduce on a developer machine.
+            return spawn_claude_via_pty(prompt, &args, ctx).await;
         }
 
         let status = std::process::Command::new("claude")
@@ -289,6 +287,44 @@ fn indent_block(body: &str) -> String {
         .map(|l| format!("    {l}"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Run the interactive work-phase claude under a PTY so every byte of
+/// its TUI output is captured to the debug log. Used only when
+/// `--debug` is on; the no-debug path keeps the inherit-stdio
+/// behaviour (no perturbation for normal users).
+async fn spawn_claude_via_pty(
+    prompt: &str,
+    args: &[String],
+    ctx: &PlanContext,
+) -> Result<()> {
+    debug_log::log(
+        "claude spawn (interactive, work)",
+        &format!(
+            "cwd: {}\nstdio: pty (full byte transcript follows)\n{}\nprompt:\n{}",
+            ctx.project_dir,
+            debug_log::format_argv("claude", args),
+            indent_block(prompt),
+        ),
+    );
+
+    let project_dir = ctx.project_dir.clone();
+    let args = args.to_vec();
+    let status = tokio::task::spawn_blocking(move || {
+        pty_capture::run_pty_session("claude", &args, &project_dir, "claude")
+    })
+    .await
+    .context("PTY task panicked")??;
+
+    debug_log::log(
+        "claude exit (interactive, work)",
+        &format!("status: {status:?}"),
+    );
+
+    if !status.success() {
+        anyhow::bail!("claude exited with status {status:?}");
+    }
+    Ok(())
 }
 
 #[cfg(test)]

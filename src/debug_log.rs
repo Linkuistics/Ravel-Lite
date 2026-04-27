@@ -91,6 +91,48 @@ pub fn log_stream_line(agent_name: &str, channel: &str, line: &str) {
     let _ = guard.flush();
 }
 
+/// Log one chunk of raw PTY traffic under `<agent>:<direction>` with
+/// non-printable control bytes rendered as caret notation
+/// (`\x1b` → `^[`, `\x01` → `^A`, etc.). Newlines and tabs survive
+/// as-is so ANSI escape sequences and ordinary text remain readable
+/// in the log. Empty chunks are dropped.
+pub fn log_pty_chunk(agent_name: &str, direction: &str, bytes: &[u8]) {
+    if bytes.is_empty() {
+        return;
+    }
+    let Some(dl) = DEBUG_LOG.get() else { return };
+    let ts = unix_iso_now();
+    let rendered = render_pty_bytes(bytes);
+    let mut guard = match dl.file.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let _ = writeln!(*guard, "[{ts}] {agent_name}:{direction} {rendered}");
+    let _ = guard.flush();
+}
+
+/// Render `bytes` for the debug log: keep newline/tab/CR as their
+/// printable forms (so multi-line ANSI output is readable across
+/// lines), keep printable ASCII and UTF-8 multi-byte sequences intact,
+/// escape other 0x00-0x1F controls as caret notation, and replace
+/// invalid UTF-8 with the standard replacement character.
+pub(crate) fn render_pty_bytes(bytes: &[u8]) -> String {
+    let lossy = String::from_utf8_lossy(bytes);
+    let mut out = String::with_capacity(lossy.len() + 8);
+    for c in lossy.chars() {
+        match c {
+            '\n' | '\t' | '\r' => out.push(c),
+            c if (c as u32) < 0x20 => {
+                out.push('^');
+                out.push(((c as u8) ^ 0x40) as char);
+            }
+            c if (c as u32) == 0x7f => out.push_str("^?"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn unix_iso_now() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -186,6 +228,32 @@ mod tests {
         // than panicking or unwrapping.
         log("test", "no debug log enabled");
         log_stream_line("claude", "stdout", "line");
+        log_pty_chunk("claude", "child→parent", b"hello");
         assert!(!is_enabled());
+    }
+
+    #[test]
+    fn render_pty_bytes_keeps_printable_and_escapes_controls() {
+        // Plain ASCII passes through unchanged.
+        assert_eq!(render_pty_bytes(b"hello world"), "hello world");
+        // Newlines, tabs, and CRs survive — multi-line ANSI output
+        // must remain readable in the log.
+        assert_eq!(render_pty_bytes(b"line1\nline2\t\r"), "line1\nline2\t\r");
+        // ESC (0x1B) renders as ^[ so a curious reader can spot ANSI
+        // sequences while grep-ing for "trust" / "permission" text.
+        assert_eq!(render_pty_bytes(b"\x1b[31mred\x1b[0m"), "^[[31mred^[[0m");
+        // Other low controls render as caret-letter.
+        assert_eq!(render_pty_bytes(b"a\x01b"), "a^Ab");
+        // DEL (0x7F) gets its conventional ^? form.
+        assert_eq!(render_pty_bytes(b"\x7f"), "^?");
+    }
+
+    #[test]
+    fn render_pty_bytes_handles_invalid_utf8() {
+        // Lone continuation byte: replaced with U+FFFD by from_utf8_lossy.
+        let rendered = render_pty_bytes(&[0x68, 0xff, 0x69]);
+        assert!(rendered.starts_with('h'));
+        assert!(rendered.ends_with('i'));
+        assert!(rendered.contains('\u{FFFD}'));
     }
 }
