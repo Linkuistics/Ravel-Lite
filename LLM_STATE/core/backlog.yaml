@@ -317,214 +317,41 @@ tasks:
 
     - Page builds and renders.
     - Verbs and flags cross-checked against the `clap` derive structure.
-- id: capture-full-claude-stdio-under-a-pty-in-debug-log-for-tui-hang-diagnosis
-  title: Capture full claude stdio under a PTY in debug log for TUI-hang diagnosis
+- id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
+  title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
   category: infra
-  status: done
-  dependencies:
-  - diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine
+  status: not_started
+  dependencies: []
   description: |
-    Capture every byte exchanged between ravel-lite and the interactive
-    `claude` subprocess to the debug log, so we can diagnose the
-    "claude TUI invisible after work-phase banner" hang on a fresh
-    machine without losing the TUI.
+    Add the same PTY-capture path to `pi.rs::invoke_interactive` that was
+    built for `claude_code.rs` in the PTY-capture task. The mechanism is
+    already implemented in `src/agent/pty_capture.rs`; this task is a
+    small scope wiring job.
 
     ## Why
 
-    The current `invoke_interactive` in `src/agent/claude_code.rs`
-    inherits stdin/stdout/stderr from ravel-lite, which means claude
-    talks directly to the user's terminal and ravel-lite sees nothing.
-    The debug log records the spawn args, cwd, and prompt, but not what
-    claude actually prints back — so on the affected colleague's
-    machine we cannot tell whether claude (a) is printing nothing, (b)
-    is showing a trust-grant modal that's invisible somehow, (c) is
-    printing escape sequences the terminal isn't honouring, or (d)
-    exited silently.
-
-    Removing the redundant `--add-dir` (separate task, already done) is
-    the leading hypothesis, but a real diagnostic capture is the
-    durable fix — it lets future TUI bugs be triaged from logs rather
-    than by re-instrumenting each time.
-
-    ## Approach
-
-    Spawn claude under a pseudo-terminal (PTY) via `portable-pty` (or
-    equivalent) instead of using inherited stdio:
-
-    - The PTY slave is wired to claude as its controlling terminal, so
-      claude still sees a real TTY and renders its TUI normally.
-    - ravel-lite copies bytes from the user's real stdin → PTY master,
-      and from PTY master → both the user's stdout AND the debug log
-      file. Stdout and stderr are merged as one stream (PTYs do not
-      separate them).
-    - Set the user's terminal to raw mode for the duration so
-      keystrokes pass through unbuffered; restore on exit.
-    - Forward SIGWINCH so resizing the terminal resizes the PTY.
-    - Gate the PTY path behind `debug_log::is_enabled()` — when debug
-      logging is off, the existing inherit-stdio path stays. This
-      keeps the perturbation small for normal users.
-
-    The headless (`-p`) spawn already pipes stdout/stderr and is
-    unrelated to this task.
+    When debug logging is enabled, `claude_code.rs::invoke_interactive` now
+    routes through `pty_capture::run_pty_session`, capturing every byte
+    exchanged with the claude subprocess in the debug log. The `pi.rs`
+    equivalent still uses inherited stdio (`stdio: inherited (no transcript
+    available)` per the Results from the PTY-capture task). A pi TUI hang
+    would have the same diagnostic blind spot the claude hang had before the
+    PTY work shipped.
 
     ## Scope
 
-    - New dependency: `portable-pty` (cross-platform: Unix `posix_openpt`
-      / Windows ConPTY). Pin to a recent version; document the choice
-      in the module-level comment.
-    - Refactor `invoke_interactive`:
-      - When debug logging is enabled, allocate a PTY pair, spawn
-        claude on the slave, run two copy loops on tasks, write a
-        delimited block (`<<<claude stdout>>>`) into the debug log
-        surrounding the live capture.
-      - When debug logging is disabled, behave exactly as today.
-    - Tests:
-      - Unit-test the byte-tee logic against an in-memory writer and a
-        canned input buffer (no real PTY required).
-      - Integration test that exercises the PTY path with a minimal
-        fake claude shim that prints a known sequence and exits — assert
-        the debug log captures that sequence verbatim.
-    - Manual verification on the colleague's affected machine: run
-      with `RAVEL_DEBUG=1` (or whatever the existing toggle is), reproduce
-      the hang, attach the log to this task's Results.
+    - In `src/agent/pi.rs::invoke_interactive`, add an early branch:
+      when `debug_log::is_enabled()`, call
+      `pty_capture::run_pty_session("pi", &args, &cwd, "pi")` via
+      `spawn_blocking`, matching the pattern in `claude_code.rs`.
+    - Existing argv construction is shared; only the spawn mechanism differs.
+    - Update the log entry text to read `stdio: pty (full byte transcript
+      follows)` on the debug path, matching the claude path.
 
     ## Verification
 
-    - Normal (non-debug) work phase: TUI renders identically to current
-      behaviour, no behaviour change observable to the user.
-    - Debug-enabled work phase: TUI renders identically AND the debug
-      log file ends up containing the byte stream claude printed plus
-      the existing spawn metadata.
-    - Resize the terminal during a debug-enabled work phase: claude's
-      TUI re-flows correctly.
-
-    ## Dependencies
-
-    Best done after (or alongside)
-    `diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine`,
-    since the PTY capture is the diagnostic tool that diagnosis task
-    needs. If diagnosis ships first using ad-hoc tracing, this task
-    becomes the durable replacement.
-  results: |
-    ## What was built
-
-    Interactive PTY-capture path for the claude work-phase spawn, gated
-    behind `--debug`. When debug logging is enabled, ravel-lite now spawns
-    claude under a freshly-allocated pseudo-terminal instead of inheriting
-    stdio, and tees every byte flowing through the master end into the
-    embedding-debug log. When debug is off, the existing inherit-stdio
-    path is unchanged — no perturbation for normal users.
-
-    ### Files changed
-
-    - `Cargo.toml` — added `portable-pty = "0.9"` and `libc = "0.2"` as
-      direct dependencies. Both were transitive already; calling them out
-      as direct because `src/` now uses them.
-    - `src/agent/pty_capture.rs` — new module. Holds:
-      - `tee_to(reader, writer, tap)` — pure byte-copy primitive that
-        forwards every chunk to a writer while also handing it to a tap
-        closure. Three unit tests cover the empty-source, normal-flow,
-        and writer-error-propagation paths.
-      - `pump_stdin_with_shutdown(...)` — the parent→child copy loop.
-        Uses `libc::poll` with a 100ms timeout so the thread can wake on
-        a shared `AtomicBool` shutdown flag instead of blocking forever
-        in a `read` syscall after the child exits. Memory note
-        `spawn-blocking-does-not-cancel-cleanly-in-tokio-select` ruled
-        out the tokio + spawn_blocking pattern; an OS thread with a
-        poll-and-flag loop is the cancellable alternative.
-      - `drive_pty_io(pair, child, parent_in, parent_out, label)` —
-        inner orchestrator. Spawns three OS threads (stdout pump, stdin
-        pump, SIGWINCH forwarder), waits for the child, signals
-        shutdown, joins. Pub(crate) so the in-module integration tests
-        can drive it with synthetic stdin/stdout (test harnesses have no
-        controlling terminal).
-      - `run_pty_session(program, args, cwd, label)` — production entry.
-        Adds raw-mode toggling via a `RawModeGuard` (RAII via crossterm,
-        already a dep) and wires `io::stdin()` / `io::stdout()`. Two
-        integration tests run a real PTY against a fake-claude shell
-        shim and confirm both the byte-flow (text appears in the
-        captured writer) and the exit-status propagation path.
-      - `current_terminal_size()` — uses TIOCGWINSZ to size the PTY to
-        the parent terminal; falls back to 24x80 when stdout isn't a tty
-        (test environments).
-    - `src/debug_log.rs` — new public `log_pty_chunk(label, direction,
-      bytes)` that appends `[ts] label:direction <rendered text>` to the
-      embedding-debug log. Bytes are rendered via a private
-      `render_pty_bytes` helper (also exposed `pub(crate)` for unit
-      tests): printable + UTF-8 multibyte pass through, newline / tab /
-      CR survive as-is so multi-line ANSI output stays readable, ESC
-      becomes `^[`, other 0x01-0x1F render as caret notation, DEL becomes
-      `^?`, invalid UTF-8 sequences become U+FFFD. Two new unit tests pin
-      the rendering contract.
-    - `src/agent/claude_code.rs::invoke_interactive` — adds an early
-      branch: when `debug_log::is_enabled()`, route through
-      `spawn_claude_via_pty` (a new private async helper that calls the
-      blocking `pty_capture::run_pty_session` via `spawn_blocking`).
-      Existing argv construction is shared; only the spawn mechanism
-      differs. Existing log entry text adjusted to read `stdio: pty (full
-      byte transcript follows)` on the debug path.
-    - `src/agent/mod.rs` — added `pub mod pty_capture;`.
-
-    ## What worked
-
-    - Full `cargo test` suite passes (700+ tests across lib + 14 integration
-      test files); the five new tests in `agent::pty_capture::tests`
-      include two real-PTY integration tests that fork a shell shim,
-      drive the bytes through `drive_pty_io`, and assert on captured
-      output and exit status.
-    - `cargo build` clean under `[lints.rust] warnings = "deny"` — no
-      warnings, no clippy suggestions surfaced during dev iterations.
-    - The MasterPty `Send`-but-not-`Sync` constraint forced a clean
-      design: the master is moved (not Arc'd) into the resize thread,
-      which holds it alive until shutdown. The reader and writer were
-      cloned/taken before the move and live in their own threads
-      independently.
-    - The drift-detection tests
-      (`embedded_defaults_drift`, `init.rs` registration walk) still
-      pass — no `defaults/` files were added, no embedded-path drift
-      introduced.
-
-    ## What didn't / what was deferred
-
-    - **No end-to-end test of `log_pty_chunk` writing to the actual debug
-      log file.** `debug_log::enable()` is a `OnceLock` singleton (per
-      the existing module doc, deliberately so to avoid threading
-      `Option<Arc<DebugLog>>` through the call graph), which makes
-      per-test isolation expensive. The renderer is unit-tested in
-      isolation; the production wiring (claude_code → run_pty_session →
-      drive_pty_io → tee_to → log_pty_chunk) is covered by the existing
-      unit tests at each layer rather than as one e2e assertion.
-    - **No SIGWINCH unit test.** Sending a real SIGWINCH from a test
-      would interact with the test runner's own terminal handling. The
-      resize thread's logic is straightforward (atomic flag set by
-      signal handler, polled at 100ms intervals, calls `master.resize`
-      with the current `TIOCGWINSZ` value); manual verification at the
-      next debug-enabled live run is the right way to confirm reflow.
-    - **Pi agent's `invoke_interactive` not converted.** The task focused
-      specifically on the claude TUI hang. `pi.rs` would benefit from
-      the same treatment (the `stdio: inherited (no transcript
-      available)` line is identical there), but doing so is a follow-up
-      task — this implementation deliberately scoped to claude.
-
-    ## What this suggests next
-
-    - **Live verification with `--debug` on a real claude run.** Confirm:
-      (a) TUI renders identically to the inherit path,
-      (b) `/tmp/ravel-embedding-debug.log` contains a `child→parent` byte
-      stream covering the full session,
-      (c) terminal resize during the session causes claude's TUI to
-      re-flow correctly. This is the "Manual verification on the
-      colleague's affected machine" step from the task brief and is the
-      natural next-cycle activity for the dependent task
-      `diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine`.
-    - **Promote pi.rs to PTY-capture parity** if the diagnostic value
-      proves out. Same shape, smaller patch (just call
-      `pty_capture::run_pty_session("pi", ...)` from the debug branch
-      in `pi.rs::invoke_interactive`).
-    - **Distilled-memory candidates** for reflect to consider: the
-      MasterPty `Send`-but-not-`Sync` design constraint, the
-      `libc::poll` + AtomicBool shutdown pattern as the cancellable
-      alternative to `spawn_blocking` (already in memory but the new
-      call site is a concrete instance), and the
-      `pub(crate) drive_pty_io` factoring that lets in-module tests
-      bypass terminal-mode setup.
+    - `cargo test` passes (all PTY-capture unit/integration tests still
+      pass; the pi tests are unaffected because none exercise the debug path).
+    - Non-debug pi invocation: TUI renders identically, no behaviour change.
+    - Debug-enabled pi invocation: TUI renders identically AND debug log
+      captures the pi byte stream.
