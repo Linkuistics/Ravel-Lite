@@ -16,6 +16,7 @@ use super::common::{
     truncate_snippet,
 };
 use crate::config::load_tokens;
+use crate::init::{embedded_entries_with_prefix, require_embedded};
 use crate::format::{
     FormattedOutput, Intent, Span, Style, StyledLine, ToolCall, clean_tool_name,
     extract_tool_detail, format_result_text, format_tool_call,
@@ -147,18 +148,17 @@ impl PiAgent {
         Self { config, config_root }
     }
 
-    /// Load a pi prompt file and run it through the shared
-    /// `substitute_tokens` pipeline. Going through the pipeline (instead
-    /// of ad-hoc `str::replace`) means any unresolved `{{NAME}}` token in
-    /// the prompt fails loudly at load time — the `{{MEMORY_DIR}}` bug
-    /// originally slipped past because this file did its own string
-    /// replacement and never ran the guard regex.
+    /// Load a pi prompt from the embedded set and run it through the
+    /// shared `substitute_tokens` pipeline. Going through the pipeline
+    /// (instead of ad-hoc `str::replace`) means any unresolved
+    /// `{{NAME}}` token fails loudly at load time — the
+    /// `{{MEMORY_DIR}}` bug originally slipped past because this file
+    /// did its own string replacement and never ran the guard regex.
     fn load_prompt_file(&self, name: &str, ctx: &PlanContext) -> Result<String> {
-        let path = Path::new(&self.config_root).join("agents/pi/prompts").join(name);
-        let content = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read {}", path.display()))?;
-        crate::prompt::substitute_tokens(&content, ctx, &HashMap::new())
-            .with_context(|| format!("Failed to substitute tokens in {}", path.display()))
+        let rel = format!("agents/pi/prompts/{name}");
+        let content = require_embedded(&rel)?;
+        crate::prompt::substitute_tokens(content, ctx, &HashMap::new())
+            .with_context(|| format!("Failed to substitute tokens in embedded {rel}"))
     }
 
     fn build_headless_args(&self, prompt: &str, phase: LlmPhase, system_prompt: &str) -> Vec<String> {
@@ -334,42 +334,24 @@ impl Agent for PiAgent {
             }
         }
 
-        // 4. Deploy subagent definitions to <project_dir>/.pi/agents/.
-        let subagents_src = Path::new(&self.config_root).join("agents/pi/subagents");
-        if !subagents_src.exists() {
-            return Ok(());
-        }
-
+        // 4. Deploy subagent definitions to <project_dir>/.pi/agents/
+        // straight from the embedded set. The runtime never reads
+        // `<config>/agents/pi/subagents/` from disk — registration in
+        // `EMBEDDED_FILES` is the only source of truth.
         let dest_dir = Path::new(&ctx.project_dir).join(".pi/agents");
         fs::create_dir_all(&dest_dir)
             .with_context(|| format!("Failed to create {}", dest_dir.display()))?;
 
-        let entries = fs::read_dir(&subagents_src)
-            .with_context(|| format!("Failed to read subagents dir {}", subagents_src.display()))?;
-
-        for entry in entries {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    eprintln!("Warning: failed to read subagents dir entry: {e}");
-                    continue;
-                }
-            };
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+        let prefix = "agents/pi/subagents/";
+        for (rel_path, raw) in embedded_entries_with_prefix(prefix) {
+            let filename = rel_path.trim_start_matches(prefix);
+            if !filename.ends_with(".md") {
                 continue;
             }
-            let filename = match path.file_name().and_then(|n| n.to_str()) {
-                Some(n) => n.to_string(),
-                None => continue,
-            };
 
             let process = || -> Result<()> {
-                let raw = fs::read_to_string(&path)
-                    .with_context(|| format!("Failed to read {}", path.display()))?;
-
-                let caps = FRONTMATTER_RE.captures(&raw).with_context(|| {
-                    format!("No YAML frontmatter found in {}", path.display())
+                let caps = FRONTMATTER_RE.captures(raw).with_context(|| {
+                    format!("No YAML frontmatter found in embedded {rel_path}")
                 })?;
                 let fm_str = caps.get(1).unwrap().as_str();
                 let body = caps.get(2).unwrap().as_str();
@@ -383,8 +365,9 @@ impl Agent for PiAgent {
                     thinking: Option<String>,
                 }
 
-                let fm: SkillFrontmatter = serde_yaml::from_str(fm_str)
-                    .with_context(|| format!("Failed to parse frontmatter in {}", path.display()))?;
+                let fm: SkillFrontmatter = serde_yaml::from_str(fm_str).with_context(|| {
+                    format!("Failed to parse frontmatter in embedded {rel_path}")
+                })?;
 
                 let mut out = format!("---\nname: {}\ndescription: {}\n", fm.name, fm.description);
                 if let Some(tools) = &fm.tools {
@@ -399,7 +382,7 @@ impl Agent for PiAgent {
                 out.push_str("---\n\n");
                 out.push_str(body);
 
-                let dest = dest_dir.join(&filename);
+                let dest = dest_dir.join(filename);
                 fs::write(&dest, &out)
                     .with_context(|| format!("Failed to write {}", dest.display()))?;
                 Ok(())
@@ -486,23 +469,6 @@ mod tests {
         assert_eq!(snippet, "not json at all");
     }
 
-    fn agent_with_prompts(prompts: &[(&str, &str)]) -> (tempfile::TempDir, PiAgent) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let prompts_dir = dir.path().join("agents/pi/prompts");
-        fs::create_dir_all(&prompts_dir).unwrap();
-        for (name, body) in prompts {
-            fs::write(prompts_dir.join(name), body).unwrap();
-        }
-        let config = AgentConfig {
-            models: HashMap::new(),
-            thinking: HashMap::new(),
-            params: HashMap::new(),
-            provider: None,
-        };
-        let agent = PiAgent::new(config, dir.path().to_string_lossy().to_string());
-        (dir, agent)
-    }
-
     fn test_plan_ctx() -> PlanContext {
         PlanContext {
             plan_dir: "/plans/my-plan".to_string(),
@@ -513,57 +479,59 @@ mod tests {
         }
     }
 
-    #[test]
-    fn load_prompt_substitutes_plan_token() {
-        let (_dir, agent) = agent_with_prompts(&[(
-            "memory-prompt.md",
-            "Memory lives at {{PLAN}}/auto-memory.",
-        )]);
-        let out = agent.load_prompt_file("memory-prompt.md", &test_plan_ctx()).unwrap();
-        assert_eq!(out, "Memory lives at /plans/my-plan/auto-memory.");
+    fn pi_agent_for_test() -> PiAgent {
+        let config = AgentConfig {
+            models: HashMap::new(),
+            thinking: HashMap::new(),
+            params: HashMap::new(),
+            provider: None,
+        };
+        PiAgent::new(config, "/unused".to_string())
     }
 
     #[test]
-    fn load_prompt_fails_on_unresolved_token() {
-        // Regression guard: a new `{{X}}` slipping into a pi prompt must
-        // fail at load time. Before routing through `substitute_tokens`,
-        // the literal token reached the LLM unchanged — that is how the
-        // `{{MEMORY_DIR}}` bug went undetected.
-        let (_dir, agent) = agent_with_prompts(&[(
-            "memory-prompt.md",
-            "dangling {{MEMORY_DIR}} token",
-        )]);
+    fn load_prompt_returns_embedded_and_substitutes_tokens() {
+        // `load_prompt_file` must source from the embedded set (no
+        // `<config>/agents/pi/prompts/` disk read). The shipped
+        // `memory-prompt.md` references `{{PLAN}}`, which substitution
+        // resolves to the plan_dir from the PlanContext.
+        let agent = pi_agent_for_test();
+        let out = agent.load_prompt_file("memory-prompt.md", &test_plan_ctx()).unwrap();
+        assert!(
+            out.contains("/plans/my-plan"),
+            "{{PLAN}} should be substituted with plan_dir; got: {out}"
+        );
+        assert!(
+            !out.contains("{{PLAN}}"),
+            "no unresolved {{PLAN}} should remain after substitution"
+        );
+    }
+
+    #[test]
+    fn load_prompt_fails_when_path_not_registered() {
+        // Drift guard: asking for a non-shipped pi prompt errors with
+        // a deterministic message naming the unregistered path.
+        let agent = pi_agent_for_test();
         let err = agent
-            .load_prompt_file("memory-prompt.md", &test_plan_ctx())
-            .expect_err("unresolved token should fail to load");
+            .load_prompt_file("does-not-exist.md", &test_plan_ctx())
+            .expect_err("unregistered embedded path should error");
         let msg = format!("{err:#}");
-        assert!(msg.contains("{{MEMORY_DIR}}"), "error should name the token: {msg}");
+        assert!(msg.contains("agents/pi/prompts/does-not-exist.md"), "msg: {msg}");
     }
 
     #[test]
     fn shipped_pi_prompts_have_no_dangling_tokens() {
-        // Drift guard: every on-disk defaults/agents/pi/prompts/*.md must
-        // substitute cleanly against a realistic PlanContext. A future
-        // `{{X}}` added to a prompt without a matching token source will
-        // fail here rather than at agent invocation time.
-        let prompts_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("defaults")
-            .join("agents")
-            .join("pi")
-            .join("prompts");
-        let entries: Vec<_> = fs::read_dir(&prompts_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("md"))
-            .collect();
-        assert!(!entries.is_empty(), "expected at least one pi prompt on disk");
-
+        // Drift guard: every embedded pi prompt must substitute cleanly
+        // against a realistic PlanContext. A future `{{X}}` added to a
+        // prompt without a matching token source will fail here rather
+        // than at agent invocation time.
         let ctx = test_plan_ctx();
-        for entry in entries {
-            let path = entry.path();
-            let body = fs::read_to_string(&path).unwrap();
-            crate::prompt::substitute_tokens(&body, &ctx, &HashMap::new())
-                .unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
+        let mut count = 0;
+        for (rel, body) in embedded_entries_with_prefix("agents/pi/prompts/") {
+            crate::prompt::substitute_tokens(body, &ctx, &HashMap::new())
+                .unwrap_or_else(|e| panic!("{rel}: {e:#}"));
+            count += 1;
         }
+        assert!(count > 0, "expected at least one embedded pi prompt");
     }
 }

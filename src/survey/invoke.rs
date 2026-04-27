@@ -144,7 +144,6 @@ pub async fn compute_survey_response(
     if let Some(prior) = prior.as_ref() {
         if !force {
             return run_incremental_survey(
-                config_root,
                 &model,
                 timeout_override_secs,
                 prior,
@@ -156,7 +155,6 @@ pub async fn compute_survey_response(
 
     // Cold path: no prior, OR `--force` overrides the incremental path.
     run_cold_survey(
-        config_root,
         &model,
         timeout_override_secs,
         &all_plans,
@@ -165,12 +163,11 @@ pub async fn compute_survey_response(
 }
 
 async fn run_cold_survey(
-    config_root: &Path,
     model: &str,
     timeout_override_secs: Option<u64>,
     all_plans: &[PlanSnapshot],
 ) -> Result<SurveyResponse> {
-    let survey_prompt = load_survey_prompt(config_root)?;
+    let survey_prompt = load_survey_prompt()?;
     let plan_input = render_survey_input(all_plans);
     let full_prompt = format!("{survey_prompt}\n\n---\n{plan_input}");
 
@@ -230,7 +227,6 @@ where
 }
 
 async fn run_incremental_survey(
-    config_root: &Path,
     model: &str,
     timeout_override_secs: Option<u64>,
     prior: &SurveyResponse,
@@ -273,7 +269,7 @@ async fn run_incremental_survey(
 
     let to_analyse = classification.plans_to_analyse();
     let prior_yaml = emit_survey_yaml(prior)?;
-    let prompt_template = load_survey_incremental_prompt(config_root)?;
+    let prompt_template = load_survey_incremental_prompt()?;
     let plan_input =
         render_survey_input_incremental(&to_analyse, &prior_yaml, &classification.removed_keys);
     let full_prompt = format!("{prompt_template}\n\n---\n{plan_input}");

@@ -118,15 +118,16 @@ pub struct PlanContext {
 }
 
 /// Top-level shared config (config.yaml).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct SharedConfig {
     pub agent: String,
     pub headroom: usize,
 }
 
 /// Per-agent config (agents/<name>/config.yaml).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct AgentConfig {
+    #[serde(default)]
     pub models: HashMap<String, String>,
     #[serde(default)]
     pub thinking: HashMap<String, String>,

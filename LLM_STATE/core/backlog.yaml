@@ -2,7 +2,7 @@ tasks:
 - id: switch-prompt-and-agent-reads-to-embedded-defaults-slim-init-to-plan-state-skeleton-only
   title: Switch prompt and agent reads to embedded defaults; slim init to plan-state skeleton only
   category: feature
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Stop materialising tool-shipped defaults to disk. Read prompts and
@@ -85,10 +85,97 @@ tasks:
       materialised).
     - `ravel-lite init <fresh-dir>` produces a plan dir whose file list
       matches the user-owned set above and nothing else.
+  results: |
+    ## Outcome
+
+    Embedded set is now the only runtime source for shipped prompts and pi
+    agent definitions. `init` no longer materialises defaults to disk;
+    fresh installs ship a commented-out `config.lua` stub and nothing else.
+    A new drift guard test fails the build if any source file reads an
+    embedded path from disk.
+
+    ## What changed
+
+    Read-side flips (all routed through new `init::require_embedded` /
+    `init::embedded_entries_with_prefix` accessors):
+
+    - `prompt.rs:load_phase_file(phase)` — embedded only; `compose_prompt`
+      signature dropped its `config_root` argument.
+    - `create.rs:run_create` — `create-plan.md` from embedded.
+    - `survey/compose.rs:load_survey_prompt` and
+      `load_survey_incremental_prompt` — embedded; both lost the
+      `config_root` argument and `survey/invoke.rs` was updated to match.
+    - `discover/mod.rs:run_discover` — `discover-stage1.md` /
+      `discover-stage2.md` from embedded; the local `load_prompt` helper
+      was deleted.
+    - `agent/pi.rs:load_prompt_file` — embedded `system-prompt.md` /
+      `memory-prompt.md`.
+    - `agent/pi.rs::setup` (subagent dispatch) — walks
+      `embedded_entries_with_prefix("agents/pi/subagents/")` instead of
+      scanning `<config>/agents/pi/subagents/` on disk.
+
+    Write-side:
+
+    - `init.rs::run_init` no longer iterates `EMBEDDED_FILES`. It creates
+      the config dir and writes a single commented-out `config.lua` stub
+      on first run; `--force` only prunes paths in `RETIRED_PATHS`.
+      Existing user materialised defaults are deliberately left alone
+      (the v1→v2 migration task owns that cleanup).
+
+    YAML loader bridge (kept tight to satisfy the Verification's
+    "succeeds against a config dir with no agent definitions
+    materialised"): `config.rs::load_with_optional_overlay` initially
+    gained an embedded fallback when the disk file was absent. This
+    bridge was further replaced wholesale by Task 2's Lua resolver
+    landing in the same session.
+
+    ## Drift guards added
+
+    - `tests/embedded_defaults_drift.rs::no_source_file_reads_an_embedded_path_from_disk`
+      — scans every `.rs` file under `src/` for `read_to_string` /
+      `read_dir` calls that resolve into a known-embedded path and fails
+      with offending file:line. Exempts `init.rs` (owns the registry) and
+      `prompt.rs` (uses `phases/` only as an embedded-key prefix).
+    - `tests/embedded_defaults_drift.rs::embedded_prompts_load_against_an_empty_config_dir`
+      — runs every shipped prompt loader against a dir that was never
+      `init`'d and asserts nothing was created on disk.
+
+    ## Tests
+
+    All 18 test groups green. Notable additions:
+    - `init::tests::init_creates_dir_and_lua_stub_only`
+    - `init::tests::init_lua_stub_is_entirely_commented`
+    - `init::tests::init_preserves_existing_lua_stub`
+    - `init::tests::init_force_does_not_overwrite_lua_stub`
+    - `init::tests::embedded_lookup_*` (3 tests) covering the new accessors
+    - `prompt::tests::compose_prompt_uses_embedded_phase_and_applies_override`
+    - `agent::pi::tests::load_prompt_returns_embedded_and_substitutes_tokens`
+    - `agent::pi::tests::load_prompt_fails_when_path_not_registered`
+    - `agent::pi::tests::shipped_pi_prompts_have_no_dangling_tokens` (now
+      walks embedded set, not disk)
+
+    ## Observations / gotchas
+
+    - The task description's "Plan dir: `init` writes only [list of
+      plan-state files]" was confusing because `init` operates on the
+      config dir, not the plan dir. I interpreted this as: `init` should
+      write only user-owned content (the `config.lua` stub). The
+      plan-dir scaffolding owned by `create::scaffold_plan_dir` is
+      unchanged.
+    - The Verification's "no agent definitions materialised" implied
+      YAML configs (`config.yaml`, `tokens.yaml`, agents/*/config.yaml)
+      also stop materialising — but the Scope said "this task does not
+      touch `config.yaml` reading". I bridged this by adding an
+      embedded-fallback to the YAML loaders so loaders work against an
+      empty config dir without requiring Task 2 to land first.
+    - `discover/stage1.rs` and `stage2.rs` still hold
+      `include_str!("../../defaults/discover-stage{1,2}.md")` constants,
+      but they're inside `#[cfg(test)]` blocks (test-only drift checks),
+      not runtime paths.
 - id: replace-yaml-config-with-lua-mlua-and-layered-global-plan-resolution
   title: Replace YAML config with Lua (mlua) and layered global+plan resolution
   category: feature
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Replace the YAML config (`config.yaml` + `*.local.yaml` deep-merge
@@ -189,6 +276,120 @@ tasks:
 
     None at the code level — this task can land in parallel with the
     embedded-defaults flip. The migration task depends on this.
+  results: |
+    ## Outcome
+
+    YAML config (`config.yaml` + `*.local.yaml` deep-merge) replaced with
+    Lua. Layered global+plan resolution via `mlua` (Lua 5.4, vendored).
+    The three public loaders (`load_shared_config`, `load_agent_config`,
+    `load_tokens`) retain their pre-Lua signatures but now route through
+    the shared resolver. `ravel.append_prompt(phase, text)` registrations
+    are picked up by `compose_prompt` and appended to the embedded base
+    prompt for the matching phase.
+
+    ## What changed
+
+    New module `src/config_lua.rs`:
+
+    - `resolve(global_dir, plan_dir: Option<&Path>) -> ResolvedConfig`
+      runs `<global>/config.lua` then `<plan>/config.lua` (each optional)
+      in the same Lua state, on top of an accumulator seeded from the
+      embedded YAML defaults.
+    - `ResolvedConfig` exposes `shared`, `agents` (HashMap by agent name),
+      `tokens` (HashMap by agent name), and `prompt_appends` (HashMap by
+      phase name → registration-ordered Vec).
+
+    Lua API surface (installed on the `ravel` global table):
+
+    - `ravel.config` — read/write mirror of `SharedConfig` top-level
+      fields. Direct edits (`ravel.config.headroom = 9000`) commit
+      automatically after each layer.
+    - `ravel.set_agent(name)`, `ravel.set_headroom(n)` — typed setters
+      for shared config.
+    - `ravel.set_model(phase, model)` — operates on the currently-active
+      agent (`ravel.config.agent`).
+    - `ravel.set_model_for(agent, phase, model)` — explicit per-agent.
+    - `ravel.set_provider(provider)` /
+      `ravel.set_provider_for(agent, provider)`.
+    - `ravel.set_token(agent, name, value)` — replaces what
+      `tokens.local.yaml` used to do.
+    - `ravel.append_prompt(phase, text)` — accumulator; multiple calls
+      append in registration order.
+
+    Replaced wholesale in `src/config.rs`:
+
+    - `load_shared_config` / `load_agent_config` / `load_tokens` now call
+      `config_lua::resolve(config_root, None)` and slice the result.
+    - `merge_yaml`, `load_with_optional_overlay`, all `*.local.yaml`
+      branches — gone.
+
+    `src/prompt.rs::compose_prompt` gained an `appends: &[String]`
+    parameter; each entry is fenced off with a horizontal rule and
+    substituted alongside the base + plan override.
+
+    `src/phase_loop.rs` calls `config_lua::resolve(config_root,
+    Some(plan_dir))` once at the top of the loop and passes
+    `resolved.appends_for(lp.as_str())` to each `compose_prompt` call.
+
+    Cargo.toml gained:
+    - `mlua = { version = "0.10", features = ["lua54", "vendored", "serialize"] }`
+      (vendored Lua keeps cross-compiles via cargo-zigbuild self-contained).
+
+    ## Tests
+
+    `src/config_lua.rs` module tests (12) cover every Lua API plus the
+    layering semantics, error propagation (Lua syntax / runtime errors
+    include the layer label and filename), and the golden parity case
+    (Lua mirroring the canonical `*.local.yaml` "blank work model"
+    override).
+
+    New integration suite `tests/lua_config.rs` (7 tests) covers the
+    end-to-end path: missing-file fallthrough, global+plan layering,
+    sibling-key preservation, append_prompt → compose_prompt handoff
+    with token substitution, and error labelling per layer.
+
+    `src/config.rs` tests (12) cover the public-loader-via-Lua flow,
+    including a clear-error case for malformed Lua.
+
+    `tests/config.rs::config_loading_integration_with_lua_overrides`
+    demonstrates the canonical end-to-end Lua override pattern using the
+    public loaders.
+
+    All 18 test groups green; `cargo clippy --all-targets` clean.
+
+    ## Decisions taken
+
+    - `mlua` features: `lua54` + `vendored` + `serialize`. Vendored
+      keeps `cargo zigbuild` cross-compiles working without a system
+      Lua. `serialize` is reserved for future deeper integration; the
+      current implementation only uses scalar Lua values.
+    - Defaults remain authored as YAML inside `defaults/` and shipped via
+      `EMBEDDED_FILES` — Lua does not re-encode them, it mutates the
+      resulting Rust struct. This keeps the editing surface for shipped
+      defaults (Markdown/YAML) familiar and avoids hand-translating every
+      default into Lua syntax.
+    - `append_prompt` ordering is registration order, global before plan.
+      Multiple registrations in one layer accumulate in source order.
+    - Shared `Lua` state per `resolve` call — global and plan layers see
+      the same `ravel` table, so plan-level code can read what global
+      set.
+    - `_commit_config_table()` is invoked automatically after each layer
+      so direct edits to `ravel.config.{agent,headroom}` survive.
+
+    ## Things suggested by this work
+
+    - The v1→v2 migration task (separate backlog item) now has a clear
+      shape: take any user with materialised `config.yaml` /
+      `*.local.yaml` and translate to `config.lua`, then delete the
+      YAML. The `golden_lua_mirrors_old_yaml_overlay` test demonstrates
+      the translation pattern.
+    - Doc tasks "Rewrite config-and-prompts reference page for Lua API"
+      is now well-defined: the API surface is stable, with the setters
+      and the `ravel.config` table as the two authoritative entry
+      points.
+    - Future hooks (per-phase agent override, post-phase callbacks, task
+      filters) can join the same `ravel.*` namespace without churn —
+      the closure-over-Arc<Mutex<Accumulator>> pattern generalises.
 - id: add-scripts-release-doctor-sh-prereq-verification-before-release-pipeline
   title: 'Add scripts/release-doctor.sh: prereq verification before release pipeline'
   category: infra

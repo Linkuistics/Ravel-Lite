@@ -953,3 +953,16 @@ sessions:
     - What this suggests next: the two remaining substantial feature tasks
       (embedded-defaults switch and lua/mlua config replacement) are each their own full
       work cycle; neither should be bundled into a tail of a smaller task.
+- id: session-66
+  timestamp: 2026-04-27T04:53:40Z
+  phase: work
+  body: |
+    ### Session 66 (2026-04-27T04:53:40Z) — Replace disk-read defaults with embedded set and Lua config
+
+    - Attempted and completed two tightly coupled tasks in one session: switching all runtime reads of shipped prompts/agent-definitions from disk to the embedded binary set, and replacing the YAML+local-overlay config model with a layered Lua config.
+    - Both tasks shipped cleanly. All call sites across `src/prompt.rs`, `src/agent/pi.rs`, `src/survey/compose.rs`, and `src/phase_loop.rs` now route through `init::require_embedded` / `init::embedded_entries_with_prefix` rather than `fs::read_to_string`. `src/config.rs` lost the `merge_yaml` / `load_with_optional_overlay` machinery; all loaders delegate to `config_lua::resolve`.
+    - New `src/config_lua.rs` (565 lines) implements the `ravel` Lua global table (`set_agent`, `set_headroom`, `set_model_for`, `set_token`, `append_prompt`, `config` table) backed by `mlua` (vendored Lua 5.4). Global + plan layers resolve in order; `append_prompt` accumulates across both layers in registration order.
+    - `src/init.rs` no longer materialises shipped defaults; `run_init` now writes only a commented-out `config.lua` stub and prunes `RETIRED_PATHS`. The `--force` flag still prunes but has nothing to refresh.
+    - Two new integration test files: `tests/lua_config.rs` (Lua API surface tests) and `tests/embedded_defaults_drift.rs` (drift guard ensuring no source file reads an embedded path from disk).
+    - The previous test suite in `tests/config.rs` was rewritten for the new surface: YAML-fixture-based tests removed, replaced with embedded-defaults and Lua-override tests.
+    - What this suggests next: the v1→v2 migration task is now unblocked (both its dependencies are done); it can be picked up in the next cycle. The drift guard test in `tests/embedded_defaults_drift.rs` should be reviewed to confirm its coverage is complete.

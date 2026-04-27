@@ -3,19 +3,17 @@
 // Plan → bundle → prompt. Renders discovered plans as a single
 // Markdown block and loads the survey prompt template.
 
-use std::fs;
-use std::path::Path;
-
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use super::discover::PlanSnapshot;
+use crate::init::require_embedded;
 
-/// Relative path to the cold survey prompt template inside a config dir.
+/// Embedded path key for the cold survey prompt template.
 pub const SURVEY_PROMPT_PATH: &str = "survey.md";
 
-/// Relative path to the incremental (warm) survey prompt, used when
-/// `run_survey` is called with a `--prior` file and has a non-empty
-/// delta to analyse.
+/// Embedded path key for the incremental (warm) survey prompt, used
+/// when `run_survey` is called with a `--prior` file and has a
+/// non-empty delta to analyse.
 pub const SURVEY_INCREMENTAL_PROMPT_PATH: &str = "survey-incremental.md";
 
 /// Render all discovered plans as a single Markdown block to append
@@ -99,26 +97,19 @@ fn render_plan_blocks<'a>(plans: impl Iterator<Item = &'a PlanSnapshot>) -> Stri
     out
 }
 
-/// Read the cold survey prompt template from `<config_root>/survey.md`.
-pub fn load_survey_prompt(config_root: &Path) -> Result<String> {
-    let path = config_root.join(SURVEY_PROMPT_PATH);
-    fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read survey prompt at {}", path.display()))
+/// Load the cold survey prompt template from the embedded set.
+pub fn load_survey_prompt() -> Result<String> {
+    Ok(require_embedded(SURVEY_PROMPT_PATH)?.to_string())
 }
 
-/// Read the incremental survey prompt template from
-/// `<config_root>/survey-incremental.md`.
-pub fn load_survey_incremental_prompt(config_root: &Path) -> Result<String> {
-    let path = config_root.join(SURVEY_INCREMENTAL_PROMPT_PATH);
-    fs::read_to_string(&path).with_context(|| {
-        format!("Failed to read incremental survey prompt at {}", path.display())
-    })
+/// Load the incremental survey prompt template from the embedded set.
+pub fn load_survey_incremental_prompt() -> Result<String> {
+    Ok(require_embedded(SURVEY_INCREMENTAL_PROMPT_PATH)?.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     fn snap(
         project: &str,
@@ -225,33 +216,17 @@ mod tests {
     }
 
     #[test]
-    fn load_survey_incremental_prompt_reads_from_config_root() {
-        let tmp = TempDir::new().unwrap();
-        fs::write(tmp.path().join("survey-incremental.md"), "warm prompt").unwrap();
-        assert_eq!(
-            load_survey_incremental_prompt(tmp.path()).unwrap(),
-            "warm prompt"
+    fn load_survey_prompt_returns_embedded_default() {
+        let body = load_survey_prompt().unwrap();
+        assert!(!body.trim().is_empty(), "embedded survey prompt is empty");
+    }
+
+    #[test]
+    fn load_survey_incremental_prompt_returns_embedded_default() {
+        let body = load_survey_incremental_prompt().unwrap();
+        assert!(
+            !body.trim().is_empty(),
+            "embedded incremental survey prompt is empty"
         );
-    }
-
-    #[test]
-    fn load_survey_incremental_prompt_errors_when_missing() {
-        let tmp = TempDir::new().unwrap();
-        let err = load_survey_incremental_prompt(tmp.path()).unwrap_err();
-        assert!(format!("{err:#}").contains("survey-incremental.md"));
-    }
-
-    #[test]
-    fn load_survey_prompt_reads_from_config_root() {
-        let tmp = TempDir::new().unwrap();
-        fs::write(tmp.path().join("survey.md"), "hello prompt").unwrap();
-        assert_eq!(load_survey_prompt(tmp.path()).unwrap(), "hello prompt");
-    }
-
-    #[test]
-    fn load_survey_prompt_errors_when_missing() {
-        let tmp = TempDir::new().unwrap();
-        let err = load_survey_prompt(tmp.path()).unwrap_err();
-        assert!(format!("{err:#}").contains("survey.md"));
     }
 }

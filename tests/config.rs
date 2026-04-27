@@ -3,23 +3,20 @@ use std::fs;
 use tempfile::TempDir;
 
 #[test]
-fn config_loading_integration() {
+fn config_loading_integration_with_lua_overrides() {
+    // End-to-end check: a hand-authored `config.lua` flips agent,
+    // pins headroom, overrides a model, and overrides a token. The
+    // public loaders surface the resolved values as if they had been
+    // set in YAML — the same shape, just sourced through the Lua layer.
     let dir = TempDir::new().unwrap();
     let config_root = dir.path();
 
     fs::write(
-        config_root.join("config.yaml"),
-        "agent: claude-code\nheadroom: 1500\n",
-    )
-    .unwrap();
-    fs::create_dir_all(config_root.join("agents/claude-code")).unwrap();
-    fs::write(
-        config_root.join("agents/claude-code/config.yaml"),
-        "models:\n  work: claude-sonnet-4-6\n  reflect: claude-haiku-4-5\nparams:\n  work:\n    dangerous: true\n",
-    ).unwrap();
-    fs::write(
-        config_root.join("agents/claude-code/tokens.yaml"),
-        "TOOL_READ: Read\n",
+        config_root.join("config.lua"),
+        "ravel.set_agent('claude-code')\n\
+         ravel.set_headroom(1500)\n\
+         ravel.set_model_for('claude-code', 'work', 'claude-sonnet-4-6')\n\
+         ravel.set_token('claude-code', 'TOOL_READ', 'Read')\n",
     )
     .unwrap();
 
@@ -29,7 +26,6 @@ fn config_loading_integration() {
 
     let agent = ravel_lite::config::load_agent_config(config_root, "claude-code").unwrap();
     assert_eq!(agent.models.get("work").unwrap(), "claude-sonnet-4-6");
-    assert!(agent.params.get("work").unwrap().get("dangerous").is_some());
 
     let tokens = ravel_lite::config::load_tokens(config_root, "claude-code").unwrap();
     assert_eq!(tokens.get("TOOL_READ").unwrap(), "Read");
@@ -37,20 +33,17 @@ fn config_loading_integration() {
 
 #[test]
 fn embedded_defaults_are_valid() {
-    // init into a temp dir, then load every config with the real loaders.
-    // Catches regressions where a default file drifts and stops parsing.
-    let dir = TempDir::new().unwrap();
-    let target = dir.path().join("cfg");
-    ravel_lite::init::run_init(&target, false).unwrap();
+    // Validate every shipped default against the real loaders, but
+    // straight from the embedded set — disk materialisation is gone, so
+    // these must parse and resolve without `init` ever writing them.
+    use ravel_lite::init::require_embedded;
 
-    let shared = ravel_lite::config::load_shared_config(&target).unwrap();
-    assert!(!shared.agent.is_empty());
-    assert!(shared.headroom > 0);
-
-    let cc = ravel_lite::config::load_agent_config(&target, "claude-code").unwrap();
+    let cc: ravel_lite::types::AgentConfig =
+        serde_yaml::from_str(require_embedded("agents/claude-code/config.yaml").unwrap()).unwrap();
     assert!(cc.models.contains_key("reflect"));
 
-    let pi = ravel_lite::config::load_agent_config(&target, "pi").unwrap();
+    let pi: ravel_lite::types::AgentConfig =
+        serde_yaml::from_str(require_embedded("agents/pi/config.yaml").unwrap()).unwrap();
     assert!(pi.models.contains_key("reflect"));
 
     // Every LLM phase in every embedded agent config must declare a
@@ -71,11 +64,9 @@ fn embedded_defaults_are_valid() {
     }
 
     // Pi's `build_headless_args` falls back to `"anthropic"` when the
-    // config omits `provider`, which is an implicit drift source — a
-    // future provider change that only edits `PiAgent` will silently
-    // disagree with the shipped config. Require the embedded default to
-    // pin the value explicitly so the fallback only fires for
-    // deliberately-minimal user configs.
+    // config omits `provider`, which is an implicit drift source.
+    // Require the embedded default to pin the value explicitly so the
+    // fallback only fires for deliberately-minimal user configs.
     let pi_provider = pi
         .provider
         .as_ref()
@@ -85,44 +76,22 @@ fn embedded_defaults_are_valid() {
         "pi defaults have empty `provider`; pick an explicit default"
     );
 
+    let shared: ravel_lite::types::SharedConfig =
+        serde_yaml::from_str(require_embedded("config.yaml").unwrap()).unwrap();
+    assert!(!shared.agent.is_empty());
+    assert!(shared.headroom > 0);
+
     for phase in ["work", "analyse-work", "reflect", "dream", "triage"] {
-        let p = target.join("phases").join(format!("{phase}.md"));
-        assert!(p.exists(), "missing phase file: {}", p.display());
-        let body = fs::read_to_string(&p).unwrap();
-        assert!(!body.trim().is_empty(), "empty phase file: {}", p.display());
+        let body = require_embedded(&format!("phases/{phase}.md")).unwrap();
+        assert!(!body.trim().is_empty(), "empty phase file: {phase}");
     }
 
-    let survey = target.join("survey.md");
+    assert!(!ravel_lite::survey::load_survey_prompt().unwrap().trim().is_empty());
     assert!(
-        survey.exists(),
-        "missing survey prompt: {}",
-        survey.display()
+        !ravel_lite::survey::load_survey_incremental_prompt()
+            .unwrap()
+            .trim()
+            .is_empty()
     );
-    let body = fs::read_to_string(&survey).unwrap();
-    assert!(!body.trim().is_empty(), "empty survey prompt");
-    let loaded = ravel_lite::survey::load_survey_prompt(&target).unwrap();
-    assert_eq!(loaded, body);
-
-    let survey_incremental = target.join("survey-incremental.md");
-    assert!(
-        survey_incremental.exists(),
-        "missing incremental survey prompt: {}",
-        survey_incremental.display()
-    );
-    let incremental_body = fs::read_to_string(&survey_incremental).unwrap();
-    assert!(
-        !incremental_body.trim().is_empty(),
-        "empty incremental survey prompt"
-    );
-    let loaded_incremental = ravel_lite::survey::load_survey_incremental_prompt(&target).unwrap();
-    assert_eq!(loaded_incremental, incremental_body);
-
-    let create_plan = target.join("create-plan.md");
-    assert!(
-        create_plan.exists(),
-        "missing create-plan prompt: {}",
-        create_plan.display()
-    );
-    let create_body = fs::read_to_string(&create_plan).unwrap();
-    assert!(!create_body.trim().is_empty(), "empty create-plan prompt");
+    assert!(!require_embedded("create-plan.md").unwrap().trim().is_empty());
 }

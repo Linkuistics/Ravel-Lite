@@ -19,6 +19,7 @@ use anyhow::{Context, Result};
 use tokio::process::Command as TokioCommand;
 
 use crate::config::{load_agent_config, load_shared_config};
+use crate::init::require_embedded;
 use crate::state::filenames::{
     BACKLOG_FILENAME, DREAM_WORD_COUNT_FILENAME, MEMORY_FILENAME, PHASE_FILENAME,
 };
@@ -146,10 +147,8 @@ pub async fn run_create(config_root: &Path, plan_dir: PathBuf) -> Result<()> {
     // `state memory add` — no raw writes, no `state backlog init`.
     scaffold_plan_dir(&abs_plan_dir)?;
 
-    let prompt_path = config_root.join(CREATE_PLAN_PROMPT_PATH);
-    let template = fs::read_to_string(&prompt_path)
-        .with_context(|| format!("Failed to read create-plan prompt at {}", prompt_path.display()))?;
-    let prompt = compose_create_prompt(&template, &abs_plan_dir);
+    let template = require_embedded(CREATE_PLAN_PROMPT_PATH)?;
+    let prompt = compose_create_prompt(template, &abs_plan_dir);
 
     let agent_config = load_agent_config(config_root, &shared.agent)?;
     // Plan creation is work-phase-like reasoning; reuse the configured

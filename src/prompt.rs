@@ -4,9 +4,10 @@ use std::fs;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use regex::Regex;
 
+use crate::init::require_embedded;
 use crate::types::{LlmPhase, PlanContext};
 
 /// Matches leftover `{{NAME}}` placeholders (ASCII letters, digits, `_`).
@@ -67,11 +68,11 @@ pub fn substitute_tokens(
     Ok(result)
 }
 
-/// Load the phase prompt file from the config root.
-pub fn load_phase_file(config_root: &Path, phase: LlmPhase) -> Result<String> {
-    let path = config_root.join("phases").join(format!("{}.md", phase));
-    fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read phase file: {}", path.display()))
+/// Load the phase prompt from the embedded set. No disk read — the
+/// shipped default is the only source of truth.
+pub fn load_phase_file(phase: LlmPhase) -> Result<String> {
+    let rel = format!("phases/{}.md", phase);
+    Ok(require_embedded(&rel)?.to_string())
 }
 
 /// Load an optional plan-specific prompt override.
@@ -80,20 +81,35 @@ pub fn load_plan_override(plan_dir: &Path, phase: LlmPhase) -> Option<String> {
     fs::read_to_string(&path).ok()
 }
 
-/// Compose the full prompt for a phase.
+/// Compose the full prompt for a phase. The composition layers, in
+/// order:
+///   1. The embedded phase prompt (`load_phase_file`).
+///   2. The optional plan-level override at
+///      `<plan_dir>/prompt-<phase>.md` (`load_plan_override`).
+///   3. Any text registered via `ravel.append_prompt(phase, ...)` in
+///      a `config.lua` layer, in registration order.
+///
+/// Each section is separated by a horizontal rule so the LLM sees
+/// distinct blocks rather than a run-on prompt. Token substitution
+/// runs over the concatenated whole, so path tokens (`{{PLAN}}`,
+/// `{{PROJECT}}`, …) inside any layer resolve identically.
 pub fn compose_prompt(
-    config_root: &Path,
     phase: LlmPhase,
     ctx: &PlanContext,
     tokens: &HashMap<String, String>,
+    appends: &[String],
 ) -> Result<String> {
-    let base = load_phase_file(config_root, phase)?;
+    let base = load_phase_file(phase)?;
     let override_text = load_plan_override(Path::new(&ctx.plan_dir), phase);
 
     let mut prompt = base;
     if let Some(ov) = override_text {
         prompt.push_str("\n\n---\n\n");
         prompt.push_str(&ov);
+    }
+    for append in appends {
+        prompt.push_str("\n\n---\n\n");
+        prompt.push_str(append);
     }
 
     substitute_tokens(&prompt, ctx, tokens)
@@ -194,30 +210,73 @@ mod tests {
     }
 
     #[test]
-    fn compose_prompt_loads_and_substitutes() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let phases_dir = dir.path().join("phases");
-        std::fs::create_dir_all(&phases_dir).unwrap();
+    fn compose_prompt_uses_embedded_phase_and_applies_override() {
+        // The base phase prompt comes from the embedded set; no file
+        // is materialised for it. A plan-level `prompt-<phase>.md`
+        // (here for triage) is appended after a horizontal rule, and
+        // path tokens are substituted across the whole composition.
+        let plan_dir = tempfile::TempDir::new().unwrap();
         std::fs::write(
-            phases_dir.join("reflect.md"),
-            "Reflect on {{PLAN}}",
-        ).unwrap();
+            plan_dir.path().join("prompt-triage.md"),
+            "Local override for {{PLAN}}",
+        )
+        .unwrap();
 
         let ctx = PlanContext {
-            plan_dir: "/plans/test".to_string(),
+            plan_dir: plan_dir.path().to_string_lossy().to_string(),
             project_dir: "/project".to_string(),
             dev_root: "/dev".to_string(),
             related_plans: "".to_string(),
-            config_root: dir.path().to_string_lossy().to_string(),
+            config_root: "/config".to_string(),
         };
 
-        let result = compose_prompt(
-            dir.path(),
-            LlmPhase::Reflect,
-            &ctx,
-            &HashMap::new(),
-        ).unwrap();
+        let result = compose_prompt(LlmPhase::Triage, &ctx, &HashMap::new(), &[]).unwrap();
+        assert!(
+            result.contains("Local override for"),
+            "override must be appended"
+        );
+        assert!(
+            result.contains(plan_dir.path().to_string_lossy().as_ref()),
+            "{{{{PLAN}}}} token must be substituted in the override"
+        );
+    }
 
-        assert_eq!(result, "Reflect on /plans/test");
+    #[test]
+    fn compose_prompt_appends_lua_registered_text_in_order() {
+        // Two `ravel.append_prompt` calls (passed through here as a
+        // pre-collected slice) land after the embedded base in the
+        // order they were registered. Each is fenced off with a
+        // horizontal rule so the LLM can see the boundary.
+        let plan_dir = tempfile::TempDir::new().unwrap();
+        let ctx = PlanContext {
+            plan_dir: plan_dir.path().to_string_lossy().to_string(),
+            project_dir: "/project".to_string(),
+            dev_root: "/dev".to_string(),
+            related_plans: "".to_string(),
+            config_root: "/config".to_string(),
+        };
+        let appends = vec![
+            "First append for {{PLAN}}".to_string(),
+            "Second append".to_string(),
+        ];
+
+        let result =
+            compose_prompt(LlmPhase::Triage, &ctx, &HashMap::new(), &appends).unwrap();
+
+        let first_pos = result.find("First append for").expect("first append present");
+        let second_pos = result.find("Second append").expect("second append present");
+        assert!(
+            first_pos < second_pos,
+            "appends must keep registration order; first should precede second"
+        );
+        assert!(
+            result.contains(plan_dir.path().to_string_lossy().as_ref()),
+            "tokens inside appends must be substituted"
+        );
+        // The horizontal-rule fence ensures distinct sections.
+        assert!(
+            result.matches("\n\n---\n\n").count() >= appends.len(),
+            "each append should be fenced by a horizontal rule"
+        );
     }
 }

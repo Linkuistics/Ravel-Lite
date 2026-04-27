@@ -24,6 +24,13 @@ dirs = "5"
 sha2 = "0.10"
 pathdiff = "0.2"
 path-clean = "1"
+# Vendored Lua 5.4 keeps the build self-contained — no system Lua
+# required on dev or release machines, so cross-compiles via
+# cargo-zigbuild keep working unchanged. `serialize` enables
+# `mlua::Value <-> serde::Value` conversion for the YAML-anchored
+# config surface (Lua mutates a serde tree, Rust deserialises it
+# back into the existing AgentConfig / SharedConfig structs).
+mlua = { version = "0.10", features = ["lua54", "vendored", "serialize"] }
 
 [dev-dependencies]
 tempfile = "3"

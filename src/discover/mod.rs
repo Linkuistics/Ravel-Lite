@@ -22,6 +22,7 @@ pub mod stage2;
 pub mod tree_sha;
 
 use crate::config::{load_agent_config, load_shared_config};
+use crate::init::require_embedded;
 use crate::projects::{self, ProjectEntry};
 
 use self::schema::{ProposalsFile, Stage1Failure, SurfaceFile};
@@ -61,8 +62,8 @@ pub async fn run_discover(config_root: &Path, options: RunDiscoverOptions) -> Re
         .cloned()
         .unwrap_or_else(|| DEFAULT_DISCOVER_MODEL.to_string());
 
-    let stage1_prompt = load_prompt(config_root, "discover-stage1.md")?;
-    let stage2_prompt = load_prompt(config_root, "discover-stage2.md")?;
+    let stage1_prompt = require_embedded("discover-stage1.md")?.to_string();
+    let stage2_prompt = require_embedded("discover-stage2.md")?.to_string();
 
     let concurrency = options.concurrency.unwrap_or(DEFAULT_CONCURRENCY).max(1);
 
@@ -218,12 +219,6 @@ pub fn load_proposals(config_root: &Path) -> Result<ProposalsFile> {
         );
     }
     Ok(file)
-}
-
-fn load_prompt(config_root: &Path, filename: &str) -> Result<String> {
-    let path = config_root.join(filename);
-    std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read prompt {}", path.display()))
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 
 use crate::agent::Agent;
 use crate::backlog_transitions::backlog_transitions;
+use crate::config_lua;
 use crate::dream::{seed_dream_word_count_if_missing, should_dream, update_dream_word_count};
 use crate::format::phase_info;
 use crate::git::{
@@ -350,6 +351,14 @@ pub async fn phase_loop(
     let name = plan_name(plan_dir);
     let project = project_name(&ctx.project_dir);
 
+    // Resolve `<global>/config.lua` + `<plan>/config.lua` once per
+    // loop so every phase composition can pull plan-level
+    // `ravel.append_prompt` registrations without re-parsing Lua. The
+    // shared/agents/tokens slices of the resolved config are already
+    // surfaced through `agent.tokens()` and the global loaders, so
+    // here we just keep the appends.
+    let resolved = config_lua::resolve(config_root, Some(plan_dir))?;
+
     if let Err(e) = agent.setup(ctx).await {
         ui.log(&format!("  ✗  Setup failed: {e}"));
     }
@@ -403,9 +412,9 @@ pub async fn phase_loop(
                     // the "Never do in an LLM what you can do in code" rule.
                     let transitions = backlog_transitions(plan_dir, &baseline_sha);
                     augmented.insert("BACKLOG_TRANSITIONS".to_string(), transitions);
-                    compose_prompt(config_root, lp, ctx, &augmented)?
+                    compose_prompt(lp, ctx, &augmented, resolved.appends_for(lp.as_str()))?
                 } else {
-                    compose_prompt(config_root, lp, ctx, &tokens)?
+                    compose_prompt(lp, ctx, &tokens, resolved.appends_for(lp.as_str()))?
                 };
                 let tx = ui.sender();
 
