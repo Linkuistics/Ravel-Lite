@@ -1,6 +1,304 @@
+<div id="preamble">
+<div class="sectionbody">
 <div class="paragraph">
-<p>This page is a placeholder. When complete it will document how <code>config.yaml</code> and <code>*.local.yaml</code> overlays compose (the <code>load_with_optional_overlay</code> deep-merge), where embedded defaults sit, the canonical token-substitution path used by every prompt-loading route, and how to customise per-phase prompts and subagent definitions.</p>
+<p>Ravel-Lite ships a complete, working set of defaults baked into the binary. A user who never writes a single line of configuration gets a usable orchestrator. Configuration exists for one purpose: to <strong>mutate</strong> that embedded baseline — change the active agent, override a model for a specific phase, append extra guidance to a prompt — without having to fork the project.</p>
 </div>
 <div class="paragraph">
-<p>The corresponding backlog task is <code>reference-configuration-and-prompt-file-formats-config-yaml-local-yaml-overlays-embedded-defaults-token-substitution-per-phase-prompts</code>.</p>
+<p>Customisation goes through Lua. Both layers — global (one per workstation) and per-plan — are <code>config.lua</code> files that mutate a shared <code>ravel</code> table. There is no YAML overlay, no on-disk prompt files to keep in sync, and no "merge order" to memorise beyond <strong>setters last-write-wins, registrators accumulate</strong>.</p>
+</div>
+<div class="paragraph">
+<p>This page documents both layers, every public function on the <code>ravel</code> table, the contract of the prompt-append mechanism, and the once-per-install v1 → v2 migration that converts legacy YAML overlays to Lua on first run.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_where_the_layers_live">Where the layers live</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The two layers are read in fixed order on every invocation:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p><strong>Global</strong>: <code>&lt;config-dir&gt;/config.lua</code>. The <code>&lt;config-dir&gt;</code> is resolved by precedence:</p>
+<div class="olist loweralpha">
+<ol class="loweralpha" type="a">
+<li>
+<p><code>--config &lt;path&gt;</code> on the CLI, if supplied;</p>
+</li>
+<li>
+<p><code>$RAVEL_LITE_CONFIG</code>, if set;</p>
+</li>
+<li>
+<p>otherwise the platform default — <code>dirs::config_dir()/ravel-lite</code> (typically <code>~/.config/ravel-lite/</code> on Linux, <code>~/Library/Application Support/ravel-lite/</code> on macOS).</p>
+</li>
+</ol>
+</div>
+</li>
+<li>
+<p><strong>Per-plan</strong>: <code>&lt;plan-dir&gt;/config.lua</code>. Read after the global layer, so plan-scoped settings override workstation-scoped ones for that one plan.</p>
+</li>
+</ol>
+</div>
+<div class="paragraph">
+<p>Either or both files may be absent. If neither exists, Ravel-Lite runs against the embedded defaults unchanged — that is the intended default for a fresh install. The migration described in <a href="#v1-v2-migration">v1 → v2 migration</a> populates <code>&lt;config-dir&gt;/config.lua</code> automatically the first time a v0.x install upgrades.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_composition_semantics">Composition semantics</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Both layers share a single Lua state. The global layer runs first; the plan layer runs second in the same state, with all the values the global layer set still in scope. Two rules govern composition:</p>
+</div>
+<div class="paragraph">
+<p><strong>Setters are last-write-wins.</strong> <code>ravel.set_agent('pi')</code> in global followed by <code>ravel.set_agent('claude-code')</code> in the plan layer leaves the resolved agent as <code>claude-code</code>. Sibling keys are untouched — overriding one phase&#8217;s model does not blank the others, exactly as the legacy YAML deep-merge guaranteed.</p>
+</div>
+<div class="paragraph">
+<p><strong>Registrators accumulate.</strong> <code>ravel.append_prompt('work', '&#8230;&#8203;')</code> is the only registrator today. Multiple calls — in either layer — append to a per-phase list in registration order. The global layer&#8217;s appends precede the plan layer&#8217;s appends in the rendered prompt; nothing replaces or removes a prior append.</p>
+</div>
+<div class="paragraph">
+<p>After each layer executes, the orchestrator pulls direct edits on <code>ravel.config</code> (e.g. <code>ravel.config.headroom = 9000</code>) back into the resolved state. You do not need to call <code>_commit_config_table</code> yourself; the auto-commit fires between the global and plan layer and again after the plan layer.</p>
+</div>
+<div class="paragraph">
+<p>The Lua state is <strong>not</strong> sandboxed. <code>config.lua</code> is trusted code — same threat model as <code>wezterm.lua</code> or <code>init.lua</code>. A <code>config.lua</code> that throws surfaces as a normal Rust error with the layer label and file path inlined.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_the_ravel_config_table">The <code>ravel.config</code> table</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>ravel.config</code> mirrors the top-level fields of the shared config. Read or write the fields directly:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-lua" data-lang="lua">ravel.config.agent     = 'claude-code'  -- active agent ('claude-code' or 'pi')
+ravel.config.headroom  = 1500           -- dream-trigger headroom in words</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Direct writes round-trip through the auto-commit. The setter functions below mutate the same fields and keep <code>ravel.config</code> in sync, so reads inside the same layer see the latest value either way.</p>
+</div>
+<div class="paragraph">
+<p><code>ravel.config.config_version</code> is the migration marker — see <a href="#config-version"><code>ravel.config.config_version</code></a>.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_the_ravel_api">The <code>ravel</code> API</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Every function below is a method on the <code>ravel</code> global table. All mutations apply to the resolved state visible to whichever phase Ravel-Lite is about to run; nothing fires immediately against an external system.</p>
+</div>
+<div class="sect2">
+<h3 id="_ravel_set_agentname"><code>ravel.set_agent(name)</code></h3>
+<div class="paragraph">
+<p>Set the active agent backend. Valid values are <code>claude-code</code> and <code>pi</code>; anything outside that set is accepted but only meaningful if you have separately registered an agent of that name (no extension API today, so practically: pick one of the two).</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-lua" data-lang="lua">ravel.set_agent('pi')</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Equivalent to <code>ravel.config.agent = 'pi'</code>. Use whichever reads better in context.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_ravel_set_headroomn"><code>ravel.set_headroom(n)</code></h3>
+<div class="paragraph">
+<p>Set the dream-trigger headroom — how many words memory may grow past its post-last-dream baseline before the next dream phase fires. Default is 1500, set in the embedded <code>defaults/config.yaml</code>. Negative values are rejected with a <code>config.lua</code> runtime error.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-lua" data-lang="lua">ravel.set_headroom(3000)  -- let memory grow further before compacting</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The dream-trigger mechanism itself lives in the <a href="phase-cycle.html">Phase cycle</a> reference.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_ravel_set_modelphase_name"><code>ravel.set_model(phase, name)</code></h3>
+<div class="paragraph">
+<p>Set the model for a specific phase on the <strong>currently active agent</strong> (whatever <code>ravel.config.agent</code> resolves to). <code>phase</code> is one of <code>work</code>, <code>analyse-work</code>, <code>reflect</code>, <code>dream</code>, <code>triage</code>. <code>name</code> is whatever string the agent CLI accepts for its <code>--model</code> flag.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-lua" data-lang="lua">ravel.set_model('work', 'claude-opus-4-7')</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Pass an empty string to defer the choice to the agent CLI&#8217;s interactive default — useful when you want the work phase to inherit whatever model your agent is currently set up for, while keeping every other phase pinned.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_ravel_set_model_foragent_phase_name"><code>ravel.set_model_for(agent, phase, name)</code></h3>
+<div class="paragraph">
+<p>Same as <code>set_model</code>, but explicit about which agent it targets. Useful when you want to configure both backends in one file:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-lua" data-lang="lua">ravel.set_model_for('claude-code', 'work',    'claude-opus-4-7')
+ravel.set_model_for('pi',          'analyse-work', 'claude-sonnet-4-6')</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_ravel_set_providerprovider"><code>ravel.set_provider(provider)</code></h3>
+<div class="paragraph">
+<p>Set the provider string for the currently active agent. The provider is passed through to the agent CLI as-is; the embedded defaults set this on a per-agent basis (e.g. claude-code&#8217;s provider is the bundled default).</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-lua" data-lang="lua">ravel.set_provider('vertex')</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_ravel_set_provider_foragent_provider"><code>ravel.set_provider_for(agent, provider)</code></h3>
+<div class="paragraph">
+<p>The explicit-agent variant of <code>set_provider</code>.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-lua" data-lang="lua">ravel.set_provider_for('claude-code', 'vertex')</code></pre>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_ravel_set_tokenagent_name_value"><code>ravel.set_token(agent, name, value)</code></h3>
+<div class="paragraph">
+<p>Override a single token in the agent&#8217;s substitution map. Tokens are the <code>{{NAME}}</code> placeholders the prompt-loader expands at compose time — for example <code>{{TOOL_READ}}</code> (the agent&#8217;s "read file" tool name) is one such token. Most users never touch this; it exists so a specialised agent variant can be wired up without forking the prompt files.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-lua" data-lang="lua">ravel.set_token('claude-code', 'TOOL_READ', 'Read')</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Unknown tokens are accepted silently — they only matter when a prompt actually references them. A <code>{{NAME}}</code> left in the rendered prompt with no matching token (built-in or user-supplied) is a hard error from the substitution layer; see <a href="#unresolved-tokens">Errors</a>.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_ravel_append_promptphase_text"><code>ravel.append_prompt(phase, text)</code></h3>
+<div class="paragraph">
+<p>Register a block of text to be appended to the named phase&#8217;s prompt. Multiple calls accumulate per phase, in registration order, across both layers. The text is not interpreted — it is concatenated verbatim into the rendered prompt after the embedded base, separated by a horizontal rule.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-lua" data-lang="lua">ravel.append_prompt('work', [[
+## Project-specific guidance
+- Prefer integration tests over mocks for anything touching the database.
+- Run `./scripts/lint.sh` before declaring a task done.
+]])</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The contract is <strong>append-only</strong>. There is no <code>ravel.set_prompt</code> or <code>ravel.replace_prompt</code>, by design — the embedded base is the single source of truth for phase behaviour, and per-project customisation layers on top of it. If you need to <strong>replace</strong> the embedded behaviour wholesale, that is a sign the embedded prompt should change for everyone; raise an issue against the project rather than working around it locally.</p>
+</div>
+<div class="paragraph">
+<p>Token substitution runs across the whole composed prompt (base + appends), so <code>{{PLAN}}</code>, <code>{{PROJECT}}</code>, and any custom tokens you set work inside an append text just as they do in the base. The composition is documented in <code>src/prompt.rs::compose_prompt</code>.</p>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_prompts_on_disk_there_are_none">Prompts on disk: there are none</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Phase prompts and per-agent prompts ship inside the binary, embedded at compile time from <code>defaults/</code>. There is no on-disk copy in the config dir. To read what a phase prompt looks like, browse the source on GitHub:</p>
+</div>
+<div class="paragraph">
+<p><a href="https://github.com/Linkuistics/Ravel-Lite/tree/main/defaults" class="bare">https://github.com/Linkuistics/Ravel-Lite/tree/main/defaults</a></p>
+</div>
+<div class="paragraph">
+<p>A plan can carry a per-phase override at <code>&lt;plan-dir&gt;/prompt-&lt;phase&gt;.md</code> (e.g. <code>prompt-triage.md</code>). When present, this file is appended after the embedded base and before any <code>ravel.append_prompt</code> text. It exists for the same reason <code>append_prompt</code> does — it is <strong>additive</strong>, not a replacement — but it is plan-scoped rather than expressed in <code>config.lua</code>. Most users will not need it.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="config-version"><code>ravel.config.config_version</code></h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p><code>ravel.config.config_version</code> is a marker stamped into the global <code>config.lua</code> by the v1 → v2 migration on first run. The value (currently <code>2</code>) identifies the config-dir layout the file was written against. Detection of the legacy v1 layout does <strong>not</strong> depend on this marker — the migration code looks at file presence — but the stamp is the documented sentinel for the v2 layout, and a future v2 → v3 migration will branch on it.</p>
+</div>
+<div class="paragraph">
+<p>You should not edit this field. The migration writes it; the running binary never reads it. If you delete it by accident the file still works; the next migration that ships will conservatively re-stamp it.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="v1-v2-migration">v1 → v2 migration</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Before the embedded-defaults landing, <code>&lt;config-dir&gt;</code> contained materialised copies of everything: <code>config.yaml</code>, <code>config.local.yaml</code> overlays, per-agent <code>agents/&lt;name&gt;/config.yaml</code> and <code>tokens.yaml</code>, and full prompt files under <code>phases/</code>. The v2 binary reads all of those from the embedded set at runtime, so the on-disk copies are dead clutter that confuses readers and shadows nothing.</p>
+</div>
+<div class="paragraph">
+<p>The first v2 invocation against a v1 config dir runs an automatic migration:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p>Read every legacy YAML (base + <code>*.local.yaml</code> overlay) and deep-merge them just as the v1 loader would have.</p>
+</li>
+<li>
+<p>Translate the merged values into a generated <code>config.lua</code> that calls <code>ravel.set_agent</code>, <code>ravel.set_headroom</code>, <code>ravel.set_model_for</code>, <code>ravel.set_provider_for</code>, and <code>ravel.set_token</code> to express the same intent.</p>
+</li>
+<li>
+<p>Stamp <code>ravel.config.config_version = 2</code> into the file.</p>
+</li>
+<li>
+<p>Delete the legacy YAML files and any newly-empty legacy directories (<code>agents/</code>, <code>phases/</code>, <code>fixed-memory/</code>).</p>
+</li>
+</ol>
+</div>
+<div class="paragraph">
+<p>The migration is idempotent — once stamped, subsequent invocations are no-ops. It is also crash-safe: writes happen before deletes, and detection is driven by the presence of legacy files (not by the marker), so a crash between steps leaves the next invocation able to complete cleanup without losing work.</p>
+</div>
+<div class="paragraph">
+<p>If you already have a hand-written <code>config.lua</code> when the migration runs, your file is preserved verbatim — the marker line is appended, and legacy YAML is deleted, but no setters from the YAML are translated into your file. The assumption is that your existing Lua already expresses the intent.</p>
+</div>
+<div class="paragraph">
+<p>User-owned files under what used to be a Ravel-Lite directory (e.g. a personal note in <code>phases/notes.md</code>) are never deleted. The migration only removes paths the v1 materialiser ever wrote.</p>
+</div>
+<div class="paragraph">
+<p>The migration code lives in <code>src/migrate_v1_to_v2.rs</code> if you want to read the exact rules.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_a_minimal_config_lua">A minimal <code>config.lua</code></h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The shortest useful config — switch the active agent and pin one phase model — looks like this:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-lua" data-lang="lua">ravel.set_agent('pi')
+ravel.set_model('work', 'claude-opus-4-7')</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Drop it at <code>&lt;config-dir&gt;/config.lua</code> (global) or <code>&lt;plan&gt;/config.lua</code> (per-plan), and the next invocation picks it up. No registration step, no schema versioning, no overlay file naming convention to remember.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="unresolved-tokens">Errors</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Two error classes are worth flagging because they show up in fresh setups.</p>
+</div>
+<div class="paragraph">
+<p><strong>Lua runtime error.</strong> If <code>config.lua</code> throws — a syntax error, an <code>error('&#8230;&#8203;')</code>, a call to a non-existent <code>ravel.set_xyz</code> — the orchestrator surfaces it as <code>Failed to execute &lt;layer&gt; &lt;path&gt;: &lt;message&gt;</code>. The layer label (<code>global</code> or <code>plan</code>) and the absolute file path tell you which file to fix.</p>
+</div>
+<div class="paragraph">
+<p><strong>Unresolved token after substitution.</strong> If a prompt (embedded, plan-override, or <code>append_prompt</code> text) contains a <code>{{NAME}}</code> placeholder for which no token is registered, prompt composition fails with <code>Prompt contains unresolved token(s) after substitution: {{NAME}}</code>. The fix is either a typo correction in the prompt or a <code>ravel.set_token('&lt;agent&gt;', 'NAME', '&lt;value&gt;')</code> registration. The hard-fail is deliberate — a previous bug let an unresolved token reach the LLM unchanged, with confusing downstream behaviour.</p>
+</div>
+<div class="paragraph">
+<p>The substitution path itself (the regex and the substitution order — content macros before path tokens) lives in <code>src/prompt.rs::substitute_tokens</code>.</p>
+</div>
+</div>
 </div>

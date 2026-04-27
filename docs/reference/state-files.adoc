@@ -1,5 +1,230 @@
 = State files
 
-This page is a placeholder. When complete it will document the durable plan-state files in full: schema, examples, and read/write call sites for `backlog.yaml`, `memory.yaml`, `session-log.yaml`, `latest-session.*`, `phase.md`, and `commits.yaml`.
+Every piece of state Ravel-Lite tracks for a plan lives as a readable file inside the plan directory. There is no database, no opaque cache, no shadow state held in memory between phases. The "no magic" principle from link:concepts.html[Concepts] cashes out here: if you want to know what the next phase will see, read the file it is about to read; if you want to change what it does, edit the file it will act on.
 
-The corresponding backlog task is `reference-state-file-formats-backlog-yaml-memory-yaml-session-log-yaml-latest-session-phase-md-commits-yaml`.
+This page documents each state file in full — schema, a worked example, which phase writes it, which phases read it, and the gotchas a hand-editor should know. Filenames are centralised as constants in `src/state/filenames.rs`; the canonical schema for each lives in `src/state/<name>/schema.rs`. The CLI verbs that mutate these files are documented on the link:cli-state.html[State commands] page.
+
+A complete plan directory:
+
+[source,text]
+----
+LLM_STATE/<plan>/
+├── backlog.yaml         # tasks, statuses, dependencies, results, hand-offs
+├── memory.yaml          # distilled learnings carried across cycles
+├── session-log.yaml     # one record per completed phase, append-only
+├── latest-session.yaml  # most recent session record, overwritten each cycle
+├── phase.md             # one-line file naming the phase to run next
+└── commits.yaml         # transient commit spec, written by analyse-work
+----
+
+Three baseline files (`work-baseline`, `reflect-baseline`, `triage-baseline`) and the dream-trigger file `dream-word-count` are not documented here — they hold a single SHA or integer respectively, and their lifecycle is on the link:phase-cycle.html[Phase cycle] page where it belongs.
+
+== `backlog.yaml`
+
+The backlog is the canonical list of work for a plan. Triage shapes it, work executes one task at a time, analyse-work flips statuses and writes results.
+
+[source,yaml]
+----
+tasks:
+  - id: rewrite-config-page                  # slug from title; immutable after creation
+    title: Rewrite config-and-prompts reference page
+    category: docs                           # free-form grouping; rendered as section header
+    status: not_started                      # not_started | in_progress | done | blocked
+    blocked_reason: ~                        # required when status == blocked, omitted otherwise
+    dependencies:                            # task ids that must reach `done` before this is ready
+      - some-other-task-id
+    description: |                           # the brief — what the task is, why it matters, scope
+      Rewrite the page for the Lua API surface. Cover the two-layer
+      composition, every public ravel.* function, and the migration.
+    results: |                               # filled by analyse-work after work completes
+      Replaced the 5-line stub with full reference. Verified by render.
+    handoff: |                               # optional; cleared by triage after acting
+      Successor task: tutorial walk-through (T2).
+----
+
+The schema is `BacklogFile` in `src/state/backlog/schema.rs`. `Status` is a strict enum (`not_started`, `in_progress`, `done`, `blocked`); the parser rejects any other value. `id` is a slug derived from the title at creation time and is *immutable* — every cross-reference in `dependencies` and the rest of the cycle hangs off it. `category` is free-form and only affects the markdown rendering's section grouping.
+
+*Writers.* The work phase calls `ravel-lite state backlog set-status` and `set-results` on the task it just finished. The analyse-work phase calls `repair-stale-statuses` to flip any task that recorded results without flipping status. The triage phase mutates the most: `add`, `delete`, `set-status`, `set-title`, `set-dependencies`, `reorder`, `clear-handoff`. All of these are CLI verbs documented on link:cli-state.html[State commands].
+
+*Readers.* Work reads it via `ravel-lite state backlog list` to choose a task. Analyse-work reads it for results-block context. Triage reads the whole file to decide what to reprioritise. Reflect and dream deliberately do *not* read the backlog — they are about memory, not tasks.
+
+*Hand-editing.* Free to edit between phases. The `dependencies` field must hold *task ids*, not titles; cycles and self-references are rejected by `state backlog set-dependencies`. An unmet dependency (a dep id with no matching task in the same backlog) is treated as not-yet-met by every consumer — a typo or rename never accidentally unblocks a task. Per-status counts and unblocked/blocked tallies are computed mechanically by `BacklogFile::task_counts` and `plan_row_counts` rather than asked of an LLM.
+
+*Hand-off blocks.* The `handoff` field carries extra context attached to a completed task — usually a partially-settled design that did not justify its own backlog entry yet. Triage mines hand-off blocks from completed tasks (see triage step 3 in the link:phase-cycle.html[Phase cycle] reference): each is either *promoted* to a new top-level task, *archived* into memory, or *dispatched* to a sibling plan. Triage clears the field after acting.
+
+*Future-proofing.* `BacklogFile` carries a `#[serde(flatten)] extra` map so unknown top-level keys (a future `schema_version`, for example) survive a read/write cycle through an older reader. Don't rely on this for active fields — but it means a hand-edit adding an experimental field will not be silently dropped.
+
+== `memory.yaml`
+
+Memory is the durable learnings a plan accumulates across cycles. Reflect adds, sharpens, and prunes; dream rewrites losslessly when memory grows past the headroom threshold; triage occasionally adds an entry when archiving a hand-off.
+
+[source,yaml]
+----
+entries:
+  - id: substitute-tokens-is-canonical-path  # slug from title; immutable after creation
+    title: All prompt loading routes through `substitute_tokens`
+    body: |
+      Ad-hoc `str::replace` bypasses the hard-error guard regex.
+      Any prompt-loading path that does not delegate to
+      `substitute_tokens` silently passes unresolved tokens through.
+      Drift guards require one canonical substitution path.
+  - id: pi-stderr-rolling-buffer
+    title: Pi stderr captured in 4096-byte rolling buffer
+    body: |
+      `PiAgent::invoke_headless` pipes stderr into a fixed-size
+      rolling buffer (`STDERR_BUFFER_CAP = 4096`). Tail surfaces in
+      error messages on failure; eliminates TUI bleed-through during
+      headless invocation.
+----
+
+The schema is `MemoryFile` in `src/state/memory/schema.rs`. Each `MemoryEntry` is `(id, title, body)` — three required strings, no metadata, no entry types in the file format itself. Entry typing (user / feedback / project / reference per the Memory style rules at `defaults/fixed-memory/memory-style.md`) lives inside the `body` content, not as a structured field.
+
+*Writers.* Reflect calls `ravel-lite state memory add`, `set-title`, `set-body`, and `delete`. Dream uses the same verbs but is bound by a stricter contract — *strictly lossless*; pure duplicates are the only deletion allowed. Triage occasionally calls `add` to archive a hand-off.
+
+*Readers.* Work reads it via `ravel-lite state memory list` for context. Reflect reads its prior content to decide what to update. Dream reads it for the rewrite. Analyse-work and triage do not read memory — analyse-work is about diff-grounded summarisation; triage is about backlog shape.
+
+*Hand-editing.* Safe to edit. The body content drives every consumer's interpretation; treat the structured `id` and `title` as light scaffolding. The Memory style rules at `defaults/fixed-memory/memory-style.md` describe the four entry types and how reflect should distil — read those before adding entries by hand if you want them to survive a future reflect cycle.
+
+*Word-count semantics.* The dream trigger sums `title + body` length across every entry to decide whether memory has grown past `baseline + headroom`. The mechanism is detailed under "The dream trigger" in the link:phase-cycle.html[Phase cycle] reference.
+
+== `session-log.yaml`
+
+The append-only history of every reasoning phase the plan has run. Each entry is one phase from one cycle.
+
+[source,yaml]
+----
+sessions:
+  - id: 2026-04-22-rewrite-config-page-analyse-work
+    timestamp: '2026-04-22T14:33:07Z'      # ISO-8601 UTC, written by analyse-work
+    phase: analyse-work                    # the phase whose work this entry summarises
+    body: |
+      Replaced the 5-line stub at docs/reference/config-and-prompts.adoc
+      with a full reference for the Lua config API.
+      Verified by ./scripts/render-docs.sh.
+  - id: 2026-04-22-write-state-files-page-analyse-work
+    timestamp: '2026-04-22T15:18:42Z'
+    phase: analyse-work
+    body: |
+      Authored docs/reference/state-files.adoc against the on-disk
+      schemas in src/state/<name>/schema.rs.
+----
+
+The schema is `SessionLogFile` in `src/state/session_log/schema.rs`. Each `SessionRecord` is `(id, timestamp, phase, body)`; only the `body` carries narrative content. The `id` is conventionally `<date>-<task-slug>-<phase>` and is the link from a session to whatever it summarises.
+
+*Writers.* `git-commit-work` appends `latest-session.yaml`'s record to this file via `session_log::append_latest_to_log`. The append is mechanical — the session log is *never* an LLM input, so an LLM cannot accidentally rewrite history.
+
+*Readers.* No reasoning phase reads the session log. It exists for the operator's audit trail, not for prompt context. Reflect reads only `latest-session.yaml`; dream reads only memory; triage reads only the backlog.
+
+*Hand-editing.* Append-only by convention. Editing or removing past entries does not break any phase's behaviour, but it destroys the audit trail that `git log` between two `save-work-baseline` commits assumes — and which makes the cycle reproducible after the fact.
+
+== `latest-session.yaml`
+
+The most recent session record, overwritten by analyse-work at the end of each cycle. Used as the hand-off from analyse-work to git-commit-work, and read by reflect.
+
+[source,yaml]
+----
+id: 2026-04-22-rewrite-config-page-analyse-work
+timestamp: '2026-04-22T14:33:07Z'
+phase: analyse-work
+body: |
+  Replaced the 5-line stub at docs/reference/config-and-prompts.adoc
+  with a full reference for the Lua config API.
+  Verified by ./scripts/render-docs.sh.
+----
+
+The schema is the same `SessionRecord` type as the entries in `session-log.yaml` — but stored at file top-level, not wrapped in a `sessions:` list. The two files share `SessionRecord`; only the wrapping differs.
+
+*The split is load-bearing.* `session-log.yaml` is the append-only history; `latest-session.yaml` is a single record overwritten each cycle. Keeping them as separate files means the analyse-work phase can write its summary without touching the history, and `git-commit-work` does the mechanical mirror-write into the history file in code (so a phase prompt cannot forget the step).
+
+*Writers.* Analyse-work writes it via `ravel-lite state session-log set-latest`. The file is overwritten in full on every cycle.
+
+*Readers.* `git-commit-work` reads it to append the record into `session-log.yaml`. Reflect reads it via `ravel-lite state session-log show-latest` to distil learnings into memory.
+
+*Hand-editing.* Editing this file between analyse-work and git-commit-work changes what gets appended into the history. After git-commit-work has run for a cycle, the file is intentionally *not* cleared — it sits there until analyse-work overwrites it next cycle, so the operator can inspect the prior summary in the gap between cycles.
+
+*Filename note.* The file is `.yaml`, not `.md` — older docs occasionally referenced `latest-session.md`. The on-disk constant is `LATEST_SESSION_FILENAME = "latest-session.yaml"` in `src/state/filenames.rs`.
+
+== `phase.md`
+
+A one-line file naming the phase to run next. The driver reads it at the top of every iteration of the inner phase loop and dispatches to the matching handler.
+
+[source,text]
+----
+work
+----
+
+That is the whole format — one of the nine valid phase names, no trailing newline required (the writer uses an atomic tmp-file + rename, and writes only the phase string).
+
+The valid set is enumerated in `src/state/phase.rs`:
+
+[source,text]
+----
+work
+analyse-work
+reflect
+dream
+triage
+git-commit-work
+git-commit-reflect
+git-commit-dream
+git-commit-triage
+----
+
+*Writers.* Every reasoning phase writes its successor via `ravel-lite state set-phase <plan> <next>`. Audit-trail phases (`git-commit-*`) write directly to the file. The CLI verb rejects typo'd phase names and refuses to *create* the file if it doesn't exist — set-phase is a transition primitive, not a plan-creation primitive.
+
+*Readers.* The driver, on every loop iteration. Nothing else reads it.
+
+*Why a separate file.* Embedding the next-phase indicator in `backlog.yaml` or `memory.yaml` would entangle the loop driver with files an LLM may legitimately rewrite end-to-end during a phase. A dedicated one-line file is small enough that an atomic `write + rename` is reliable, and lets the driver sample it between turns without parsing YAML.
+
+*Hand-editing.* Edit freely between phases to skip ahead or rewind. The driver refuses to re-invoke the same phase twice in a row (a stop condition that masks would-be infinite loops), so writing the same phase the loop just ran will halt the loop rather than re-run it.
+
+== `commits.yaml`
+
+The commit spec authored by analyse-work and consumed by git-commit-work. One-shot scratch — read once, deleted after apply.
+
+[source,yaml]
+----
+commits:
+  - paths:                                   # git pathspecs; passed verbatim to `git add`
+      - "."
+    message: |
+      Wire the greeting path through the new renderer
+
+      Renames the intermediate struct to match its new role and
+      updates the two call sites. Plan-state updates for this
+      session are included.
+  - paths:                                   # split only when concerns are genuinely independent
+      - "docs/**"
+      - ":!docs/generated/"                  # exclusion via standard git pathspec syntax
+    message: |
+      Update the reference pages for the Lua config surface
+----
+
+The schema is `CommitsSpec` in `src/git.rs` — an ordered list of `CommitSpec` entries, each with a `paths` list and a `message`. Pathspec strings are passed straight to `git add`, so every git pathspec feature works: literal paths, globs (`src/**`), exclusions (`:!src/generated/`), and the catch-all `"."`.
+
+*Writers.* The analyse-work phase writes it directly with the `Write` tool — `commits.yaml` is *not* a state-CLI-managed file. The contract is documented in step 9 of `defaults/phases/analyse-work.md`: one commit per cycle is the default; split only when the diff genuinely spans independent concerns.
+
+*Readers.* `git-commit-work` only. The handler reads the file, deletes it before any git operations (so a `"."` pathspec in an entry doesn't sweep the spec into its own commit), then applies each entry as `git reset HEAD -- .` → `git add -- <paths>` → `git commit -m <message>`. Entries that stage nothing are reported but produce no commit.
+
+*Fallback.* If `commits.yaml` is missing, empty, or fails to parse, `git-commit-work` falls back to a single catch-all commit covering the whole subtree under the default message `run-plan: work (<plan>)`. This is a safety net, not the intended path — analyse-work should always write the spec, and the TUI warns if the post-commit tree is still dirty (anything left uncommitted means the work agent edited paths no entry covered).
+
+*Hand-editing.* Possible but unusual — between analyse-work and git-commit-work the file exists for a brief window. Editing it changes what commits land. After git-commit-work runs, the file is gone; do not re-create it for any other phase.
+
+*Title rules.* Imperative mood, max 72 chars, no backlog-task-id references, no session numbers, no plan-bookkeeping framing. The full rules are in `defaults/phases/analyse-work.md`; the gist is that the title describes what changed in the *tree*, not what changed in plan-state bookkeeping.
+
+== Summary table
+
+A quick lookup of which phase touches what:
+
+[cols="1,2,3", options="header"]
+|===
+| File | Writers | Readers
+| `backlog.yaml` | work, analyse-work, triage | work, analyse-work, triage
+| `memory.yaml` | reflect, dream, triage | work, reflect, dream
+| `session-log.yaml` | git-commit-work (append) | (operator only)
+| `latest-session.yaml` | analyse-work | git-commit-work, reflect
+| `phase.md` | every phase (writes successor) | the driver, every iteration
+| `commits.yaml` | analyse-work | git-commit-work (then deleted)
+|===
+
+Cross-plan files — `subagent-dispatch.yaml` and `related-components.yaml` — are documented separately on the link:cross-plan-files.html[Cross-plan files] page.

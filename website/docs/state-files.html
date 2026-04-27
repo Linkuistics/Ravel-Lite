@@ -1,6 +1,334 @@
+<div id="preamble">
+<div class="sectionbody">
 <div class="paragraph">
-<p>This page is a placeholder. When complete it will document the durable plan-state files in full: schema, examples, and read/write call sites for <code>backlog.yaml</code>, <code>memory.yaml</code>, <code>session-log.yaml</code>, <code>latest-session.*</code>, <code>phase.md</code>, and <code>commits.yaml</code>.</p>
+<p>Every piece of state Ravel-Lite tracks for a plan lives as a readable file inside the plan directory. There is no database, no opaque cache, no shadow state held in memory between phases. The "no magic" principle from <a href="concepts.html">Concepts</a> cashes out here: if you want to know what the next phase will see, read the file it is about to read; if you want to change what it does, edit the file it will act on.</p>
 </div>
 <div class="paragraph">
-<p>The corresponding backlog task is <code>reference-state-file-formats-backlog-yaml-memory-yaml-session-log-yaml-latest-session-phase-md-commits-yaml</code>.</p>
+<p>This page documents each state file in full — schema, a worked example, which phase writes it, which phases read it, and the gotchas a hand-editor should know. Filenames are centralised as constants in <code>src/state/filenames.rs</code>; the canonical schema for each lives in <code>src/state/&lt;name&gt;/schema.rs</code>. The CLI verbs that mutate these files are documented on the <a href="cli-state.html">State commands</a> page.</p>
+</div>
+<div class="paragraph">
+<p>A complete plan directory:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-text" data-lang="text">LLM_STATE/&lt;plan&gt;/
+├── backlog.yaml         # tasks, statuses, dependencies, results, hand-offs
+├── memory.yaml          # distilled learnings carried across cycles
+├── session-log.yaml     # one record per completed phase, append-only
+├── latest-session.yaml  # most recent session record, overwritten each cycle
+├── phase.md             # one-line file naming the phase to run next
+└── commits.yaml         # transient commit spec, written by analyse-work</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Three baseline files (<code>work-baseline</code>, <code>reflect-baseline</code>, <code>triage-baseline</code>) and the dream-trigger file <code>dream-word-count</code> are not documented here — they hold a single SHA or integer respectively, and their lifecycle is on the <a href="phase-cycle.html">Phase cycle</a> page where it belongs.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_backlog_yaml"><code>backlog.yaml</code></h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The backlog is the canonical list of work for a plan. Triage shapes it, work executes one task at a time, analyse-work flips statuses and writes results.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-yaml" data-lang="yaml">tasks:
+  - id: rewrite-config-page                  # slug from title; immutable after creation
+    title: Rewrite config-and-prompts reference page
+    category: docs                           # free-form grouping; rendered as section header
+    status: not_started                      # not_started | in_progress | done | blocked
+    blocked_reason: ~                        # required when status == blocked, omitted otherwise
+    dependencies:                            # task ids that must reach `done` before this is ready
+      - some-other-task-id
+    description: |                           # the brief — what the task is, why it matters, scope
+      Rewrite the page for the Lua API surface. Cover the two-layer
+      composition, every public ravel.* function, and the migration.
+    results: |                               # filled by analyse-work after work completes
+      Replaced the 5-line stub with full reference. Verified by render.
+    handoff: |                               # optional; cleared by triage after acting
+      Successor task: tutorial walk-through (T2).</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The schema is <code>BacklogFile</code> in <code>src/state/backlog/schema.rs</code>. <code>Status</code> is a strict enum (<code>not_started</code>, <code>in_progress</code>, <code>done</code>, <code>blocked</code>); the parser rejects any other value. <code>id</code> is a slug derived from the title at creation time and is <strong>immutable</strong> — every cross-reference in <code>dependencies</code> and the rest of the cycle hangs off it. <code>category</code> is free-form and only affects the markdown rendering&#8217;s section grouping.</p>
+</div>
+<div class="paragraph">
+<p><strong>Writers.</strong> The work phase calls <code>ravel-lite state backlog set-status</code> and <code>set-results</code> on the task it just finished. The analyse-work phase calls <code>repair-stale-statuses</code> to flip any task that recorded results without flipping status. The triage phase mutates the most: <code>add</code>, <code>delete</code>, <code>set-status</code>, <code>set-title</code>, <code>set-dependencies</code>, <code>reorder</code>, <code>clear-handoff</code>. All of these are CLI verbs documented on <a href="cli-state.html">State commands</a>.</p>
+</div>
+<div class="paragraph">
+<p><strong>Readers.</strong> Work reads it via <code>ravel-lite state backlog list</code> to choose a task. Analyse-work reads it for results-block context. Triage reads the whole file to decide what to reprioritise. Reflect and dream deliberately do <strong>not</strong> read the backlog — they are about memory, not tasks.</p>
+</div>
+<div class="paragraph">
+<p><strong>Hand-editing.</strong> Free to edit between phases. The <code>dependencies</code> field must hold <strong>task ids</strong>, not titles; cycles and self-references are rejected by <code>state backlog set-dependencies</code>. An unmet dependency (a dep id with no matching task in the same backlog) is treated as not-yet-met by every consumer — a typo or rename never accidentally unblocks a task. Per-status counts and unblocked/blocked tallies are computed mechanically by <code>BacklogFile::task_counts</code> and <code>plan_row_counts</code> rather than asked of an LLM.</p>
+</div>
+<div class="paragraph">
+<p><strong>Hand-off blocks.</strong> The <code>handoff</code> field carries extra context attached to a completed task — usually a partially-settled design that did not justify its own backlog entry yet. Triage mines hand-off blocks from completed tasks (see triage step 3 in the <a href="phase-cycle.html">Phase cycle</a> reference): each is either <strong>promoted</strong> to a new top-level task, <strong>archived</strong> into memory, or <strong>dispatched</strong> to a sibling plan. Triage clears the field after acting.</p>
+</div>
+<div class="paragraph">
+<p><strong>Future-proofing.</strong> <code>BacklogFile</code> carries a <code>#[serde(flatten)] extra</code> map so unknown top-level keys (a future <code>schema_version</code>, for example) survive a read/write cycle through an older reader. Don&#8217;t rely on this for active fields — but it means a hand-edit adding an experimental field will not be silently dropped.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_memory_yaml"><code>memory.yaml</code></h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>Memory is the durable learnings a plan accumulates across cycles. Reflect adds, sharpens, and prunes; dream rewrites losslessly when memory grows past the headroom threshold; triage occasionally adds an entry when archiving a hand-off.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-yaml" data-lang="yaml">entries:
+  - id: substitute-tokens-is-canonical-path  # slug from title; immutable after creation
+    title: All prompt loading routes through `substitute_tokens`
+    body: |
+      Ad-hoc `str::replace` bypasses the hard-error guard regex.
+      Any prompt-loading path that does not delegate to
+      `substitute_tokens` silently passes unresolved tokens through.
+      Drift guards require one canonical substitution path.
+  - id: pi-stderr-rolling-buffer
+    title: Pi stderr captured in 4096-byte rolling buffer
+    body: |
+      `PiAgent::invoke_headless` pipes stderr into a fixed-size
+      rolling buffer (`STDERR_BUFFER_CAP = 4096`). Tail surfaces in
+      error messages on failure; eliminates TUI bleed-through during
+      headless invocation.</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The schema is <code>MemoryFile</code> in <code>src/state/memory/schema.rs</code>. Each <code>MemoryEntry</code> is <code>(id, title, body)</code> — three required strings, no metadata, no entry types in the file format itself. Entry typing (user / feedback / project / reference per the Memory style rules at <code>defaults/fixed-memory/memory-style.md</code>) lives inside the <code>body</code> content, not as a structured field.</p>
+</div>
+<div class="paragraph">
+<p><strong>Writers.</strong> Reflect calls <code>ravel-lite state memory add</code>, <code>set-title</code>, <code>set-body</code>, and <code>delete</code>. Dream uses the same verbs but is bound by a stricter contract — <strong>strictly lossless</strong>; pure duplicates are the only deletion allowed. Triage occasionally calls <code>add</code> to archive a hand-off.</p>
+</div>
+<div class="paragraph">
+<p><strong>Readers.</strong> Work reads it via <code>ravel-lite state memory list</code> for context. Reflect reads its prior content to decide what to update. Dream reads it for the rewrite. Analyse-work and triage do not read memory — analyse-work is about diff-grounded summarisation; triage is about backlog shape.</p>
+</div>
+<div class="paragraph">
+<p><strong>Hand-editing.</strong> Safe to edit. The body content drives every consumer&#8217;s interpretation; treat the structured <code>id</code> and <code>title</code> as light scaffolding. The Memory style rules at <code>defaults/fixed-memory/memory-style.md</code> describe the four entry types and how reflect should distil — read those before adding entries by hand if you want them to survive a future reflect cycle.</p>
+</div>
+<div class="paragraph">
+<p><strong>Word-count semantics.</strong> The dream trigger sums <code>title + body</code> length across every entry to decide whether memory has grown past <code>baseline + headroom</code>. The mechanism is detailed under "The dream trigger" in the <a href="phase-cycle.html">Phase cycle</a> reference.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_session_log_yaml"><code>session-log.yaml</code></h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The append-only history of every reasoning phase the plan has run. Each entry is one phase from one cycle.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-yaml" data-lang="yaml">sessions:
+  - id: 2026-04-22-rewrite-config-page-analyse-work
+    timestamp: '2026-04-22T14:33:07Z'      # ISO-8601 UTC, written by analyse-work
+    phase: analyse-work                    # the phase whose work this entry summarises
+    body: |
+      Replaced the 5-line stub at docs/reference/config-and-prompts.adoc
+      with a full reference for the Lua config API.
+      Verified by ./scripts/render-docs.sh.
+  - id: 2026-04-22-write-state-files-page-analyse-work
+    timestamp: '2026-04-22T15:18:42Z'
+    phase: analyse-work
+    body: |
+      Authored docs/reference/state-files.adoc against the on-disk
+      schemas in src/state/&lt;name&gt;/schema.rs.</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The schema is <code>SessionLogFile</code> in <code>src/state/session_log/schema.rs</code>. Each <code>SessionRecord</code> is <code>(id, timestamp, phase, body)</code>; only the <code>body</code> carries narrative content. The <code>id</code> is conventionally <code>&lt;date&gt;-&lt;task-slug&gt;-&lt;phase&gt;</code> and is the link from a session to whatever it summarises.</p>
+</div>
+<div class="paragraph">
+<p><strong>Writers.</strong> <code>git-commit-work</code> appends <code>latest-session.yaml&#8217;s record to this file via `session_log::append_latest_to_log</code>. The append is mechanical — the session log is <strong>never</strong> an LLM input, so an LLM cannot accidentally rewrite history.</p>
+</div>
+<div class="paragraph">
+<p><strong>Readers.</strong> No reasoning phase reads the session log. It exists for the operator&#8217;s audit trail, not for prompt context. Reflect reads only <code>latest-session.yaml</code>; dream reads only memory; triage reads only the backlog.</p>
+</div>
+<div class="paragraph">
+<p><strong>Hand-editing.</strong> Append-only by convention. Editing or removing past entries does not break any phase&#8217;s behaviour, but it destroys the audit trail that <code>git log</code> between two <code>save-work-baseline</code> commits assumes — and which makes the cycle reproducible after the fact.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_latest_session_yaml"><code>latest-session.yaml</code></h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The most recent session record, overwritten by analyse-work at the end of each cycle. Used as the hand-off from analyse-work to git-commit-work, and read by reflect.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-yaml" data-lang="yaml">id: 2026-04-22-rewrite-config-page-analyse-work
+timestamp: '2026-04-22T14:33:07Z'
+phase: analyse-work
+body: |
+  Replaced the 5-line stub at docs/reference/config-and-prompts.adoc
+  with a full reference for the Lua config API.
+  Verified by ./scripts/render-docs.sh.</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The schema is the same <code>SessionRecord</code> type as the entries in <code>session-log.yaml</code> — but stored at file top-level, not wrapped in a <code>sessions:</code> list. The two files share <code>SessionRecord</code>; only the wrapping differs.</p>
+</div>
+<div class="paragraph">
+<p><strong>The split is load-bearing.</strong> <code>session-log.yaml</code> is the append-only history; <code>latest-session.yaml</code> is a single record overwritten each cycle. Keeping them as separate files means the analyse-work phase can write its summary without touching the history, and <code>git-commit-work</code> does the mechanical mirror-write into the history file in code (so a phase prompt cannot forget the step).</p>
+</div>
+<div class="paragraph">
+<p><strong>Writers.</strong> Analyse-work writes it via <code>ravel-lite state session-log set-latest</code>. The file is overwritten in full on every cycle.</p>
+</div>
+<div class="paragraph">
+<p><strong>Readers.</strong> <code>git-commit-work</code> reads it to append the record into <code>session-log.yaml</code>. Reflect reads it via <code>ravel-lite state session-log show-latest</code> to distil learnings into memory.</p>
+</div>
+<div class="paragraph">
+<p><strong>Hand-editing.</strong> Editing this file between analyse-work and git-commit-work changes what gets appended into the history. After git-commit-work has run for a cycle, the file is intentionally <strong>not</strong> cleared — it sits there until analyse-work overwrites it next cycle, so the operator can inspect the prior summary in the gap between cycles.</p>
+</div>
+<div class="paragraph">
+<p><strong>Filename note.</strong> The file is <code>.yaml</code>, not <code>.md</code> — older docs occasionally referenced <code>latest-session.md</code>. The on-disk constant is <code>LATEST_SESSION_FILENAME = "latest-session.yaml"</code> in <code>src/state/filenames.rs</code>.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_phase_md"><code>phase.md</code></h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>A one-line file naming the phase to run next. The driver reads it at the top of every iteration of the inner phase loop and dispatches to the matching handler.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-text" data-lang="text">work</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>That is the whole format — one of the nine valid phase names, no trailing newline required (the writer uses an atomic tmp-file + rename, and writes only the phase string).</p>
+</div>
+<div class="paragraph">
+<p>The valid set is enumerated in <code>src/state/phase.rs</code>:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-text" data-lang="text">work
+analyse-work
+reflect
+dream
+triage
+git-commit-work
+git-commit-reflect
+git-commit-dream
+git-commit-triage</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p><strong>Writers.</strong> Every reasoning phase writes its successor via <code>ravel-lite state set-phase &lt;plan&gt; &lt;next&gt;</code>. Audit-trail phases (<code>git-commit-<strong></code>) write directly to the file. The CLI verb rejects typo&#8217;d phase names and refuses to *create</strong> the file if it doesn&#8217;t exist — set-phase is a transition primitive, not a plan-creation primitive.</p>
+</div>
+<div class="paragraph">
+<p><strong>Readers.</strong> The driver, on every loop iteration. Nothing else reads it.</p>
+</div>
+<div class="paragraph">
+<p><strong>Why a separate file.</strong> Embedding the next-phase indicator in <code>backlog.yaml</code> or <code>memory.yaml</code> would entangle the loop driver with files an LLM may legitimately rewrite end-to-end during a phase. A dedicated one-line file is small enough that an atomic <code>write + rename</code> is reliable, and lets the driver sample it between turns without parsing YAML.</p>
+</div>
+<div class="paragraph">
+<p><strong>Hand-editing.</strong> Edit freely between phases to skip ahead or rewind. The driver refuses to re-invoke the same phase twice in a row (a stop condition that masks would-be infinite loops), so writing the same phase the loop just ran will halt the loop rather than re-run it.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_commits_yaml"><code>commits.yaml</code></h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>The commit spec authored by analyse-work and consumed by git-commit-work. One-shot scratch — read once, deleted after apply.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-yaml" data-lang="yaml">commits:
+  - paths:                                   # git pathspecs; passed verbatim to `git add`
+      - "."
+    message: |
+      Wire the greeting path through the new renderer
+
+      Renames the intermediate struct to match its new role and
+      updates the two call sites. Plan-state updates for this
+      session are included.
+  - paths:                                   # split only when concerns are genuinely independent
+      - "docs/**"
+      - ":!docs/generated/"                  # exclusion via standard git pathspec syntax
+    message: |
+      Update the reference pages for the Lua config surface</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>The schema is <code>CommitsSpec</code> in <code>src/git.rs</code> — an ordered list of <code>CommitSpec</code> entries, each with a <code>paths</code> list and a <code>message</code>. Pathspec strings are passed straight to <code>git add</code>, so every git pathspec feature works: literal paths, globs (<code>src/**</code>), exclusions (<code>:!src/generated/</code>), and the catch-all <code>"."</code>.</p>
+</div>
+<div class="paragraph">
+<p><strong>Writers.</strong> The analyse-work phase writes it directly with the <code>Write</code> tool — <code>commits.yaml</code> is <strong>not</strong> a state-CLI-managed file. The contract is documented in step 9 of <code>defaults/phases/analyse-work.md</code>: one commit per cycle is the default; split only when the diff genuinely spans independent concerns.</p>
+</div>
+<div class="paragraph">
+<p><strong>Readers.</strong> <code>git-commit-work</code> only. The handler reads the file, deletes it before any git operations (so a <code>"."</code> pathspec in an entry doesn&#8217;t sweep the spec into its own commit), then applies each entry as <code>git reset HEAD&#8201;&#8212;&#8201;.</code> → <code>git add&#8201;&#8212;&#8201;&lt;paths&gt;</code> → <code>git commit -m &lt;message&gt;</code>. Entries that stage nothing are reported but produce no commit.</p>
+</div>
+<div class="paragraph">
+<p><strong>Fallback.</strong> If <code>commits.yaml</code> is missing, empty, or fails to parse, <code>git-commit-work</code> falls back to a single catch-all commit covering the whole subtree under the default message <code>run-plan: work (&lt;plan&gt;)</code>. This is a safety net, not the intended path — analyse-work should always write the spec, and the TUI warns if the post-commit tree is still dirty (anything left uncommitted means the work agent edited paths no entry covered).</p>
+</div>
+<div class="paragraph">
+<p><strong>Hand-editing.</strong> Possible but unusual — between analyse-work and git-commit-work the file exists for a brief window. Editing it changes what commits land. After git-commit-work runs, the file is gone; do not re-create it for any other phase.</p>
+</div>
+<div class="paragraph">
+<p><strong>Title rules.</strong> Imperative mood, max 72 chars, no backlog-task-id references, no session numbers, no plan-bookkeeping framing. The full rules are in <code>defaults/phases/analyse-work.md</code>; the gist is that the title describes what changed in the <strong>tree</strong>, not what changed in plan-state bookkeeping.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_summary_table">Summary table</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>A quick lookup of which phase touches what:</p>
+</div>
+<table class="tableblock frame-all grid-all stretch">
+<colgroup>
+<col style="width: 16.6666%;">
+<col style="width: 33.3333%;">
+<col style="width: 50.0001%;">
+</colgroup>
+<thead>
+<tr>
+<th class="tableblock halign-left valign-top">File</th>
+<th class="tableblock halign-left valign-top">Writers</th>
+<th class="tableblock halign-left valign-top">Readers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>backlog.yaml</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">work, analyse-work, triage</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">work, analyse-work, triage</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>memory.yaml</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">reflect, dream, triage</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">work, reflect, dream</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>session-log.yaml</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">git-commit-work (append)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">(operator only)</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>latest-session.yaml</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">analyse-work</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">git-commit-work, reflect</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>phase.md</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">every phase (writes successor)</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">the driver, every iteration</p></td>
+</tr>
+<tr>
+<td class="tableblock halign-left valign-top"><p class="tableblock"><code>commits.yaml</code></p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">analyse-work</p></td>
+<td class="tableblock halign-left valign-top"><p class="tableblock">git-commit-work (then deleted)</p></td>
+</tr>
+</tbody>
+</table>
+<div class="paragraph">
+<p>Cross-plan files — <code>subagent-dispatch.yaml</code> and <code>related-components.yaml</code> — are documented separately on the <a href="cross-plan-files.html">Cross-plan files</a> page.</p>
+</div>
+</div>
 </div>

@@ -2,7 +2,7 @@ tasks:
 - id: rewrite-config-and-prompts-reference-page-for-lua-api
   title: Rewrite config-and-prompts reference page for Lua API
   category: docs
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Rewrite the `config-and-prompts` reference page for the Lua-based
@@ -76,10 +76,55 @@ tasks:
     the embedded-defaults landing (so the doc accurately describes what's
     on disk vs embedded), and the migration landing (so upgrade
     behaviour can be documented from observed reality).
+  results: |
+    Replaced the 5-line stub at `docs/reference/config-and-prompts.adoc`
+    with a full reference for the Lua-based config surface. Coverage:
+
+    - Two-layer composition (global `<config-dir>/config.lua` and per-plan
+      `<plan>/config.lua`) including the `<config-dir>` resolution chain
+      (`--config` → `RAVEL_LITE_CONFIG` → `dirs::config_dir()/ravel-lite`).
+    - Composition semantics: setters last-write-wins, registrators
+      (`append_prompt`) accumulate, auto-commit between layers.
+    - The `ravel.config` table (agent, headroom, config_version) and how
+      direct table writes round-trip through the auto-commit.
+    - Every public `ravel.*` function with a one-line example: `set_agent`,
+      `set_headroom`, `set_model`, `set_model_for`, `set_provider`,
+      `set_provider_for`, `set_token`, `append_prompt`. Internal
+      `_commit_config_table` deliberately omitted from the public surface.
+    - Prompt customisation contract: append-only, embedded base remains
+      authoritative; layering order (embedded base → optional plan-level
+      `prompt-<phase>.md` → `ravel.append_prompt` accumulation); token
+      substitution applies to the whole composition.
+    - Pointer to the embedded prompts on GitHub
+      (`https://github.com/Linkuistics/Ravel-Lite/tree/main/defaults`)
+      rather than re-narrating their content.
+    - `config_version` semantics — what it is, when it's stamped, why
+      users should not edit it.
+    - Full v1 → v2 migration walkthrough: detection rule (legacy file
+      presence, not the marker), translation of legacy YAML +
+      `*.local.yaml` overlays into `ravel.set_*` calls, idempotence,
+      crash safety, preservation of pre-existing user `config.lua`,
+      user-owned files under former Ravel-Lite directories never deleted.
+    - Worked minimal `config.lua` example.
+    - Error model: Lua runtime error surfaces with layer label and path;
+      unresolved `{{NAME}}` token after substitution is a hard error.
+
+    Verification: `./scripts/render-docs.sh` rendered cleanly with no
+    asciidoctor warnings; the rendered fragment lives at
+    `website/docs/config-and-prompts.html` (303 lines, 17 headings —
+    one per H2/H3 section). Style mirrors `phase-cycle.adoc` (friendly
+    prose, `[source,lua]` schema blocks, sibling-relative `.html` links,
+    no emoji), per the conventions in `docs/reference/index.adoc`.
+
+    What this suggests next: the link from `concepts.adoc` already
+    points here for the per-backend layout; that page now has a real
+    target. The tutorial walk-through task (T2) can lean on this
+    reference for the "local config" chapter rather than re-explaining
+    the API.
 - id: reference-state-file-formats-backlog-yaml-memory-yaml-session-log-yaml-latest-session-phase-md-commits-yaml
   title: 'Reference: state-file formats (backlog.yaml, memory.yaml, session-log.yaml, latest-session, phase.md, commits.yaml)'
   category: docs
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Write the state-file formats reference page: schema, examples, and read/write call sites for the durable plan-state files.
@@ -107,10 +152,64 @@ tasks:
     - Page builds and renders via `./scripts/render-docs.sh`.
     - Every schema cross-checked against `src/state/<file>/schema.rs` (or wherever the serde struct lives). Key constants centralised in `src/state/filenames.rs`.
     - At least one example per file is realistic — lifted from a real plan, anonymised if needed.
+  results: |
+    Replaced the 5-line stub at `docs/reference/state-files.adoc` with
+    a full reference for the durable plan-state files. Coverage:
+
+    - A plan-directory tree diagram showing all six documented files.
+    - Per file (backlog.yaml, memory.yaml, session-log.yaml,
+      latest-session.yaml, phase.md, commits.yaml): a YAML/text schema
+      block with field-level comments, a worked example, the phase that
+      writes it, the phases that read it, and the gotchas a hand-editor
+      needs to know (the consistent "Writers / Readers / Hand-editing"
+      tripartite per file).
+    - `latest-session.yaml` documented as `.yaml` (not `.md`), with the
+      load-bearing split called out: `session-log.yaml` is the
+      append-only history, `latest-session.yaml` is the single
+      overwritten record. The mechanical mirror-write is performed by
+      `git-commit-work` via `session_log::append_latest_to_log`.
+    - `phase.md` documented as one of the nine valid phase names from
+      `src/state/phase.rs::VALID_PHASES`, including why it's a separate
+      file (atomic write reliability, no YAML parsing on every loop
+      iteration).
+    - `commits.yaml` documented with full pathspec semantics (literal
+      paths, globs, exclusions), the "one commit per cycle is the
+      default" rule from analyse-work, and the catch-all fallback.
+    - `backlog.yaml` includes the unmet-dependency rule (a dep id with
+      no matching task is treated as not-yet-met) and the future-proof
+      `extra` field that preserves unknown top-level keys across r/w.
+    - Three-row summary table at the bottom mapping file → writers →
+      readers, for fast lookup.
+    - Cross-references to `phase-cycle.html`, `cli-state.html`, and
+      `cross-plan-files.html` rather than re-narrating those topics.
+
+    Schemas were cross-checked against the canonical structs in
+    `src/state/<name>/schema.rs`:
+
+    - `BacklogFile` / `Task` / `Status` enum (snake_case)
+    - `MemoryFile` / `MemoryEntry`
+    - `SessionLogFile` / `SessionRecord` (and the same `SessionRecord`
+      used at top level by `latest-session.yaml`)
+    - `CommitsSpec` / `CommitSpec` in `src/git.rs`
+
+    Filenames cited from the centralised constants in
+    `src/state/filenames.rs`.
+
+    Verification: `./scripts/render-docs.sh` rendered cleanly; the
+    fragment lives at `website/docs/state-files.html` (333 lines, 7
+    H2 sections — one per file plus the summary table). No
+    asciidoctor warnings.
+
+    What this suggests next: the page is ready to be linked from the
+    tutorial walk-through (T2) when it covers what hand-editing a
+    backlog entry looks like between cycles. The
+    `latest-session.yaml` filename clarification (over the legacy
+    `.md` reference) is now the authoritative source — if the older
+    reference shows up elsewhere in docs, it should point here.
 - id: reference-cross-plan-file-formats-subagent-dispatch-yaml-related-components-yaml-evidence-grades
   title: 'Reference: cross-plan file formats (subagent-dispatch.yaml, related-components.yaml, evidence grades)'
   category: docs
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Write the cross-plan file formats reference page: `subagent-dispatch.yaml` (triage hand-off mechanism) and `related-components.yaml` (peer-project edges), with schema, examples, evidence-grade semantics, and the lifecycle of each file.
@@ -144,6 +243,81 @@ tasks:
     - Page builds and renders.
     - Schemas cross-checked against `src/state/related_components/` (and the triage dispatch code for the dispatch file).
     - Examples lifted from a real `related-components.yaml` — this very project's file (with edges to APIAnyware-MacOS, TestAnyware, Ravel, Atlas) is good source material.
+  results: |
+    Replaced the 5-line stub at `docs/reference/cross-plan-files.adoc`
+    with a full reference for the cross-plan file formats. Coverage:
+
+    - `subagent-dispatch.yaml`: schema (target/kind/summary, all
+      required), with a two-entry worked example. Documented as one-shot
+      scratch — written by triage with the `Write` tool (not a
+      state-CLI-managed file), consumed by the driver, deleted after
+      dispatch. Dispatched-subagent behaviour explained: each entry
+      produces a fresh agent invocation scoped to the target plan via
+      `dispatch_subagent`, which for Claude Code is
+      `claude --add-dir <target>`. Hand-editing is supported as a
+      one-off escape hatch.
+
+    - `related-components.yaml`: schema_version: 2 (loader hard-errors
+      on any other value; no in-memory upgrade), edges with the full
+      six-field structure (kind, lifecycle, participants, evidence_grade,
+      evidence_fields, rationale). Worked example uses two real edges
+      from this very project's file
+      (`<config-dir>/related-components.yaml`):
+      Ravel-Lite/orchestrates/APIAnyware-MacOS and
+      Ravel-Lite/depends-on/Atlas. Documented at the *config-dir level*
+      (not in any plan dir), with names resolved per-user via
+      `projects.yaml`.
+
+    - Per-edge validation rules called out: exactly two distinct
+      participants; symmetric kinds (`communicates-with`,
+      `co-implements`) require sorted participants; rationale non-empty
+      after trim; `evidence_fields` non-empty unless grade is `weak`.
+
+    - CLI workflow section with worked invocations for `add-edge`,
+      `list` (with `--plan` / `--kind` / `--lifecycle` filters), and
+      the two-stage `discover` / `discover-apply` pipeline.
+
+    - Edge-kinds vocabulary documented in full — all 17 kinds from
+      `src/ontology/schema.rs::EdgeKind`, grouped into 7 families
+      (Dependency, Linkage, Generation, Communication, Orchestration,
+      Testing, Specification), with the symmetric-vs-directed
+      distinction called out per kind.
+
+    - Lifecycle-scopes vocabulary: all 7 scopes from `LifecycleScope`,
+      with concrete examples of when each applies. The "same edge kind
+      at different lifecycles is two edges" rule is emphasised.
+
+    - Evidence-grades semantics: strong / medium / weak, with the
+      validation rule (evidence_fields required unless weak) and the
+      downstream-consumer behaviour (triage uses the grade to decide
+      which related components are confident enough to dispatch to).
+
+    - Cross-references to `phase-cycle.html` (dispatch behaviour and
+      dream-trigger), `cli-state.html` (CLI flags), and
+      `state-files.html` (plan-state files).
+
+    Schemas cross-checked against `src/ontology/schema.rs` (Edge,
+    RelatedComponentsFile, EdgeKind, LifecycleScope, EvidenceGrade)
+    and `src/related_components.rs` (the host adapter), plus the
+    clap definitions in `src/main.rs::RelatedComponentsCommands`.
+    The dispatch schema is cross-checked against
+    `src/subagent.rs::DispatchFile` and `src/types.rs::SubagentDispatch`,
+    plus the contract in `defaults/phases/triage.md`.
+
+    Verification: `./scripts/render-docs.sh` rendered cleanly; the
+    fragment lives at `website/docs/cross-plan-files.html` (519 lines,
+    7 H2 sections). No asciidoctor warnings. The horizontal-list
+    syntax (`[horizontal]`) used in the vocabularies for edge kinds
+    and lifecycle scopes renders correctly.
+
+    What this suggests next: with all three reference pages
+    (config-and-prompts, state-files, cross-plan-files) now substantive
+    rather than stubs, the `index.adoc` "File formats" pillar is fully
+    backed. The tutorial walk-through task (T2) can lean on
+    edge-kind/lifecycle-scope/evidence-grade vocabularies without
+    defining them inline. The `state related-components` CLI page
+    should now cross-link here for the controlled vocabularies rather
+    than re-listing them.
 - id: write-user-guide-covering-install-update-init-config-projects-plans-and-running
   title: 'Write tutorial walk-through: install through further-cycles with worked example'
   category: docs

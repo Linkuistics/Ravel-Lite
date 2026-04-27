@@ -1,5 +1,196 @@
 = Configuration and prompts
 
-This page is a placeholder. When complete it will document how `config.yaml` and `*.local.yaml` overlays compose (the `load_with_optional_overlay` deep-merge), where embedded defaults sit, the canonical token-substitution path used by every prompt-loading route, and how to customise per-phase prompts and subagent definitions.
+Ravel-Lite ships a complete, working set of defaults baked into the binary. A user who never writes a single line of configuration gets a usable orchestrator. Configuration exists for one purpose: to *mutate* that embedded baseline — change the active agent, override a model for a specific phase, append extra guidance to a prompt — without having to fork the project.
 
-The corresponding backlog task is `reference-configuration-and-prompt-file-formats-config-yaml-local-yaml-overlays-embedded-defaults-token-substitution-per-phase-prompts`.
+Customisation goes through Lua. Both layers — global (one per workstation) and per-plan — are `config.lua` files that mutate a shared `ravel` table. There is no YAML overlay, no on-disk prompt files to keep in sync, and no "merge order" to memorise beyond *setters last-write-wins, registrators accumulate*.
+
+This page documents both layers, every public function on the `ravel` table, the contract of the prompt-append mechanism, and the once-per-install v1 → v2 migration that converts legacy YAML overlays to Lua on first run.
+
+== Where the layers live
+
+The two layers are read in fixed order on every invocation:
+
+. *Global*: `<config-dir>/config.lua`. The `<config-dir>` is resolved by precedence:
+.. `--config <path>` on the CLI, if supplied;
+.. `$RAVEL_LITE_CONFIG`, if set;
+.. otherwise the platform default — `dirs::config_dir()/ravel-lite` (typically `~/.config/ravel-lite/` on Linux, `~/Library/Application Support/ravel-lite/` on macOS).
+. *Per-plan*: `<plan-dir>/config.lua`. Read after the global layer, so plan-scoped settings override workstation-scoped ones for that one plan.
+
+Either or both files may be absent. If neither exists, Ravel-Lite runs against the embedded defaults unchanged — that is the intended default for a fresh install. The migration described in <<v1-v2-migration>> populates `<config-dir>/config.lua` automatically the first time a v0.x install upgrades.
+
+== Composition semantics
+
+Both layers share a single Lua state. The global layer runs first; the plan layer runs second in the same state, with all the values the global layer set still in scope. Two rules govern composition:
+
+*Setters are last-write-wins.* `ravel.set_agent('pi')` in global followed by `ravel.set_agent('claude-code')` in the plan layer leaves the resolved agent as `claude-code`. Sibling keys are untouched — overriding one phase's model does not blank the others, exactly as the legacy YAML deep-merge guaranteed.
+
+*Registrators accumulate.* `ravel.append_prompt('work', '...')` is the only registrator today. Multiple calls — in either layer — append to a per-phase list in registration order. The global layer's appends precede the plan layer's appends in the rendered prompt; nothing replaces or removes a prior append.
+
+After each layer executes, the orchestrator pulls direct edits on `ravel.config` (e.g. `ravel.config.headroom = 9000`) back into the resolved state. You do not need to call `_commit_config_table` yourself; the auto-commit fires between the global and plan layer and again after the plan layer.
+
+The Lua state is *not* sandboxed. `config.lua` is trusted code — same threat model as `wezterm.lua` or `init.lua`. A `config.lua` that throws surfaces as a normal Rust error with the layer label and file path inlined.
+
+== The `ravel.config` table
+
+`ravel.config` mirrors the top-level fields of the shared config. Read or write the fields directly:
+
+[source,lua]
+----
+ravel.config.agent     = 'claude-code'  -- active agent ('claude-code' or 'pi')
+ravel.config.headroom  = 1500           -- dream-trigger headroom in words
+----
+
+Direct writes round-trip through the auto-commit. The setter functions below mutate the same fields and keep `ravel.config` in sync, so reads inside the same layer see the latest value either way.
+
+`ravel.config.config_version` is the migration marker — see <<config-version>>.
+
+== The `ravel` API
+
+Every function below is a method on the `ravel` global table. All mutations apply to the resolved state visible to whichever phase Ravel-Lite is about to run; nothing fires immediately against an external system.
+
+=== `ravel.set_agent(name)`
+
+Set the active agent backend. Valid values are `claude-code` and `pi`; anything outside that set is accepted but only meaningful if you have separately registered an agent of that name (no extension API today, so practically: pick one of the two).
+
+[source,lua]
+----
+ravel.set_agent('pi')
+----
+
+Equivalent to `ravel.config.agent = 'pi'`. Use whichever reads better in context.
+
+=== `ravel.set_headroom(n)`
+
+Set the dream-trigger headroom — how many words memory may grow past its post-last-dream baseline before the next dream phase fires. Default is 1500, set in the embedded `defaults/config.yaml`. Negative values are rejected with a `config.lua` runtime error.
+
+[source,lua]
+----
+ravel.set_headroom(3000)  -- let memory grow further before compacting
+----
+
+The dream-trigger mechanism itself lives in the link:phase-cycle.html[Phase cycle] reference.
+
+=== `ravel.set_model(phase, name)`
+
+Set the model for a specific phase on the *currently active agent* (whatever `ravel.config.agent` resolves to). `phase` is one of `work`, `analyse-work`, `reflect`, `dream`, `triage`. `name` is whatever string the agent CLI accepts for its `--model` flag.
+
+[source,lua]
+----
+ravel.set_model('work', 'claude-opus-4-7')
+----
+
+Pass an empty string to defer the choice to the agent CLI's interactive default — useful when you want the work phase to inherit whatever model your agent is currently set up for, while keeping every other phase pinned.
+
+=== `ravel.set_model_for(agent, phase, name)`
+
+Same as `set_model`, but explicit about which agent it targets. Useful when you want to configure both backends in one file:
+
+[source,lua]
+----
+ravel.set_model_for('claude-code', 'work',    'claude-opus-4-7')
+ravel.set_model_for('pi',          'analyse-work', 'claude-sonnet-4-6')
+----
+
+=== `ravel.set_provider(provider)`
+
+Set the provider string for the currently active agent. The provider is passed through to the agent CLI as-is; the embedded defaults set this on a per-agent basis (e.g. claude-code's provider is the bundled default).
+
+[source,lua]
+----
+ravel.set_provider('vertex')
+----
+
+=== `ravel.set_provider_for(agent, provider)`
+
+The explicit-agent variant of `set_provider`.
+
+[source,lua]
+----
+ravel.set_provider_for('claude-code', 'vertex')
+----
+
+=== `ravel.set_token(agent, name, value)`
+
+Override a single token in the agent's substitution map. Tokens are the `{{NAME}}` placeholders the prompt-loader expands at compose time — for example `{{TOOL_READ}}` (the agent's "read file" tool name) is one such token. Most users never touch this; it exists so a specialised agent variant can be wired up without forking the prompt files.
+
+[source,lua]
+----
+ravel.set_token('claude-code', 'TOOL_READ', 'Read')
+----
+
+Unknown tokens are accepted silently — they only matter when a prompt actually references them. A `{{NAME}}` left in the rendered prompt with no matching token (built-in or user-supplied) is a hard error from the substitution layer; see <<unresolved-tokens>>.
+
+=== `ravel.append_prompt(phase, text)`
+
+Register a block of text to be appended to the named phase's prompt. Multiple calls accumulate per phase, in registration order, across both layers. The text is not interpreted — it is concatenated verbatim into the rendered prompt after the embedded base, separated by a horizontal rule.
+
+[source,lua]
+----
+ravel.append_prompt('work', [[
+## Project-specific guidance
+- Prefer integration tests over mocks for anything touching the database.
+- Run `./scripts/lint.sh` before declaring a task done.
+]])
+----
+
+The contract is *append-only*. There is no `ravel.set_prompt` or `ravel.replace_prompt`, by design — the embedded base is the single source of truth for phase behaviour, and per-project customisation layers on top of it. If you need to *replace* the embedded behaviour wholesale, that is a sign the embedded prompt should change for everyone; raise an issue against the project rather than working around it locally.
+
+Token substitution runs across the whole composed prompt (base + appends), so `{{PLAN}}`, `{{PROJECT}}`, and any custom tokens you set work inside an append text just as they do in the base. The composition is documented in `src/prompt.rs::compose_prompt`.
+
+== Prompts on disk: there are none
+
+Phase prompts and per-agent prompts ship inside the binary, embedded at compile time from `defaults/`. There is no on-disk copy in the config dir. To read what a phase prompt looks like, browse the source on GitHub:
+
+https://github.com/Linkuistics/Ravel-Lite/tree/main/defaults
+
+A plan can carry a per-phase override at `<plan-dir>/prompt-<phase>.md` (e.g. `prompt-triage.md`). When present, this file is appended after the embedded base and before any `ravel.append_prompt` text. It exists for the same reason `append_prompt` does — it is *additive*, not a replacement — but it is plan-scoped rather than expressed in `config.lua`. Most users will not need it.
+
+[[config-version]]
+== `ravel.config.config_version`
+
+`ravel.config.config_version` is a marker stamped into the global `config.lua` by the v1 → v2 migration on first run. The value (currently `2`) identifies the config-dir layout the file was written against. Detection of the legacy v1 layout does *not* depend on this marker — the migration code looks at file presence — but the stamp is the documented sentinel for the v2 layout, and a future v2 → v3 migration will branch on it.
+
+You should not edit this field. The migration writes it; the running binary never reads it. If you delete it by accident the file still works; the next migration that ships will conservatively re-stamp it.
+
+[[v1-v2-migration]]
+== v1 → v2 migration
+
+Before the embedded-defaults landing, `<config-dir>` contained materialised copies of everything: `config.yaml`, `config.local.yaml` overlays, per-agent `agents/<name>/config.yaml` and `tokens.yaml`, and full prompt files under `phases/`. The v2 binary reads all of those from the embedded set at runtime, so the on-disk copies are dead clutter that confuses readers and shadows nothing.
+
+The first v2 invocation against a v1 config dir runs an automatic migration:
+
+. Read every legacy YAML (base + `*.local.yaml` overlay) and deep-merge them just as the v1 loader would have.
+. Translate the merged values into a generated `config.lua` that calls `ravel.set_agent`, `ravel.set_headroom`, `ravel.set_model_for`, `ravel.set_provider_for`, and `ravel.set_token` to express the same intent.
+. Stamp `ravel.config.config_version = 2` into the file.
+. Delete the legacy YAML files and any newly-empty legacy directories (`agents/`, `phases/`, `fixed-memory/`).
+
+The migration is idempotent — once stamped, subsequent invocations are no-ops. It is also crash-safe: writes happen before deletes, and detection is driven by the presence of legacy files (not by the marker), so a crash between steps leaves the next invocation able to complete cleanup without losing work.
+
+If you already have a hand-written `config.lua` when the migration runs, your file is preserved verbatim — the marker line is appended, and legacy YAML is deleted, but no setters from the YAML are translated into your file. The assumption is that your existing Lua already expresses the intent.
+
+User-owned files under what used to be a Ravel-Lite directory (e.g. a personal note in `phases/notes.md`) are never deleted. The migration only removes paths the v1 materialiser ever wrote.
+
+The migration code lives in `src/migrate_v1_to_v2.rs` if you want to read the exact rules.
+
+== A minimal `config.lua`
+
+The shortest useful config — switch the active agent and pin one phase model — looks like this:
+
+[source,lua]
+----
+ravel.set_agent('pi')
+ravel.set_model('work', 'claude-opus-4-7')
+----
+
+Drop it at `<config-dir>/config.lua` (global) or `<plan>/config.lua` (per-plan), and the next invocation picks it up. No registration step, no schema versioning, no overlay file naming convention to remember.
+
+[[unresolved-tokens]]
+== Errors
+
+Two error classes are worth flagging because they show up in fresh setups.
+
+*Lua runtime error.* If `config.lua` throws — a syntax error, an `error('...')`, a call to a non-existent `ravel.set_xyz` — the orchestrator surfaces it as `Failed to execute <layer> <path>: <message>`. The layer label (`global` or `plan`) and the absolute file path tell you which file to fix.
+
+*Unresolved token after substitution.* If a prompt (embedded, plan-override, or `append_prompt` text) contains a `{{NAME}}` placeholder for which no token is registered, prompt composition fails with `Prompt contains unresolved token(s) after substitution: {{NAME}}`. The fix is either a typo correction in the prompt or a `ravel.set_token('<agent>', 'NAME', '<value>')` registration. The hard-fail is deliberate — a previous bug let an unresolved token reach the LLM unchanged, with confusing downstream behaviour.
+
+The substitution path itself (the regex and the substitution order — content macros before path tokens) lives in `src/prompt.rs::substitute_tokens`.

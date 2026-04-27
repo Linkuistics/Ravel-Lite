@@ -1056,3 +1056,16 @@ sessions:
     What worked: the `--embedded` flag in render-docs.sh produces clean standalone HTML fragments with no custom template needed. The asciidoctor table-cell pipe character restriction (a bare `before|after` inside a cell was parsed as a row delimiter) required one formatting fix in cli-state.adoc.
 
     What's next: remaining reference pages in the backlog (cli-state-backlog split if needed, cross-plan-files, state-files) can follow the same pattern established here.
+- id: session-73
+  timestamp: 2026-04-27T13:39:43Z
+  phase: work
+  body: |
+    ### Session 73 (2026-04-27T13:39:43Z) — Write reference docs for config API, state files, and cross-plan file formats
+
+    - All three reference stubs in `docs/reference/` replaced with full, substantive pages.
+    - `config-and-prompts.adoc`: documents the two-layer Lua config model (global + per-plan), the `<config-dir>` resolution chain (`--config` → `RAVEL_LITE_CONFIG` → `dirs::config_dir()/ravel-lite`), composition semantics (setters last-write-wins, registrators accumulate), every public `ravel.*` function with examples, and the append-only prompt customisation contract.
+    - `state-files.adoc`: documents all plan-state files (`backlog.yaml`, `memory.yaml`, `session-log.yaml`, `latest-session`, `phase.md`, `commits.yaml`) with full schemas, lifecycle notes, and CLI verb cross-references.
+    - `cross-plan-files.adoc`: documents `subagent-dispatch.yaml` (schema, one-shot scratch lifecycle, dispatch contract) and `related-components.yaml` (schema_version 2, full six-field edge structure, per-edge validation rules, CLI workflow). Includes full vocabulary tables for 17 edge kinds (grouped into 7 families), 7 lifecycle scopes, and 3 evidence grades. Schemas cross-checked against `src/ontology/schema.rs`, `src/related_components.rs`, and `src/main.rs::RelatedComponentsCommands`.
+    - All three pages rendered via `./scripts/render-docs.sh`; HTML fragments committed alongside AsciiDoc source.
+    - No AsciiDoc warnings on render; horizontal-list syntax used for vocabulary tables renders correctly.
+    - With all three reference pages now substantive, the tutorial walk-through task (T2) can reference edge-kind / lifecycle-scope / evidence-grade vocabularies without defining them inline.
