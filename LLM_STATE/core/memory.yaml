@@ -586,7 +586,7 @@ entries:
 - id: config-model-is-layered-lua-config-lua-rs-owns-it
   title: Config model is layered Lua; `config_lua.rs` owns it
   body: |
-    `src/config_lua.rs` implements the `ravel` Lua global table (`set_agent`, `set_headroom`, `set_model_for`, `set_token`, `append_prompt`, `config`). Backed by `mlua` (vendored Lua 5.4). Global + plan layers resolve in order; `append_prompt` accumulates across both layers in registration order. All config loaders delegate to `config_lua::resolve`; `src/config.rs` no longer contains `merge_yaml` or overlay machinery.
+    `src/config_lua.rs` implements the `ravel` Lua global table (`set_agent`, `set_headroom`, `set_model_for`, `set_token`, `append_prompt`, `config`). Backed by `mlua` (vendored Lua 5.4). Global + plan layers apply in order; setter functions use last-write-wins; `append_prompt` is append-only and accumulates across both layers in registration order — prompts cannot be replaced via config. All config loaders delegate to `config_lua::resolve`; `src/config.rs` no longer contains `merge_yaml` or overlay machinery.
 - id: shipped-defaults-read-from-embedded-binary-not-disk
   title: Shipped defaults read from embedded binary, not disk
   body: |
@@ -631,3 +631,7 @@ entries:
   title: 'Asciidoctor table cells: bare pipe is a column delimiter'
   body: |
     `before|after` inside a table cell is parsed as two cells, not one. Escape as `before\|after` or restructure. Applies to all `.adoc` files under `docs/`.
+- id: config-dir-resolves-config-ravel-lite-config-dirs-config-dir-ravel-lite
+  title: 'Config-dir resolves: --config → RAVEL_LITE_CONFIG → dirs::config_dir()/ravel-lite'
+  body: |
+    `config_lua::resolve` tries in order: `--config` CLI flag, `RAVEL_LITE_CONFIG` env var, `dirs::config_dir()/ravel-lite`. First match wins. See: `Config model is layered Lua; config_lua.rs owns it`.
