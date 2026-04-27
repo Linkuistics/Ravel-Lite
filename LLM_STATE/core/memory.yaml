@@ -587,3 +587,7 @@ entries:
   title: Capture scripts template documentation with real system runs
   body: |
     `scripts/capture/ravel-lite-tutorial.sh` drives a TestAnyware macOS VM: installs via Homebrew, runs the tutorial scenario interactively, takes screenshots, pulls the resulting `LLM_STATE` tree. Structured into eight named sections with `[STEP-NAME]` log markers for LLM driver correlation. This is the template for all future documentation-with-real-results capture scripts. Known approximation: `testanyware vm list --format json` flag is inferred from README, not validated against a live install; `VNC_ENDPOINT`/`AGENT_ENDPOINT` env overrides are in place for first-run tuning.
+- id: after-help-const-avoids-dead-code-warnings-no-intermediate-url-consts
+  title: after_help const avoids dead-code warnings; no intermediate URL consts
+  body: |
+    `src/main.rs` exposes repo and docs URLs via clap's `after_help` field. Defined as a single `AFTER_HELP: &str` string literal rather than separate `REPO_URL`/`WEBSITE_URL` constants; intermediate named string constants with no other consumers trigger dead-code warnings under `[lints.rust] warnings = "deny"`.
