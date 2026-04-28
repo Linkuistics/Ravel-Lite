@@ -705,3 +705,11 @@ entries:
   title: blocked_by is kind-specific extension data, not a justification edge
   body: |
     `blocked_by` relationships belong in kind-specific extension data, not in the generic `justification` edge enum. Threading `blocked_by` through the substrate `store` would re-couple the generic substrate to ravel-lite plan vocabulary. The wiring task handles it as a domain wrapper.
+- id: src-repos-rs-holds-reposregistry-on-disk-is-name-keyed-map
+  title: '`src/repos.rs` holds `ReposRegistry`; on-disk is name-keyed map'
+  body: |
+    `ReposRegistry` in `src/repos.rs` owns `repos.yaml`; on-disk shape is a name-keyed `IndexMap<String, RepoEntry>` (per architecture-next §The repo registry). `local_path` is stored absolute; omitted from YAML when absent. `try_add` rejects duplicate slugs. CLI verbs: `repo add`, `repo list`, `repo remove`.
+- id: componentref-canonical-string-is-repo-component
+  title: '`ComponentRef` canonical string is `<repo>:<component>`'
+  body: |
+    `ComponentRef { repo_slug, component_id }` in `src/component_ref.rs`. `Display`/`FromStr`/serde all produce the `<repo>:<component>` form. Validation rejects empty halves and extra colons (exactly one colon required).
