@@ -335,10 +335,12 @@ coexist; the user/agent picks the right tool.
 
 ### Library extraction
 
-The substrate becomes a separate crate consumable by ravel-lite,
-atlas-contracts, and (eventually) Atlas itself when it runs as an
-actor in Ravel. Working name TBD; candidates include `kg`, `tms`,
-`defeasible-kg`. The crate provides:
+The substrate is built as an in-project workspace crate named
+`knowledge-graph`, with eventual extraction into a separately-
+published crate consumable by ravel-lite, atlas-contracts, and Atlas
+itself when it runs as an actor in Ravel. v2.0 keeps the crate
+in-tree to keep iteration cheap; extraction is a follow-up once the
+shape is stable. The crate provides:
 
 - Typed item/edge schema (generic over kind).
 - YAML serde with the canonical shape.
@@ -945,34 +947,45 @@ Compared with `architecture.md`:
   separate, related TMS kinds with `serves-intent` justification
   edges; defeat cascade keeps backlog honest.
 
+## Settled decisions
+
+Resolved during the kick-off of architecture-next migration work
+(2026-04-28). Recorded here so the doc stays the canonical source.
+
+- **TMS/KG crate name and home.** Crate is named `knowledge-graph`
+  and ships as an in-project workspace member of the ravel-lite
+  repository for v2.0. Future extraction into its own published
+  crate (consumable by atlas-contracts and Atlas) is deferred until
+  the shape stabilises.
+
+- **Datalog engine.** `ascent`. At the ravel-lite scale (plan KGs
+  with tens-to-hundreds of items, catalog KGs with low-thousands of
+  components), batch recompute is microseconds-to-fractions-of-a-
+  second, so differential-dataflow's incrementality pays no
+  dividend and adds substantial API/runtime complexity. `crepe` is
+  similar in shape to ascent but with less momentum.
+
+- **v1 → v2 cutover policy.** Hard cutover: the v2 binary does not
+  run v1 plans. Migration is in-scope for v2.0 via
+  `ravel-lite migrate <old-plan-path>`; running ravel-lite 2.x
+  against an unmigrated `LLM_STATE/<plan>` directory is an error.
+
+- **Legacy memory/intent backfill.** One-shot LLM-driven extraction
+  during `ravel-lite migrate`: the agent reads `phase.md` and
+  recent backlog and emits an `intents.yaml`, then re-reads
+  `memory.md` and emits a `memory.yaml` with best-effort
+  justifications. Entries the agent cannot attribute receive
+  `status: legacy` and are surfaced for the user to curate.
+
 ## Open questions
 
 These are the spots where the design is not yet settled:
-
-- **Library naming and home for the TMS/KG crate.** Working
-  candidates: `kg`, `tms`, `defeasible-kg`. Sits in a shared repo
-  alongside atlas-contracts, or its own. Should be picked before
-  implementation starts so plan state code can target the library
-  shape from day one.
-
-- **Datalog engine selection.** `ascent` is the leading candidate
-  (embedded macro, stratified negation). `crepe` and
-  `differential-dataflow` are alternatives; differential-dataflow
-  shines for incremental updates if/when the catalog grows large
-  enough to make recompute expensive.
 
 - **Live-update vs batch reasoning.** The Datalog engine recomputes
   derivations from the current fact base; for small plan KGs this
   is cheap. For large catalog KGs it may need incrementalisation
   — open question whether that complexity is needed at the
   ravel-lite scale or only at Atlas-as-server scale.
-
-- **TMS migration from existing plans.** Existing `memory.md`
-  entries don't have explicit justifications. Existing `phase.md`
-  files don't have structured intent. A one-shot LLM-driven
-  migration that backfills best-effort justifications and extracts
-  intent claims, or a `legacy: true` status that grandfathers
-  unstructured items until natural turnover replaces them.
 
 - **Multi-target-cycle escape hatch semantics.** When a cycle is
   marked multi-target in `this-cycle-focus.yaml`, the work phase
@@ -1034,7 +1047,10 @@ operation:
    `status: legacy` entries. The user can curate these in their
    own time.
 
-Existing in-flight plans on the old model continue to run on the
-old model until migrated; the binary need not support both
-simultaneously, but a `ravel-lite migrate <old-plan-path>` verb is
-the cleanest cutover.
+v2.0 is a hard cutover: the v2 binary does not run v1 plans.
+Existing plans must be migrated via `ravel-lite migrate
+<old-plan-path>` before they can be operated. Migration is a
+one-shot, LLM-driven backfill that extracts intent claims from
+`phase.md` and reconstructs justifications for legacy `memory.md`
+entries; entries the LLM cannot attribute land with `status:
+legacy` for the user to curate.
