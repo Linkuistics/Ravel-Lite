@@ -677,3 +677,19 @@ entries:
   title: config_lua.rs doc comment can drift from registered API
   body: |
     Grep `set_function`/`set` registration calls in `src/config_lua.rs` to audit the live Lua API surface; the module-level doc comment listing exported names is not guaranteed to match. See: `Config model is layered Lua; config_lua.rs owns it`.
+- id: knowledge-graph-crate-is-in-tree-extraction-deferred-post-v2-0
+  title: knowledge-graph crate is in-tree; extraction deferred post-v2.0
+  body: |
+    `knowledge-graph` is the TMS substrate crate name; in-tree Cargo workspace member. Extraction to a standalone crate is deferred until after v2.0 ships. See: `docs/architecture-next.md` Settled decisions §crate name.
+- id: ascent-chosen-as-datalog-engine-differential-dataflow-rejected
+  title: Ascent chosen as Datalog engine; differential-dataflow rejected
+  body: |
+    `ascent` (recompute-based) is the chosen Datalog engine for the knowledge-graph crate. Recompute is fast enough at ravel-lite scale; differential-dataflow's incremental complexity is not warranted. Settled in Phase A of architecture-next.
+- id: v1-v2-cutover-is-hard-v2-binary-refuses-unmigrated-plans
+  title: v1→v2 cutover is hard; v2 binary refuses unmigrated plans
+  body: |
+    No migration window: the v2 binary hard-fails on unmigrated plans. Users must run `ravel-lite state migrate` before switching to v2. Settled in Phase A of architecture-next.
+- id: legacy-backfill-uses-one-shot-llm-extraction-at-migrate-time
+  title: Legacy backfill uses one-shot LLM extraction at migrate time
+  body: |
+    One-shot LLM-driven extraction at `migrate` time backfills the knowledge graph from existing plan history. Entries with no attributable session land with `status: legacy`. No incremental or post-hoc repair path. Settled in Phase A of architecture-next.
