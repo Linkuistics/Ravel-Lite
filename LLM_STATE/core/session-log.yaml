@@ -1172,3 +1172,13 @@ sessions:
     - **Didn't work / deferred:** Full end-to-end verification (a clean chapter-01-through-04 capture run) was not feasible inside this work phase — it requires a real TestAnyware VM. The sentinel handshake is the right failure mode: if it times out, the script errors loudly rather than silently misfiring.
     - **Blocked:** `auto-exit-work-phase-claude-after-plan-completion` was moved to `blocked`. User design decision (2026-04-28): work-phase claude must remain interactive after plan completion. The cross-talk fix therefore belongs in the capture script, not in ravel-lite core.
     - **Next:** Run the capture script end-to-end to empirically confirm chapter-03 → chapter-04 no longer cross-talks. Also stop the kept TestAnyware VM `ravel-lite-tutorial-20260428T045749Z` (separate backlog item).
+- id: session-81
+  timestamp: 2026-04-28T10:24:10Z
+  phase: work
+  body: |
+    ### Session 81 (2026-04-28T10:24:10Z) — Stop kept TestAnyware VM
+
+    - Ran `testanyware vm stop ravel-lite-tutorial-20260428T045749Z` to release the VM left running with `--keep-vm` after the chapter-04/05 capture run.
+    - VM stop succeeded: VNC viewers closed, VM stopped and deleted. Confirmed via `testanyware vm list` — no running clones remain.
+    - No source tree changes; task was purely operational cleanup.
+    - The `--keep-vm` + enqueue-a-stop-task pattern worked as intended: the capture run left a warm VM, a backlog task cleaned it up in the next cycle.

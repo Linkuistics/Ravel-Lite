@@ -67,7 +67,7 @@ tasks:
 - id: stop-kept-testanyware-vm-ravel-lite-tutorial-20260428t045749z
   title: Stop kept TestAnyware VM ravel-lite-tutorial-20260428T045749Z
   category: infra
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Stop the TestAnyware VM left running after the chapter-04/05 capture run.
@@ -89,3 +89,14 @@ tasks:
     ## Done when
 
     `testanyware vm stop` completes without error (or the VM is confirmed already stopped/gone).
+  results: |
+    Ran `testanyware vm stop ravel-lite-tutorial-20260428T045749Z`. Output
+    confirmed VNC viewers were closed and the VM was both stopped and
+    deleted. Verified with `testanyware vm list`: no running clones remain.
+    No tree changes, so no `.gitignore` work was needed.
+
+    The `--keep-vm` follow-up pattern (capture run leaves a warm VM, a
+    backlog task cleans it up later) worked as intended here. Future
+    capture-run scripts that rely on `--keep-vm` should continue to enqueue
+    a stop task on completion so the VM does not linger across phase
+    cycles.
