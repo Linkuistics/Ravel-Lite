@@ -2,7 +2,7 @@ tasks:
 - id: begin-architecture-next-migration
   title: Begin architecture-next migration
   category: infra
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Begin the architecture-next migration as captured in `docs/architecture-next.md`. v1.0.4 is the clean baseline; this is the migration that reshapes ravel-lite itself.
@@ -25,6 +25,105 @@ tasks:
     ## Sequencing note
 
     `default-config-location-to-config-ravel-lite-on-both-linux-and-macos-and-make-init-path-optional` is explicitly parked until after architecture-next lands.
+  results: |
+    ## Decomposition into trackable sub-tasks
+
+    The umbrella is closed by decomposing into 13 sub-tasks under category
+    `architecture-next`, each referencing the relevant section of
+    `docs/architecture-next.md`. Triage selects work via the dependency
+    graph rather than by fixed phase order, so sequencing can flex as
+    foundations land.
+
+    ## Settled Phase A decisions (now in the design doc)
+
+    - **A1. TMS/KG crate.** `knowledge-graph`, in-project workspace
+      member; extraction to a separate published crate deferred to
+      post-v2.0.
+    - **A2. Datalog engine.** `ascent`. At ravel-lite scale (plan KGs ≤
+      hundreds, catalog KGs ≤ low thousands of nodes) batch recompute is
+      microseconds-to-fractions-of-a-second; differential-dataflow's
+      incrementality buys nothing and adds substantial API/runtime
+      complexity. `crepe` is similar in shape but with less momentum.
+    - **A3. v1 → v2 cutover.** Hard cutover. The v2 binary will refuse to
+      run unmigrated v1 plans. Migration is in-scope for v2.0 via
+      `ravel-lite migrate <old-plan-path>`.
+    - **A4. Legacy backfill.** One-shot LLM-driven extraction at migrate
+      time: rebuild `intents.yaml` from `phase.md` + recent backlog;
+      rebuild `memory.yaml` from `legacy_memory.md` with best-effort
+      justifications. Unattributable entries land with `status: legacy`
+      for the user to curate. The "grandfather unstructured items"
+      alternative was rejected.
+
+    These are recorded in `docs/architecture-next.md` under a new
+    *Settled decisions* section; the corresponding *Open questions*
+    bullets were removed in the same edit. Remaining open questions
+    (live-update vs batch reasoning, multi-target-cycle escape hatch,
+    cross-repo memory home, atlas freshness signaling, intent-trajectory
+    phase split, rename cascade, concurrent plan execution) are still in
+    the doc and will be resolved as their respective sub-tasks become the
+    active focus.
+
+    ## Sub-tasks added (13)
+
+    Foundations (no deps; parallelisable):
+
+    - `knowledge-graph-crate-scaffold-tms-kg-substrate`
+    - `ravel-context-new-layout-and-repos-yaml-registry`
+
+    Substrate consumers and CLI:
+
+    - `knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding`
+      (deps: scaffold)
+    - `graph-rag-ravel-lite-atlas-cli-for-catalog-queries`
+      (deps: layout)
+    - `findings-inbox-context-level-findings-yaml-replaces-subagent-dispatch`
+      (deps: scaffold + layout)
+
+    Plan-shape changes:
+
+    - `ravel-lite-create-write-plans-into-context-plans-dir`
+      (deps: layout + plan-KG wiring)
+    - `targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts`
+      (deps: layout)
+    - `phase-cycle-triage-first-with-focus-objections-and-commits-yaml`
+      (deps: plan-KG wiring + create + targets)
+    - `reflect-bounded-tms-plus-intent-trajectory-check`
+      (deps: plan-KG wiring)
+
+    Lifecycle endpoints:
+
+    - `plan-finish-pr-merge-with-memory-promotion-and-archive`
+      (deps: create + targets + phase cycle)
+    - `curate-standalone-truth-maintenance-replaces-dream-phase`
+      (deps: plan-KG wiring)
+    - `sync-ravel-lite-sync-plan-from-other-plan`
+      (deps: targets)
+    - `migrate-ravel-lite-migrate-for-v1-to-v2-cutover`
+      (deps: layout + plan-KG wiring + create + targets + phase cycle)
+
+    ## Side effects on the existing backlog
+
+    The `default-config-location-...` task was flipped to `blocked` with
+    reason "Parked until architecture-next migration completes; will
+    land in ravel-lite 2.x." Its substance is subsumed by the
+    `ravel-context-new-layout-and-repos-yaml-registry` task, since the
+    new context root replaces the v1 config-discovery chain entirely.
+
+    ## What didn't happen
+
+    No code was written. The Cargo workspace conversion, the
+    `crates/knowledge-graph/` skeleton, and any phase-loop changes are
+    deferred to subsequent cycles that pick the relevant sub-tasks.
+    This was a planning cycle, not an implementation cycle.
+
+    ## What this suggests next
+
+    The two foundation tasks have no dependencies and can be worked in
+    either order — or in parallel across two plans, if desired. Most
+    likely first pick is the substrate scaffold, since it underpins five
+    downstream tasks; the layout task underpins six. Either is
+    defensible. Triage should choose based on which foundation is more
+    disruptive to defer.
 - id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
   title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
   category: infra
@@ -67,7 +166,8 @@ tasks:
 - id: default-config-location-to-config-ravel-lite-on-both-linux-and-macos-and-make-init-path-optional
   title: Default config location to ~/.config/ravel-lite on both Linux and macOS, and make init path optional
   category: ux
-  status: not_started
+  status: blocked
+  blocked_reason: Parked until the architecture-next migration completes; will land in ravel-lite 2.x. The new ravel-context model reshapes config discovery entirely, so any v1 config-location work would be wasted.
   dependencies: []
   description: |
     Two small UX changes that travel together:
@@ -143,3 +243,279 @@ tasks:
     `<ravel-context>/` root, etc.), and any work on the v1 default
     location is wasted effort until that lands. Park this until the
     migration is complete, then address it before the next release.
+- id: knowledge-graph-crate-scaffold-tms-kg-substrate
+  title: 'knowledge-graph crate: scaffold TMS+KG substrate'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Scaffold the in-project workspace crate `knowledge-graph` that provides the TMS + typed-KG substrate underpinning the rest of architecture-next.
+
+    Reference: `docs/architecture-next.md` §Knowledge substrate (TMS + KG), §Library extraction.
+
+    Scope:
+    - Convert root `Cargo.toml` to a workspace; place crate at `crates/knowledge-graph/`.
+    - Generic TMS item shape per §Item shape (id, kind, claim, justifications, status, supersedes/superseded_by/defeated_by, authored_at, authored_in) with canonical YAML serde.
+    - Justification kinds enum: code-anchor, rationale, serves-intent, defeats, supersedes, external. Per-kind fields.
+    - Status mutation API with deterministic cascade across `serves-intent`, `blocked_by`, `defeats`, justification refs (per §Defeat cascade).
+    - Wire `ascent` for Datalog rules; ship two smoke-test rules from §Datalog-style inferencing (orphaned backlog item, suspect memory entry).
+    - Graph algorithm API: shortest path, BFS subgraph, SCC, articulation/bridges, topo sort.
+    - No domain types yet — kinds and statuses are registered by consumers (ravel-lite plan KG, future catalog consumer).
+
+    Out of scope (separate tasks): wiring ravel-lite's plan kinds; wiring catalog kinds; CLI verbs.
+- id: ravel-context-new-layout-and-repos-yaml-registry
+  title: 'ravel-context: new layout and repos.yaml registry'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Stand up the new `<ravel-context>/` root with config, repo registry, agents/phases/fixed-memory dirs, plans dir, and findings inbox slot. Replaces the v1 `<project>/LLM_STATE/<plan>` rooting and the `dirs::config_dir()` lookup chain.
+
+    Reference: `docs/architecture-next.md` §Layout, §The repo registry.
+
+    Scope:
+    - New layout per §Layout: `config.yaml`, `config.local.yaml`, `repos.yaml`, `findings.yaml`, `agents/`, `phases/`, `fixed-memory/`, `plans/` under `<ravel-context>/`.
+    - One git identity for the context (independent of any target repo).
+    - `repos.yaml` schema: `{ name -> { url, local_path? } }` per §The repo registry.
+    - `ravel-lite repo {add, list, remove}` CLI verbs.
+    - `ravel-lite init` (no path arg) scaffolds context at the default location; precedence: `--config` > `RAVEL_LITE_CONFIG` > default.
+    - Catalog view computes on read as union of `.atlas/components.yaml` from registered repos; ComponentRefs use `repos.yaml` keys as `repo_slug`.
+    - Subsumes the v1 config-location task (currently blocked) — `~/.config/ravel-lite/` is the default for the new context.
+
+    Open question still in play: directory tier under XDG vs macOS-specific; v1's blocked task captures the current prose answer.
+- id: knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
+  title: 'knowledge-graph: wire plan KG kinds (intent, backlog, memory, finding)'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - knowledge-graph-crate-scaffold-tms-kg-substrate
+  description: |
+    Register ravel-lite's plan-side TMS kinds in the `knowledge-graph` crate and migrate the existing plan state files to TMS item shape.
+
+    Reference: `docs/architecture-next.md` §Plan as a knowledge graph, §Item shape, §Status vocabularies, §CLI surface for queries.
+
+    Scope:
+    - Register kinds: `intent`, `backlog-item`, `memory-entry`, `finding`.
+    - Status vocabularies per §Status vocabularies.
+    - Convert `backlog.yaml` schema to TMS item shape — each item gets explicit justifications (`serves-intent` for parents, `external` for issue links) and structured status. Preserve current behaviour during conversion.
+    - Convert `memory.yaml` schema to TMS item shape with justifications (`code-anchor`, `rationale`).
+    - Add `intents.yaml` schema; `phase.md` becomes a rendered overview from the structured `intents.yaml`, not the canonical source.
+    - Add `ravel-lite plan <subcommand>` for plan KG inspection (small surface for v2.0).
+
+    Coordination: legacy plan migration (separate task) calls into the conversion routines defined here. The dogfood case is `LLM_STATE/core` itself.
+- id: graph-rag-ravel-lite-atlas-cli-for-catalog-queries
+  title: 'graph-RAG: ravel-lite atlas CLI for catalog queries'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - ravel-context-new-layout-and-repos-yaml-registry
+  description: |
+    Replace catalog-rendered-into-prompts with on-demand graph-RAG via a `ravel-lite atlas` CLI. The agent shells out to query the catalog instead of reading a YAML dump from the prompt.
+
+    Reference: `docs/architecture-next.md` §Catalog as graph (graph-RAG), §CLI surface, §Caching and freshness, §Forward path to Ravel as actor system.
+
+    Scope:
+    - `ravel-lite atlas` subcommands: `list-repos`, `list-components [--repo R] [--kind K]`, `describe <ref>`, `edges <ref> [--in|--out|--both]`, `neighbors <ref> [--depth N]`, `path <from> <to> [--max-hops N]`, `scc`, `roots`, `summary [--repo R]`, `memory <ref> [--search T]`, `freshness [--require-fresh]`, `help`.
+    - Read `.atlas/components.yaml` from each registered repo; union into in-memory graph.
+    - Cross-repo edges via `.atlas/related-components.yaml` with ComponentRefs in `from`/`to`; dedupe and union.
+    - Cache by `(path, mtime)`; near-100% hit rate in steady state.
+    - `freshness` reports last Atlas-run age per repo; `--require-fresh` errors if stale.
+    - Strip catalog rendering from existing prompt files.
+
+    Forward path: when Atlas runs as an actor in Ravel, this CLI becomes a thin client routing to the service — agent's mental model unchanged.
+- id: ravel-lite-create-write-plans-into-context-plans-dir
+  title: 'ravel-lite create: write plans into context plans dir'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - ravel-context-new-layout-and-repos-yaml-registry
+  - knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
+  description: |
+    Re-shape `ravel-lite create <plan>` so plans live at `<context>/plans/<plan>/` and the create session has the three structured deliverables defined for v2.0.
+
+    Reference: `docs/architecture-next.md` §`ravel-lite create <plan>`, §Plan lifecycle.
+
+    Scope:
+    - Validate `<context>/plans/<plan>/` does not yet exist.
+    - Spawn a headful claude session with the catalog query tools (atlas CLI) available.
+    - Three deliverables in the session:
+      1. Intent articulation — author `intents.yaml` with 1–5 strategic intents, each a TMS item with explicit justifications (rationale linking to the user's stated reasons, external for issue links).
+      2. Target proposal — emit `target-requests.yaml` with components the intents reach; user reviews; runner mounts at next phase boundary.
+      3. Anchor capture — components mentioned but not edited get recorded as anchors in `phase.md` (graph-RAG starting points for triage).
+    - `phase.md` becomes a rendered overview (intent summary + anchors + housekeeping), not the canonical intent source.
+    - No component required at create time; targets land asynchronously via target-requests.
+- id: targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
+  title: 'Targets and worktrees: per-repo plan branches and dynamic mounts'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - ravel-context-new-layout-and-repos-yaml-registry
+  description: |
+    Implement the `Target` abstraction, `targets.yaml` runtime state, and per-git-root worktree mounting that gives plan work physical isolation against `main`.
+
+    Reference: `docs/architecture-next.md` §Targets and worktrees, §Mounting, §Dynamic mounting, §Pure isolation against main.
+
+    Scope:
+    - `Target` = `{ component_ref: (repo_slug, component_id), working_root, branch, path_segments }` cached at mount time.
+    - `targets.yaml` runtime state per plan; lists currently mounted targets.
+    - Mount semantics per §Mounting: `working_root = <plan>/.worktrees/<repo_slug>/`, `branch = ravel-lite/<plan>/main`, created via `git worktree add ... -b <branch>` from HEAD-of-default-branch in source repo.
+    - Multi-component-per-worktree: components sharing a git root share one worktree.
+    - `target-requests.yaml` consumed at phase boundaries: attach to existing worktree if same git root, else create new; clear error if component is not in any registered repo's `.atlas/`.
+    - Plan branches do not auto-rebase; merge debt is paid at finish.
+    - Phase prompts expose `<plan>/.worktrees/<repo_slug>/` paths via `--add-dir` for whichever targets are mounted.
+
+    Coordination: `ravel-lite-create` writes initial `target-requests.yaml`; runner drains it on first phase boundary.
+- id: findings-inbox-context-level-findings-yaml-replaces-subagent-dispatch
+  title: 'Findings inbox: context-level findings.yaml replaces subagent-dispatch'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - knowledge-graph-crate-scaffold-tms-kg-substrate
+  - ravel-context-new-layout-and-repos-yaml-registry
+  description: |
+    Add the context-level findings inbox and remove the v1 cross-plan subagent-dispatch fan-out. Cross-plan effects in v2 are advisory only, mediated by the user processing findings.
+
+    Reference: `docs/architecture-next.md` §Findings inbox, §What this replaces or removes.
+
+    Scope:
+    - `<context>/findings.yaml` schema: list of TMS items, kind=`finding`, statuses `new | promoted | wontfix | superseded`. Optional `component` attribution and `raised_in` plan reference.
+    - Triage and reflect write findings when they observe something out of scope for the current plan.
+    - `survey` surfaces the inbox; user processes findings out of band — promoting `new` into actual plans, filing bugs externally, marking `wontfix`.
+    - Nothing reads findings.yaml during plan execution.
+    - Remove the existing `subagent-dispatch.yaml` mechanism: triage no longer fans out to sibling plans automatically.
+    - Update phase prompts (triage, reflect) to author findings instead of dispatch entries.
+
+    Coordination: relies on `knowledge-graph` substrate for the TMS item shape, and on the context layout for the file location.
+- id: phase-cycle-triage-first-with-focus-objections-and-commits-yaml
+  title: 'Phase cycle: triage-first with focus-objections and commits.yaml'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
+  - ravel-lite-create-write-plans-into-context-plans-dir
+  - targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
+  description: |
+    Restructure the phase cycle to `triage → work → analyse-work → reflect`, eliminate the in-cycle dream phase, and make commit partitioning + phase boundary mechanics fully runner-driven.
+
+    Reference: `docs/architecture-next.md` §Phase cycle (restructured), §Phase boundaries, §Commits (two streams), §Recovery from interrupted cycles.
+
+    Scope:
+    - Reorder cycle: triage opens (true triage), reflect closes; no dream in cycle.
+    - `this-cycle-focus.yaml` (triage writes) — single target by default, multi-target only when atomic across components in same git root.
+    - `focus-objections.yaml` (work writes; triage consumes next cycle) — kinds: wrong-target, skip-item, premature. A cycle that produces only objections + memory is valid.
+    - `commits.yaml` (analyse-work writes) — partitions edits into ordered commits with `{ target, paths, message }`. Runner applies mechanically: resolves ComponentRef to (working_root, pathspec), runs `git add` + `git commit` in working_root.
+    - Phase boundary: drain target-requests, apply commits, run defeat cascade over plan KG, commit plan-state changes (`run-plan: <phase> (<plan>)`), save per-worktree baselines into `<phase>-baseline.yaml`.
+    - Two-stream commits: target work first, then context records.
+    - Recovery: Ctrl-C lands "between cycles"; next run starts with triage. No resume machinery; interrupted scratch files ignored.
+
+    Update phase prompts for the new cycle shape.
+- id: reflect-bounded-tms-plus-intent-trajectory-check
+  title: 'Reflect: bounded TMS plus intent-trajectory check'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
+  description: |
+    Give the reflect phase its v2 responsibilities: distil session learnings into TMS-shaped memory, run a bounded truth-maintenance pass on recent entries, and check the cycle's work against active intents for drift.
+
+    Reference: `docs/architecture-next.md` §REFLECT, §Reflect's role on memory (bounded TMS).
+
+    Scope:
+    - Distil learnings into new memory entries with structured justifications and component attribution. Process learnings about plan dynamics get `attribution: plan-process` and stay in plan memory only.
+    - Bounded TMS pass: for each entry potentially affected by this cycle's changes, run code-anchor mechanical checks (path exists, SHA matches at line range). Mark suspect entries via Datalog rule.
+    - LLM re-evaluation: for suspect entries and rationale-only justifications, re-read the relevant code and decide still true / refined / defeated.
+    - Authoring discipline: new entries must include explicit justifications; two contradictory active entries is a bug.
+    - Bounded scope: last K cycles or last N entries — cheap by design.
+    - Intent-trajectory check: walk this cycle's commits + session log against active intents; flag drift (work not serving any active intent, or intents not served by recent work). Output is part of reflect's memory, not a hard fail.
+    - Reflect operates on plan memory only; component memory edits happen at plan finish (promotion) or via curate.
+
+    Open question: whether intent-trajectory grows into its own phase between reflect and triage — keep an eye on scope.
+- id: plan-finish-pr-merge-with-memory-promotion-and-archive
+  title: 'Plan finish: pr/merge with memory promotion and archive'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - ravel-lite-create-write-plans-into-context-plans-dir
+  - targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
+  - phase-cycle-triage-first-with-focus-objections-and-commits-yaml
+  description: |
+    Implement plan completion: promote plan memory into component memory, ship code + memory together via PR or local fast-forward, archive the plan dir.
+
+    Reference: `docs/architecture-next.md` §`ravel-lite finish <plan>`, §Promotion at plan finish, §Archive, §Continuous attribution.
+
+    Scope:
+    - `ravel-lite finish <plan> [--pr | --merge] [--yes]`. Default `--pr`.
+    - Completion criterion: every intent has `status: satisfied | defeated | superseded`. Backlog drainage alone does not qualify.
+    - `promote` headless phase reads plan memory + intents + targets + catalog (via atlas CLI); emits `promotion-spec.yaml` grouping promotions by satisfied/defeated intent: `{ intent_id, entries: [{ entry_id, target_component }] }`.
+    - Runner applies spec mechanically: append entries to `<component-path>/.atlas/memory.yaml`. `cross-root` entries go to `<context>/cross-root-memory.yaml` (or edge-attached when atlas-contracts provides slot — open question).
+    - "Highest-level component within a git root" rule: walk the `parent` chain in `components.yaml`, land at lowest common ancestor for entries spanning multiple components in one repo.
+    - Confirm-before-commit on promotion-spec by default; `--yes` skips for non-interactive workflows.
+    - `--pr`: push each target's plan branch and open a PR per target repo; plan dir stays in `plans/` until all PRs land then moves to `archive/`.
+    - `--merge`: fast-forward each target's main onto plan branch locally, delete plan branches, remove worktrees, archive.
+    - Archive: `<context>/archive/<plan>/` retains `phase.md`, `intents.yaml`, `backlog.yaml`, post-promotion `memory.yaml`. Worktrees are removed.
+
+    Continuous attribution is enforced upstream in reflect (entries carry target component when authored). Promotion at finish only groups; no fresh attribution reasoning.
+- id: curate-standalone-truth-maintenance-replaces-dream-phase
+  title: 'Curate: standalone truth maintenance, replaces dream phase'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
+  description: |
+    Add `ravel-lite curate` as a standalone, context-wide truth-maintenance pass over every active plan's memory and every component memory in every registered repo. Replaces the v1 in-cycle dream phase, which is removed entirely.
+
+    Reference: `docs/architecture-next.md` §Curate (unbounded TMS, separate process), §What this replaces or removes.
+
+    Scope:
+    - `ravel-lite curate` is invoked by the user on demand (not in plan cycle). Plan execution never blocks on curate.
+    - Validate every memory entry against current code: code-anchor SHA checks at scale, rationale entries surfaced for LLM re-evaluation, contradiction detection across entries.
+    - Output: `curate-report.yaml` of discrepancies, grouped by component and severity. User reviews and acts (defeat, supersede, edit) — curate proposes, user disposes.
+    - Operates on both plan memory (`<plan>/memory.yaml` for active plans) and component memory (`<repo>/<component>/.atlas/memory.yaml`).
+    - Remove the v1 `dream` phase entirely from the cycle.
+
+    Coordination: relies on plan KG wiring for the structured memory schema and on the knowledge-graph crate for the cascade primitives.
+- id: sync-ravel-lite-sync-plan-from-other-plan
+  title: 'Sync: ravel-lite sync plan from other-plan'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
+  description: |
+    Add explicit cross-plan visibility for solo devs running multiple plans in parallel. Replaces the v1 "direct mode" target types from earlier drafts.
+
+    Reference: `docs/architecture-next.md` §`ravel-lite sync <plan> --from <other-plan>`, §What this replaces or removes.
+
+    Scope:
+    - `ravel-lite sync <plan> --from <other-plan>`.
+    - For each shared target between the two plans: run `git merge <other>'s plan branch` in `<plan>`'s worktree on `<plan>`'s branch.
+    - Targets unique to `<other>` are mounted into `<plan>` first.
+    - Conflicts surface in the worktree for the user to resolve manually.
+    - Worktree isolation is preserved by default; visibility is on-demand and audited via merge commits.
+    - Remove the "direct mode" target types entirely from the v1 codebase.
+
+    Out of scope: any auto-sync or rebase-on-main semantics — plan branches stay isolated against main per design.
+- id: migrate-ravel-lite-migrate-for-v1-to-v2-cutover
+  title: 'Migrate: ravel-lite migrate for v1 to v2 cutover'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - ravel-context-new-layout-and-repos-yaml-registry
+  - knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
+  - ravel-lite-create-write-plans-into-context-plans-dir
+  - targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
+  - phase-cycle-triage-first-with-focus-objections-and-commits-yaml
+  description: |
+    Implement the `ravel-lite migrate <old-plan-path>` verb that cuts a v1 `<project>/LLM_STATE/<plan>` plan over to v2's `<context>/plans/<plan>` model. Hard cutover: the v2 binary refuses to run on unmigrated v1 plans.
+
+    Reference: `docs/architecture-next.md` §Migration sketch, §Settled decisions (cutover policy + backfill).
+
+    Scope (per the 7-step sketch):
+    1. Register repos: ensure each project hosting an existing plan is in the new context's `repos.yaml` (URL + local_path).
+    2. Run Atlas: index each registered repo so `.atlas/components.yaml` exists. Plans cannot start without this.
+    3. Move plan state: copy `<project>/LLM_STATE/<plan>/` → `<context>/plans/<plan>/`. Rename `memory.md` to `legacy_memory.md`; new `memory.yaml` starts mostly empty.
+    4. Extract intent (one-shot LLM): the migrate-intent headless phase reads `phase.md` + recent backlog and emits `intents.yaml` with best-effort intents; backlog items get `serves-intent` justifications (or `legacy: true` if unattributable).
+    5. Mint targets (one-shot LLM): a headless pass against the project's components.yaml proposes initial `targets.yaml`; user reviews.
+    6. Mount worktrees: initialise worktrees from the project's current main per the new mount mechanics.
+    7. Backfill memory (one-shot LLM): pass over `legacy_memory.md` produces a `memory.yaml` with `status: legacy` entries. User curates in their own time.
+
+    Verification: dogfood by migrating `LLM_STATE/core` (this very plan) as the canonical test case before the v2.0 release.
