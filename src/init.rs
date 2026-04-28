@@ -1,9 +1,11 @@
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use anyhow::{Context, Result};
 
 use crate::config::CONFIG_ENV_VAR;
+use crate::repos;
 
 struct EmbeddedFile {
     path: &'static str,
@@ -124,15 +126,32 @@ const CONFIG_LUA_STUB: &str = r#"-- ravel-lite config (Lua)
 -- ]])
 "#;
 
-/// Initialise (or refresh) a config dir. Materialisation of shipped
-/// defaults has been removed: prompts and agent definitions are read
-/// from the embedded set at runtime, so the config dir holds only
-/// user-owned files.
+/// Top-level dirs that make up the v2 ravel-context layout. Each is
+/// created empty on a fresh `init`; user-owned overrides land here at
+/// the user's discretion. `agents/`, `phases/`, and `fixed-memory/`
+/// are the disk-overlay points for the embedded shipped set; `plans/`
+/// is where every plan directory lives.
+const LAYOUT_DIRS: &[&str] = &["agents", "phases", "fixed-memory", "plans"];
+
+/// Filename of the empty findings inbox seeded by `init`. Schema is
+/// finalised by the `findings-inbox` backlog task; the seed file is the
+/// minimal claim required by the v2 layout — a top-level `findings:`
+/// list — so that consumers can read it without a missing-file branch.
+const FINDINGS_FILENAME: &str = "findings.yaml";
+const FINDINGS_SEED: &str = "findings: []\n";
+
+/// Initialise (or refresh) a ravel-context dir following the v2 layout.
 ///
-/// `force` no longer rewrites shipped files (there is nothing to
-/// rewrite); it only prunes paths in `RETIRED_PATHS`. The
-/// `config.lua` stub is preserved on `--force` so a user's edits are
-/// not silently overwritten.
+/// Creates: `config.lua` stub (commented out), empty `repos.yaml`,
+/// empty `findings.yaml`, the `agents/`, `phases/`, `fixed-memory/`,
+/// `plans/` subdirectories, and a fresh git repository so the context
+/// has its own commit history independent of any target repo.
+///
+/// All steps are idempotent: re-running over an existing context
+/// preserves user content (`config.lua`, `repos.yaml`, `findings.yaml`,
+/// `.git`) and only fills in missing pieces. `force` prunes paths in
+/// `RETIRED_PATHS`; the user-owned files are still preserved so a
+/// `--force` run never destroys customisation.
 pub fn run_init(target_dir: &Path, force: bool) -> Result<()> {
     fs::create_dir_all(target_dir)
         .with_context(|| format!("Failed to create {}", target_dir.display()))?;
@@ -143,6 +162,26 @@ pub fn run_init(target_dir: &Path, force: bool) -> Result<()> {
         fs::write(&stub_path, CONFIG_LUA_STUB)
             .with_context(|| format!("Failed to write {}", stub_path.display()))?;
     }
+
+    for dir_name in LAYOUT_DIRS {
+        let dir = target_dir.join(dir_name);
+        fs::create_dir_all(&dir)
+            .with_context(|| format!("Failed to create {}", dir.display()))?;
+    }
+
+    let repos_path = target_dir.join(repos::REGISTRY_FILE);
+    if !repos_path.exists() {
+        repos::save_atomic(target_dir, &repos::ReposRegistry::default())
+            .with_context(|| format!("Failed to seed empty {}", repos_path.display()))?;
+    }
+
+    let findings_path = target_dir.join(FINDINGS_FILENAME);
+    if !findings_path.exists() {
+        fs::write(&findings_path, FINDINGS_SEED)
+            .with_context(|| format!("Failed to seed empty {}", findings_path.display()))?;
+    }
+
+    let git_initialised = ensure_git_repository(target_dir)?;
 
     let mut pruned = 0;
     if force {
@@ -168,13 +207,99 @@ pub fn run_init(target_dir: &Path, force: bool) -> Result<()> {
     if force {
         println!("  ✓ Init --force complete: {pruned} pruned (shipped defaults are embedded; nothing to refresh on disk)");
     } else if stub_existed {
-        println!("  ✓ Config dir already initialised at {}", target_dir.display());
+        println!("  ✓ Context dir already initialised at {}", target_dir.display());
     } else {
-        println!("  ✓ Wrote starter {CONFIG_LUA_FILENAME} (all settings commented out)");
+        println!("  ✓ Scaffolded ravel-context at {}", target_dir.display());
+        println!("    - {CONFIG_LUA_FILENAME} (commented-out starter; embedded defaults in effect)");
+        println!("    - {} (empty repo registry)", repos::REGISTRY_FILE);
+        println!("    - {FINDINGS_FILENAME} (empty findings inbox)");
+        println!("    - {} (empty subdirs)", LAYOUT_DIRS.join("/, ") + "/");
+        if git_initialised {
+            println!("    - .git (context owns its own history)");
+        }
     }
 
     print_discovery_guidance(target_dir);
     Ok(())
+}
+
+/// Initialise a git repository inside `target_dir` if one is not
+/// already present. The context's git identity is independent of any
+/// target repo — phase boundaries commit `plans/<plan>/` changes here,
+/// not in user code repos. Returns `true` when a fresh repo was
+/// created, `false` when an existing `.git/` was found.
+///
+/// An initial empty commit lands on `main` so the repo has a HEAD on
+/// completion. Without it, the rare-but-real case of a user putting
+/// the ravel-context inside another git repo breaks the outer repo's
+/// `git add` (modern git refuses to stage an embedded repo with no
+/// commits, with `'<dir>/' does not have a commit checked out`).
+/// Using the user's configured identity when available; otherwise
+/// installing a context-local fallback so the commit always succeeds
+/// without polluting global git config.
+fn ensure_git_repository(target_dir: &Path) -> Result<bool> {
+    if target_dir.join(".git").exists() {
+        return Ok(false);
+    }
+    run_git(target_dir, &["init", "-q", "-b", "main"], "init")?;
+    ensure_local_git_identity(target_dir)?;
+    run_git(
+        target_dir,
+        &["commit", "-q", "--allow-empty", "-m", "ravel-lite: init context"],
+        "commit (initial)",
+    )?;
+    Ok(true)
+}
+
+fn run_git(cwd: &Path, args: &[&str], label: &str) -> Result<()> {
+    let output = Command::new("git")
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .with_context(|| format!("Failed to spawn git {label} in {}", cwd.display()))?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git {label} failed in {}: {}",
+            cwd.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+/// Set context-local `user.name` / `user.email` only when a global
+/// identity is unavailable. The local config is scoped to the context
+/// repo, so a user who has identity configured globally sees their
+/// own attribution; a fresh CI / sandbox machine without global
+/// identity gets a deterministic ravel-lite fallback.
+fn ensure_local_git_identity(target_dir: &Path) -> Result<()> {
+    let needs_name = !git_var_present(target_dir, "user.name");
+    let needs_email = !git_var_present(target_dir, "user.email");
+    if needs_name {
+        run_git(target_dir, &["config", "user.name", "ravel-lite"], "config user.name")?;
+    }
+    if needs_email {
+        run_git(
+            target_dir,
+            &["config", "user.email", "ravel-lite@invalid.local"],
+            "config user.email",
+        )?;
+    }
+    Ok(())
+}
+
+/// `git config --get` exits non-zero when the key is unset at every
+/// scope. Treat any error or empty stdout as "absent" so the caller
+/// can install a fallback.
+fn git_var_present(cwd: &Path, key: &str) -> bool {
+    Command::new("git")
+        .current_dir(cwd)
+        .args(["config", "--get", key])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+        .unwrap_or(false)
 }
 
 /// After scaffolding, tell the user how to make `ravel-lite` find this
@@ -202,29 +327,110 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn init_creates_dir_and_lua_stub_only() {
-        // Slimmed `init`: no shipped defaults are materialised — those
-        // live in the embedded set. The config dir gets created and a
-        // commented-out `config.lua` stub lands so users have an
-        // obvious starting point for customisation.
+    fn init_scaffolds_v2_layout() {
+        // v2 layout: the context owns the four user-facing dirs
+        // (`agents/`, `phases/`, `fixed-memory/`, `plans/`), seeds an
+        // empty `repos.yaml` and `findings.yaml`, writes the
+        // commented-out `config.lua` stub, and creates a `.git`
+        // repository so the context has its own commit history.
+        // Shipped prompt/agent content is still embedded — the empty
+        // dirs are disk-overlay points for user-owned overrides, not
+        // a materialisation of the defaults.
         let dir = TempDir::new().unwrap();
-        let target = dir.path().join("my-config");
+        let target = dir.path().join("ctx");
         run_init(&target, false).unwrap();
 
-        assert!(target.is_dir(), "config dir must exist after init");
+        assert!(target.is_dir(), "context dir must exist after init");
         assert!(target.join(CONFIG_LUA_FILENAME).exists(), "init must write the config.lua stub");
+        assert!(target.join(repos::REGISTRY_FILE).exists(), "init must seed an empty repos.yaml");
+        assert!(target.join(FINDINGS_FILENAME).exists(), "init must seed an empty findings.yaml");
+        for dir_name in LAYOUT_DIRS {
+            assert!(
+                target.join(dir_name).is_dir(),
+                "init must create the {dir_name}/ subdir for the v2 layout"
+            );
+        }
+        assert!(target.join(".git").is_dir(), "init must give the context its own git identity");
         assert!(
             !target.join("config.yaml").exists(),
-            "init must not materialise the shipped config.yaml — defaults are embedded"
+            "init must not materialise the shipped config.yaml — defaults remain embedded"
         );
-        assert!(
-            !target.join("phases").exists(),
-            "init must not materialise phase prompts — defaults are embedded"
+    }
+
+    #[test]
+    fn init_seeds_empty_repos_registry_round_trips() {
+        // The seeded `repos.yaml` must parse via the same loader the
+        // CLI uses. A bespoke "empty" representation that does not
+        // round-trip would defeat the loader's schema_version guard.
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("ctx");
+        run_init(&target, false).unwrap();
+
+        let registry = repos::load_or_empty(&target).unwrap();
+        assert!(registry.repos.is_empty(), "seeded registry must be empty");
+        assert_eq!(registry.schema_version, repos::SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn init_seeds_findings_with_empty_list() {
+        // The findings-inbox task owns the schema; the seed file
+        // commits to the smallest shape that the design doc names —
+        // a top-level `findings:` list — so consumers do not need a
+        // missing-file branch.
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("ctx");
+        run_init(&target, false).unwrap();
+
+        let body = fs::read_to_string(target.join(FINDINGS_FILENAME)).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
+        let findings = parsed.get("findings").expect("findings: key required");
+        assert!(findings.is_sequence(), "findings: must be a list");
+        assert_eq!(findings.as_sequence().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn init_is_idempotent_when_run_twice() {
+        // Re-running init must preserve user content. The lua stub,
+        // a customised repos.yaml, a non-trivial findings.yaml, and
+        // an existing .git all survive a second run unchanged.
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("ctx");
+        run_init(&target, false).unwrap();
+
+        let mut registry = repos::load_or_empty(&target).unwrap();
+        repos::try_add(&mut registry, "atlas", "u1", None).unwrap();
+        repos::save_atomic(&target, &registry).unwrap();
+        let custom_findings = "findings:\n  - id: f-1\n";
+        fs::write(target.join(FINDINGS_FILENAME), custom_findings).unwrap();
+        fs::write(target.join(CONFIG_LUA_FILENAME), "-- mine\n").unwrap();
+        let head_before = read_head(&target);
+
+        run_init(&target, false).unwrap();
+
+        let after = repos::load_or_empty(&target).unwrap();
+        assert!(after.repos.contains_key("atlas"), "repos.yaml content survives re-init");
+        assert_eq!(
+            fs::read_to_string(target.join(FINDINGS_FILENAME)).unwrap(),
+            custom_findings,
+            "findings.yaml content survives re-init"
         );
-        assert!(
-            !target.join("agents").exists(),
-            "init must not materialise agent definitions — defaults are embedded"
+        assert_eq!(
+            fs::read_to_string(target.join(CONFIG_LUA_FILENAME)).unwrap(),
+            "-- mine\n",
+            "config.lua content survives re-init"
         );
+        assert_eq!(
+            head_before,
+            read_head(&target),
+            ".git HEAD must not change on a no-op re-init"
+        );
+    }
+
+    fn read_head(context_root: &Path) -> Vec<u8> {
+        // `.git/HEAD` exists on a fresh repo even before any commit;
+        // its contents fingerprint the repo identity for the
+        // idempotency check.
+        fs::read(context_root.join(".git/HEAD")).unwrap()
     }
 
     #[test]

@@ -1,12 +1,25 @@
-id: session-86
-timestamp: 2026-04-28T13:03:58Z
+id: session-87
+timestamp: 2026-04-28T13:34:01Z
 phase: work
 body: |
-  ### Session 86 (2026-04-28T13:03:58Z) — Block show-verb task on extensibility design constraint
+  ### Session 87 (2026-04-28T13:34:01Z) — Wire v2 ravel-context layout and path-optional init
 
-  - Attempted to implement `ravel-lite show <embedded-path>` that would print embedded fixed-memory content via `init::require_embedded`.
-  - During work-phase planning, a design constraint surfaced: `fixed-memory/` must remain user-extensible (users can add `coding-style-<lang>.md` for languages not in the shipped set). A thin wrapper over `require_embedded` serves only the compile-time embed set, which would re-introduce the silent-failure bug for user-added files.
-  - No code was written. Task was moved to `blocked` with a detailed results block explaining the layered disk-overlay approach needed before implementation.
-  - The layered approach (disk lookup first, embedded fallback, deterministic error) mirrors the existing `compose_prompt` layering for phase prompts.
-  - The decision to defer was also driven by interaction with the `ravel-lite init v2` task: the new `<context>/` layout would determine where user-owned `fixed-memory/` lives, and deciding that directory now would either pre-empt v2 or be re-litigated under it.
-  - What this suggests next: settle `fixed-memory/` extensibility model as part of the v2 init scaffolding task, specifying lookup order, then unblock this task.
+  - Implemented full v2 `<ravel-context>/` directory scaffolding in `ravel-lite init`
+  - Completed deferred deliverables (4), (5), (6) from the `ravel-context-new-layout-and-repos-yaml-registry` session: git identity, layout dirs, path-optional init
+  - All 748 workspace tests pass; an end-to-end binary test was added to `tests/cli.rs`
+
+  What worked:
+  - Splitting `resolve_config_dir` into `resolve_config_dir_for_init` (no existence gate) + `require_existing_dir` cleanly separated the runtime-command vs. init-time concerns in `src/config.rs`
+  - The embedded-repo hazard (modern git refusing to stage a repo with no HEAD) was surfaced by existing `phase_loop` tests; fixed by issuing an empty initial commit with fallback git identity using `.invalid.local` (RFC 2606-reserved) only when global identity is absent
+  - `repos::save_atomic` and `repos::ReposRegistry::default()` were usable directly for seeding `repos.yaml`; no new repos API required
+
+  What didn't:
+  - The architecture-next doc lists `config.yaml` / `config.local.yaml` as layout artefacts; implementation preserves `config.lua` (Lua override model, which predates those entries). The doc is stale and should be updated in a future pass
+
+  What this suggests trying next:
+  - The three new migration tasks added to the backlog (`migration-m2`, `migration-m4`, `migration-m5`) can now be triaged against the Atlas component-ontology crate work
+  - The `config.yaml` / `config.local.yaml` doc divergence in `docs/architecture-next.md` should be cleaned up
+
+  Key learnings:
+  - Git subrepository initialisation inside a test's project tree requires an initial commit, not just `git init`, to avoid `does not have a commit checked out` errors from outer `git add`
+  - Fallback git identity should use RFC 2606-reserved domains (`.invalid.local`) to prevent accidental attribution on mis-published commits

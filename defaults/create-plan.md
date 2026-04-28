@@ -140,7 +140,8 @@ for the contract.
 
 The cycle is driven by the `ravel-lite` Rust binary. Each
 user-configured profile lives in its own directory, scaffolded once
-with `ravel-lite init <config-dir>`. Day-to-day usage points the
+with `ravel-lite init --config <config-dir>` (path-optional; defaults
+to the platform config dir when the flag is omitted). Day-to-day usage points the
 binary at that config directory via the discovery chain (`--config`
 flag, then `RAVEL_LITE_CONFIG` env var, then the default location at
 `<dirs::config_dir()>/ravel-lite/`):

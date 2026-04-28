@@ -39,30 +39,30 @@
 <h2 id="_init"><code>init</code></h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Materialises a config directory on disk. Writes the embedded defaults — agent config files, phase prompts, the universal coding-style and memory-style files under <code>fixed-memory/</code> — into the target directory.</p>
+<p>Scaffolds a <strong>ravel-context</strong> on disk: the user&#8217;s single root holding configuration, the repo registry, and every plan. The shipped prompts and agent definitions are baked into the binary and read from the embedded set on every invocation, so <code>init</code> only writes the user-owned files (<code>config.lua</code> starter, empty <code>repos.yaml</code>, empty <code>findings.yaml</code>) plus the four override-point subdirs (<code>agents/</code>, <code>phases/</code>, <code>fixed-memory/</code>, <code>plans/</code>) and runs <code>git init</code> inside the context so plan-state changes can be committed independently of any target repo.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre>ravel-lite init &lt;dir&gt; [--force]</pre>
+<pre>ravel-lite init [--config &lt;path&gt;] [--force]</pre>
 </div>
 </div>
 <div class="dlist">
 <dl>
-<dt class="hdlist1"><code>&lt;dir&gt;</code></dt>
+<dt class="hdlist1"><code>--config &lt;path&gt;</code></dt>
 <dd>
-<p>Target directory. Created if it does not exist. Refused if it exists and is non-empty unless <code>--force</code> is set.</p>
+<p>Target directory for the context. Path-optional; resolves the same precedence chain as every other subcommand (<code>--config</code> → <code>$RAVEL_LITE_CONFIG</code> → platform default). The directory may already exist (init is idempotent) or be missing (init creates it).</p>
 </dd>
 <dt class="hdlist1"><code>--force</code></dt>
 <dd>
-<p>Overwrite existing files in <code>&lt;dir&gt;</code>. The default refuses to clobber, so a stale <code>init</code> against a populated directory is a no-op without this flag. With <code>--force</code>, every embedded default is rewritten — useful for refreshing prompts after upgrading the binary.</p>
+<p>Prune retired paths from a previously-scaffolded context. Never overwrites user-owned files (<code>config.lua</code>, <code>repos.yaml</code>, <code>findings.yaml</code>). Every embedded default is shipped in the binary, not on disk, so there is nothing to refresh — <code>--force</code> is purely a layout-cleanup tool used after upgrades that retire a previously-shipped path.</p>
 </dd>
 </dl>
 </div>
 <div class="paragraph">
-<p><code>init</code> is the only lifecycle command that does not need the config directory to already exist; it is how the config directory comes into being. After it runs, set <code>RAVEL_LITE_CONFIG=&lt;dir&gt;</code> (or pass <code>--config &lt;dir&gt;</code> to subsequent commands) so the rest of the CLI knows where to look.</p>
+<p><code>init</code> is the only lifecycle command that does not need the context directory to already exist; it is how the context comes into being. The context owns its own git history (initial empty commit on <code>main</code>) so plan-state changes can be committed independently of any target repo. After <code>init</code> runs, point subsequent commands at the same path via <code>RAVEL_LITE_CONFIG</code> or <code>--config</code> (or, for the platform default, no flag at all).</p>
 </div>
 <div class="paragraph">
-<p>The materialised tree is the read source for every subsequent run. Editing files under it is supported — the orchestrator reads them on each invocation, so a customised prompt or a new model setting takes effect on the next phase. See the <a href="config-and-prompts.html">Configuration and prompts</a> reference for the layout in full.</p>
+<p>Re-running <code>init</code> is safe and idempotent: existing user files survive, <code>.git/</code> is left alone, and only missing pieces get filled in. See the <a href="config-and-prompts.html">Configuration and prompts</a> reference for the override-point layout in full.</p>
 </div>
 </div>
 </div>

@@ -31,16 +31,33 @@ pub const CONFIG_ENV_VAR: &str = "RAVEL_LITE_CONFIG";
 /// The resolved path must be an existing directory; otherwise an
 /// actionable error pointing at `ravel-lite init` is returned.
 pub fn resolve_config_dir(explicit_flag: Option<PathBuf>) -> Result<PathBuf> {
+    let (source, candidate) = pick_candidate(explicit_flag)?;
+    require_existing_dir(&source, &candidate)?;
+    Ok(candidate)
+}
+
+/// Resolve the same precedence chain as [`resolve_config_dir`] but
+/// without requiring the directory to exist — `init` materialises it.
+/// The returned path is still normalised (trailing separators stripped).
+pub fn resolve_config_dir_for_init(explicit_flag: Option<PathBuf>) -> Result<PathBuf> {
+    let (_source, candidate) = pick_candidate(explicit_flag)?;
+    Ok(candidate)
+}
+
+/// Walk the precedence chain and produce a normalised candidate path
+/// plus a human-readable source label for diagnostics. Existence is the
+/// caller's concern — runtime commands enforce it; `init` does not.
+fn pick_candidate(explicit: Option<PathBuf>) -> Result<(String, PathBuf)> {
     let env_var = std::env::var(CONFIG_ENV_VAR).ok().map(PathBuf::from);
     let xdg_default = dirs::config_dir().map(|p| p.join("ravel-lite"));
-    select_config_dir(explicit_flag, env_var, xdg_default)
+    select_config_dir(explicit, env_var, xdg_default)
 }
 
 fn select_config_dir(
     explicit: Option<PathBuf>,
     env: Option<PathBuf>,
     default: Option<PathBuf>,
-) -> Result<PathBuf> {
+) -> Result<(String, PathBuf)> {
     let (source, candidate) = if let Some(path) = explicit {
         ("--config flag".to_string(), path)
     } else if let Some(path) = env {
@@ -51,7 +68,7 @@ fn select_config_dir(
         anyhow::bail!(
             "Could not resolve Ravel-Lite config directory.\n\
              No --config flag, no RAVEL_LITE_CONFIG environment variable, and no user config dir available on this platform.\n\
-             Create one with `ravel-lite init <dir>` and either pass --config <dir> or set RAVEL_LITE_CONFIG=<dir>."
+             Create one with `ravel-lite init --config <dir>` or set RAVEL_LITE_CONFIG=<dir>."
         );
     };
 
@@ -62,18 +79,19 @@ fn select_config_dir(
     // body and, more critically, leaks into claude's per-machine
     // permission rules as `Read(//path/**)` entries.
     let candidate: PathBuf = candidate.components().collect();
+    Ok((source, candidate))
+}
 
-    if !candidate.is_dir() {
-        anyhow::bail!(
-            "Ravel-Lite config directory {} (from {}) does not exist or is not a directory.\n\
-             Create it with `ravel-lite init {}`.",
-            candidate.display(),
-            source,
-            candidate.display()
-        );
+fn require_existing_dir(source: &str, candidate: &Path) -> Result<()> {
+    if candidate.is_dir() {
+        return Ok(());
     }
-
-    Ok(candidate)
+    anyhow::bail!(
+        "Ravel-Lite config directory {} (from {}) does not exist or is not a directory.\n\
+         Create it with `ravel-lite init` (path-optional; resolves the same precedence chain).",
+        candidate.display(),
+        source,
+    );
 }
 
 pub fn load_shared_config(config_root: &Path) -> Result<SharedConfig> {
@@ -176,7 +194,15 @@ mod tests {
         assert!(msg.contains("config.lua"), "msg: {msg}");
     }
 
-    // ---- select_config_dir ----
+    // ---- select_config_dir / require_existing_dir ----
+
+    fn picked(
+        explicit: Option<PathBuf>,
+        env: Option<PathBuf>,
+        default: Option<PathBuf>,
+    ) -> Result<PathBuf> {
+        select_config_dir(explicit, env, default).map(|(_, p)| p)
+    }
 
     #[test]
     fn explicit_flag_takes_precedence_over_env_and_default() {
@@ -184,7 +210,7 @@ mod tests {
         let env = TempDir::new().unwrap();
         let default = TempDir::new().unwrap();
 
-        let resolved = select_config_dir(
+        let resolved = picked(
             Some(explicit.path().to_path_buf()),
             Some(env.path().to_path_buf()),
             Some(default.path().to_path_buf()),
@@ -199,7 +225,7 @@ mod tests {
         let env = TempDir::new().unwrap();
         let default = TempDir::new().unwrap();
 
-        let resolved = select_config_dir(
+        let resolved = picked(
             None,
             Some(env.path().to_path_buf()),
             Some(default.path().to_path_buf()),
@@ -212,14 +238,14 @@ mod tests {
     #[test]
     fn default_used_when_no_explicit_and_no_env() {
         let default = TempDir::new().unwrap();
-        let resolved = select_config_dir(None, None, Some(default.path().to_path_buf())).unwrap();
+        let resolved = picked(None, None, Some(default.path().to_path_buf())).unwrap();
         assert_eq!(resolved, default.path());
     }
 
     #[test]
-    fn nonexistent_explicit_errors_with_candidate_path() {
+    fn nonexistent_path_fails_existence_check_with_candidate_in_message() {
         let missing = PathBuf::from("/definitely/not/a/real/path/for/ravel-lite/test");
-        let err = select_config_dir(Some(missing.clone()), None, None).unwrap_err();
+        let err = require_existing_dir("--config flag", &missing).unwrap_err();
         let message = format!("{err:#}");
         assert!(message.contains(&missing.display().to_string()));
         assert!(message.contains("--config flag"));
@@ -227,28 +253,32 @@ mod tests {
     }
 
     #[test]
-    fn nonexistent_env_errors_with_env_var_name() {
+    fn require_existing_dir_mentions_env_var_label_when_source_is_env() {
         let missing = PathBuf::from("/definitely/not/a/real/path/for/ravel-lite/test");
-        let err = select_config_dir(None, Some(missing), None).unwrap_err();
+        let err = require_existing_dir(
+            &format!("environment variable {CONFIG_ENV_VAR}"),
+            &missing,
+        )
+        .unwrap_err();
         let message = format!("{err:#}");
         assert!(message.contains("RAVEL_LITE_CONFIG"));
     }
 
     #[test]
     fn all_sources_missing_errors_with_init_guidance() {
-        let err = select_config_dir(None, None, None).unwrap_err();
+        let err = picked(None, None, None).unwrap_err();
         let message = format!("{err:#}");
         assert!(message.contains("ravel-lite init"));
         assert!(message.contains("RAVEL_LITE_CONFIG"));
     }
 
     #[test]
-    fn candidate_that_is_a_file_errors() {
+    fn candidate_that_is_a_file_errors_at_existence_check() {
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("not-a-dir");
         fs::write(&file_path, "").unwrap();
 
-        let err = select_config_dir(Some(file_path.clone()), None, None).unwrap_err();
+        let err = require_existing_dir("--config flag", &file_path).unwrap_err();
         let message = format!("{err:#}");
         assert!(message.contains("not a directory") || message.contains("does not exist"));
     }
@@ -263,12 +293,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let with_trailing = format!("{}/", dir.path().display());
 
-        let resolved = select_config_dir(
-            Some(PathBuf::from(&with_trailing)),
-            None,
-            None,
-        )
-        .unwrap();
+        let resolved = picked(Some(PathBuf::from(&with_trailing)), None, None).unwrap();
 
         let resolved_str = resolved.to_string_lossy();
         assert!(
@@ -276,5 +301,19 @@ mod tests {
             "resolved config dir must not end with a path separator: {resolved_str}"
         );
         assert_eq!(resolved, dir.path());
+    }
+
+    #[test]
+    fn for_init_resolver_returns_path_even_when_dir_missing() {
+        // The init-time resolver does not gate on existence — `init`
+        // creates the dir itself, so a brand-new path must round-trip.
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("new-context");
+        assert!(!target.exists(), "precondition: target must not exist");
+
+        let (source, resolved) =
+            select_config_dir(Some(target.clone()), None, None).unwrap();
+        assert_eq!(resolved, target);
+        assert!(source.contains("--config flag"));
     }
 }

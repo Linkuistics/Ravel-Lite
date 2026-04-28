@@ -62,29 +62,38 @@ ravel-lite 1.0.3 (v1.0.3, built 2026-04-27T12:13:39Z)</code></pre>
 <h2 id="_ravel_lite_init"><code>ravel-lite init</code></h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p><code>init</code> scaffolds a config directory. It does <strong>not</strong> materialise the shipped prompts, agent definitions, or fixed-memory files — those are baked into the binary and read from the embedded set on every invocation. The only file <code>init</code> writes is a starter <code>config.lua</code> whose body is entirely commented out, present as a discoverability aid for users who want to start customising. An empty config dir (or no config dir at all) is a valid setup; the runtime falls back to the embedded defaults unchanged.</p>
+<p><code>init</code> scaffolds a <strong>ravel-context</strong> — the user&#8217;s single root holding configuration, the repo registry, and every plan. It does <strong>not</strong> materialise the shipped prompts, agent definitions, or fixed-memory files — those are baked into the binary and read from the embedded set on every invocation. The user-owned files <code>init</code> seeds are: a commented-out <code>config.lua</code> starter, an empty <code>repos.yaml</code>, an empty <code>findings.yaml</code>, and the four override-point subdirs (<code>agents/</code>, <code>phases/</code>, <code>fixed-memory/</code>, <code>plans/</code>). It also gives the context its own git identity (<code>git init</code> plus an initial empty commit) so plan-state changes can be committed to the context&#8217;s history independently of any target repo.</p>
+</div>
+<div class="paragraph">
+<p><code>init</code> is path-optional. With no <code>--config</code> flag it resolves the same precedence chain as every other subcommand (<code>$RAVEL_LITE_CONFIG</code>, then the platform default at <code>~/.config/ravel-lite/</code>). The example below names the path explicitly to keep the macOS and Linux walkthroughs identical:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code class="language-console" data-lang="console">$ ravel-lite init ~/.config/ravel-lite
-  ✓ Wrote starter config.lua (all settings commented out)
+<pre class="highlight"><code class="language-console" data-lang="console">$ ravel-lite init --config ~/.config/ravel-lite
+  ✓ Scaffolded ravel-context at /Users/admin/.config/ravel-lite
+    - config.lua (commented-out starter; embedded defaults in effect)
+    - repos.yaml (empty repo registry)
+    - findings.yaml (empty findings inbox)
+    - agents/, phases/, fixed-memory/, plans/ (empty subdirs)
+    - .git (context owns its own history)
 
-  To use this config as the default for ravel-lite, set:
-    export RAVEL_LITE_CONFIG=/Users/admin/.config/ravel-lite
-  Or pass --config /Users/admin/.config/ravel-lite on each invocation.</code></pre>
+  Config is at the default location; ravel-lite will discover it automatically.</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>The path is a suggestion; you can put the config directory wherever you like. On Linux the platform default lookup is <code>~/.config/ravel-lite/</code>; on macOS it is <code>~/Library/Application Support/ravel-lite/</code>. If you <code>init</code> at one of those defaults, the trailing guidance changes to <strong>"Config is at the default location; ravel-lite will discover it automatically"</strong> — no env var or CLI flag needed. The non-default path used in this tutorial keeps macOS and Linux walkthroughs identical and is the precedent most users follow.</p>
+<p>If you target a non-default path, the trailing guidance instead instructs you to set <code>RAVEL_LITE_CONFIG</code> or pass <code>--config</code> on each invocation.</p>
 </div>
 <div class="paragraph">
-<p>After <code>init</code> runs, the directory contains exactly one file:</p>
+<p>After <code>init</code> runs, the directory holds the v2 layout:</p>
 </div>
 <div class="listingblock">
 <div class="content">
 <pre class="highlight"><code class="language-console" data-lang="console">$ ls ~/.config/ravel-lite
-config.lua</code></pre>
+agents  config.lua  findings.yaml  fixed-memory  phases  plans  repos.yaml</code></pre>
 </div>
+</div>
+<div class="paragraph">
+<p>The four subdirs (<code>agents/</code>, <code>phases/</code>, <code>fixed-memory/</code>) are <strong>override points</strong> — they are empty by default, and the binary serves the embedded set unless you drop a same-named override here. <code>plans/</code> is where every plan you create lives; <code>repos.yaml</code> is the registry of repos you can target with a plan; <code>findings.yaml</code> is the cross-cutting inbox written by triage and reflect.</p>
 </div>
 <div class="paragraph">
 <p>That file is the customisation surface. It is plain Lua and entirely commented out at scaffold time, so reading the file is the fastest way to discover what you can customise:</p>
@@ -116,29 +125,25 @@ config.lua</code></pre>
 <h2 id="_re_running_init">Re-running <code>init</code></h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Re-running <code>init</code> against an existing config directory is safe. It does not error and it does not overwrite your <code>config.lua</code>:</p>
+<p>Re-running <code>init</code> against an existing context is safe. It does not error, it does not overwrite your <code>config.lua</code> / <code>repos.yaml</code> / <code>findings.yaml</code>, and it does not re-run <code>git init</code>:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code class="language-console" data-lang="console">$ ravel-lite init ~/.config/ravel-lite
-  ✓ Config dir already initialised at /Users/admin/.config/ravel-lite
+<pre class="highlight"><code class="language-console" data-lang="console">$ ravel-lite init --config ~/.config/ravel-lite
+  ✓ Context dir already initialised at /Users/admin/.config/ravel-lite
 
-  To use this config as the default for ravel-lite, set:
-    export RAVEL_LITE_CONFIG=/Users/admin/.config/ravel-lite
-  Or pass --config /Users/admin/.config/ravel-lite on each invocation.</code></pre>
+  Config is at the default location; ravel-lite will discover it automatically.</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p><code>--force</code> exists for a narrow purpose: pruning paths that <strong>used to ship</strong> and have since been removed or renamed. It does not refresh shipped defaults — they live in the embedded set, not on disk — and it deliberately leaves your <code>config.lua</code> untouched.</p>
+<p><code>--force</code> exists for a narrow purpose: pruning paths that <strong>used to ship</strong> and have since been removed or renamed. It does not refresh shipped defaults — they live in the embedded set, not on disk — and it deliberately leaves your user-owned files (<code>config.lua</code>, <code>repos.yaml</code>, <code>findings.yaml</code>) untouched.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code class="language-console" data-lang="console">$ ravel-lite init ~/.config/ravel-lite --force
+<pre class="highlight"><code class="language-console" data-lang="console">$ ravel-lite init --config ~/.config/ravel-lite --force
   ✓ Init --force complete: 0 pruned (shipped defaults are embedded; nothing to refresh on disk)
 
-  To use this config as the default for ravel-lite, set:
-    export RAVEL_LITE_CONFIG=/Users/admin/.config/ravel-lite
-  Or pass --config /Users/admin/.config/ravel-lite on each invocation.</code></pre>
+  Config is at the default location; ravel-lite will discover it automatically.</code></pre>
 </div>
 </div>
 <div class="paragraph">

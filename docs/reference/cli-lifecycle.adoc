@@ -19,19 +19,19 @@ The precedence chain for the config directory is `--config` → `$RAVEL_LITE_CON
 
 == `init`
 
-Materialises a config directory on disk. Writes the embedded defaults — agent config files, phase prompts, the universal coding-style and memory-style files under `fixed-memory/` — into the target directory.
+Scaffolds a *ravel-context* on disk: the user's single root holding configuration, the repo registry, and every plan. The shipped prompts and agent definitions are baked into the binary and read from the embedded set on every invocation, so `init` only writes the user-owned files (`config.lua` starter, empty `repos.yaml`, empty `findings.yaml`) plus the four override-point subdirs (`agents/`, `phases/`, `fixed-memory/`, `plans/`) and runs `git init` inside the context so plan-state changes can be committed independently of any target repo.
 
 ----
-ravel-lite init <dir> [--force]
+ravel-lite init [--config <path>] [--force]
 ----
 
-`<dir>`:: Target directory. Created if it does not exist. Refused if it exists and is non-empty unless `--force` is set.
+`--config <path>`:: Target directory for the context. Path-optional; resolves the same precedence chain as every other subcommand (`--config` → `$RAVEL_LITE_CONFIG` → platform default). The directory may already exist (init is idempotent) or be missing (init creates it).
 
-`--force`:: Overwrite existing files in `<dir>`. The default refuses to clobber, so a stale `init` against a populated directory is a no-op without this flag. With `--force`, every embedded default is rewritten — useful for refreshing prompts after upgrading the binary.
+`--force`:: Prune retired paths from a previously-scaffolded context. Never overwrites user-owned files (`config.lua`, `repos.yaml`, `findings.yaml`). Every embedded default is shipped in the binary, not on disk, so there is nothing to refresh — `--force` is purely a layout-cleanup tool used after upgrades that retire a previously-shipped path.
 
-`init` is the only lifecycle command that does not need the config directory to already exist; it is how the config directory comes into being. After it runs, set `RAVEL_LITE_CONFIG=<dir>` (or pass `--config <dir>` to subsequent commands) so the rest of the CLI knows where to look.
+`init` is the only lifecycle command that does not need the context directory to already exist; it is how the context comes into being. The context owns its own git history (initial empty commit on `main`) so plan-state changes can be committed independently of any target repo. After `init` runs, point subsequent commands at the same path via `RAVEL_LITE_CONFIG` or `--config` (or, for the platform default, no flag at all).
 
-The materialised tree is the read source for every subsequent run. Editing files under it is supported — the orchestrator reads them on each invocation, so a customised prompt or a new model setting takes effect on the next phase. See the link:config-and-prompts.html[Configuration and prompts] reference for the layout in full.
+Re-running `init` is safe and idempotent: existing user files survive, `.git/` is left alone, and only missing pieces get filled in. See the link:config-and-prompts.html[Configuration and prompts] reference for the override-point layout in full.
 
 == `create`
 

@@ -67,11 +67,24 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Scaffold a config directory with default prompts and config
+    /// Scaffold (or refresh) a ravel-context directory following the
+    /// v2 layout. Path-optional: with no `--config`, init resolves the
+    /// same precedence chain as every other subcommand
+    /// (`$RAVEL_LITE_CONFIG`, then the XDG default at
+    /// `<dirs::config_dir()>/ravel-lite/`). Idempotent: a re-run on an
+    /// existing context preserves user content and only fills in
+    /// missing pieces.
     Init {
-        /// Target directory to create
-        dir: PathBuf,
-        /// Overwrite existing files (refresh prompts after upgrading)
+        /// Path to the context directory to scaffold. Overrides
+        /// `$RAVEL_LITE_CONFIG` and the default location at
+        /// `<dirs::config_dir()>/ravel-lite/`. The directory may
+        /// already exist (init is idempotent) or be missing (init
+        /// creates it).
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Prune retired paths from a previously-scaffolded context.
+        /// Never overwrites user-owned files (`config.lua`,
+        /// `repos.yaml`, `findings.yaml`).
         #[arg(long)]
         force: bool,
     },
@@ -798,8 +811,9 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { dir, force } => {
-            init::run_init(&dir, force)
+        Commands::Init { config, force } => {
+            let target = ravel_lite::config::resolve_config_dir_for_init(config)?;
+            init::run_init(&target, force)
         }
         Commands::Run { config, dangerous, debug, survey_state, plan_dirs } => {
             let config_root = resolve_config_dir(config)?;

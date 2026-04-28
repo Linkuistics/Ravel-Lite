@@ -39,27 +39,34 @@ If you do not use Homebrew, clone the repository and `cargo install --path .` ag
 
 == `ravel-lite init`
 
-`init` scaffolds a config directory. It does *not* materialise the shipped prompts, agent definitions, or fixed-memory files — those are baked into the binary and read from the embedded set on every invocation. The only file `init` writes is a starter `config.lua` whose body is entirely commented out, present as a discoverability aid for users who want to start customising. An empty config dir (or no config dir at all) is a valid setup; the runtime falls back to the embedded defaults unchanged.
+`init` scaffolds a *ravel-context* — the user's single root holding configuration, the repo registry, and every plan. It does *not* materialise the shipped prompts, agent definitions, or fixed-memory files — those are baked into the binary and read from the embedded set on every invocation. The user-owned files `init` seeds are: a commented-out `config.lua` starter, an empty `repos.yaml`, an empty `findings.yaml`, and the four override-point subdirs (`agents/`, `phases/`, `fixed-memory/`, `plans/`). It also gives the context its own git identity (`git init` plus an initial empty commit) so plan-state changes can be committed to the context's history independently of any target repo.
+
+`init` is path-optional. With no `--config` flag it resolves the same precedence chain as every other subcommand (`$RAVEL_LITE_CONFIG`, then the platform default at `~/.config/ravel-lite/`). The example below names the path explicitly to keep the macOS and Linux walkthroughs identical:
 
 [source,console]
 ----
-$ ravel-lite init ~/.config/ravel-lite
-  ✓ Wrote starter config.lua (all settings commented out)
+$ ravel-lite init --config ~/.config/ravel-lite
+  ✓ Scaffolded ravel-context at /Users/admin/.config/ravel-lite
+    - config.lua (commented-out starter; embedded defaults in effect)
+    - repos.yaml (empty repo registry)
+    - findings.yaml (empty findings inbox)
+    - agents/, phases/, fixed-memory/, plans/ (empty subdirs)
+    - .git (context owns its own history)
 
-  To use this config as the default for ravel-lite, set:
-    export RAVEL_LITE_CONFIG=/Users/admin/.config/ravel-lite
-  Or pass --config /Users/admin/.config/ravel-lite on each invocation.
+  Config is at the default location; ravel-lite will discover it automatically.
 ----
 
-The path is a suggestion; you can put the config directory wherever you like. On Linux the platform default lookup is `~/.config/ravel-lite/`; on macOS it is `~/Library/Application Support/ravel-lite/`. If you `init` at one of those defaults, the trailing guidance changes to *"Config is at the default location; ravel-lite will discover it automatically"* — no env var or CLI flag needed. The non-default path used in this tutorial keeps macOS and Linux walkthroughs identical and is the precedent most users follow.
+If you target a non-default path, the trailing guidance instead instructs you to set `RAVEL_LITE_CONFIG` or pass `--config` on each invocation.
 
-After `init` runs, the directory contains exactly one file:
+After `init` runs, the directory holds the v2 layout:
 
 [source,console]
 ----
 $ ls ~/.config/ravel-lite
-config.lua
+agents  config.lua  findings.yaml  fixed-memory  phases  plans  repos.yaml
 ----
+
+The four subdirs (`agents/`, `phases/`, `fixed-memory/`) are *override points* — they are empty by default, and the binary serves the embedded set unless you drop a same-named override here. `plans/` is where every plan you create lives; `repos.yaml` is the registry of repos you can target with a plan; `findings.yaml` is the cross-cutting inbox written by triage and reflect.
 
 That file is the customisation surface. It is plain Lua and entirely commented out at scaffold time, so reading the file is the fastest way to discover what you can customise:
 
@@ -85,28 +92,24 @@ The link:../docs/config-and-prompts.html[Configuration and prompts] reference co
 
 == Re-running `init`
 
-Re-running `init` against an existing config directory is safe. It does not error and it does not overwrite your `config.lua`:
+Re-running `init` against an existing context is safe. It does not error, it does not overwrite your `config.lua` / `repos.yaml` / `findings.yaml`, and it does not re-run `git init`:
 
 [source,console]
 ----
-$ ravel-lite init ~/.config/ravel-lite
-  ✓ Config dir already initialised at /Users/admin/.config/ravel-lite
+$ ravel-lite init --config ~/.config/ravel-lite
+  ✓ Context dir already initialised at /Users/admin/.config/ravel-lite
 
-  To use this config as the default for ravel-lite, set:
-    export RAVEL_LITE_CONFIG=/Users/admin/.config/ravel-lite
-  Or pass --config /Users/admin/.config/ravel-lite on each invocation.
+  Config is at the default location; ravel-lite will discover it automatically.
 ----
 
-`--force` exists for a narrow purpose: pruning paths that *used to ship* and have since been removed or renamed. It does not refresh shipped defaults — they live in the embedded set, not on disk — and it deliberately leaves your `config.lua` untouched.
+`--force` exists for a narrow purpose: pruning paths that *used to ship* and have since been removed or renamed. It does not refresh shipped defaults — they live in the embedded set, not on disk — and it deliberately leaves your user-owned files (`config.lua`, `repos.yaml`, `findings.yaml`) untouched.
 
 [source,console]
 ----
-$ ravel-lite init ~/.config/ravel-lite --force
+$ ravel-lite init --config ~/.config/ravel-lite --force
   ✓ Init --force complete: 0 pruned (shipped defaults are embedded; nothing to refresh on disk)
 
-  To use this config as the default for ravel-lite, set:
-    export RAVEL_LITE_CONFIG=/Users/admin/.config/ravel-lite
-  Or pass --config /Users/admin/.config/ravel-lite on each invocation.
+  Config is at the default location; ravel-lite will discover it automatically.
 ----
 
 In day-to-day use you almost never need `--force`. The one situation that warrants it is upgrading across a release that retires a previously-shipped path: `--force` removes the now-defunct file or directory so your config tree matches the new layout. The `--help` text and release notes call out when this matters.

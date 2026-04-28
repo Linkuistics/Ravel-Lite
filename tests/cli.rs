@@ -185,6 +185,40 @@ fn multi_plan_round_trip_preserves_selection_mapping() {
     assert_eq!(picked2, Some(plan_a));
 }
 
+/// `ravel-lite init --config <path>` is path-optional in the v2 CLI
+/// (no positional `dir` arg). Spawning the binary end-to-end proves
+/// the clap definition resolves the path through
+/// `resolve_config_dir_for_init`, which permits a non-existent target.
+/// The resulting context must hold every v2 layout artefact the
+/// downstream phases lean on (`repos.yaml`, `findings.yaml`, the four
+/// subdirs, `.git/`, and the `config.lua` stub).
+#[test]
+fn init_via_binary_scaffolds_v2_layout_with_config_flag() {
+    let tmp = TempDir::new().unwrap();
+    let target = tmp.path().join("ctx");
+    assert!(!target.exists(), "precondition: target dir must not exist");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["init", "--config"])
+        .arg(&target)
+        .output()
+        .expect("binary must spawn");
+    assert!(
+        out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(target.is_dir(), "context dir must exist after init");
+    assert!(target.join("config.lua").exists());
+    assert!(target.join("repos.yaml").exists());
+    assert!(target.join("findings.yaml").exists());
+    for sub in ["agents", "phases", "fixed-memory", "plans"] {
+        assert!(target.join(sub).is_dir(), "missing subdir: {sub}");
+    }
+    assert!(target.join(".git").is_dir(), "context must own its git history");
+}
+
 /// Top-level `--help` must surface the source repo and the docs site
 /// so a user reading help can find both without remembering the URLs.
 #[test]

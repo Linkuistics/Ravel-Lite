@@ -2,7 +2,7 @@ tasks:
 - id: ravel-lite-init-v2-context-layout-scaffolding-git-identity-path-optional-init
   title: 'ravel-lite init v2: context layout scaffolding, git identity, path-optional init'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Stand up the full v2 `<ravel-context>/` directory layout via `ravel-lite init` (no path arg required) and give the context its own git identity.
@@ -26,6 +26,124 @@ tasks:
     - `default-config-location-to-config-ravel-lite-on-both-linux-and-macos-and-make-init-path-optional` (blocked — subsume and delete when this lands)
 
     Design note: `src/init.rs` currently materialises a v1 layout; the scaffold call there (`init::require_embedded` path) is the right hook to extend. Keep existing v1 scaffolding under a version guard if a migration path is needed, or behind a feature flag that triage can decide on.
+  results: |
+    ## Results
+
+    Landed the v2 ravel-context layout, the context's git identity, and the
+    path-optional `init` resolution. All deferred deliverables (4), (5), (6)
+    from the `ravel-context-new-layout-and-repos-yaml-registry` session are
+    shipped. 748 workspace tests pass.
+
+    ### What changed
+
+    **`src/init.rs`** — `run_init` now scaffolds the v2 layout: `config.lua`
+    (starter), empty `repos.yaml` (via `repos::save_atomic`), empty
+    `findings.yaml` (`findings: []` seed), four override-point dirs
+    (`agents/`, `phases/`, `fixed-memory/`, `plans/`), and a fresh git
+    repository on `main` with an initial empty commit. Idempotent — every
+    step short-circuits on existing artefacts.
+
+    **`src/config.rs`** — split the resolver:
+    - `resolve_config_dir` (existing public API, used by every runtime
+      command) gates on directory existence as before.
+    - `resolve_config_dir_for_init` (new) walks the same precedence chain
+      but does not gate on existence — `init` materialises the dir.
+    - Internal helpers `pick_candidate`, `select_config_dir`,
+      `require_existing_dir` factored out so each concern is independently
+      testable.
+
+    **`src/main.rs`** — clap `Init` reshaped from positional `dir` to
+    `--config <path>` (path-optional). Hard CLI cut consistent with the
+    v2-redesign cutover policy in `docs/architecture-next.md` §Settled
+    decisions.
+
+    **Doc updates** — `docs/tutorial/01-install-and-config.adoc` and
+    `docs/reference/cli-lifecycle.adoc` rewritten to match the new
+    `init [--config <path>]` syntax and v2 layout output. Rendered fragments
+    re-generated via `scripts/render-docs.sh`. `defaults/create-plan.md`
+    mention of `ravel-lite init <config-dir>` updated to the new form.
+
+    ### Embedded-repo hazard surfaced and fixed
+
+    Modern git refuses to stage an embedded git repo with no HEAD: outer
+    `git add -- .` errors with `'<dir>/' does not have a commit checked
+    out`. This bit `phase_loop` tests (which place `config_root` inside the
+    test's project repo) and would also bite a real user nesting the
+    ravel-context inside a target repo.
+
+    Resolved by giving the context's fresh repo a HEAD on completion via
+    `git commit --allow-empty -m "ravel-lite: init context"`. To survive a
+    machine without a configured git identity (CI, fresh sandbox), the
+    context-local `user.name`/`user.email` are set to ravel-lite fallbacks
+    **only when global is absent** — the user's normal attribution is
+    preserved when present. The fallback email uses `.invalid.local` (RFC
+    2606-reserved) so an accidentally-published commit cannot be
+    misattributed.
+
+    ### Divergence from the architecture-next layout doc
+
+    The doc lists `config.yaml` and `config.local.yaml` in the layout. The
+    current implementation uses `config.lua` (a Lua override layer over the
+    embedded YAML defaults). I preserved the Lua model rather than
+    introducing parallel YAML files — the design doc predates the Lua
+    migration and treating `config.yaml` as a literal artefact would
+    duplicate the configuration surface. The design intent (a user-owned
+    override layer above the embedded defaults) is satisfied by `config.lua`
+    unchanged. The doc could be updated in a future pass.
+
+    ### Subsumed task
+
+    The blocked `default-config-location-...` task is no longer in the
+    backlog (was already removed before this cycle started; only its name
+    survives in the description prose of this task and a session-log entry).
+    No deletion needed.
+
+    ### What this suggests next
+
+    - The blocked `add-ravel-lite-show-verb-for-embedded-fixed-memory-content`
+      task can be unblocked once a layered disk-overlay-with-embedded-fallback
+      decision lands. The v2 layout now defines the on-disk override points
+      (`<context>/agents/`, `<context>/phases/`, `<context>/fixed-memory/`),
+      so the lookup order is concrete: read from `<context>/<rel>` on disk
+      first, fall back to `init::require_embedded(<rel>)`. The directories
+      exist (empty) on a fresh init, so a user-supplied
+      `coding-style-<lang>.md` works without further plumbing.
+    - The `findings-inbox-context-level-findings-yaml-replaces-subagent-dispatch`
+      task will define the `findings.yaml` schema. The seed currently
+      commits to the smallest claim (`findings: []`); the inbox task can
+      expand it to TMS-shaped items per architecture-next §Findings inbox.
+    - The upcoming `migrate` task can rely on `<context>/plans/` existing
+      (an `init` precondition).
+
+    ### Files touched
+
+    - `src/init.rs` — scaffold, git init + initial commit, identity
+      fallback, idempotency.
+    - `src/config.rs` — resolver split.
+    - `src/main.rs` — clap reshape.
+    - `tests/cli.rs` — new `init_via_binary_scaffolds_v2_layout_with_config_flag`
+      end-to-end test.
+    - `docs/tutorial/01-install-and-config.adoc`,
+      `docs/reference/cli-lifecycle.adoc`, `defaults/create-plan.md` — doc
+      sweep.
+    - `website/docs/cli-lifecycle.html`,
+      `website/tutorials/01-install-and-config.html` — re-rendered.
+
+    ### New tests (all pass)
+
+    - `init::tests::init_scaffolds_v2_layout` — every layout artefact is
+      present after a fresh init.
+    - `init::tests::init_seeds_empty_repos_registry_round_trips` — the
+      seeded `repos.yaml` parses through `repos::load_or_empty` cleanly.
+    - `init::tests::init_seeds_findings_with_empty_list` — `findings.yaml`
+      parses to `findings: []`.
+    - `init::tests::init_is_idempotent_when_run_twice` — re-running
+      preserves user content (`config.lua`, `repos.yaml`, `findings.yaml`)
+      and leaves `.git/HEAD` byte-identical.
+    - `config::tests::for_init_resolver_returns_path_even_when_dir_missing`
+      — the init-time resolver permits non-existent paths.
+    - `cli::init_via_binary_scaffolds_v2_layout_with_config_flag` —
+      end-to-end CLI integration.
 - id: add-ravel-lite-show-verb-for-embedded-fixed-memory-content
   title: Add ravel-lite show verb for embedded fixed-memory content
   category: architecture-next
@@ -400,3 +518,154 @@ tasks:
     7. Backfill memory (one-shot LLM): pass over `legacy_memory.md` produces a `memory.yaml` with `status: legacy` entries. User curates in their own time.
 
     Verification: dogfood by migrating `LLM_STATE/core` (this very plan) as the canonical test case before the v2.0 release.
+- id: migration-m2-switch-to-atlas-contracts-component-ontology-crate
+  title: 'Migration M2: switch to atlas-contracts component-ontology crate'
+  category: migration
+  status: not_started
+  dependencies: []
+  description: |
+    **Priority: MEDIUM.** Unblocks M4 and M5.
+
+    **Design reference:** §9.4 M2 (in Atlas's design doc).
+
+    ## Scope
+
+    - In the root `Cargo.toml`, add a `[workspace.dependencies]` entry (or plain `[dependencies]` if Ravel-Lite is single-crate):
+      ```toml
+      component-ontology = { git = "https://github.com/linkuistics/atlas-contracts", rev = "<sha>" }
+      ```
+      Pin by commit sha. The canonical repo is `linkuistics/atlas-contracts` (a public Cargo workspace hosting Atlas's data-format / vocabulary crates).
+
+      **Dev convention:** Atlas itself consumes `component-ontology` and `atlas-index` as **local path deps** during development (`path = "../atlas-contracts/crates/component-ontology"`, with a sibling checkout at `~/Development/atlas-contracts/`). Match that convention for Ravel-Lite during dev; flip to `git+rev` at publish time.
+    - Replace every `use crate::ontology::...` or `use ravel_lite::ontology::...` with `use component_ontology::...`.
+    - Delete `src/ontology/` entirely.
+    - Keep `defaults/ontology.yaml` for now — the canonical file is shipped by `component-ontology` via `include_str!`, but removing the local copy is M4.
+    - Run the full test suite; fix any breakage from the import path change.
+    - Commit as a single PR.
+
+    ### Tests
+
+    - Existing tests (targeting the ontology drift assertion, edge validation, etc.) continue to pass.
+    - Compatibility test: load an existing `related-components.yaml` produced pre-M2 and verify it parses bit-identical.
+
+    ## Out of scope
+
+    - Removing `defaults/ontology.yaml` (M4).
+    - Refactoring `src/projects.rs` (M5).
+    - Any behavioural change — this is purely a dep-source switch.
+
+    ## Exit criteria
+
+    - Compiles and all tests pass with `component-ontology` sourced from `linkuistics/atlas-contracts`.
+    - `src/ontology/` is gone.
+    - A commit titled "Switch component-ontology to atlas-contracts dep" linking to the `atlas-contracts` commit it pins.
+
+    ## Prerequisite
+
+    Ravel-Lite must be quiescent when this lands. Per the Atlas-side note `m2-migration-is-pure-import-path-swap`, the public surface of `component-ontology` at SHA `337c54368eb1393f2c3f8839a5e9042ce72cf964` matches `src/ontology/mod.rs` 1:1, so the migration itself is mechanical — the only real obstacle is in-flight refactors.
+
+    ## Provenance
+
+    Moved from Atlas's backlog (id `ravel-lite-migration-m2-switch-to-atlas-component-ontology-crate`) on 2026-04-28. Rationale: the work happens here; Atlas is the upstream dependency. The cross-project relationship is captured in Atlas's `related-components.yaml` via the `depends-on / build` edge.
+- id: migration-m4-delete-in-tree-ontology-copies
+  title: 'Migration M4: delete in-tree ontology copies'
+  category: migration
+  status: not_started
+  dependencies:
+  - migration-m2-switch-to-atlas-contracts-component-ontology-crate
+  description: |
+    **Priority: MEDIUM.** Removes drift risk by eliminating duplicates.
+
+    **Design reference:** §9.4 M4 (in Atlas's design doc).
+
+    ## Scope
+
+    - Delete `defaults/ontology.yaml`. Ravel-Lite now reads the YAML from the `component-ontology` crate (hosted at `linkuistics/atlas-contracts`) via its exposed `component_ontology::EMBEDDED_ONTOLOGY_YAML` constant.
+    - Delete `docs/component-ontology.md`, or reduce to a one-line redirect stub linking to `atlas-contracts/crates/component-ontology/README.md` (or equivalent upstream docs).
+    - Delete `docs/component-ontology-migration.md` — the migration is done, the doc is obsolete.
+    - Update any tests that previously loaded `defaults/ontology.yaml` from disk to instead use `component_ontology::EMBEDDED_ONTOLOGY_YAML`.
+    - The build-time test that asserts `EdgeKind` matches `ontology.yaml` switches to assert against the crate-exposed constant (which is the canonical file).
+    - Stage 1 / Stage 2 prompts still exist in `defaults/` for this task; they're removed in M5.
+
+    ### Tests
+
+    - Test suite passes.
+    - Build-time `EdgeKind` vs `ontology.yaml` consistency test still runs and passes.
+    - No file other than `component-ontology`-sourced strings references `ontology.yaml` at a Ravel-Lite-local path.
+
+    ## Out of scope
+
+    - Removing Stage 1/2 prompt copies (M5).
+    - Refactoring `src/projects.rs` (M5).
+
+    ## Exit criteria
+
+    - `defaults/ontology.yaml` does not exist.
+    - `docs/component-ontology.md` is a one-line redirect stub or deleted.
+    - Builds and tests pass.
+
+    ## Provenance
+
+    Moved from Atlas's backlog (id `ravel-lite-migration-m4-delete-in-tree-ontology-copies`) on 2026-04-28.
+- id: migration-m5-consume-atlas-via-atlas-index
+  title: 'Migration M5: consume Atlas via atlas-index'
+  category: migration
+  status: not_started
+  dependencies:
+  - migration-m2-switch-to-atlas-contracts-component-ontology-crate
+  description: |
+    **Priority: MEDIUM.** Completes the migration; single `related-components.yaml` in the ecosystem. Gates Atlas v1 success criterion 5.
+
+    **Design reference:** §9.4 M5 (in Atlas's design doc).
+
+    ## Scope
+
+    ### Depend on atlas-index
+
+    - Add `atlas-index = { git = "https://github.com/linkuistics/atlas-contracts", rev = "<sha>" }` to Cargo.toml. Pin the same rev used for `component-ontology` in M2 (both crates live in the same workspace). Use a local path dep during dev, matching the convention noted in M2.
+
+    ### Refactor projects.rs
+
+    - `ProjectsCatalog` becomes a thin wrapper over Atlas's `ComponentsFile`.
+    - `find_by_name(name)` searches `atlas_index::ComponentsFile.components` by `id`.
+    - Only *internal* components are valid plan targets — external components (from `external-components.yaml`) are rejected with a helpful error per the earlier decision.
+    - Existing callers' API preserved as much as possible; public signatures remain backward-compatible where practical (change the import paths but keep the verbs).
+
+    ### Stage 1/2 prompt copies — resolution of the open question
+
+    Three options for where Ravel-Lite reads Atlas's prompts from once they live in the private Atlas repo:
+
+    1. **Add prompts to `atlas-contracts`** — simplest for Ravel-Lite; exposes Atlas prompt IP publicly.
+    2. **Ravel-Lite keeps its own prompt copies** — Ravel-Lite stays prompt-independent. Reintroduces drift risk.
+    3. **Env-var / path-based lookup** — no prompts of its own; requires a sibling Atlas checkout via `ATLAS_PROMPTS_DIR` or similar.
+
+    Decide during this task. **Default recommendation: option 2.** Rationale: prompts are the heart of Atlas's IP; publishing them via `atlas-contracts` contradicts the "public data-formats, private computational parts" split that motivated the extraction. Ravel-Lite's Stage-1/2 prompts are lighter than Atlas's discover-* prompts and can diverge intentionally.
+
+    If option 2 is picked, this section collapses to "leave `defaults/discover-stage1.md` and `defaults/discover-stage2.md` alone" and the exit criterion below changes accordingly.
+
+    ### CLI surface
+
+    - `ravel-lite state related-components ...` remains as a thin pass-through — the CLI is kept but internally routes through `atlas-index` verbs.
+    - `ravel-lite state projects ...` similarly — the verbs still exist but operate on Atlas-produced `components.yaml` via `atlas-index`.
+    - Existing tests for these CLI surfaces continue to pass.
+
+    ### Tests
+
+    - End-to-end test: run a discover loop on Ravel-Lite itself using Atlas-produced YAMLs as the project catalog. Verify Stage 1/Stage 2 outputs are identical (modulo the project→component rename) to pre-migration outputs.
+    - Compatibility: a user who already has a `projects.yaml` at the old path receives a clear migration error directing them to run Atlas.
+
+    ## Out of scope
+
+    - Atlas-side changes.
+    - Performance optimisation.
+
+    ## Exit criteria
+
+    - A single `related-components.yaml` exists in the ecosystem — Ravel-Lite no longer writes its own.
+    - Test suite passes end to end.
+    - `ravel-lite run` on any plan directory can discover and use components produced by Atlas without any hand-authored `projects.yaml`.
+    - The Stage-1/2 prompt question is answered and the chosen option's sub-steps are applied.
+
+    ## Provenance
+
+    Moved from Atlas's backlog (id `ravel-lite-migration-m5-consume-atlas-via-atlas-index`) on 2026-04-28. Atlas's `verify-atlas-v1-success-criteria-end-to-end` task previously listed this as a structural dependency; that dep is now tracked as prose because cross-plan dep ids aren't supported.
