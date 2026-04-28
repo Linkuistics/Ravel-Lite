@@ -1,0 +1,19 @@
+[package]
+name = "knowledge-graph"
+version = "0.1.0"
+edition = "2021"
+description = "Typed knowledge-graph + truth-maintenance substrate for ravel-lite plan state and catalog"
+license = "Apache-2.0"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+indexmap = { version = "2", features = ["serde"] }
+thiserror = "1"
+petgraph = "0.6"
+ascent = "0.6"
+
+[dev-dependencies]
+
+[lints.rust]
+warnings = "deny"

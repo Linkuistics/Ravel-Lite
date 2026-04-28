@@ -1,12 +1,11 @@
-id: session-83
-timestamp: 2026-04-28T12:11:30Z
+id: session-84
+timestamp: 2026-04-28T12:28:27Z
 phase: work
 body: |
-  ### Session 83 (2026-04-28T12:11:30Z) — Decompose architecture-next umbrella into 13 sub-tasks
+  ### Session 84 (2026-04-28T12:28:27Z) — Scaffold knowledge-graph crate with TMS+KG substrate
 
-  - Worked the `begin-architecture-next-migration` umbrella task: closed it by decomposing into 13 trackable sub-tasks under category `architecture-next` and recording four settled Phase A decisions in `docs/architecture-next.md`.
-  - All four open questions that had concrete answers were resolved: crate name and home (`knowledge-graph`, in-tree workspace member, extraction deferred post-v2.0), Datalog engine (`ascent` — recompute is fast enough at ravel-lite scale; differential-dataflow's incremental complexity is unwarranted), v1→v2 cutover (hard cutover; v2 binary refuses unmigrated plans), legacy backfill (one-shot LLM-driven extraction at migrate time; unattributable entries land with `status: legacy`).
-  - `docs/architecture-next.md` updated: new *Settled decisions* section, Library extraction section revised to name the crate and state the in-tree-first policy. Remaining open questions left intact.
-  - `default-config-location-...` flipped to `blocked` — its substance is subsumed by `ravel-context-new-layout-and-repos-yaml-registry`, which owns config discovery for v2.
-  - No code written. Cargo workspace conversion, crate skeleton, and phase-loop changes deferred to sub-tasks.
-  - The two foundation sub-tasks (`knowledge-graph-crate-scaffold-tms-kg-substrate`, `ravel-context-new-layout-and-repos-yaml-registry`) have no dependencies and can start in either order; both underpin five or six downstream tasks respectively. Triage should pick based on which is more disruptive to defer.
+  - **What was attempted:** Scaffold the `knowledge-graph` workspace crate at `crates/knowledge-graph/` per the `knowledge-graph-crate-scaffold-tms-kg-substrate` task. Root `Cargo.toml` converted into a workspace (retaining `ravel-lite` at the root).
+  - **What worked:** Full scaffold shipped in one cycle. All five substrate modules completed: `item` (generic `Item` with YAML serde and `DefeatedBy` serialisation), `justification` (six-kind enum with externally-tagged serde), `store` (`Store` over `IndexMap` with `defeat`/`supersede` cascade APIs and YAML round-trip), `algorithms` (`GraphView` + `shortest_path`, `bfs_subgraph`, `scc`, `topo_sort`, `articulation_points`), and `datalog` (two smoke rules via `ascent!` macro: `orphaned` and `suspect`). 23 inline tests added; full workspace test run green (621 existing + 23 new). No collateral damage to existing build targets, binaries, or tests.
+  - **What didn't / open scope:** `blocked_by` cascade deferred (it's kind-specific extension data, not a justification edge — threading it through would re-couple the substrate to ravel-lite plan vocabulary). Per-kind status-transition validation deferred (pending concrete kind registrations from the wiring task). `ascent` pinned at 0.6 (0.8 current); upgrade is a clean follow-on. No runtime rule-registry yet — each consumer will have its own `ascent!` program.
+  - **What this suggests trying next:** `knowledge-graph: wire plan KG kinds (intent, backlog, memory, finding)` — domain wrappers over the generic `Item`, plus the deferred `blocked_by` cascade and per-kind status validation.
+  - **Key learnings:** `ascent` 0.6's macro-generated struct-with-Vec-fields API is clean for two-rule smoke programs. Articulation-points required a hand-rolled low-link DFS (~50 lines) because `petgraph` 0.6 doesn't expose one on its stable surface; keep this in mind when picking algorithm dependencies at crate-scaffold time.
