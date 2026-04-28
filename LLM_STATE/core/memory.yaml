@@ -576,7 +576,7 @@ entries:
 - id: capture-scripts-template-documentation-with-real-system-runs
   title: Capture scripts template documentation with real system runs
   body: |
-    `scripts/capture/ravel-lite-tutorial.sh` drives a TestAnyware macOS VM: installs via Homebrew, runs the tutorial scenario, takes screenshots, pulls the resulting `LLM_STATE` tree. Structured into named sections with `[STEP-NAME]` log markers. VM identity uses deterministic `VM_ID` passed to `vm start --id`; reused via `--vm` throughout — `vm list --format json` is not used. All testanyware subcommands validated against `--help` output; `bash -n` passes. Chapter 01-02 have 11 named `transcript_at` captures; chapter 03 (`ravel-lite create`) is interactive and not yet captured. This is the template for all future documentation-with-real-results capture scripts.
+    `scripts/capture/ravel-lite-tutorial.sh` drives a TestAnyware macOS VM: installs via Homebrew, runs the tutorial scenario, takes screenshots, pulls the resulting `LLM_STATE` tree. Structured into named sections with `[STEP-NAME]` log markers. VM identity uses deterministic `VM_ID` passed to `vm start --id`; reused via `--vm` throughout — `vm list --format json` is not used. All testanyware subcommands validated against `--help` output; `bash -n` passes. Chapter 01-02 have 11 named `transcript_at` captures. Chapter 03 (`ravel-lite create`) uses hybrid capture: screenshot-per-prompt for the volatile four-question scope conversation, `transcript_at` for the deterministic post-create state; live VM run still pending. This is the template for all future documentation-with-real-results capture scripts. See: `Hybrid capture splits screenshot vs transcript_at by content stability`.
 - id: after-help-const-avoids-dead-code-warnings-no-intermediate-url-consts
   title: after_help const avoids dead-code warnings; no intermediate URL consts
   body: |
@@ -641,3 +641,11 @@ entries:
   title: transcript_at captures per-command stdout+stderr for AsciiDoc
   body: |
     `transcript_at <label> <command>` helper in capture scripts writes stdout+stderr to `transcripts/<label>.txt` as paste-ready `[source,console]` AsciiDoc blocks. This is the mechanism for folding live VM output into tutorial chapters.
+- id: hybrid-capture-splits-screenshot-vs-transcript-at-by-content-stability
+  title: Hybrid capture splits screenshot vs transcript_at by content stability
+  body: |
+    For interactive CLI phases where the agent paraphrases questions, use screenshot-per-prompt for the volatile conversation and `transcript_at` for any deterministic post-command state. Maps capture fidelity to content stability: screenshots tolerate paraphrase variance; `transcript_at` is reproducible text. A marker-echo (`echo CHAPTER_03_CREATE_DONE`) after the interactive command provides a deterministic `find-text` sync point. Chapter 03 `ravel-lite create` demonstrates the pattern.
+- id: capture-response-files-are-authored-source-live-outside-docs-captures
+  title: Capture response files are authored source, live outside docs/captures/
+  body: |
+    `scripts/capture/responses/` holds authored verbatim responses for interactive capture scenarios (e.g. `03-purpose.txt`, `03-project.txt`). Located outside `docs/captures/` so `.gitignore`'s `docs/captures/` rule does not silently exclude them; they are authored source content, not captured output.
