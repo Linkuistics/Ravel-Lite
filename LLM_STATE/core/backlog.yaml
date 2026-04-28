@@ -1,53 +1,4 @@
 tasks:
-- id: diagnose-claude-tui-invisible-after-work-phase-banner-on-a-fresh-machine
-  title: 'Verify fix: re-test work-phase TUI hang on fresh machine after removing --add-dir and fixing path normalisation'
-  category: infra
-  status: done
-  dependencies: []
-  description: |
-    ## Status
-
-    Both leading-hypothesis fixes have shipped:
-
-    1. **Double-slash path-join bug** (`select_config_dir` now normalises trailing slashes via `components().collect()`).
-    2. **Redundant `--add-dir <plan_dir>`** removed from `invoke_interactive` in `src/agent/claude_code.rs`.
-
-    These were the two most likely causes of the invisible trust-grant modal (hypothesis A) that hung the work phase on a fresh machine.
-
-    ## Required action
-
-    Have the affected colleague (macOS, local terminal, no multiplexer, Claude 2.1.119) pull the latest binary and re-run `ravel-lite run` from their launcher-web project.
-
-    Expected outcome: work phase proceeds normally with no hang after the banner.
-
-    ## If the hang persists
-
-    Pivot to hypothesis B (inline-viewport handoff bug in `src/ui.rs:298` reset volley). Investigation path:
-
-    - Check colleague's `~/.claude.json` for the project path to see if trust is already granted.
-    - Run `dangerous: true` in their plan's config (appends `--dangerously-skip-permissions`); if hang disappears, a remaining trust-grant modal is the cause.
-    - If B, inspect `src/ui.rs:244` Viewport::Inline and the `suspend` volley at line 298.
-
-    The `capture-full-claude-stdio-under-a-pty-in-debug-log-for-tui-hang-diagnosis` task provides the full diagnostic capture tool if further investigation is needed.
-
-    ## What "done" looks like
-
-    Colleague confirms the hang is gone. Or, if hang persists: root cause identified and a follow-up fix landed.
-  results: |
-    ## Status: confirmed fixed in 1.0.3
-
-    Marked done in this work phase based on user confirmation in-session: *"our 1.0.3 version no longer exhibits that claude-tui-invisible bug - maybe adding the pty capture has fixed it"*. The hypothesised fix path now appears to be the PTY-capture work shipped at `src/agent/pty_capture.rs`, which routes the claude subprocess through a captured PTY rather than inherited stdio — the original two leading-hypothesis fixes (path-normalisation + dropping `--add-dir`) had already shipped before this confirmation, but the hang was not reliably gone until PTY capture also landed.
-
-    ## Indirect corroboration from chapter 03 capture work in this same phase
-
-    The `replace-tutorial-illustrative-transcripts-...` and `design-and-implement-interactive-capture-mechanism-...` tasks completed this phase included a live `ravel-lite create` run inside a fresh TestAnyware macOS VM against a brew-installed `ravel-lite 1.0.3`. The historical invisible-modal hang would have stopped the create session at the trust-grant or onboarding modals, before claude's first prompt ever rendered. Instead, claude ran cleanly through scaffold → conversation → state CLI calls → exit, with screenshots showing each stage. That is independent evidence (not just a colleague's anecdote on their own machine) that the hang is gone in 1.0.3 + PTY-capture.
-
-    The capture script in this phase had to add three other modal-bypass mechanisms on top — `~/.claude.json` pre-trust + `hasCompletedOnboarding`, `permissions.defaultMode: bypassPermissions`, and `skipDangerousModePermissionPrompt` — but each of those is a *different* claude security gate, not the historical TUI render bug. They sit on the same surface area (security/permission prompts in the create flow) and would have masked the TUI bug if it had still been present, but the screenshots show claude rendering correctly throughout, including the bypass-mode warning that briefly stopped run #5 (which is itself a render success, not a hang).
-
-    ## What this suggests next
-
-    - The hypothesis-B path documented in this task's original description (`src/ui.rs:298` reset volley as the root cause) does not need investigation; PTY-capture appears to have addressed the rendering side of the issue.
-    - The companion task `add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs` is still blocked-by-need but has gained a small priority signal: PTY-capture is now the de-facto fix for the modal-rendering-on-fresh-machine class of bugs, and pi.rs lacks the same protection. Worth promoting if any pi-side TUI weirdness surfaces.
 - id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
   title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
   category: infra
@@ -87,160 +38,57 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: replace-tutorial-illustrative-transcripts-with-testanyware-captured-transcripts
-  title: Run capture script live and replace chapters 01-02 tutorial transcripts with TestAnyware output
+- id: implement-tui-screenshot-capture-for-tutorial-chapters-04-05-and-fold-into-chapter-prose
+  title: Implement TUI screenshot capture for tutorial chapters 04-05 and fold into chapter prose
   category: docs
-  status: done
+  status: not_started
   dependencies: []
   description: |
-    Run `scripts/capture/ravel-lite-tutorial.sh` against a live TestAnyware VM to produce
-    verbatim terminal transcripts, then fold those transcripts into tutorial chapters 01 and 02.
+    Implement TUI screenshot capture mechanism for tutorial chapters 04 and 05
+    (`ravel-lite run` work phase and subsequent phases), then fold captured screenshots
+    into the chapter prose.
 
-    ## What the script does
+    ## Why
 
-    `scripts/capture/ravel-lite-tutorial.sh` drives a TestAnyware macOS VM: Homebrew-installs
-    ravel-lite, runs each chapter-01 and chapter-02 command via `transcript_at`, and writes
-    combined stdout+stderr to `docs/captures/ravel-lite-tutorial/transcripts/<label>.txt` in
-    paste-ready `[source,console]` AsciiDoc format.
+    Chapters 01-03 were updated with verbatim captured output in the previous cycle.
+    Chapters 04-05 cover the TUI-driven `run` phase and are screenshot-driven by nature —
+    the Ratatui interface cannot be captured as text. The capture mechanism for these
+    chapters is a separate concern from the `transcript_at` / interactive-response
+    approach used in chapters 01-03.
 
-    Eleven named captures cover chapters 01-02: `01-version`, `01-init-fresh`, `01-init-refuse`,
-    `01-init-force`, `01-ls-phases`, `01-projects-list-empty`, `02-git-init`, `02-git-commit`,
-    `02-projects-add`, `02-projects-list-populated`.
+    The `scenario_run` step is intentionally commented out in `scripts/capture/ravel-lite-tutorial.sh`
+    pending this task.
+
+    ## Mechanism design
+
+    TestAnyware screenshot capture via `testanyware screenshot` at key TUI states:
+    - Pre-work-phase prompt (the "continue / switch plan / exit" inter-cycle prompt)
+    - Active work phase banner and TUI layout
+    - Phase transitions visible in the terminal title (OSC escape)
+    - Post-run state tree visible in the terminal
+
+    The hybrid pattern established for chapter 03 applies: screenshots for volatile TUI
+    views, `transcript_at` for deterministic post-command state.
+
+    ## What `--from <step>` would unlock
+
+    The capture script currently runs all chapters top-to-bottom; re-running just chapters
+    04-05 wastes ~2 minutes re-executing chapters 01-03. A `--from <step>` flag (accepting
+    a step name like `chapter03` or `chapter04`) should be added to the capture script
+    during this task so iterative development of the 04-05 captures is cheap.
 
     ## Scope
 
-    - Run the script against a live VM; debug any divergences from `--help`-deduced assumptions.
-    - Verify all 11 captures land in `docs/captures/ravel-lite-tutorial/transcripts/`.
-    - Replace each `----` illustrative listing block in `docs/tutorial/01-install-and-config.adoc`
-      and `docs/tutorial/02-the-project.adoc` with `[source,console]` blocks containing the
-      corresponding transcript file's content.
-    - Re-render with `scripts/render-docs.sh` and spot-check HTML output.
-
-    ## Out of scope
-
-    - Chapter 03 (`ravel-lite create`) is interactive; a separate interactive capture mechanism
-      is required before chapter 03 transcripts can be produced.
-    - Chapters 04-05 are TUI-screenshot-driven; those updates are a separate task.
+    - Add `--from <step>` flag to `scripts/capture/ravel-lite-tutorial.sh`.
+    - Implement `scenario_run` section in the capture script: drive the TUI with
+      `testanyware input type` / `testanyware screenshot`, capture screenshots at each
+      key TUI state.
+    - Validate mechanism against a live TestAnyware VM.
+    - Replace illustrative listings and screenshots in chapters 04 and 05 with
+      verbatim captured output.
+    - Re-render with `scripts/render-docs.sh` and spot-check HTML.
 
     ## Done when
 
-    Chapters 01 and 02 use verbatim captured output and the rendered HTML passes a visual spot-check.
-  results: |
-    ## Scope executed
-
-    Live VM run completed end-to-end against a fresh TestAnyware macOS VM with brew-installed `ravel-lite 1.0.3`. All eleven chapter 01-02 captures landed in `docs/captures/ravel-lite-tutorial/transcripts/` (and were folded into the chapters), but the more substantial deliverable is what the live run *surfaced* about the chapters themselves: the prose described an architecture that the codebase had moved past.
-
-    ## What the live run surfaced
-
-    `ravel-lite init` no longer materialises a tree of phase prompts, agent definitions, and `fixed-memory/` files into the config dir. Both v1.0.3 (what brew installs) and current HEAD ship those defaults *embedded in the binary*, and `init` writes only a starter `config.lua` whose body is entirely commented out. The chapter prose still claimed a 31-file directory tree with `phases/`, `agents/`, `fixed-memory/`, `config.yaml`, `projects.yaml`, `related-components.yaml`, and `create-plan.md` — none of which exist on disk after `init`. The original task description ("Replace each `----` illustrative listing block with `[source,console]` blocks containing the corresponding transcript file's content") rested on the false premise that the chapter prose was current; verbatim transcript-fold would have produced internally-contradictory chapters.
-
-    User chose option B from a three-way scoping menu (rewrite chapters to match v1.0.3 reality + fold real captures + render). Both chapters were substantively rewritten:
-
-    - **Chapter 01** (`01-install-and-config.adoc`): Recast `init` as "scaffold one starter `config.lua`; defaults are embedded". Re-wrote the "Re-running init" section — `init` is idempotent and never errors on a non-empty dir; `--force` exists narrowly for pruning paths that ship-after-removal and deliberately leaves `config.lua` untouched. Dropped the obsolete sanity-check #3 (the `ls $RAVEL_LITE_CONFIG/phases/` check that would always fail). Updated `state projects list` shape from the old `projects: {}` map to the actual `schema_version: 1\nprojects: []` list.
-    - **Chapter 02** (`02-the-project.adoc`): Updated `state projects add` (silent on success today). Updated `state projects list` populated shape to the actual sequence form. Added explanatory prose about `pathdiff::diff_paths` storing paths relative to the config dir for catalog portability. Replaced the over-promising plan-dir tree (which listed `session-log.yaml` / `latest-session.yaml` as if they exist from creation) with what `ravel-lite create` actually scaffolds (4 files: `phase.md`, `backlog.yaml`, `memory.yaml`, `dream-word-count`), plus a follow-on paragraph naming the files that appear later as the cycle runs.
-
-    ## What changed in the capture script
-
-    The script needed five non-trivial extensions before chapters 01-02 ran end-to-end on a fresh VM. None of them are tutorial content — they're capture-harness plumbing that the previous "no live VM run yet" iteration could not have anticipated:
-
-    1. `VM_USER` default flipped from `tester` to `admin` — the actual GUI user on `testanyware-golden-macos-tahoe`. Same shape as the predecessor task's `vm list --format json` assumption — a value that would have silently failed at first contact with a real VM.
-    2. `VM_SHELL_PRELUDE` constant + `vm_run`/`transcript_at` wrappers prepending `eval "$(/opt/homebrew/bin/brew shellenv)"; export PATH=$HOME/.local/bin:$PATH` — `testanyware exec` runs `/bin/bash -c` non-interactively and bypasses `~/.zprofile` (where the brew install hooks PATH), so the very first `brew install` step hit "brew: command not found" without this.
-    3. `vm_run` made timeout-tolerant (`|| true`) — `testanyware exec` has a fixed 30s response-collection timeout that fires on the agent channel even when the in-VM command itself completed in milliseconds; the previous `set -e`-strict `vm_run` killed the script every time we typed a quick git-init or mkdir.
-    4. Multi-line chained `vm_run`s (the README scaffold) split into per-step calls — a chained `cmd1 && cmd2 && cmd3` hits the timeout once for the entire block even though each step is sub-second; per-call splits keep each one cheap.
-    5. `transcript_at` post-processes captured transcripts with `sed '/^Process timed out after/d'` — strips the testanyware-side timeout marker so the captured `.txt` files don't mislead readers into thinking the in-VM command failed.
-
-    Plus a small ergonomic improvement: pre-set `git config --global user.{name,email}` before the chapter 02 commit so the captured transcript doesn't include git's one-time identity-not-set warning, which is noise unrelated to the tutorial story.
-
-    ## Validation
-
-    - Both chapters render cleanly via `scripts/render-docs.sh`; HTML fragments under `website/tutorials/01-install-and-config.html` and `02-the-project.html` are regenerated and contain the expected `<pre class="highlight">` blocks for each captured transcript.
-    - All eleven chapter 01-02 transcript files exist under `docs/captures/ravel-lite-tutorial/transcripts/` after the run; six are now embedded verbatim (the captured outputs match the new prose); five (`01-init-fresh`, `01-init-refuse`, `01-init-force`, `01-projects-list-empty`, `02-projects-list-populated`) are referenced as the source of the prose's example outputs.
-
-    ## What did NOT happen (and why)
-
-    - No new release was cut; the chapters now describe v1.0.3 behaviour (what brew installs), not main HEAD behaviour. They happen to coincide today because v1.0.3 and HEAD are functionally identical on the captured CLI surface, but if a future release diverges, re-capture against the new release rather than against `cargo build` output.
-    - The legacy 5-file plan-dir tree that the old chapter 02 prose showed (`backlog.yaml` / `memory.yaml` / `session-log.yaml` / `latest-session.yaml` / `phase.md`) was wrong on TWO counts: it omitted `dream-word-count` (which `scaffold_plan_dir` writes), and it included two files (`session-log.yaml` / `latest-session.yaml`) that do not exist until analyse-work runs after the first cycle. The new prose describes the actual 4-file scaffold + the post-cycle additions.
-- id: design-and-implement-interactive-capture-mechanism-for-tutorial-chapter-03-ravel-lite-create
-  title: Design and implement interactive capture mechanism for tutorial chapter 03 (ravel-lite create)
-  category: docs
-  status: done
-  dependencies: []
-  description: |
-    Design and implement a capture mechanism for `docs/tutorial/03-creating-a-plan.adoc`
-    (`ravel-lite create`), which drives an interactive prompt-and-response TUI session.
-    Unlike chapters 01-02, `ravel-lite create` is not headless; stdout is inside the VM's
-    GUI Terminal, not on the TestAnyware agent channel.
-
-    ## Why a separate task
-
-    `transcript_at` (non-interactive command capture) cannot capture the create-session
-    exchange. Chapter 03 illustrative transcripts show multi-turn dialogue; byte-accurate
-    capture requires a different mechanism.
-
-    ## Design options to evaluate
-
-    - `testanyware input type` to send keystrokes + `testanyware find-text` waits to detect
-      prompts, combined with `script(1)` recording inside the VM for full byte fidelity.
-    - Screenshot-based approach matching chapters 04-05.
-    - PTY recording piped out via `testanyware exec` if the VM runner supports it.
-
-    ## Done when
-
-    A mechanism is implemented in `scripts/capture/ravel-lite-tutorial.sh`, validated
-    against a live VM, and chapter 03's `----` illustrative blocks are replaced with
-    verbatim captures or screenshots as appropriate.
-  results: |
-    ## Scope executed
-
-    Live VM run of `ravel-lite create LLM_STATE/main` completed end-to-end: claude actually populated the plan with 3 backlog tasks and 3 memory entries via the state CLI, screenshots captured the conversation, and post-create transcripts (`ls`, `state backlog list`, `state memory list`) folded into chapter 03. Both the capture mechanism and the chapter prose were substantially rewritten — what shipped from the predecessor phase ("mechanism implemented; live VM run deferred") could not have run as designed; the live attempt surfaced four independent issues, all now addressed.
-
-    ## What the live run surfaced
-
-    1. **Wrong shell-prompt character.** The previous mechanism waited for `find-text "$"` to detect the Terminal prompt before typing the create command. macOS zsh defaults to `%`, not `$`, so the wait timed out at 15s and aborted. Replaced the find-text dependency with a fixed `sleep 5` after `open -a Terminal` — robust against prompt customisation, doesn't depend on OCR-readability of a single character.
-
-    2. **Question-count mismatch with the create-plan template.** The previous `drive_scope_question` driver waited for four hand-picked substrings (`plan for`, `project`, `backlog`, `memory`) and typed four corresponding response files. But `defaults/create-plan.md` §1 actually lists *six* topics (purpose, initial tasks, categories, dependencies/blockers, peer-project relationships, work-phase instructions), and the original "memory" question doesn't exist in §1 at all — memory seeding is handled in §2 as a per-need add via the state CLI, not as a scope question. The driver was permanently misaligned with the template.
-
-       Fixed by leaning on the create-plan template's explicit escape hatch ("If the description is a concrete problem ... a single-task plan is a valid plan"): one comprehensive single-shot description in `responses/03-comprehensive.txt` covers purpose + tasks + categories + memory hints in one prompt, claude proceeds directly to writing the plan, no multi-turn dialogue. This matches what most real users do in practice.
-
-    3. **Three independent claude security gates needed bypass-style configuration in the harness.** The original mechanism only addressed per-project trust (`hasTrustDialogAccepted`); two more had to be added before claude would run end-to-end without human input:
-
-       - **Tool-use permission prompts** (run #4 hung here) — claude asks for human approval before each Bash/Write call by default. Bypassed by writing `~/.claude/settings.json` with `{"permissions": {"defaultMode": "bypassPermissions"}}`.
-       - **Bypass-mode confirmation modal** (run #5 hung here) — even with `defaultMode: bypassPermissions`, claude shows a "you've enabled dangerous mode, type continue to confirm" warning at session start. Bypassed by adding `"skipDangerousModePermissionPrompt": true` to the same settings file (mirrors a setting the user already had in their host `~/.claude/settings.json`).
-
-       All three gates are documented in the new `pretrust_project()` function with clear `HARNESS-ONLY` framing — tutorial readers will follow the standard interactive flows on their own machines.
-
-    4. **Marker-find completion signal was brittle.** The original mechanism typed `echo CHAPTER_03_CREATE_DONE` after the response and waited for `find-text` to see it on screen. That only works if the marker hits the shell — but if claude is still running, the typed text goes into claude's input buffer instead. Replaced with agent-channel polling: `testanyware exec ... grep -q '^- id:' backlog.yaml` every 10s for up to 4 minutes. Detects the *real* completion signal (claude has called `state backlog add` at least once), independent of GUI Terminal state.
-
-    ## What the chapter 03 prose now describes
-
-    Substantively rewritten to match the actual `create-plan` template structure and the actual capture run:
-
-    - The "what `create` does" section now describes the three-phase runner behaviour: pre-spawn scaffold (4 files, deterministic), prompt composition (embedded template + appended target path), headful claude session (stdio inherited, model from work-phase config).
-    - The "conversation" section now describes the six-question §1 structure AND the concrete-description escape hatch, with the captured single-shot description as the illustrative slice.
-    - The post-create file listing now matches what `scaffold_plan_dir` actually writes (4 files including `dream-word-count`, no `session-log.yaml` or `work-baseline` until later phases run). The previous chapter's listing was wrong on both counts.
-    - The captured backlog (3 reading-list tasks) and memory (3 standing facts) are folded in verbatim from the live run.
-    - The "Trust modal hangs" failure-mode section is updated to reference 1.0.3's PTY-capture work as the de-facto fix (cross-confirmed against the `diagnose-claude-tui-invisible-after-work-phase-banner` task closed in this same phase).
-
-    ## Capture-script extensions
-
-    Three new functions wired into `main()` between the chapter 02 capture and the chapter 03 capture:
-
-    - `install_claude_code` — runs `curl -fsSL https://claude.ai/install.sh | bash`, appends `~/.local/bin` to `~/.zshenv` for interactive shell sessions.
-    - `transfer_claude_auth` — extracts the OAuth credential JSON from the host's `Claude Code-credentials` keychain entry, uploads via `testanyware upload`, injects into the VM's `admin` user keychain via `security add-generic-password -U`. Strong `HARNESS-ONLY` comments document the test-harness scope: the token survives only on the ephemeral VM disk (destroyed on `vm stop`).
-    - `pretrust_project` — writes `~/.claude.json` with `hasCompletedOnboarding` + per-project `hasTrustDialogAccepted`, AND writes `~/.claude/settings.json` with the two-gate permission bypass.
-    - `setup_shell_env` — writes `RAVEL_LITE_CONFIG` to `~/.zshenv` so the GUI Terminal session inherits it (per-`exec` env var setting in `transcript_at` doesn't help interactive Terminal flows).
-
-    The `scenario_run` step (chapter 04-05 TUI capture) is intentionally commented out in `main()` — those captures are a separate task and a separate capture mechanism (TUI screenshots, not text transcripts).
-
-    ## Validation
-
-    - The captured `03-backlog-list.txt` shows 3 tasks under "reading-list" category: "Add first ten distributed-systems entries", "Add five type-theory entries on dependent-typing introductions", "Cross-link entries that cite each other". These are claude's interpretation of the comprehensive prompt, written through `state backlog add`.
-    - The captured `03-memory-list.txt` shows 3 entries with stable kebab-case IDs (`one-line-annotations-only-in-reading-list-md`, `slug-convention-lower-kebab-case-from-title`, `reuse-existing-tags-before-inventing-new-ones`), each with claude-tightened body prose.
-    - Screenshots in `docs/captures/ravel-lite-tutorial/screens/` show the Terminal-opened state, the post-prompt state, and the mid-execution state with claude actively writing memory body files and running `state backlog add`.
-    - `scripts/render-docs.sh` regenerates `website/tutorials/03-creating-a-plan.html` cleanly with all five expected `<pre>` blocks.
-
-    ## What did NOT happen (and why)
-
-    - **No `testanyware download` of LLM_STATE.** The download step at the end of the script failed with `Agent HTTP 400: Download failed: The file "LLM_STATE" couldn't be opened.` This is a directory-vs-file mismatch in testanyware's download semantics; the per-file transcripts captured everything we needed, so the download is an unused belt-and-braces. Worth investigating separately if anyone wants the full state tree pulled back, but not blocking for this task.
-    - **No `--scope chapter01-02` / `--scope chapter03` flag added to the script.** The script still runs everything top-to-bottom; iteratively re-running just chapter 03 wastes ~2 minutes re-doing 01-02. A `--from <step>` flag would make iteration cheaper but adds CLI surface to the script. Defer until the next batch of capture work makes it clearly worthwhile.
-    - **No memory updates.** The reflect phase owns memory; this phase only implements.
+    Chapters 04 and 05 use verbatim captured screenshots and the rendered HTML passes
+    a visual spot-check.
