@@ -633,3 +633,7 @@ entries:
   title: 'Config-dir resolves: --config → RAVEL_LITE_CONFIG → dirs::config_dir()/ravel-lite'
   body: |
     `config_lua::resolve` tries in order: `--config` CLI flag, `RAVEL_LITE_CONFIG` env var, `dirs::config_dir()/ravel-lite`. First match wins. See: `Config model is layered Lua; config_lua.rs owns it`.
+- id: doc-publish-pipeline-reads-website-via-git-archive
+  title: Doc publish pipeline reads `website/` via git archive
+  body: |
+    Doc publish pipeline reads `website/` via git archive; `projects/ravel-lite.html` and `SYNC.yml` do not exist in the current pipeline (post-2026-04-26). No intermediate artifact files are needed; the pipeline consumes the `website/` subtree directly.
