@@ -17,9 +17,13 @@ progress.
 - **Agents are subprocesses.** The orchestrator spawns `claude` or `pi`
   CLI processes, reads their JSON stream output, and renders progress.
   It never calls LLM APIs directly.
-- **Configuration drives everything.** There are no CLI flags for
-  agent selection, model choice, or permissions. Everything comes
-  from YAML files under the config directory.
+- **Configuration drives everything.** Agent selection, per-phase
+  model choice, and prompt customisation all live in the config
+  directory — embedded YAML defaults plus optional `config.lua`
+  override layers (see *Configuration*). The handful of CLI knobs
+  that exist (`--dangerous`, `--model` for `survey`) are escape
+  hatches that mutate the loaded config in-process; they don't
+  introduce parallel sources of truth.
 
 ## Overview
 
@@ -192,7 +196,8 @@ the same `UISender`. Agents only send `Progress`, `Persist`, and
   `--output-format stream-json`, reads stdout line by line via
   `tokio::io::BufReader`, parses each line as JSON. `assistant` events
   with `tool_use` blocks become `Progress`; writes to highlight-matched
-  paths (memory.md, backlog.md) and `result` events become `Persist`.
+  paths (e.g. `memory.yaml`, `backlog.yaml`) and `result` events become
+  `Persist`.
 - **PiAgent** — spawns `pi` with `--mode json`. Different JSON event
   schema but the same output-event mapping.
 
@@ -224,7 +229,7 @@ is no `Vec<String>` log buffer in the application — `Log` and
   ▶ Dispatching 3 subagent(s)...
     ✓ sub-B-phase-cycle
 ─────────────────────────────────────────────────────  ← inline viewport (1 row)
-      · Edit backlog.md (+1.4s)                       ← latest tool call OR confirm
+      · Edit backlog.yaml (+1.4s)                     ← latest tool call OR confirm
 ```
 
 ### Scrollback (above the viewport)
@@ -423,25 +428,31 @@ ravel-lite/
 └── src/
     ├── main.rs                 # binary entry + CLI dispatch
     ├── lib.rs                  # library surface for integration tests
-    ├── config.rs               # YAML config loading + .local overlays
+    ├── config.rs               # thin wrappers around the Lua resolver (config_lua)
+    ├── config_lua.rs           # Lua-backed config layer (global + plan)
     ├── types.rs                # LlmPhase, ScriptPhase, PlanContext, etc.
     ├── agent/
     │   ├── mod.rs              # Agent trait
     │   ├── claude_code.rs      # ClaudeCodeAgent + stream parser
     │   ├── pi.rs               # PiAgent + stream parser
+    │   ├── pty_capture.rs      # PTY transcript capture for debug logging
     │   └── common.rs           # shared helpers across agent impls
     ├── format.rs               # Pure formatting functions
     ├── phase_loop.rs           # Phase state machine (single cycle)
+    ├── phase_summary.rs        # deterministic labelled-line phase summaries
     ├── multi_plan.rs           # Survey-driven multi-plan routing
     ├── subagent.rs             # Dispatch + concurrent execution
     ├── git.rs                  # git commit, baseline save, project-root math
     ├── dream.rs                # should_dream, update_baseline
+    ├── debug_log.rs            # opt-in transcript log of LLM subprocess I/O
     ├── prompt.rs               # Template loading + token substitution
-    ├── init.rs                 # `init` command — writes defaults
+    ├── init.rs                 # `init` command — writes defaults + config.lua stub
     ├── create.rs               # `create` command — interactive plan scaffold
     ├── term_title.rs           # OSC-escape terminal title side channel
     ├── projects.rs             # ProjectsCatalog (name → path)
     ├── related_components.rs   # global name-indexed edge store
+    ├── backlog_transitions.rs  # status-transition rules shared across verbs
+    ├── migrate_v1_to_v2.rs     # one-shot config-file migration helper
     ├── survey.rs               # `survey` command entry
     ├── survey/
     │   ├── compose.rs          # prompt composition (fenced YAML blocks)
@@ -465,7 +476,9 @@ ravel-lite/
     ├── state/                  # typed CRUD over plan-state files
     │   ├── phase.rs
     │   ├── migrate.rs
+    │   ├── filenames.rs        # canonical state-file names shared by all verbs
     │   ├── backlog/            # schema + yaml_io + parse_md + verbs
+    │   │                       # + render, lint_dependencies, repair_stale_statuses
     │   ├── memory/             # schema + yaml_io + parse_md + verbs
     │   ├── session_log/        # schema + yaml_io + parse_md + verbs
     │   └── discover_proposals/ # schema + verbs (add-proposal, load)
@@ -517,21 +530,38 @@ location is not tied to any project.
 `init` skips files that already exist — rerunning it after an upgrade
 picks up new defaults without overwriting user customisations.
 
-### Plan directories (anywhere on disk)
+### Plan directories
 
 ```
-my-plan/
-├── phase.md
-├── backlog.md
-├── memory.md
-├── dream-baseline
-├── session-log.md
-├── related-plans.md
+<project>/LLM_STATE/<plan>/
+├── phase.md                  # current phase pointer (the only .md state file)
+├── backlog.yaml
+├── memory.yaml
+├── session-log.yaml          # append-only history
+├── latest-session.yaml       # most-recent session record (written by analyse-work)
+├── related-plans.md          # optional prose-only cross-plan pointers
+├── work-baseline             # SHA captured before the work phase
+├── reflect-baseline          # SHA captured before reflect
+├── triage-baseline           # SHA captured before triage
+├── dream-baseline            # SHA captured before dream (when triggered)
+├── dream-word-count          # memory word count at last dream baseline
 └── …
 ```
 
-The project directory for a plan is found by walking up from the plan
-directory until a `.git` is found.
+The project root for a plan is derived from the plan path as
+`<plan_dir>/../..` — pure path math, independent of where `.git`
+lives. The conventional layout is `<project>/LLM_STATE/<plan>`, but
+ravel-lite does not enforce the `LLM_STATE` segment; only
+`<plan>/../..` is read as the project root, which makes the
+orchestrator work cleanly inside a monorepo subtree as well as in a
+single-repo layout (see "Monorepo subtrees" in `README.md`).
+
+State files are typed YAML. The legacy `.md` shape (backlog.md,
+memory.md, session-log.md, latest-session.md) is supported only via a
+one-shot `ravel-lite state migrate` conversion; once migrated, the
+prose-side mutators are the `ravel-lite state <kind> ...` verbs and
+the `parse_md.rs` modules in `src/state/<kind>/` exist purely to read
+the legacy form during migration.
 
 ## CLI and Invocation
 
@@ -566,10 +596,21 @@ that resolves to an existing directory wins; if that directory doesn't
 exist, `ravel-lite` errors with the candidate path and the source
 that produced it.
 
-### `ravel-lite run [--config <dir>] <plan-directory>`
+### `ravel-lite run [--config <dir>] [--dangerous] [--survey-state <path>] <plan-dir> [<plan-dir> ...]`
 
-The main phase loop. Takes an optional config root (resolved via the
-discovery chain if omitted) and a plan directory.
+Drives the phase loop. Takes an optional config root (resolved via
+the discovery chain if omitted) and one or more plan directories.
+
+With a **single plan directory** the loop runs continuously, prompting
+between cycles. With **two or more plan directories**, multi-plan
+mode kicks in: every cycle starts with a fresh survey across all
+named plans, the user picks one from a numbered stdout prompt, and
+one phase cycle runs for the chosen plan before the loop returns to
+the survey prompt. `--survey-state <path>` is required in multi-plan
+mode and rejected in single-plan mode; it is fed to the next survey
+as `--prior` (the incremental-survey integration point) and
+rewritten at the end of every survey, so the file is the persistent
+integration point between cycles.
 
 ### `ravel-lite create [--config <dir>] <plan-dir>`
 
@@ -617,63 +658,152 @@ session persistence, no file writes. Model precedence is `--model`
 flag → `models.survey` in the agent config → `DEFAULT_SURVEY_MODEL`
 (currently `claude-haiku-4-5`). Supports `claude-code` only in v1.
 
+### `ravel-lite survey-format <yaml-path>`
+
+Render a saved YAML survey file (as produced by `ravel-lite survey`)
+as human-readable markdown on stdout. Read-only; no network, no LLM
+call. Useful for re-rendering an archived survey result without
+re-running the LLM pass.
+
+### `ravel-lite version`
+
+Print the installed `ravel-lite` version. Equivalent to
+`ravel-lite --version`; the subcommand form mirrors the rest of the
+CLI surface. Output includes the crate version, the
+`git describe --tags --always --dirty` of the source tree the binary
+was built from, and the UTC build timestamp, so a running binary
+always identifies the commit it came from.
+
+### `ravel-lite state <subcommand>`
+
+Mutate plan-state files from prompts without the per-call permission
+overhead of letting the agent edit YAML directly. The intended
+allowlist pattern is a single `Bash(ravel-lite state *)` entry that
+covers every state mutation a phase prompt may issue.
+
+Sub-commands:
+
+- **`set-phase`** — rewrite `<plan-dir>/phase.md` to the given phase.
+  Validates the phase string and requires `phase.md` to already
+  exist.
+- **`projects`** — manage the per-user projects catalog
+  (`<config-dir>/projects.yaml`) that maps component names to
+  absolute paths. Auto-populated on `ravel-lite run` when a new
+  project is encountered. The shared component-relationship graph
+  references components by name; this catalog is the per-user
+  resolver.
+- **`backlog`** — backlog CRUD verbs (`list`, `show`, `add`, `init`,
+  `set-status`, `set-results`, `set-description`, `set-handoff`,
+  `clear-handoff`, `set-title`, `set-dependencies`, `reorder`,
+  `delete`, `lint-dependencies`, `repair-stale-statuses`). Every
+  prompt-side mutation of `backlog.yaml` flows through one of these.
+- **`memory`** — memory CRUD verbs. Dream rewrites `memory.yaml`
+  per-entry through these rather than bulk-swapping the file.
+- **`session-log`** — session-log verbs. `latest-session.yaml` is a
+  single-record file written by analyse-work; `session-log.yaml` is
+  the append-only history. `phase_loop::GitCommitWork` appends
+  latest → log programmatically between phases.
+- **`migrate`** — single-plan conversion of legacy `.md` state files
+  into typed `.yaml` siblings. Covers `backlog.md`, `memory.md`,
+  `session-log.md`, and `latest-session.md` (each written when
+  present).
+- **`related-components`** — global component-relationship graph at
+  `<config-dir>/related-components.yaml`. Edges follow the
+  component-ontology v2 schema (see `docs/component-ontology.md`);
+  participants reference components by name (resolved per-user via
+  the projects catalog), so the file is shareable between users.
+- **`discover-proposals`** — Stage 2 discovery emits each edge
+  through `add-proposal` rather than writing
+  `discover-proposals.yaml` directly. A hallucinated `--kind` is
+  rejected by clap with the full valid vocabulary in the error
+  message, so the LLM retries that single call instead of corrupting
+  the whole file.
+- **`phase-summary`** — deterministic labelled-line summary of what
+  changed in `backlog.yaml` (triage) or `memory.yaml`
+  (reflect/dream) between a baseline commit and the current
+  working-tree state. Replaces the LLM's manual re-transcription of
+  its own tool calls at the end of each phase; the narrative
+  preamble stays in the LLM.
+
+Each verb is a thin Rust adapter over the typed CRUD modules under
+`src/state/`. They validate inputs, write atomically, and emit
+machine-readable confirmation on stdout.
+
 ### Configuration
 
+The shipped defaults are authored as YAML inside the embedded set:
+
 ```yaml
-# <config-dir>/config.yaml
+# defaults/config.yaml
 agent: claude-code
 headroom: 1500
 ```
 
 ```yaml
-# <config-dir>/agents/claude-code/config.yaml
+# defaults/agents/claude-code/config.yaml
 models:
-  work: claude-sonnet-4-6
-  analyse-work: claude-haiku-4-5-20251001
-  reflect: claude-haiku-4-5-20251001
-  dream: claude-haiku-4-5-20251001
-  triage: claude-haiku-4-5-20251001
-params:
-  work:
-    dangerous: true
-  analyse-work:
-    dangerous: true
-  reflect:
-    dangerous: true
-  dream:
-    dangerous: true
-  triage:
-    dangerous: true
+  work: claude-opus-4-7
+  analyse-work: claude-sonnet-4-6
+  reflect: claude-sonnet-4-6
+  dream: claude-sonnet-4-6
+  triage: claude-sonnet-4-6
 ```
 
-Any of the three config files (`config.yaml`,
-`agents/<name>/config.yaml`, `agents/<name>/tokens.yaml`) can have a
-sibling `*.local.yaml` overlay. When present, the overlay is deep-merged
-into the embedded base before deserialization: scalar collisions are won
-by the overlay, map keys present only in the base survive, and nested
-maps (`models`, `thinking`, `params`) recurse. `init --force` only
-rewrites files listed in `EMBEDDED_FILES`, so `*.local.yaml` files are
-never touched by scaffolding — use them for machine-local pins that must
-survive future `init --force` sweeps. Typical example: setting
-`models.work: ""` in `agents/claude-code/config.local.yaml` to suppress
-the `--model` flag and defer to Claude Code's interactive default (e.g.
-the 1M-context variant) without losing the other phase models.
+User overrides are expressed in **Lua**, not in YAML overlays. Two
+optional layers compose on top of the embedded YAML defaults:
 
-Per-phase `params` maps contain agent-specific CLI flags. For
-`claude-code`, `dangerous: true` adds `--dangerously-skip-permissions`.
-This keeps the `Agent` trait generic — the orchestrator doesn't need
-to know what flags each agent supports.
+1. `<config-dir>/config.lua` — global override layer, scoped to this
+   user / config root.
+2. `<plan-dir>/config.lua` — per-plan override layer; runs in the same
+   Lua state after the global layer.
 
-`ravel-lite run --dangerous <plan_dir>` mutates the loaded
-`AgentConfig` at startup, setting `dangerous: true` for every LLM
-phase before the agent is constructed — so the agent itself still
-reads a single source of truth (`config.params`), and no parallel
-override channel is needed (claude-code only; ignored with a warning
-for other agents).
+Both files are evaluated by `config_lua::resolve` before the agent is
+constructed. Setters are last-write-wins; `ravel.append_prompt`
+accumulates across both layers in registration order. The Lua state is
+not sandboxed — config is trusted code, same threat model as
+`wezterm.lua` or Neovim's `init.lua`. A `config.lua` that throws is
+surfaced as a normal Rust error tagged with the offending layer.
+
+The Lua API is small and imperative:
+
+```lua
+-- <config-dir>/config.lua  (typical)
+ravel.set_agent("claude-code")
+ravel.set_model("work", "claude-opus-4-7")               -- active agent
+ravel.set_model("reflect", "")                           -- defer to CLI default
+ravel.set_model_for("pi", "work", "claude-opus-4-7")     -- specific agent
+ravel.config.headroom = 2000
+ravel.append_prompt("work", "Always run cargo fmt before declaring done.")
+```
+
+`ravel.config` is a writable table backed by `SharedConfig`'s top-level
+fields (`agent`, `headroom`). `ravel.set_agent` swaps the active agent;
+`ravel.set_model(phase, name)` updates the active agent's model;
+`ravel.set_model_for(agent, phase, name)` targets a specific agent;
+`ravel.set_headroom(n)` sets the dream-trigger headroom;
+`ravel.set_token(agent, name, value)` overrides a single template
+token; `ravel.append_prompt(phase, text)` accumulates appended prompt
+fragments. Setting a model to the empty string suppresses the
+`--model` flag at spawn time so the agent CLI uses its own default
+(useful for machine-local pins that should follow whatever the editor
+is currently configured for).
+
+`init` writes a fully-commented `config.lua` stub to the config
+directory; `init --force` preserves an existing `config.lua` rather
+than overwriting it. The retired `*.local.yaml` overlay mechanism has
+been removed — `migrate_v1_to_v2` provides a one-shot conversion
+helper for users coming from older installs.
+
+`ravel-lite run --dangerous <plan_dir>` is still supported as a
+single-process knob: at startup it mutates the resolved `AgentConfig`
+to set `dangerous: true` for every LLM phase before the agent is
+constructed. For `claude-code`, that adds
+`--dangerously-skip-permissions`; the flag is ignored with a warning
+for other agents.
 
 All `claude-code` invocations (interactive and headless) pass
 `--add-dir <plan_dir>` so Claude's sandbox permits writes into the
-plan directory. Without it, `memory.md`, `latest-session.md`,
-`backlog.md`, and `subagent-dispatch.yaml` writes would be denied
+plan directory. Without it, `memory.yaml`, `latest-session.yaml`,
+`backlog.yaml`, and `subagent-dispatch.yaml` writes would be denied
 because `plan_dir` lives outside the project tree (`current_dir` is
 `project_dir`).
