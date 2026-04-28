@@ -1,10 +1,10 @@
-id: session-81
-timestamp: 2026-04-28T10:24:10Z
+id: session-82
+timestamp: 2026-04-28T11:42:26Z
 phase: work
 body: |
-  ### Session 81 (2026-04-28T10:24:10Z) — Stop kept TestAnyware VM
+  ### Session 82 (2026-04-28T11:42:26Z) — Reconcile architecture.md and cut v1.0.4
 
-  - Ran `testanyware vm stop ravel-lite-tutorial-20260428T045749Z` to release the VM left running with `--keep-vm` after the chapter-04/05 capture run.
-  - VM stop succeeded: VNC viewers closed, VM stopped and deleted. Confirmed via `testanyware vm list` — no running clones remain.
-  - No source tree changes; task was purely operational cleanup.
-  - The `--keep-vm` + enqueue-a-stop-task pattern worked as intended: the capture run left a warm VM, a backlog task cleaned it up in the next cycle.
+  - **What was attempted:** Two-part task: (1) audit and fix drift in `docs/architecture.md` against the current codebase, then (2) cut the v1.0.4 release as a clean baseline before architecture-next work begins.
+  - **What worked:** Both parts shipped in one cycle. `docs/architecture.md` was the only doc with material drift; the other docs (`component-ontology.md`, `website/` HTML, reference `.adoc` files, `README.md`) were already current. The reconciliation covered plan directory layout (state file names, per-phase baseline files), project-root path math, source-tree additions since v1.0.3, config section (Lua resolver replacing stale `.local.yaml` overlay model), CLI surface (added `state`, `survey-format`, `version` subcommands), and the over-stated "no CLI flags" principle. Committed as `052b92b`. The v1.0.4 release then ran end-to-end without hitches via `cargo release patch --execute` → push with tags → `release-build.sh` (4 cross-target tarballs) → `release-publish.sh` (GitHub Release + Homebrew formula committed to `Linkuistics/homebrew-taps`). Committed as `6e56c82`.
+  - **What this suggests trying next:** The architecture-next migration (`docs/architecture-next.md`) is now the primary track. v1.0.4 is the clean baseline it will diff against.
+  - **Key learnings:** When auditing Lua API surface, grep `set_function`/`set` registrations in `config_lua.rs` — the module-level doc comment can drift from the actual registered API. `cargo-release` with `publish = false` and `push = false` in `release.toml` keeps remote side-effects entirely under manual control.
