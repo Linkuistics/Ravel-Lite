@@ -1215,3 +1215,16 @@ sessions:
     - **What didn't / open scope:** `blocked_by` cascade deferred (it's kind-specific extension data, not a justification edge — threading it through would re-couple the substrate to ravel-lite plan vocabulary). Per-kind status-transition validation deferred (pending concrete kind registrations from the wiring task). `ascent` pinned at 0.6 (0.8 current); upgrade is a clean follow-on. No runtime rule-registry yet — each consumer will have its own `ascent!` program.
     - **What this suggests trying next:** `knowledge-graph: wire plan KG kinds (intent, backlog, memory, finding)` — domain wrappers over the generic `Item`, plus the deferred `blocked_by` cascade and per-kind status validation.
     - **Key learnings:** `ascent` 0.6's macro-generated struct-with-Vec-fields API is clean for two-rule smoke programs. Articulation-points required a hand-rolled low-link DFS (~50 lines) because `petgraph` 0.6 doesn't expose one on its stable surface; keep this in mind when picking algorithm dependencies at crate-scaffold time.
+- id: session-85
+  timestamp: 2026-04-28T12:52:00Z
+  phase: work
+  body: |
+    ### Session 85 (2026-04-28T12:52:00Z) — Add repos.yaml registry, ComponentRef type, and repo CLI verbs
+
+    - Implemented `src/repos.rs`: `ReposRegistry`/`RepoEntry`, atomic load/save, `try_add`, and `run_list`/`run_add`/`run_remove` CLI handlers. On-disk shape is the name-keyed `IndexMap` from architecture-next §The repo registry; `local_path` is stored absolute and omitted when absent. 9 unit tests.
+    - Implemented `src/component_ref.rs`: `ComponentRef { repo_slug, component_id }` with `Display`/`FromStr`/serde producing the canonical `<repo>:<component>` string. Validation rejects empty halves and extra colons. 7 unit tests.
+    - Added `tests/repo_cli.rs`: 3 integration tests covering add/list/remove round-trip, duplicate-slug rejection, and omitted-`local_path` not emitting a `null` token to YAML.
+    - Wired top-level `Repo` subcommand and `dispatch_repo` into `src/main.rs`; registered both new modules in `src/lib.rs`.
+    - All 637 + 19 new tests pass; no warnings under `[lints.rust] warnings = "deny"`.
+    - What didn't land: full `<context>/` dir scaffolding (`ravel-lite init` v2), context git identity, path-optional init, and catalog view — all deferred to follow-up tasks added to the backlog this session.
+    - What this suggests next: Two follow-up tasks promoted to the backlog: "ravel-lite init v2: context layout scaffolding, git identity, path-optional init" and "Add ravel-lite show verb for embedded fixed-memory content". The existing `default-config-location` blocked task will be subsumed when the init-v2 task lands.

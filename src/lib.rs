@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod backlog_transitions;
+pub mod component_ref;
 pub mod config;
 pub mod config_lua;
 pub mod create;
@@ -17,6 +18,7 @@ pub mod phase_summary;
 pub mod projects;
 pub mod prompt;
 pub mod related_components;
+pub mod repos;
 pub mod state;
 pub mod subagent;
 pub mod survey;

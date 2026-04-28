@@ -15,7 +15,7 @@ use ravel_lite::state::filenames::PHASE_FILENAME;
 use ravel_lite::types::{AgentConfig, LlmPhase, PlanContext};
 use ravel_lite::ui::{run_tui, UI};
 use ravel_lite::{
-    create, init, multi_plan, phase_loop, projects, related_components, state, survey,
+    create, init, multi_plan, phase_loop, projects, related_components, repos, state, survey,
 };
 
 /// Force `dangerous: true` for every known LLM phase, overriding
@@ -187,6 +187,58 @@ enum Commands {
     State {
         #[command(subcommand)]
         command: StateCommands,
+    },
+    /// Manage the ravel-context repository registry
+    /// (`<context>/repos.yaml`). Each entry maps a stable slug — the
+    /// `repo_slug` half of every `ComponentRef` — to a clone URL plus an
+    /// optional local checkout path. The registry is the per-context
+    /// resolver every plan target, edge, and memory attribution leans
+    /// on; slugs are intentionally non-renameable in v1 because a
+    /// rename would cascade through plan state files.
+    Repo {
+        #[command(subcommand)]
+        command: RepoCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum RepoCommands {
+    /// Emit the registry as YAML on stdout (empty registry is valid output).
+    List {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// Register a repo under `<name>` with `--url <u>` and an optional
+    /// `--local-path <p>` pointing at the user's regular checkout.
+    /// Rejects duplicate names; the local path, when supplied, is
+    /// resolved against the current working directory and stored as an
+    /// absolute path.
+    Add {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Stable slug for the repo. Used as `repo_slug` in every
+        /// `ComponentRef` downstream.
+        name: String,
+        /// Clone URL (any form git accepts: ssh, https, file path, etc.).
+        #[arg(long)]
+        url: String,
+        /// Optional path to an existing local checkout. When omitted,
+        /// future operations that need a working tree clone into the
+        /// context cache on demand.
+        #[arg(long)]
+        local_path: Option<PathBuf>,
+    },
+    /// Remove the entry for `<name>`. Errors if no such entry exists.
+    Remove {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        name: String,
     },
 }
 
@@ -809,6 +861,29 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::State { command } => dispatch_state(command).await,
+        Commands::Repo { command } => dispatch_repo(command),
+    }
+}
+
+fn dispatch_repo(command: RepoCommands) -> Result<()> {
+    match command {
+        RepoCommands::List { config } => {
+            let context_root = resolve_config_dir(config)?;
+            repos::run_list(&context_root)
+        }
+        RepoCommands::Add {
+            config,
+            name,
+            url,
+            local_path,
+        } => {
+            let context_root = resolve_config_dir(config)?;
+            repos::run_add(&context_root, &name, &url, local_path.as_deref())
+        }
+        RepoCommands::Remove { config, name } => {
+            let context_root = resolve_config_dir(config)?;
+            repos::run_remove(&context_root, &name)
+        }
     }
 }
 

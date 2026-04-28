@@ -2,7 +2,7 @@ tasks:
 - id: ravel-context-new-layout-and-repos-yaml-registry
   title: 'ravel-context: new layout and repos.yaml registry'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Stand up the new `<ravel-context>/` root with config, repo registry, agents/phases/fixed-memory dirs, plans dir, and findings inbox slot. Replaces the v1 `<project>/LLM_STATE/<plan>` rooting and the `dirs::config_dir()` lookup chain.
@@ -19,6 +19,52 @@ tasks:
     - Subsumes the v1 config-location task (currently blocked) — `~/.config/ravel-lite/` is the default for the new context.
 
     Open question still in play: directory tier under XDG vs macOS-specific; v1's blocked task captures the current prose answer.
+  results: |
+    ## What was done
+
+    Landed the first concrete slice of the v2 ravel-context architecture: the `repos.yaml` registry data model, the `ComponentRef` value type that uses it, and the `ravel-lite repo {add, list, remove}` CLI surface.
+
+    New files:
+    - `src/repos.rs` — `ReposRegistry` / `RepoEntry`, atomic load/save, `try_add`, `run_list` / `run_add` / `run_remove`. On-disk shape matches the architecture-next §The repo registry example: `name -> { url, local_path? }`. `IndexMap` preserves insertion order across save/load. `local_path` is stored absolute, cleaned; absent values are omitted on disk (no `null` token). 9 unit tests.
+    - `src/component_ref.rs` — `ComponentRef { repo_slug, component_id }` with `Display` / `FromStr` / serde producing the canonical `<repo>:<component>` string. Validation rejects empty halves and extra colons. 7 unit tests.
+    - `tests/repo_cli.rs` — 3 integration tests covering the binary dispatch (add/list/remove round trip, duplicate-slug rejection, omitted-`local_path` not emitted to YAML).
+
+    Modified files:
+    - `src/lib.rs` — register the two new modules.
+    - `src/main.rs` — top-level `Repo` subcommand (matches architecture-next §CLI surface; not nested under `state` since the doc shows `ravel-lite repo` as a top-level verb), plus `dispatch_repo` routing through `resolve_config_dir`.
+
+    ## Verification
+
+    - `cargo build`: clean (no warnings under `[lints.rust] warnings = "deny"`).
+    - `cargo test --workspace`: all 637 lib tests pass; all integration suites pass; 19 new tests pass (9 `repos::tests`, 7 `component_ref::tests`, 3 in `tests/repo_cli.rs`).
+    - `./target/debug/ravel-lite repo --help` and `repo add --help` show the documented surface.
+
+    ## What worked
+
+    - `src/projects.rs` was a near-perfect template: schema_version, `RawX` on-disk types separated from in-memory types, `load_or_empty` / `save_atomic`, `run_*` CLI handlers. Adapting it to the architecture-next mapping shape (name-keyed `IndexMap`) instead of a `Vec` was a small change.
+    - Treating `local_path` as absolute on disk (matching the architecture-next example) avoided `projects.yaml`'s relativise-on-write indirection. Cleaner code, less footgun.
+    - `ComponentRef` falling out as its own module: it's referenced by future tasks (targets, commits.yaml, memory attribution) and has no dependency on `repos.rs` itself, so it's self-contained.
+
+    ## What didn't / wasn't done
+
+    The original task description bundled six deliverables:
+    1. ✅ `repos.yaml` schema + reader/writer
+    2. ✅ `ravel-lite repo {add, list, remove}` CLI
+    3. ✅ `ComponentRef` type
+    4. ❌ Full new `<context>/` directory layout scaffolding (config.yaml/local, findings.yaml, agents/, phases/, fixed-memory/, plans/) via `ravel-lite init`
+    5. ❌ One git identity for the context (`git init` inside `<context>/`)
+    6. ❌ `~/.config/ravel-lite/` uniform default + path-optional `init`
+    7. ❌ Catalog view computation (union of `.atlas/components.yaml` across repos)
+
+    (4) and (5) are coupled — the context dir scaffolding is what gets `git init`-ed. They share enough surface to live in one follow-up task. (6) is the v1 config-location task this one was supposed to subsume; it should now be unblocked once the layout reshape lands. (7) is the natural prerequisite to the `graph-RAG: ravel-lite atlas CLI for catalog queries` task and should fold into that one rather than this one.
+
+    ## What this suggests next
+
+    Triage should split the parent task into follow-ups:
+    - **Context layout scaffolding + git identity + path-optional init** (covers (4)(5)(6)) — landing this is what makes `ravel-lite init` produce a v2-shaped context. Until that lands, the new `repo` verbs work against any directory passed via `--config`/`RAVEL_LITE_CONFIG`, which is the fallback the existing config dir already gives us.
+    - **Catalog view (`<context>/.atlas`-equivalent reader)** — fold into the `graph-RAG: ravel-lite atlas CLI for catalog queries` task as a precondition; that task was already going to read `.atlas/components.yaml` from registered repos, and it now has `repos.yaml` to drive that.
+
+    A separate concern surfaced during this work — the user pointed out that `defaults/fixed-memory/*.md` are referenced by phase prompts (`{{ORCHESTRATOR}}/fixed-memory/...`) but `ravel-lite init` no longer materialises them (per `src/init.rs:130`). The LLM is told to read files that don't exist on disk. Recommendation captured in chat: add a `ravel-lite show <embedded-path>` verb that prints embedded content via `init::require_embedded`, and sweep prompts to use `Bash(ravel-lite show ...)` instead of `Read({{ORCHESTRATOR}}/fixed-memory/...)`. This is a discrete, well-bounded follow-up — triage should add it as a backlog item (or a finding once the v2 findings inbox lands).
 - id: knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
   title: 'knowledge-graph: wire plan KG kinds (intent, backlog, memory, finding)'
   category: architecture-next
@@ -392,3 +438,50 @@ tasks:
     - `cargo check --workspace --all-targets` clean under `[lints.rust] warnings = "deny"`.
 
     Out of scope: any rule-registry/builder API changes — keep the per-consumer `ascent!` program model unchanged.
+- id: ravel-lite-init-v2-context-layout-scaffolding-git-identity-path-optional-init
+  title: 'ravel-lite init v2: context layout scaffolding, git identity, path-optional init'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Stand up the full v2 `<ravel-context>/` directory layout via `ravel-lite init` (no path arg required) and give the context its own git identity.
+
+    Picks up deliverables (4), (5), (6) deferred from the `ravel-context-new-layout-and-repos-yaml-registry` session. The `repos.yaml` registry landed in that session; this task wires up everything around it.
+
+    Scope:
+    - `ravel-lite init [--config <path>]` scaffolds the full v2 layout under the resolved context root:
+      - `config.yaml`, `config.local.yaml` (gitignored)
+      - `repos.yaml` (empty registry)
+      - `findings.yaml`
+      - `agents/`, `phases/`, `fixed-memory/`, `plans/` dirs
+    - `git init` inside `<context>/` so the context has its own git identity independent of any target repo.
+    - Path-optional `init`: precedence `--config` > `$RAVEL_LITE_CONFIG` > `~/.config/ravel-lite/` (XDG on Linux, same path on macOS — the open question about macOS-specific dirs settled in favour of a uniform XDG path; see the blocked task `default-config-location-to-config-ravel-lite-on-both-linux-and-macos-and-make-init-path-optional` for prior prose).
+    - This task subsumes the blocked `default-config-location` task; when this lands, that task can be deleted.
+
+    Reference: `docs/architecture-next.md` §Layout, §The repo registry (for the git-identity paragraph).
+
+    Dependencies:
+    - `ravel-context-new-layout-and-repos-yaml-registry` (done — repos.yaml read/write is already in place)
+    - `default-config-location-to-config-ravel-lite-on-both-linux-and-macos-and-make-init-path-optional` (blocked — subsume and delete when this lands)
+
+    Design note: `src/init.rs` currently materialises a v1 layout; the scaffold call there (`init::require_embedded` path) is the right hook to extend. Keep existing v1 scaffolding under a version guard if a migration path is needed, or behind a feature flag that triage can decide on.
+- id: add-ravel-lite-show-verb-for-embedded-fixed-memory-content
+  title: Add ravel-lite show verb for embedded fixed-memory content
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Add a `ravel-lite show <embedded-path>` verb that prints embedded content via `init::require_embedded`, and sweep phase prompts that use `Read({{ORCHESTRATOR}}/fixed-memory/...)` to use `Bash(ravel-lite show ...)` instead.
+
+    Problem: `defaults/fixed-memory/*.md` are referenced by phase prompts (e.g. `Read {{ORCHESTRATOR}}/fixed-memory/...`) but `ravel-lite init` no longer materialises those files to disk (see `src/init.rs:130`). The LLM is instructed to read files that do not exist, causing silent failures.
+
+    Scope:
+    - Add `ravel-lite show <embedded-path>` subcommand. `<embedded-path>` is a relative path within the embedded asset bundle (e.g. `fixed-memory/norms.md`). Command prints the content to stdout and exits 0, or exits non-zero with a clear message if the path is not found.
+    - Implementation: thin wrapper over `init::require_embedded(path)` — that function already returns `&'static str` from the compile-time embed.
+    - Sweep `defaults/phases/*.md` and any other prompt templates for `Read({{ORCHESTRATOR}}/fixed-memory/...)` occurrences; replace with `Bash(ravel-lite show fixed-memory/<name>)`.
+
+    Reference examples:
+    - `src/init.rs` — `require_embedded` is defined here; the embed catalogue is already known at compile time.
+    - `defaults/phases/` — the prompt files that reference fixed-memory paths.
+
+    No new dependencies. Self-contained once `ravel-lite show` is wired into `src/main.rs`.
