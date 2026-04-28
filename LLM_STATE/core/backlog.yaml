@@ -1,4 +1,30 @@
 tasks:
+- id: begin-architecture-next-migration
+  title: Begin architecture-next migration
+  category: infra
+  status: not_started
+  dependencies: []
+  description: |
+    Begin the architecture-next migration as captured in `docs/architecture-next.md`. v1.0.4 is the clean baseline; this is the migration that reshapes ravel-lite itself.
+
+    ## Why
+
+    The architecture-next design (multi-repo plans, TMS substrate, graph-RAG catalog) represents a fundamental rethinking of the plan/project model. The v1.0.4 release was cut specifically as the stable baseline before this work begins. The migration will be driven by the *current* binary managing changes that reshape itself.
+
+    ## Starting point
+
+    Read `docs/architecture-next.md` to understand the settled design decisions before beginning any implementation work. The doc is the authoritative source for what "architecture-next" means; this task is intentionally open-ended because the migration will span multiple cycles.
+
+    ## Scope (high level)
+
+    - New `<ravel-context>/` root replacing the current plan-adjacent layout
+    - Multi-repo plan support
+    - TMS substrate integration
+    - Graph-RAG catalog
+
+    ## Sequencing note
+
+    `default-config-location-to-config-ravel-lite-on-both-linux-and-macos-and-make-init-path-optional` is explicitly parked until after architecture-next lands.
 - id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
   title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
   category: infra
@@ -38,143 +64,6 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: reconcile-architecture-md-drift-and-cut-v1-0-4-release
-  title: Reconcile architecture.md drift and cut v1.0.4 release
-  category: release
-  status: done
-  dependencies: []
-  description: |
-    Pre-architecture-next groundwork: bring `docs/architecture.md` back in
-    line with current code reality, then cut a clean v1.0.4 release as the
-    baseline the architecture-next migration will diff against.
-
-    ## Scope
-
-    1. Mechanical render-sync check — confirm `website/docs/*.html` and
-       `website/tutorials/*.html` are in sync with their `.adoc` sources.
-    2. Audit `docs/architecture.md` and `docs/component-ontology.md` against
-       current source tree; fix drifted content.
-    3. Spot-check the recently-rewritten `docs/reference/*.adoc` and
-       `docs/tutorial/*.adoc` for stale state-file shapes / CLI surface.
-    4. Sanity-check `README.md` release flow.
-    5. Cut v1.0.4 via the README-documented flow:
-       `cargo release patch --execute` → `git push origin main --follow-tags`
-       → `./scripts/release-build.sh` → `./scripts/release-publish.sh`.
-
-    ## Why
-
-    The user is about to start the architecture-next migration (the redesign
-    captured in `docs/architecture-next.md`). That migration will be driven
-    by the *current* version of ravel-lite, so v1.0.4 is the clean
-    starting-point release: the binary that will manage the changes that
-    reshape itself.
-  results: |
-    ## Outcome
-
-    Both parts shipped in this single work cycle.
-
-    ### Part A — Doc audit
-
-    `docs/architecture.md` was the only doc with material drift; everything
-    else was already current. Single commit `052b92b` reconciles it
-    (+194/-64 lines):
-
-    - **Plan directory layout** — state files are now `backlog.yaml`,
-      `memory.yaml`, `session-log.yaml`, `latest-session.yaml`; added all
-      five per-phase baseline files (`work-baseline`, `reflect-baseline`,
-      `triage-baseline`, `dream-baseline`, `dream-word-count`).
-    - **Project root rule** — replaced the stale "walk up to `.git`" claim
-      with the actual `<plan>/../..` path math, matching `git.rs:325`
-      (`project_root_for_plan`) and `README.md`.
-    - **Source tree** — added the 6+ files added since v1.0.3:
-      `src/agent/pty_capture.rs`, `src/config_lua.rs`, `src/debug_log.rs`,
-      `src/phase_summary.rs`, `src/backlog_transitions.rs`,
-      `src/migrate_v1_to_v2.rs`, `src/state/filenames.rs`, plus the new
-      `state/backlog/{lint_dependencies,render,repair_stale_statuses}.rs`.
-    - **Configuration section** — replaced the retired `*.local.yaml`
-      overlay model with the actual layered Lua resolver. The Lua API
-      description was corrected for arity (`set_model(phase, name)` for
-      active agent, `set_model_for(agent, phase, name)` for explicit
-      targeting; full surface includes `set_agent`, `set_headroom`,
-      `set_token`, `append_prompt`, plus the writable `ravel.config`
-      table).
-    - **CLI section** — added `state` (with all 9 subcommands),
-      `survey-format`, `version`; updated `run` for multi-plan mode and
-      `--survey-state`.
-    - **Principles** — softened the over-stated "no CLI flags" claim
-      since `--dangerous` and survey's `--model` exist.
-    - **Cleanups** — residual `memory.md` / `backlog.md` references in
-      the ClaudeCodeAgent description and the viewport example were
-      flipped to `.yaml`.
-
-    Verified clean for the rest:
-
-    - `./scripts/render-docs.sh` produced no diff — `website/docs/*.html`
-      and `website/tutorials/*.html` were already in sync with their
-      `.adoc` sources.
-    - `docs/component-ontology.md` matches `defaults/ontology.yaml` (17
-      kinds × correct lifecycles × evidence grades).
-    - Reference docs cover the current CLI surface
-      (`cli-lifecycle.adoc` → init/create/run/version,
-      `cli-state.adoc` → all 9 state subcommands,
-      `cli-survey.adoc` → survey + survey-format).
-    - `README.md` was already updated to describe the new docs pipeline
-      (commit `24086b6` retired `build-docs.sh`/`manifest.txt` etc.).
-    - `cargo check` clean.
-
-    ### Part B — v1.0.4 release
-
-    `docs/architecture.md` committed first (`052b92b`), then standard
-    release flow per `README.md`:
-
-    1. `cargo release patch --execute` → `6e56c82` (`chore: release v1.0.4`)
-       + tag `v1.0.4`, with `Cargo.toml` and `Cargo.lock` version bumps.
-       `release.toml` keeps `publish = false` (not a crates.io crate) and
-       `push = false` (local inspection before remote side-effect).
-    2. `git push origin main --follow-tags` → 73 commits + tag pushed to
-       `Linkuistics/Ravel-Lite`.
-    3. `./scripts/release-build.sh` → 4 cross-target tarballs (~1.6–1.9 MB
-       each) + rendered Homebrew formula in `target/dist/`. SHA256s
-       captured in the formula.
-    4. `./scripts/release-publish.sh` → GitHub Release v1.0.4 created with
-       all 4 tarballs uploaded; formula committed to
-       `Linkuistics/homebrew-taps` (`c300a16`) and pushed.
-
-    Live URLs:
-
-    - https://github.com/Linkuistics/Ravel-Lite/releases/tag/v1.0.4
-    - `brew install linkuistics/taps/ravel-lite` now installs v1.0.4
-
-    ## What worked
-
-    - The README's release flow worked end-to-end without modification.
-      Every prerequisite check in `release-build.sh`'s release-doctor
-      passed (zig 0.16.0, cargo-zigbuild, rustup targets, gh auth).
-    - Build is fast (~12 s per target × 4 targets); Linux glibc floor 2.17
-      preserved.
-    - `cargo-release` correctly skipped `cargo publish` (per `release.toml`)
-      and left the push as a separate manual step, so the commit + tag could
-      be inspected locally before any remote side-effect.
-
-    ## What didn't
-
-    Nothing failed. One small process note:
-
-    - The Lua API description in my first pass had the wrong arity for
-      `set_model` (3-arg form) — caught and corrected by checking
-      `config_lua.rs:195/224/307`. Future audit work should grep for
-      `set_function`/`set` registrations rather than relying on the
-      module-level doc-comment to enumerate the API.
-
-    ## Suggests next
-
-    - The next work cycle (or, more accurately, the next *several* cycles)
-      is the architecture-next migration as captured in
-      `docs/architecture-next.md`. v1.0.4 is now the baseline that will
-      manage that migration.
-    - The blocked PTY-capture task (`add-pty-capture-debug-path-to-pi-rs-...`)
-      is a small wiring job and remains correctly deferred — pi-side TUI
-      debugging still hasn't surfaced as a need.
 - id: default-config-location-to-config-ravel-lite-on-both-linux-and-macos-and-make-init-path-optional
   title: Default config location to ~/.config/ravel-lite on both Linux and macOS, and make init path optional
   category: ux
