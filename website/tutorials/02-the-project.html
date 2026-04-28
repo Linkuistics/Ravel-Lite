@@ -30,9 +30,10 @@
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code class="language-bash" data-lang="bash">mkdir -p ~/Development/ravel-tutorial-example
-cd ~/Development/ravel-tutorial-example
-git init</code></pre>
+<pre class="highlight"><code class="language-console" data-lang="console">$ mkdir -p ~/Development/ravel-tutorial-example
+$ cd ~/Development/ravel-tutorial-example
+$ git init
+Initialized empty Git repository in /Users/admin/Development/ravel-tutorial-example/.git/</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -94,18 +95,20 @@ git commit -m "Initial scaffold"</code></pre>
 <p>Ravel-Lite maintains a per-user <strong>projects catalog</strong> at <code>&lt;config-dir&gt;/projects.yaml</code>. The catalog maps human-friendly component names to absolute paths on disk. Component names are the shared currency of the cross-plan graph (<code>related-components.yaml</code>); the catalog is the per-user resolver from name to path.</p>
 </div>
 <div class="paragraph">
-<p>You do not have to populate the catalog manually — <code>ravel-lite run</code> auto-registers a project the first time it sees one. But it is instructive to do it by hand once:</p>
+<p>You do not have to populate the catalog manually — <code>ravel-lite run</code> auto-registers a project the first time it sees one. But it is instructive to do it by hand once. The <code>add</code> subcommand is silent on success:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code class="language-bash" data-lang="bash">$ ravel-lite state projects add --path ~/Development/ravel-tutorial-example
-added project 'ravel-tutorial-example' at /Users/you/Development/ravel-tutorial-example
-
+<pre class="highlight"><code class="language-console" data-lang="console">$ ravel-lite state projects add --path ~/Development/ravel-tutorial-example
 $ ravel-lite state projects list
+schema_version: 1
 projects:
-  ravel-tutorial-example:
-    path: /Users/you/Development/ravel-tutorial-example</code></pre>
+- name: ravel-tutorial-example
+  path: ../../Development/ravel-tutorial-example</code></pre>
 </div>
+</div>
+<div class="paragraph">
+<p>The path stored in the catalog is <strong>relative to the config directory</strong>, not absolute — <code>pathdiff::diff_paths</code> normalises every entry against <code>&lt;config-dir&gt;</code> so the catalog stays portable: copying the config directory and the project directory together to another machine continues to resolve correctly without an edit. The relative form here (<code>../../Development/ravel-tutorial-example</code>) climbs out of <code>~/.config/ravel-lite/</code> to <code>~/</code>, then descends into the project. At runtime the binary re-resolves to an absolute path before doing anything with it.</p>
 </div>
 <div class="paragraph">
 <p>If <code>--name</code> is omitted, the basename of the path is used. The catalog rejects duplicate names and duplicate paths so two entries cannot disagree about the same project. To rename later — say, after refactoring or moving the directory — use <code>state projects rename</code>; the rename cascades into <code>related-components.yaml</code> and the discover-cache so cross-references stay consistent. The full surface is documented on the <a href="../docs/cli-state.html">State commands</a> reference.</p>
@@ -119,17 +122,35 @@ projects:
 <p>A <strong>plan</strong> is a directory of state files representing an in-flight body of work. Conventionally it sits at <code>&lt;project&gt;/LLM_STATE/&lt;plan-name&gt;/</code>, though the state-directory name is configurable. We will create <code>~/Development/ravel-tutorial-example/LLM_STATE/main/</code> in the next chapter.</p>
 </div>
 <div class="paragraph">
-<p>Inside a plan, every piece of state ravel-lite needs lives as a readable file:</p>
+<p>Inside a freshly-created plan, four files exist — the minimum scaffold <code>ravel-lite create</code> writes before the bootstrap conversation runs:</p>
 </div>
 <div class="listingblock">
 <div class="content">
 <pre class="highlight"><code class="language-text" data-lang="text">LLM_STATE/main/
-├── backlog.yaml         # tasks, statuses, dependencies, results, hand-offs
-├── memory.yaml          # distilled learnings carried across cycles
-├── session-log.yaml     # one record per completed phase, append-only
-├── latest-session.yaml  # most recent session record, overwritten each cycle
-└── phase.md             # one-line file naming the phase to run next</code></pre>
+├── phase.md           # one-line file naming the phase to run next ("work\n")
+├── backlog.yaml       # tasks, statuses, dependencies, results, hand-offs
+├── memory.yaml        # distilled learnings carried across cycles
+└── dream-word-count   # word-count tracking for the dream trigger</code></pre>
 </div>
+</div>
+<div class="paragraph">
+<p><code>backlog.yaml</code> and <code>memory.yaml</code> start as empty shells (<code>tasks: []</code> and <code>entries: []</code>) and are populated by the <code>create</code> conversation through <code>ravel-lite state backlog add</code> / <code>state memory add</code> calls. The bootstrap LLM never writes YAML directly — every mutation routes through the schemas in <code>src/state/&lt;name&gt;/schema.rs</code>, so a malformed entry never lands on disk.</p>
+</div>
+<div class="paragraph">
+<p>As the cycle runs, a few more files appear in the same directory:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>session-log.yaml</code> and <code>latest-session.yaml</code> — the analyse-work phase appends one record per completed phase to the log and overwrites the latest-session pointer each cycle.</p>
+</li>
+<li>
+<p><code>work-baseline</code>, <code>reflect-baseline</code>, <code>dream-baseline</code>, <code>triage-baseline</code> — per-phase baseline SHAs captured so each phase has something to diff against.</p>
+</li>
+<li>
+<p><code>commits.yaml</code> and <code>subagent-dispatch.yaml</code> — written by triage when committing or when dispatching cross-plan subagents.</p>
+</li>
+</ul>
 </div>
 <div class="paragraph">
 <p>A project can host multiple plans. Each is its own directory under <code>LLM_STATE/</code> and runs its own cycle independently. For this tutorial we will run a single plan called <code>main</code>. The full schema for each file lives on the <a href="../docs/state-files.html">State files</a> reference; the current chapter only needs the high-level shape so the next chapter&#8217;s <code>create</code> command makes sense.</p>

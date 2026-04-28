@@ -1120,3 +1120,18 @@ sessions:
     What to try next:
     - A live-VM phase that runs the full script end-to-end, tunes any failing `find-text` substrings, and folds both the chapter 01-02 and chapter 03 captures into the tutorial docs in one pass
     - Consider tightening the `defaults/create-plan.md` template phrasing to reduce paraphrasing variance — would benefit both capture stability and first-time user consistency
+- id: session-77
+  timestamp: 2026-04-28T03:47:54Z
+  phase: work
+  body: |
+    ### Session 77 (2026-04-28T03:47:54Z) — Replace illustrative tutorial transcripts with live-captured output and rewrite chapters 01-03 for v1.0.3 accuracy
+
+    - Ran `scripts/capture/ravel-lite-tutorial.sh` end-to-end against a fresh TestAnyware macOS VM (brew-installed ravel-lite 1.0.3). All eleven chapter 01-02 captures landed; chapter 03 live run of `ravel-lite create` completed with claude writing 3 backlog tasks and 3 memory entries via the state CLI.
+    - Discovered chapters 01-02 described a pre-embedded-defaults architecture (31-file config dir tree with `phases/`, `agents/`, `fixed-memory/`) that no longer exists; both chapters substantively rewritten to describe v1.0.3 reality: `init` writes only `config.lua`, defaults are binary-embedded.
+    - Chapter 03 rewritten to match the actual `create-plan` template structure (6-topic §1, concrete-description escape hatch) and the captured single-shot conversation; post-create file listing corrected to the actual 4-file scaffold (`phase.md`, `backlog.yaml`, `memory.yaml`, `dream-word-count`).
+    - Capture script extended with five harness-plumbing fixes: `VM_USER` default, `VM_SHELL_PRELUDE` for non-interactive PATH, timeout-tolerant `vm_run`, per-step command splitting, and transcript cleanup via `sed`. Also added `install_claude_code`, `transfer_claude_auth`, `pretrust_project`, and `setup_shell_env` functions for the chapter 03 interactive flow.
+    - Three independent claude security gates had to be bypassed in the harness: per-project trust (`hasTrustDialogAccepted`), tool-use permission prompts (`defaultMode: bypassPermissions`), and bypass-mode confirmation modal (`skipDangerousModePermissionPrompt`).
+    - Added `responses/03-comprehensive.txt` as the single-shot description used by the capture driver; avoids multi-turn dialogue alignment issues with the `create-plan` template.
+    - Diagnosed TUI-invisible bug as resolved: the `diagnose-claude-tui-invisible-after-work-phase-banner` task closed — user confirmed 1.0.3 no longer exhibits the hang, with independent corroboration from the clean chapter 03 create run on a fresh VM.
+    - HTML renders for all three tutorial chapters updated; `scripts/render-docs.sh` regenerates cleanly.
+    - What this suggests next: a `--from <step>` flag on the capture script to avoid re-running 01-02 when iterating on chapter 03; chapters 04-05 (TUI screenshot captures) remain a separate task.

@@ -16,11 +16,12 @@ Throughout this tutorial we will operate on a small reading-list-manager: a cura
 
 Bootstrap the project directory:
 
-[source,bash]
+[source,console]
 ----
-mkdir -p ~/Development/ravel-tutorial-example
-cd ~/Development/ravel-tutorial-example
-git init
+$ mkdir -p ~/Development/ravel-tutorial-example
+$ cd ~/Development/ravel-tutorial-example
+$ git init
+Initialized empty Git repository in /Users/admin/Development/ravel-tutorial-example/.git/
 ----
 
 `git init` is recommended even for a non-code project. The audit-trail commits ravel-lite produces (`run-plan: work`, `run-plan: reflect`, the per-phase baseline commits) need somewhere to land. Without a git repository, the `git-commit-*` audit-trail phases will fail loudly the first time they run.
@@ -65,18 +66,19 @@ The README is not optional. The work phase reads `<project>/README.md` at the st
 
 Ravel-Lite maintains a per-user *projects catalog* at `<config-dir>/projects.yaml`. The catalog maps human-friendly component names to absolute paths on disk. Component names are the shared currency of the cross-plan graph (`related-components.yaml`); the catalog is the per-user resolver from name to path.
 
-You do not have to populate the catalog manually — `ravel-lite run` auto-registers a project the first time it sees one. But it is instructive to do it by hand once:
+You do not have to populate the catalog manually — `ravel-lite run` auto-registers a project the first time it sees one. But it is instructive to do it by hand once. The `add` subcommand is silent on success:
 
-[source,bash]
+[source,console]
 ----
 $ ravel-lite state projects add --path ~/Development/ravel-tutorial-example
-added project 'ravel-tutorial-example' at /Users/you/Development/ravel-tutorial-example
-
 $ ravel-lite state projects list
+schema_version: 1
 projects:
-  ravel-tutorial-example:
-    path: /Users/you/Development/ravel-tutorial-example
+- name: ravel-tutorial-example
+  path: ../../Development/ravel-tutorial-example
 ----
+
+The path stored in the catalog is *relative to the config directory*, not absolute — `pathdiff::diff_paths` normalises every entry against `<config-dir>` so the catalog stays portable: copying the config directory and the project directory together to another machine continues to resolve correctly without an edit. The relative form here (`../../Development/ravel-tutorial-example`) climbs out of `~/.config/ravel-lite/` to `~/`, then descends into the project. At runtime the binary re-resolves to an absolute path before doing anything with it.
 
 If `--name` is omitted, the basename of the path is used. The catalog rejects duplicate names and duplicate paths so two entries cannot disagree about the same project. To rename later — say, after refactoring or moving the directory — use `state projects rename`; the rename cascades into `related-components.yaml` and the discover-cache so cross-references stay consistent. The full surface is documented on the link:../docs/cli-state.html[State commands] reference.
 
@@ -84,17 +86,24 @@ If `--name` is omitted, the basename of the path is used. The catalog rejects du
 
 A *plan* is a directory of state files representing an in-flight body of work. Conventionally it sits at `<project>/LLM_STATE/<plan-name>/`, though the state-directory name is configurable. We will create `~/Development/ravel-tutorial-example/LLM_STATE/main/` in the next chapter.
 
-Inside a plan, every piece of state ravel-lite needs lives as a readable file:
+Inside a freshly-created plan, four files exist — the minimum scaffold `ravel-lite create` writes before the bootstrap conversation runs:
 
 [source,text]
 ----
 LLM_STATE/main/
-├── backlog.yaml         # tasks, statuses, dependencies, results, hand-offs
-├── memory.yaml          # distilled learnings carried across cycles
-├── session-log.yaml     # one record per completed phase, append-only
-├── latest-session.yaml  # most recent session record, overwritten each cycle
-└── phase.md             # one-line file naming the phase to run next
+├── phase.md           # one-line file naming the phase to run next ("work\n")
+├── backlog.yaml       # tasks, statuses, dependencies, results, hand-offs
+├── memory.yaml        # distilled learnings carried across cycles
+└── dream-word-count   # word-count tracking for the dream trigger
 ----
+
+`backlog.yaml` and `memory.yaml` start as empty shells (`tasks: []` and `entries: []`) and are populated by the `create` conversation through `ravel-lite state backlog add` / `state memory add` calls. The bootstrap LLM never writes YAML directly — every mutation routes through the schemas in `src/state/<name>/schema.rs`, so a malformed entry never lands on disk.
+
+As the cycle runs, a few more files appear in the same directory:
+
+* `session-log.yaml` and `latest-session.yaml` — the analyse-work phase appends one record per completed phase to the log and overwrites the latest-session pointer each cycle.
+* `work-baseline`, `reflect-baseline`, `dream-baseline`, `triage-baseline` — per-phase baseline SHAs captured so each phase has something to diff against.
+* `commits.yaml` and `subagent-dispatch.yaml` — written by triage when committing or when dispatching cross-plan subagents.
 
 A project can host multiple plans. Each is its own directory under `LLM_STATE/` and runs its own cycle independently. For this tutorial we will run a single plan called `main`. The full schema for each file lives on the link:../docs/state-files.html[State files] reference; the current chapter only needs the high-level shape so the next chapter's `create` command makes sense.
 

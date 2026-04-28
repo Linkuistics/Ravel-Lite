@@ -17,10 +17,23 @@
 </div>
 </div>
 <div class="paragraph">
-<p>Two things happen behind the scenes. First, ravel-lite reads the <strong>create-plan</strong> prompt template from <code>&lt;config-dir&gt;/create-plan.md</code>, appends the target plan path to it, and uses the result as the system prompt for a fresh Claude Code session. Second, it spawns Claude Code with stdio inherited so the conversation runs directly in your terminal — no TUI, no JSON streaming, just a normal headful claude session.</p>
+<p>Three things happen, in order:</p>
+</div>
+<div class="olist arabic">
+<ol class="arabic">
+<li>
+<p><strong>Pre-spawn scaffold.</strong> The runner creates the plan directory and writes four empty-but-valid files inside it: <code>phase.md</code> containing <code>work</code>, <code>backlog.yaml</code> containing <code>tasks: []</code>, <code>memory.yaml</code> containing <code>entries: []</code>, and <code>dream-word-count</code> containing <code>0</code>. This scaffold is mechanical work the runner can do deterministically; it is not LLM output.</p>
+</li>
+<li>
+<p><strong>Prompt composition.</strong> Ravel-Lite reads the embedded <code>create-plan</code> template (the source-of-truth lives at <code>defaults/create-plan.md</code> in the Ravel-Lite tree), appends the absolute target plan path with explicit instructions, and uses the result as the system prompt for a fresh Claude Code session.</p>
+</li>
+<li>
+<p><strong>Headful claude session.</strong> Ravel-Lite spawns Claude Code with stdio inherited so the conversation runs directly in your terminal — no TUI, no JSON streaming, just a normal claude session. The model used is whichever model you have configured for the work phase (in <code>&lt;config-dir&gt;/config.lua</code> via <code>ravel.set_model("work", &#8230;&#8203;)</code>); plan creation is work-phase-like reasoning, so the same model is reused.</p>
+</li>
+</ol>
 </div>
 <div class="paragraph">
-<p>The <code>create</code> phase reuses the same agent-and-model configuration as the work phase (from <code>&lt;config-dir&gt;/agents/claude-code/config.yaml</code>), so the bootstrap conversation runs against whichever model you have configured for actual work. Pi is not currently supported as the create-plan agent — <code>create</code> is interactive, and the integration was built first against Claude Code.</p>
+<p>Pi is not currently supported as the create-plan agent — <code>create</code> is interactive, and the integration was built first against Claude Code.</p>
 </div>
 <div class="admonitionblock note">
 <table>
@@ -30,7 +43,7 @@
 </td>
 <td class="content">
 <div class="paragraph">
-<p>The first time claude runs against a new directory it asks for trust. If you have not used Claude Code in this project subtree before, expect a prompt like <strong>"Do you want to trust this directory?"</strong> — answer <strong>yes</strong> once and the trust grant is remembered in <code>~/.claude.json</code> for the next run.</p>
+<p>The first time claude runs against a new directory it asks for trust. If you have not used Claude Code in this project subtree before, expect a prompt like <strong>"Do you want to trust this directory?"</strong> — answer <strong>yes</strong> once and the trust grant is remembered in <code>~/.claude.json</code> for the next run. Versions of ravel-lite from <code>1.0.3</code> onward (paired with the PTY-capture work in <code>src/agent/</code>) render this modal correctly even in non-multiplexer terminal sessions; earlier versions had a known invisible-modal hang on fresh machines.</p>
 </div>
 </td>
 </tr>
@@ -42,61 +55,61 @@
 <h2 id="_the_conversation">The conversation</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>The create-plan prompt asks four questions in order: what is this plan for, what does the project look like, what is the initial backlog, and is there starter context to seed memory with. Below is an illustrative slice of the conversation against the reading-list-manager.</p>
+<p>The <code>create-plan</code> template gives claude six topics to clarify in §1: what the plan is for, what tasks you already know need doing, what categories make sense for grouping them, known dependencies or blockers, peer-project relationships, and any work-phase-specific instructions. Claude is told to ask follow-ups one at a time rather than firehosing all six at once.</p>
+</div>
+<div class="paragraph">
+<p>The template also has a deliberate escape hatch: <strong>if your first turn is a complete, concrete description, claude will skip the multi-turn dialogue and proceed straight to writing the plan files.</strong> A single-task plan is treated as a valid plan. This is the common path in practice — most users have something specific in mind and hand claude the whole picture in one paragraph.</p>
+</div>
+<div class="paragraph">
+<p>Below is one such single-shot description against the reading-list-manager. The exact wording of your description shapes the resulting backlog and memory; this is illustrative, not prescriptive.</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code class="language-text" data-lang="text">&gt; I'd like to understand the goal of this plan. What is this plan for, in
-&gt; one or two sentences?
+<pre class="highlight"><code class="language-text" data-lang="text">&gt; What is this plan for? What do you already know needs doing?
 
-I want to populate a curated reading list with about thirty entries
-across distributed-systems, type-theory, and writing-craft tags, with
-short notes for each.
+I want a plan to populate a curated reading-list-manager. The
+project is at ~/Development/ravel-tutorial-example. The README
+defines the entry format and naming conventions. There is no
+code, just reading-list.md and notes/&lt;slug&gt;.md per entry.
 
-&gt; What does the project look like? Anything I should know about its
-&gt; conventions before I shape the backlog?
+Initial backlog has three tasks, all in a single category called
+"reading-list":
+ 1. Add the first ten distributed-systems entries.
+ 2. Add five type-theory entries focused on dependent-typing
+    introductions.
+ 3. Cross-link entries that cite each other.
 
-The project is at ~/Development/ravel-tutorial-example. The README
-defines the entry format and naming conventions. There's no code —
-just reading-list.md and notes/&lt;slug&gt;.md per entry.
+No dependencies between tasks, no peer-project relationships.
 
-&gt; Got it. What should the initial backlog look like? List the tasks you
-&gt; want to start with, in any order.
+Memory should remember three standing facts:
+ (a) Each entry needs a one-line annotation only; longer thoughts
+     go in notes/&lt;slug&gt;.md.
+ (b) Slugs are lower-kebab-case derived from the title; the
+     convention is in the README.
+ (c) Tags should be reused before inventing new ones; check
+     existing tags in reading-list.md first.
 
-Three tasks to start:
-1. Add the first ten distributed-systems entries.
-2. Add five type-theory entries focused on dependent-typing introductions.
-3. Cross-link entries that cite each other (e.g. Lamport's clocks paper
-   and Liskov's distributed systems chapter).
-
-&gt; Should I seed memory with anything you'd want every cycle to know? A
-&gt; style preference, a constraint, a domain bit?
-
-Yes — memory should remember:
-- Each entry needs a one-line annotation, not a full summary; longer
-  thoughts go in notes/&lt;slug&gt;.md.
-- Slugs are lower-kebab-case derived from the title; the convention is
-  in the README.
-- Tags should be reused before inventing new ones; check existing tags
-  in reading-list.md before adding.
-
-&gt; Thanks. Writing the plan now.</code></pre>
+No special work-phase instructions. Please go ahead and write
+the plan with that scope.</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>Claude then writes the plan files using the <code>ravel-lite state</code> CLI rather than direct file edits. That choice matters: it routes every mutation through the schemas in <code>src/state/&lt;name&gt;/schema.rs</code>, which means a malformed entry never lands on disk.</p>
+<p>Claude then writes the plan using the <code>ravel-lite state</code> CLI rather than direct file edits. That choice matters: it routes every mutation through the schemas in <code>src/state/&lt;name&gt;/schema.rs</code>, which means a malformed entry never lands on disk. You will see claude run <code>ravel-lite state backlog add</code> once per task and <code>ravel-lite state memory add</code> once per memory entry, with the body of each entry passed via a temp file <code>--body-file</code> rather than inline.</p>
 </div>
 <div class="paragraph">
-<p>After the conversation finishes you will see a populated plan directory:</p>
+<p>After the conversation finishes you will see the populated plan directory:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code class="language-bash" data-lang="bash">$ ls ~/Development/ravel-tutorial-example/LLM_STATE/main/
-backlog.yaml  memory.yaml  phase.md  session-log.yaml  work-baseline</code></pre>
+<pre class="highlight"><code class="language-console" data-lang="console">$ ls ~/Development/ravel-tutorial-example/LLM_STATE/main/
+backlog.yaml
+dream-word-count
+memory.yaml
+phase.md</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p><code>session-log.yaml</code> is empty — no cycles have run. <code>phase.md</code> reads <code>work</code> so the next phase is the first work prompt. <code>work-baseline</code> holds the project&#8217;s HEAD SHA, captured so the first analyse-work has something to diff against.</p>
+<p>Four files, exactly the scaffold the runner laid down — but <code>backlog.yaml</code> and <code>memory.yaml</code> are now populated rather than empty shells. Other files appear later: <code>session-log.yaml</code> and <code>latest-session.yaml</code> are written by the analyse-work phase after the first cycle completes, and the per-phase <code>*-baseline</code> files (<code>work-baseline</code>, <code>reflect-baseline</code>, etc.) are written by the phase loop as it captures pre-phase SHAs to diff against.</p>
 </div>
 </div>
 </div>
@@ -108,16 +121,14 @@ backlog.yaml  memory.yaml  phase.md  session-log.yaml  work-baseline</code></pre
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code class="language-bash" data-lang="bash">$ ravel-lite state backlog list ~/Development/ravel-tutorial-example/LLM_STATE/main \
-    --format markdown
-
+<pre class="highlight"><code class="language-console" data-lang="console">$ ravel-lite state backlog list ~/Development/ravel-tutorial-example/LLM_STATE/main --format markdown
 ## reading-list
 
-| title                                                          | status      | deps |
-|----------------------------------------------------------------|-------------|------|
-| Add first ten distributed-systems entries                      | not_started | —    |
-| Add five type-theory entries on dependent typing               | not_started | —    |
-| Cross-link entries that cite each other                        | not_started | —    |</code></pre>
+| title | status | deps |
+|---|---|---|
+| Add first ten distributed-systems entries | not_started | — |
+| Add five type-theory entries on dependent-typing introductions | not_started | — |
+| Cross-link entries that cite each other | not_started | — |</code></pre>
 </div>
 </div>
 <div class="paragraph">
@@ -125,28 +136,42 @@ backlog.yaml  memory.yaml  phase.md  session-log.yaml  work-baseline</code></pre
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code class="language-bash" data-lang="bash">$ ravel-lite state memory list ~/Development/ravel-tutorial-example/LLM_STATE/main
+<pre class="highlight"><code class="language-console" data-lang="console">$ ravel-lite state memory list ~/Development/ravel-tutorial-example/LLM_STATE/main
 entries:
-  - id: one-line-annotations-only
-    title: Annotations are one line; longer thoughts go in notes/&lt;slug&gt;.md
-    body: |
-      The README defines the entry format. Keep `reading-list.md` skim-friendly:
-      title, author, source, status, tags, one-line annotation. Anything
-      longer is a separate file under `notes/`.
-  - id: slug-convention-from-readme
-    title: Slugs are lower-kebab-case from the title
-    body: |
-      Defined in README.md. Used to name `notes/&lt;slug&gt;.md` and to keep
-      cross-references stable.
-  - id: reuse-tags-before-inventing
-    title: Reuse existing tags before inventing new ones
-    body: |
-      Check `reading-list.md` for existing tags before introducing a new
-      one. Tag drift makes the catalog harder to navigate.</code></pre>
+- id: one-line-annotations-only-in-reading-list-md
+  title: One-line annotations only in reading-list.md
+  body: |
+    Each entry in `reading-list.md` gets a **one-line annotation only**.
+    Anything longer — summaries, quotes, open questions, follow-up reading
+    — belongs in the entry's `notes/&lt;slug&gt;.md` file, not in the main list.
+
+    This keeps `reading-list.md` scannable as an index.
+- id: slug-convention-lower-kebab-case-from-title
+  title: 'Slug convention: lower-kebab-case from title'
+  body: |
+    Slugs are **lower-kebab-case derived from the entry title**. The
+    authoritative convention lives in the project README — consult it
+    before coining a new slug rather than guessing.
+
+    The slug is used both as the `notes/&lt;slug&gt;.md` filename and as the
+    stable identifier for cross-links.
+- id: reuse-existing-tags-before-inventing-new-ones
+  title: Reuse existing tags before inventing new ones
+  body: |
+    Reuse existing tags before inventing new ones. Before tagging a new
+    entry, scan the current tag set in `reading-list.md` and prefer an
+    existing tag that fits — even a slightly imperfect match is usually
+    better than a near-duplicate new tag (e.g. don't add `consensus-algos`
+    if `consensus` already exists).
+
+    Only coin a new tag when no existing tag plausibly applies.</code></pre>
 </div>
 </div>
 <div class="paragraph">
 <p>These are the two files the work phase will read at the start of the first cycle. Memory is durable — these three entries will carry across every future cycle of this plan, sharpened by reflect and (eventually) compacted by dream.</p>
+</div>
+<div class="paragraph">
+<p>Note that the entry IDs are claude&#8217;s own slug-isations of the titles you described, not byte-for-byte renderings of your input — claude tightens prose for the body and derives stable identifiers in lower-kebab-case form. Hand-edit <code>memory.yaml</code> later if you prefer different IDs; the runtime never holds shadow state, so an in-place edit between phases is the supported customisation path.</p>
 </div>
 <div class="admonitionblock note">
 <table>
@@ -176,7 +201,7 @@ entries:
 <p><strong>Plan directory already exists.</strong> <code>create</code> refuses to clobber. Move the existing directory aside or pick a different plan name.</p>
 </li>
 <li>
-<p><strong>Trust modal hangs.</strong> If you are running inside a multiplexer (tmux, screen) and the claude trust prompt does not render, ravel-lite&#8217;s UI may not surface it. The known workaround is to <code>claude</code> once at the project&#8217;s parent directory beforehand to grant trust outside of ravel-lite, or to run <code>create</code> in a plain terminal.</p>
+<p><strong>Trust modal hangs.</strong> Historically, the claude trust prompt could fail to render cleanly inside multiplexers (tmux, screen) or in some non-default terminal configurations, leaving the create session apparently hung. Versions of ravel-lite from <code>1.0.3</code> onward route the claude subprocess through a captured PTY (<code>src/agent/pty_capture.rs</code>) and have not exhibited the invisible-modal hang in practice. If you do see a hang, the historical workaround still applies — run <code>claude</code> once at the project&#8217;s parent directory beforehand to grant trust outside of ravel-lite, or run <code>create</code> in a plain terminal.</p>
 </li>
 </ol>
 </div>

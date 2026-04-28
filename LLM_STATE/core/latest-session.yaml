@@ -1,25 +1,15 @@
-id: session-76
-timestamp: 2026-04-28T01:31:05Z
+id: session-77
+timestamp: 2026-04-28T03:47:54Z
 phase: work
 body: |
-  ### Session 76 (2026-04-28T01:31:05Z) — Implement hybrid interactive capture mechanism for chapter 03
+  ### Session 77 (2026-04-28T03:47:54Z) — Replace illustrative tutorial transcripts with live-captured output and rewrite chapters 01-03 for v1.0.3 accuracy
 
-  - Implemented hybrid capture mechanism for `ravel-lite create` in `scripts/capture/ravel-lite-tutorial.sh`
-  - Added `type_lines` and `drive_scope_question` helpers for driving the four-question scope conversation via `testanyware input type` + screenshot, using pre-staged response files in `scripts/capture/responses/03-*.txt`
-  - Added `capture_chapter03_create_session` (screenshot-per-prompt approach for the paraphrase-sensitive conversation) and `capture_chapter03_post_state` (deterministic text via `transcript_at` for `ls`, `state backlog list`, `state memory list`)
-  - Fixed a latent `scenario_run` bug: was invoking `ravel-lite create` with no argument and waiting for a non-existent "plan name" prompt; corrected to `ravel-lite run` against the plan created in chapter 03
-  - Added four response files (`scripts/capture/responses/03-{purpose,project,backlog,memory-seed}.txt`) matching the chapter's illustrative responses verbatim; these are authored content and deliberately outside `docs/captures/` so they are tracked in git
-  - Task blocked (not failed): mechanism is complete, but live VM run and chapter block replacement remain pending alongside the chapter 01-02 transcripts task
-
-  What worked:
-  - The hybrid design (screenshot the volatile conversation, `transcript_at` the deterministic post-create state) cleanly maps capture fidelity to content stability
-  - The marker-echo completion signal (`echo CHAPTER_03_CREATE_DONE`) is a robust sync point for knowing when claude has returned control to the shell
-  - Treating `scripts/capture/responses/` as authored source (not captured output) keeps `.gitignore`'s `docs/captures/` rule from silently swallowing the files
-
-  What didn't work / open risks:
-  - The four `find-text` wait substrings (`plan for`, `project`, `backlog`, `memory`) depend on claude's paraphrasing staying within those words; this is the highest-risk axis and will likely need tuning on first live run
-  - No live VM validation yet (same blocker as the preceding chapter 01-02 task)
-
-  What to try next:
-  - A live-VM phase that runs the full script end-to-end, tunes any failing `find-text` substrings, and folds both the chapter 01-02 and chapter 03 captures into the tutorial docs in one pass
-  - Consider tightening the `defaults/create-plan.md` template phrasing to reduce paraphrasing variance — would benefit both capture stability and first-time user consistency
+  - Ran `scripts/capture/ravel-lite-tutorial.sh` end-to-end against a fresh TestAnyware macOS VM (brew-installed ravel-lite 1.0.3). All eleven chapter 01-02 captures landed; chapter 03 live run of `ravel-lite create` completed with claude writing 3 backlog tasks and 3 memory entries via the state CLI.
+  - Discovered chapters 01-02 described a pre-embedded-defaults architecture (31-file config dir tree with `phases/`, `agents/`, `fixed-memory/`) that no longer exists; both chapters substantively rewritten to describe v1.0.3 reality: `init` writes only `config.lua`, defaults are binary-embedded.
+  - Chapter 03 rewritten to match the actual `create-plan` template structure (6-topic §1, concrete-description escape hatch) and the captured single-shot conversation; post-create file listing corrected to the actual 4-file scaffold (`phase.md`, `backlog.yaml`, `memory.yaml`, `dream-word-count`).
+  - Capture script extended with five harness-plumbing fixes: `VM_USER` default, `VM_SHELL_PRELUDE` for non-interactive PATH, timeout-tolerant `vm_run`, per-step command splitting, and transcript cleanup via `sed`. Also added `install_claude_code`, `transfer_claude_auth`, `pretrust_project`, and `setup_shell_env` functions for the chapter 03 interactive flow.
+  - Three independent claude security gates had to be bypassed in the harness: per-project trust (`hasTrustDialogAccepted`), tool-use permission prompts (`defaultMode: bypassPermissions`), and bypass-mode confirmation modal (`skipDangerousModePermissionPrompt`).
+  - Added `responses/03-comprehensive.txt` as the single-shot description used by the capture driver; avoids multi-turn dialogue alignment issues with the `create-plan` template.
+  - Diagnosed TUI-invisible bug as resolved: the `diagnose-claude-tui-invisible-after-work-phase-banner` task closed — user confirmed 1.0.3 no longer exhibits the hang, with independent corroboration from the clean chapter 03 create run on a fresh VM.
+  - HTML renders for all three tutorial chapters updated; `scripts/render-docs.sh` regenerates cleanly.
+  - What this suggests next: a `--from <step>` flag on the capture script to avoid re-running 01-02 when iterating on chapter 03; chapters 04-05 (TUI screenshot captures) remain a separate task.
