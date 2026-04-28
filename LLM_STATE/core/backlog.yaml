@@ -2,7 +2,8 @@ tasks:
 - id: add-ravel-lite-show-verb-for-embedded-fixed-memory-content
   title: Add ravel-lite show verb for embedded fixed-memory content
   category: architecture-next
-  status: not_started
+  status: blocked
+  blocked_reason: fixed-memory/ must remain user-extensible (e.g. user-supplied coding-style-<lang>.md). An embed-only show verb would re-introduce the silent-failure bug for any user-added file. Needs design pass on disk-overlay-with-embedded-fallback before implementation.
   dependencies: []
   description: |
     Add a `ravel-lite show <embedded-path>` verb that prints embedded content via `init::require_embedded`, and sweep phase prompts that use `Read({{ORCHESTRATOR}}/fixed-memory/...)` to use `Bash(ravel-lite show ...)` instead.
@@ -19,6 +20,71 @@ tasks:
     - `defaults/phases/` — the prompt files that reference fixed-memory paths.
 
     No new dependencies. Self-contained once `ravel-lite show` is wired into `src/main.rs`.
+  results: |
+    ## Results
+
+    Task moved to `blocked` before any code was written. The trigger was a
+    design constraint surfaced during work-phase planning: `fixed-memory/`
+    must remain **user-extensible**, but the proposed `ravel-lite show
+    <embedded-path>` verb is a thin wrapper over `init::require_embedded`
+    and therefore serves *only* the compile-time embed set.
+
+    A user adding their own `coding-style-<lang>.md` (e.g. for a language
+    the shipped set doesn't cover) would either:
+    - be silently ignored by `show` (re-introducing the same
+      silent-failure bug this task was meant to fix), or
+    - need a separate read path, splitting the "single source of truth"
+      the embedded set is meant to provide.
+
+    The right shape is probably layered:
+    1. `show <relative-path>` first looks for `<config-dir>/<relative-path>`
+       on disk and serves it if present.
+    2. Falls back to `init::require_embedded(<relative-path>)`.
+    3. Errors with a deterministic message if neither path resolves.
+
+    That mirrors the existing `compose_prompt` layering for phase prompts
+    (plan-level `prompt-<phase>.md` override on top of embedded base) and
+    would let the phase-prompt sweep proceed without sacrificing
+    user-extensibility.
+
+    The decision was deferred because:
+
+    - The disk-overlay layer interacts with `ravel-lite init v2: context
+      layout scaffolding` (separate backlog task) — that task introduces
+      the new `<context>/` layout where user-owned `fixed-memory/` would
+      presumably live, so deciding the directory now would either
+      pre-empt v2 or be re-litigated under it.
+    - The `architecture-next` redesign track may reshape what counts as
+      "user-owned" prompt material vs "shipped reference material",
+      which changes the right merge semantics.
+
+    ### What this suggests next
+
+    - Settle the `fixed-memory/` extensibility model as part of the v2
+      init scaffolding task, then unblock this task with the agreed
+      layering. Specifically: where does user-owned `fixed-memory/` live
+      under `<context>/` v2, and what is the lookup order?
+    - The phase-prompt sweep (the second half of this task's scope) is
+      conditional on the verb existing in its final form, so it stays
+      bundled here rather than being split out.
+    - The drift-guard test
+      (`every_file_under_defaults_is_registered_in_embedded_files`) is
+      unchanged by this deferral — the embed set still ships the current
+      `fixed-memory/*.md` files; only the *reach mechanism* from the LLM
+      side is undecided.
+
+    ### Files inspected (no edits made)
+
+    - `src/init.rs` — `require_embedded` and the `EMBEDDED_FILES`
+      registry; the natural backing for any future `show` verb.
+    - `src/main.rs` — clap structure where a new `Show` subcommand would
+      land alongside `Init`, `Run`, `Create`, etc.
+    - `defaults/phases/work.md`, `defaults/phases/reflect.md`,
+      `defaults/phases/dream.md` — the three prompts that currently
+      reference `{{ORCHESTRATOR}}/fixed-memory/...` and would have been
+      swept to `Bash(ravel-lite show ...)` once the verb existed.
+    - `src/prompt.rs` — confirmed token substitution is the only
+      composition layer; no other reach path exists today.
 - id: ravel-lite-init-v2-context-layout-scaffolding-git-identity-path-optional-init
   title: 'ravel-lite init v2: context layout scaffolding, git identity, path-optional init'
   category: architecture-next

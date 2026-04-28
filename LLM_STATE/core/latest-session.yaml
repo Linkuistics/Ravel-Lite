@@ -1,13 +1,12 @@
-id: session-85
-timestamp: 2026-04-28T12:52:00Z
+id: session-86
+timestamp: 2026-04-28T13:03:58Z
 phase: work
 body: |
-  ### Session 85 (2026-04-28T12:52:00Z) — Add repos.yaml registry, ComponentRef type, and repo CLI verbs
+  ### Session 86 (2026-04-28T13:03:58Z) — Block show-verb task on extensibility design constraint
 
-  - Implemented `src/repos.rs`: `ReposRegistry`/`RepoEntry`, atomic load/save, `try_add`, and `run_list`/`run_add`/`run_remove` CLI handlers. On-disk shape is the name-keyed `IndexMap` from architecture-next §The repo registry; `local_path` is stored absolute and omitted when absent. 9 unit tests.
-  - Implemented `src/component_ref.rs`: `ComponentRef { repo_slug, component_id }` with `Display`/`FromStr`/serde producing the canonical `<repo>:<component>` string. Validation rejects empty halves and extra colons. 7 unit tests.
-  - Added `tests/repo_cli.rs`: 3 integration tests covering add/list/remove round-trip, duplicate-slug rejection, and omitted-`local_path` not emitting a `null` token to YAML.
-  - Wired top-level `Repo` subcommand and `dispatch_repo` into `src/main.rs`; registered both new modules in `src/lib.rs`.
-  - All 637 + 19 new tests pass; no warnings under `[lints.rust] warnings = "deny"`.
-  - What didn't land: full `<context>/` dir scaffolding (`ravel-lite init` v2), context git identity, path-optional init, and catalog view — all deferred to follow-up tasks added to the backlog this session.
-  - What this suggests next: Two follow-up tasks promoted to the backlog: "ravel-lite init v2: context layout scaffolding, git identity, path-optional init" and "Add ravel-lite show verb for embedded fixed-memory content". The existing `default-config-location` blocked task will be subsumed when the init-v2 task lands.
+  - Attempted to implement `ravel-lite show <embedded-path>` that would print embedded fixed-memory content via `init::require_embedded`.
+  - During work-phase planning, a design constraint surfaced: `fixed-memory/` must remain user-extensible (users can add `coding-style-<lang>.md` for languages not in the shipped set). A thin wrapper over `require_embedded` serves only the compile-time embed set, which would re-introduce the silent-failure bug for user-added files.
+  - No code was written. Task was moved to `blocked` with a detailed results block explaining the layered disk-overlay approach needed before implementation.
+  - The layered approach (disk lookup first, embedded fallback, deterministic error) mirrors the existing `compose_prompt` layering for phase prompts.
+  - The decision to defer was also driven by interaction with the `ravel-lite init v2` task: the new `<context>/` layout would determine where user-owned `fixed-memory/` lives, and deciding that directory now would either pre-empt v2 or be re-litigated under it.
+  - What this suggests next: settle `fixed-memory/` extensibility model as part of the v2 init scaffolding task, specifying lookup order, then unblock this task.
