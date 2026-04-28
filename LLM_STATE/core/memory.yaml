@@ -713,3 +713,11 @@ entries:
   title: '`ComponentRef` canonical string is `<repo>:<component>`'
   body: |
     `ComponentRef { repo_slug, component_id }` in `src/component_ref.rs`. `Display`/`FromStr`/serde all produce the `<repo>:<component>` form. Validation rejects empty halves and extra colons (exactly one colon required).
+- id: show-fixed-memory-verb-requires-disk-first-lookup
+  title: '''show'' fixed-memory verb requires disk-first lookup'
+  body: |
+    `require_embedded` alone silently fails for user-added files (e.g., `coding-style-<lang>.md`). Correct lookup order: disk first, embedded fallback, deterministic error. Mirrors `compose_prompt` layering for phase prompts. See: `fixed-memory/ extensibility model depends on init v2 layout`.
+- id: fixed-memory-extensibility-model-depends-on-init-v2-layout
+  title: '''fixed-memory/'' extensibility model depends on ''init v2'' layout'
+  body: |
+    The `<context>/` directory layout (settled in `init v2`) determines where user-owned `fixed-memory/` lives. Deciding the lookup root before `init v2` either pre-empts v2 or requires re-litigation under it. Unblock the `show` verb after `init v2` fixes the location. See: `'show' fixed-memory verb requires disk-first lookup`.
