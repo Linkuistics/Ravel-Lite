@@ -1,57 +1,4 @@
 tasks:
-- id: knowledge-graph-crate-scaffold-tms-kg-substrate
-  title: 'knowledge-graph crate: scaffold TMS+KG substrate'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Scaffold the in-project workspace crate `knowledge-graph` that provides the TMS + typed-KG substrate underpinning the rest of architecture-next.
-
-    Reference: `docs/architecture-next.md` §Knowledge substrate (TMS + KG), §Library extraction.
-
-    Scope:
-    - Convert root `Cargo.toml` to a workspace; place crate at `crates/knowledge-graph/`.
-    - Generic TMS item shape per §Item shape (id, kind, claim, justifications, status, supersedes/superseded_by/defeated_by, authored_at, authored_in) with canonical YAML serde.
-    - Justification kinds enum: code-anchor, rationale, serves-intent, defeats, supersedes, external. Per-kind fields.
-    - Status mutation API with deterministic cascade across `serves-intent`, `blocked_by`, `defeats`, justification refs (per §Defeat cascade).
-    - Wire `ascent` for Datalog rules; ship two smoke-test rules from §Datalog-style inferencing (orphaned backlog item, suspect memory entry).
-    - Graph algorithm API: shortest path, BFS subgraph, SCC, articulation/bridges, topo sort.
-    - No domain types yet — kinds and statuses are registered by consumers (ravel-lite plan KG, future catalog consumer).
-
-    Out of scope (separate tasks): wiring ravel-lite's plan kinds; wiring catalog kinds; CLI verbs.
-  results: |
-    ## What was done
-
-    Scaffolded the `knowledge-graph` workspace crate at `crates/knowledge-graph/`. Root `Cargo.toml` converted into a workspace (root `ravel-lite` package retained at the root, `knowledge-graph` added as a member). The substrate is intentionally generic — no domain types — and consists of:
-
-    - **`item`** — `Item` (id, kind, claim, justifications, status, supersedes/superseded_by/defeated_by, authored_at, authored_in) with YAML serde. `DefeatedBy` is a flat-string enum: serializes as the literal `cascade` for cascade-defeated items, as the defeating item id otherwise.
-    - **`justification`** — `Justification` enum with the six `architecture-next.md`-listed kinds (CodeAnchor, Rationale, ServesIntent, Defeats, Supersedes, External), externally-tagged via `#[serde(tag = "kind")]` with kebab-case names.
-    - **`store`** — `Store` keyed by `IndexMap<ItemId, Item>` for stable ordering. APIs: `insert`, `get`, `set_status`, `defeat(id)` (cascading through `serves-intent` edges), `supersede(old, new)` (linking both ends and flipping status). YAML round-trip via a `StoreFile { schema_version, items }` DTO; reads reject mismatched `schema_version`.
-    - **`algorithms`** — `GraphView` builder over the store (default edge function walks every justification ref) plus `shortest_path`, `bfs_subgraph`, `strongly_connected_components`, `topological_sort`, and a hand-rolled `articulation_points` (petgraph 0.6 doesn't expose one in stable surface; standard low-link DFS).
-    - **`datalog`** — `SmokeProgram` defined via the `ascent!` macro implementing the two doc-listed smoke rules: `orphaned(item)` (backlog item with no active justifying intent) and `suspect(entry)` (memory entry whose code-anchor SHA has changed). Smoke tests populate facts directly and check derivations.
-
-    23 inline tests across the crate; full workspace test run is green (621 existing + 23 new). `cargo check --workspace --all-targets` clean under the crate's `[lints.rust] warnings = "deny"` setting.
-
-    ## What worked
-
-    - Workspace conversion with `ravel-lite` retained at the root caused zero collateral damage — release scripts, build.rs, tests/, multi-binary paths all keep working unchanged. Only the root `Cargo.toml` needed editing.
-    - `ascent` 0.6 is a clean fit: the macro-generated struct-with-Vec-fields API made smoke tests trivial. Two stratified rules (the `has_active_intent` intermediate to break the negation cleanly) compiled first try.
-    - `petgraph` 0.6 covered four of five algorithms. Articulation-points hand-roll (low-link DFS) added ~50 lines but kept the dependency surface minimal.
-    - Caller-initiated cascade (`defeat(id)`) avoided having to encode "what status string means defeated" in the substrate. The substrate stays domain-agnostic.
-
-    ## What didn't / open scope
-
-    - **`blocked_by` cascade is intentionally deferred.** Per `architecture-next.md` §Item shape, `blocked_by` is kind-specific extension data (alongside `attribution`), not a justification edge. The substrate's only cascade mechanism is justification-ref walking; threading kind-specific data through would re-couple the substrate to ravel-lite's plan vocabulary. The `Store::defeat` doc comment marks this as a follow-on task.
-    - **Per-kind status-transition validation deferred.** `set_status` accepts any string; the doc anticipates a registered constraint table per kind. Worth deferring until the consumer (ravel-lite plan KG wiring task) has concrete kinds to register.
-    - **`ascent` is pinned at 0.6** while 0.8 is current. 0.6 was selected because cargo's compatibility resolver chose it without prompting; an upgrade can be deferred to a follow-on task and decoupled from this scaffold.
-    - The substrate doesn't yet expose a Datalog rule registry that consumers can extend at runtime. `SmokeProgram` is a closed set; the catalog KG and plan KG will get their own `ascent!` programs. The library-crate goal of "consumers register kinds and rules" is partly delivered: kinds are open (any string), rules are still per-program. A registry/builder API is the natural follow-on.
-
-    ## What this suggests next
-
-    - **`knowledge-graph: wire plan KG kinds (intent, backlog, memory, finding)`** is the direct next task — depends on this scaffold and is what the substrate was built to support. Concrete domain wrappers can layer on the generic `Item` (e.g., `Intent::from_item`, `BacklogItem::from_item`) or use a `kind == "intent"` discriminant.
-    - The deferred `blocked_by` cascade should be picked up at the same time, as backlog items will need it.
-    - Per-kind status-transition tables can be designed alongside the wiring task — that task knows the four kinds' status enums and can register them.
-    - `ascent`-version bump (0.6 → 0.8) and a possible move to a programmatic rule-registry are clean follow-on infra tasks once consumers exist.
 - id: ravel-context-new-layout-and-repos-yaml-registry
   title: 'ravel-context: new layout and repos.yaml registry'
   category: architecture-next
@@ -72,6 +19,25 @@ tasks:
     - Subsumes the v1 config-location task (currently blocked) — `~/.config/ravel-lite/` is the default for the new context.
 
     Open question still in play: directory tier under XDG vs macOS-specific; v1's blocked task captures the current prose answer.
+- id: knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
+  title: 'knowledge-graph: wire plan KG kinds (intent, backlog, memory, finding)'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Register ravel-lite's plan-side TMS kinds in the `knowledge-graph` crate and migrate the existing plan state files to TMS item shape.
+
+    Reference: `docs/architecture-next.md` §Plan as a knowledge graph, §Item shape, §Status vocabularies, §CLI surface for queries.
+
+    Scope:
+    - Register kinds: `intent`, `backlog-item`, `memory-entry`, `finding`.
+    - Status vocabularies per §Status vocabularies.
+    - Convert `backlog.yaml` schema to TMS item shape — each item gets explicit justifications (`serves-intent` for parents, `external` for issue links) and structured status. Preserve current behaviour during conversion.
+    - Convert `memory.yaml` schema to TMS item shape with justifications (`code-anchor`, `rationale`).
+    - Add `intents.yaml` schema; `phase.md` becomes a rendered overview from the structured `intents.yaml`, not the canonical source.
+    - Add `ravel-lite plan <subcommand>` for plan KG inspection (small surface for v2.0).
+
+    Coordination: legacy plan migration (separate task) calls into the conversion routines defined here. The dogfood case is `LLM_STATE/core` itself.
 - id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
   title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
   category: infra
@@ -191,26 +157,6 @@ tasks:
     `<ravel-context>/` root, etc.), and any work on the v1 default
     location is wasted effort until that lands. Park this until the
     migration is complete, then address it before the next release.
-- id: knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
-  title: 'knowledge-graph: wire plan KG kinds (intent, backlog, memory, finding)'
-  category: architecture-next
-  status: not_started
-  dependencies:
-  - knowledge-graph-crate-scaffold-tms-kg-substrate
-  description: |
-    Register ravel-lite's plan-side TMS kinds in the `knowledge-graph` crate and migrate the existing plan state files to TMS item shape.
-
-    Reference: `docs/architecture-next.md` §Plan as a knowledge graph, §Item shape, §Status vocabularies, §CLI surface for queries.
-
-    Scope:
-    - Register kinds: `intent`, `backlog-item`, `memory-entry`, `finding`.
-    - Status vocabularies per §Status vocabularies.
-    - Convert `backlog.yaml` schema to TMS item shape — each item gets explicit justifications (`serves-intent` for parents, `external` for issue links) and structured status. Preserve current behaviour during conversion.
-    - Convert `memory.yaml` schema to TMS item shape with justifications (`code-anchor`, `rationale`).
-    - Add `intents.yaml` schema; `phase.md` becomes a rendered overview from the structured `intents.yaml`, not the canonical source.
-    - Add `ravel-lite plan <subcommand>` for plan KG inspection (small surface for v2.0).
-
-    Coordination: legacy plan migration (separate task) calls into the conversion routines defined here. The dogfood case is `LLM_STATE/core` itself.
 - id: graph-rag-ravel-lite-atlas-cli-for-catalog-queries
   title: 'graph-RAG: ravel-lite atlas CLI for catalog queries'
   category: architecture-next
@@ -278,7 +224,6 @@ tasks:
   category: architecture-next
   status: not_started
   dependencies:
-  - knowledge-graph-crate-scaffold-tms-kg-substrate
   - ravel-context-new-layout-and-repos-yaml-registry
   description: |
     Add the context-level findings inbox and remove the v1 cross-plan subagent-dispatch fan-out. Cross-plan effects in v2 are advisory only, mediated by the user processing findings.
@@ -427,3 +372,23 @@ tasks:
     7. Backfill memory (one-shot LLM): pass over `legacy_memory.md` produces a `memory.yaml` with `status: legacy` entries. User curates in their own time.
 
     Verification: dogfood by migrating `LLM_STATE/core` (this very plan) as the canonical test case before the v2.0 release.
+- id: ascent-upgrade-bump-knowledge-graph-crate-from-0-6-to-0-8
+  title: 'ascent upgrade: bump knowledge-graph crate from 0.6 to 0.8'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
+  description: |
+    Upgrade the `ascent` Datalog engine in the `knowledge-graph` crate from 0.6 to 0.8.
+
+    Reference: `knowledge-graph` crate `Cargo.toml`; ascent changelog at https://crates.io/crates/ascent.
+
+    Background: The scaffold task pinned `ascent` at 0.6 because the compatibility resolver chose it without prompting. The scaffold task results note that 0.8 is current and the upgrade was deliberately deferred until at least one consumer (plan KG wiring) exists to validate the rule compilation.
+
+    Scope:
+    - Bump `ascent` in `crates/knowledge-graph/Cargo.toml` from `0.6` to `0.8` (or latest compatible).
+    - Resolve any macro-API changes between 0.6 and 0.8 in `src/datalog.rs` (`SmokeProgram`).
+    - All 23 existing tests pass; smoke Datalog rules derive correctly.
+    - `cargo check --workspace --all-targets` clean under `[lints.rust] warnings = "deny"`.
+
+    Out of scope: any rule-registry/builder API changes — keep the per-consumer `ascent!` program model unchanged.
