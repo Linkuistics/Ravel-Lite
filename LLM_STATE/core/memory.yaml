@@ -673,3 +673,7 @@ entries:
   title: Capture chapter transitions use /exit + sentinel echo before next chapter
   body: |
     At the tail of a capture chapter that may leave Claude running (e.g., `capture_chapter03_create_session`), send `/exit` + Return into the GUI Terminal, type `echo <SENTINEL>` + Return, and wait with `testanyware find-text "<SENTINEL>" --timeout 30`. Robust to Claude having already exited: `/exit` becomes harmless command-not-found and the sentinel still renders. Prevents the next chapter from typing into a Claude TUI instead of the shell. See: `Hybrid capture splits screenshot vs transcript_at by content stability`.
+- id: config-lua-rs-doc-comment-can-drift-from-registered-api
+  title: config_lua.rs doc comment can drift from registered API
+  body: |
+    Grep `set_function`/`set` registration calls in `src/config_lua.rs` to audit the live Lua API surface; the module-level doc comment listing exported names is not guaranteed to match. See: `Config model is layered Lua; config_lua.rs owns it`.
