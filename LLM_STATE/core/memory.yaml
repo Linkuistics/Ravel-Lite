@@ -721,3 +721,11 @@ entries:
   title: '''fixed-memory/'' extensibility model depends on ''init v2'' layout'
   body: |
     The `<context>/` directory layout (settled in `init v2`) determines where user-owned `fixed-memory/` lives. Deciding the lookup root before `init v2` either pre-empts v2 or requires re-litigation under it. Unblock the `show` verb after `init v2` fixes the location. See: `'show' fixed-memory verb requires disk-first lookup`.
+- id: git-subrepo-in-test-tree-requires-initial-commit
+  title: Git subrepo in test tree requires initial commit
+  body: |
+    `git init` alone in a test's project subtree triggers `does not have a commit checked out` errors from outer `git add`. Issue `git commit --allow-empty` after init. When no global git identity is configured, supply fallback identity using an RFC 2606-reserved domain such as `.invalid.local` (e.g. `ravel-lite-test@test.invalid.local`) to prevent accidental attribution on mis-published commits.
+- id: architecture-next-md-config-yaml-layout-entries-are-stale
+  title: architecture-next.md config.yaml layout entries are stale
+  body: |
+    `docs/architecture-next.md` lists `config.yaml` and `config.local.yaml` as `<ravel-context>/` layout artefacts. Implementation uses `config.lua` (layered Lua model); those doc sections do not reflect the current config model. See: `Config model is layered Lua; config_lua.rs owns it`.
