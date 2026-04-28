@@ -693,3 +693,15 @@ entries:
   title: Legacy backfill uses one-shot LLM extraction at migrate time
   body: |
     One-shot LLM-driven extraction at `migrate` time backfills the knowledge graph from existing plan history. Entries with no attributable session land with `status: legacy`. No incremental or post-hoc repair path. Settled in Phase A of architecture-next.
+- id: petgraph-0-6-lacks-articulation-points-api-hand-rolled-dfs-needed
+  title: petgraph 0.6 lacks articulation-points API; hand-rolled DFS needed
+  body: |
+    `petgraph` 0.6 does not expose articulation points on its stable surface. The knowledge-graph `algorithms` module uses a hand-rolled low-link DFS (~50 lines) instead. Audit algorithm crate APIs for missing stable-surface functions before committing to a dependency at crate-scaffold time.
+- id: knowledge-graph-consumers-each-author-their-own-ascent-program
+  title: knowledge-graph consumers each author their own ascent! program
+  body: |
+    No shared runtime rule-registry exists in the knowledge-graph crate. Each consumer authors its own `ascent!` Datalog program with the rules it needs. Centralising rules would couple the generic substrate to consumer-specific vocabulary.
+- id: blocked-by-is-kind-specific-extension-data-not-a-justification-edge
+  title: blocked_by is kind-specific extension data, not a justification edge
+  body: |
+    `blocked_by` relationships belong in kind-specific extension data, not in the generic `justification` edge enum. Threading `blocked_by` through the substrate `store` would re-couple the generic substrate to ravel-lite plan vocabulary. The wiring task handles it as a domain wrapper.
