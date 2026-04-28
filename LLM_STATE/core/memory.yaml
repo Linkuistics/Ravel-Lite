@@ -665,3 +665,11 @@ entries:
   title: Chapter 03 capture driver does not wait for claude exit before chapter 04
   body: |
     The chapter-03 scenario setup does not issue an `/exit` wait after the polling-for-backlog check. Without it, the chapter-03 `claude` process may still be running when chapter-04 starts typing into the GUI Terminal. Currently worked around manually during live VM capture runs. Fix: add `/exit` wait in the chapter-03/04 transition before chapter-04 GUI input.
+- id: testanyware-download-cannot-pull-a-directory-use-per-file-exec-workaround
+  title: testanyware download cannot pull a directory; use per-file exec workaround
+  body: |
+    `capture_state` in `scripts/capture/ravel-lite-tutorial.sh` uses `testanyware download` on the `LLM_STATE/` directory, which fails with `Error: Agent HTTP 400: Download failed: The file "LLM_STATE" couldn't be opened.` — testanyware download cannot pull a directory.
+
+    Workaround used: capture individual transcripts via headless `testanyware exec` calls; this covers everything the tutorial prose needs.
+
+    Full fix options: (a) recursive walk + per-file download; (b) tar roundtrip (`testanyware exec -- tar czf /tmp/llm_state.tar.gz LLM_STATE && testanyware download /tmp/llm_state.tar.gz`). Low priority because the per-file exec workaround is sufficient for prose-fold tasks.
