@@ -1,129 +1,44 @@
 tasks:
-- id: begin-architecture-next-migration
-  title: Begin architecture-next migration
-  category: infra
-  status: done
+- id: knowledge-graph-crate-scaffold-tms-kg-substrate
+  title: 'knowledge-graph crate: scaffold TMS+KG substrate'
+  category: architecture-next
+  status: not_started
   dependencies: []
   description: |
-    Begin the architecture-next migration as captured in `docs/architecture-next.md`. v1.0.4 is the clean baseline; this is the migration that reshapes ravel-lite itself.
+    Scaffold the in-project workspace crate `knowledge-graph` that provides the TMS + typed-KG substrate underpinning the rest of architecture-next.
 
-    ## Why
+    Reference: `docs/architecture-next.md` §Knowledge substrate (TMS + KG), §Library extraction.
 
-    The architecture-next design (multi-repo plans, TMS substrate, graph-RAG catalog) represents a fundamental rethinking of the plan/project model. The v1.0.4 release was cut specifically as the stable baseline before this work begins. The migration will be driven by the *current* binary managing changes that reshape itself.
+    Scope:
+    - Convert root `Cargo.toml` to a workspace; place crate at `crates/knowledge-graph/`.
+    - Generic TMS item shape per §Item shape (id, kind, claim, justifications, status, supersedes/superseded_by/defeated_by, authored_at, authored_in) with canonical YAML serde.
+    - Justification kinds enum: code-anchor, rationale, serves-intent, defeats, supersedes, external. Per-kind fields.
+    - Status mutation API with deterministic cascade across `serves-intent`, `blocked_by`, `defeats`, justification refs (per §Defeat cascade).
+    - Wire `ascent` for Datalog rules; ship two smoke-test rules from §Datalog-style inferencing (orphaned backlog item, suspect memory entry).
+    - Graph algorithm API: shortest path, BFS subgraph, SCC, articulation/bridges, topo sort.
+    - No domain types yet — kinds and statuses are registered by consumers (ravel-lite plan KG, future catalog consumer).
 
-    ## Starting point
+    Out of scope (separate tasks): wiring ravel-lite's plan kinds; wiring catalog kinds; CLI verbs.
+- id: ravel-context-new-layout-and-repos-yaml-registry
+  title: 'ravel-context: new layout and repos.yaml registry'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Stand up the new `<ravel-context>/` root with config, repo registry, agents/phases/fixed-memory dirs, plans dir, and findings inbox slot. Replaces the v1 `<project>/LLM_STATE/<plan>` rooting and the `dirs::config_dir()` lookup chain.
 
-    Read `docs/architecture-next.md` to understand the settled design decisions before beginning any implementation work. The doc is the authoritative source for what "architecture-next" means; this task is intentionally open-ended because the migration will span multiple cycles.
+    Reference: `docs/architecture-next.md` §Layout, §The repo registry.
 
-    ## Scope (high level)
+    Scope:
+    - New layout per §Layout: `config.yaml`, `config.local.yaml`, `repos.yaml`, `findings.yaml`, `agents/`, `phases/`, `fixed-memory/`, `plans/` under `<ravel-context>/`.
+    - One git identity for the context (independent of any target repo).
+    - `repos.yaml` schema: `{ name -> { url, local_path? } }` per §The repo registry.
+    - `ravel-lite repo {add, list, remove}` CLI verbs.
+    - `ravel-lite init` (no path arg) scaffolds context at the default location; precedence: `--config` > `RAVEL_LITE_CONFIG` > default.
+    - Catalog view computes on read as union of `.atlas/components.yaml` from registered repos; ComponentRefs use `repos.yaml` keys as `repo_slug`.
+    - Subsumes the v1 config-location task (currently blocked) — `~/.config/ravel-lite/` is the default for the new context.
 
-    - New `<ravel-context>/` root replacing the current plan-adjacent layout
-    - Multi-repo plan support
-    - TMS substrate integration
-    - Graph-RAG catalog
-
-    ## Sequencing note
-
-    `default-config-location-to-config-ravel-lite-on-both-linux-and-macos-and-make-init-path-optional` is explicitly parked until after architecture-next lands.
-  results: |
-    ## Decomposition into trackable sub-tasks
-
-    The umbrella is closed by decomposing into 13 sub-tasks under category
-    `architecture-next`, each referencing the relevant section of
-    `docs/architecture-next.md`. Triage selects work via the dependency
-    graph rather than by fixed phase order, so sequencing can flex as
-    foundations land.
-
-    ## Settled Phase A decisions (now in the design doc)
-
-    - **A1. TMS/KG crate.** `knowledge-graph`, in-project workspace
-      member; extraction to a separate published crate deferred to
-      post-v2.0.
-    - **A2. Datalog engine.** `ascent`. At ravel-lite scale (plan KGs ≤
-      hundreds, catalog KGs ≤ low thousands of nodes) batch recompute is
-      microseconds-to-fractions-of-a-second; differential-dataflow's
-      incrementality buys nothing and adds substantial API/runtime
-      complexity. `crepe` is similar in shape but with less momentum.
-    - **A3. v1 → v2 cutover.** Hard cutover. The v2 binary will refuse to
-      run unmigrated v1 plans. Migration is in-scope for v2.0 via
-      `ravel-lite migrate <old-plan-path>`.
-    - **A4. Legacy backfill.** One-shot LLM-driven extraction at migrate
-      time: rebuild `intents.yaml` from `phase.md` + recent backlog;
-      rebuild `memory.yaml` from `legacy_memory.md` with best-effort
-      justifications. Unattributable entries land with `status: legacy`
-      for the user to curate. The "grandfather unstructured items"
-      alternative was rejected.
-
-    These are recorded in `docs/architecture-next.md` under a new
-    *Settled decisions* section; the corresponding *Open questions*
-    bullets were removed in the same edit. Remaining open questions
-    (live-update vs batch reasoning, multi-target-cycle escape hatch,
-    cross-repo memory home, atlas freshness signaling, intent-trajectory
-    phase split, rename cascade, concurrent plan execution) are still in
-    the doc and will be resolved as their respective sub-tasks become the
-    active focus.
-
-    ## Sub-tasks added (13)
-
-    Foundations (no deps; parallelisable):
-
-    - `knowledge-graph-crate-scaffold-tms-kg-substrate`
-    - `ravel-context-new-layout-and-repos-yaml-registry`
-
-    Substrate consumers and CLI:
-
-    - `knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding`
-      (deps: scaffold)
-    - `graph-rag-ravel-lite-atlas-cli-for-catalog-queries`
-      (deps: layout)
-    - `findings-inbox-context-level-findings-yaml-replaces-subagent-dispatch`
-      (deps: scaffold + layout)
-
-    Plan-shape changes:
-
-    - `ravel-lite-create-write-plans-into-context-plans-dir`
-      (deps: layout + plan-KG wiring)
-    - `targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts`
-      (deps: layout)
-    - `phase-cycle-triage-first-with-focus-objections-and-commits-yaml`
-      (deps: plan-KG wiring + create + targets)
-    - `reflect-bounded-tms-plus-intent-trajectory-check`
-      (deps: plan-KG wiring)
-
-    Lifecycle endpoints:
-
-    - `plan-finish-pr-merge-with-memory-promotion-and-archive`
-      (deps: create + targets + phase cycle)
-    - `curate-standalone-truth-maintenance-replaces-dream-phase`
-      (deps: plan-KG wiring)
-    - `sync-ravel-lite-sync-plan-from-other-plan`
-      (deps: targets)
-    - `migrate-ravel-lite-migrate-for-v1-to-v2-cutover`
-      (deps: layout + plan-KG wiring + create + targets + phase cycle)
-
-    ## Side effects on the existing backlog
-
-    The `default-config-location-...` task was flipped to `blocked` with
-    reason "Parked until architecture-next migration completes; will
-    land in ravel-lite 2.x." Its substance is subsumed by the
-    `ravel-context-new-layout-and-repos-yaml-registry` task, since the
-    new context root replaces the v1 config-discovery chain entirely.
-
-    ## What didn't happen
-
-    No code was written. The Cargo workspace conversion, the
-    `crates/knowledge-graph/` skeleton, and any phase-loop changes are
-    deferred to subsequent cycles that pick the relevant sub-tasks.
-    This was a planning cycle, not an implementation cycle.
-
-    ## What this suggests next
-
-    The two foundation tasks have no dependencies and can be worked in
-    either order — or in parallel across two plans, if desired. Most
-    likely first pick is the substrate scaffold, since it underpins five
-    downstream tasks; the layout task underpins six. Either is
-    defensible. Triage should choose based on which foundation is more
-    disruptive to defer.
+    Open question still in play: directory tier under XDG vs macOS-specific; v1's blocked task captures the current prose answer.
 - id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
   title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
   category: infra
@@ -243,46 +158,6 @@ tasks:
     `<ravel-context>/` root, etc.), and any work on the v1 default
     location is wasted effort until that lands. Park this until the
     migration is complete, then address it before the next release.
-- id: knowledge-graph-crate-scaffold-tms-kg-substrate
-  title: 'knowledge-graph crate: scaffold TMS+KG substrate'
-  category: architecture-next
-  status: not_started
-  dependencies: []
-  description: |
-    Scaffold the in-project workspace crate `knowledge-graph` that provides the TMS + typed-KG substrate underpinning the rest of architecture-next.
-
-    Reference: `docs/architecture-next.md` §Knowledge substrate (TMS + KG), §Library extraction.
-
-    Scope:
-    - Convert root `Cargo.toml` to a workspace; place crate at `crates/knowledge-graph/`.
-    - Generic TMS item shape per §Item shape (id, kind, claim, justifications, status, supersedes/superseded_by/defeated_by, authored_at, authored_in) with canonical YAML serde.
-    - Justification kinds enum: code-anchor, rationale, serves-intent, defeats, supersedes, external. Per-kind fields.
-    - Status mutation API with deterministic cascade across `serves-intent`, `blocked_by`, `defeats`, justification refs (per §Defeat cascade).
-    - Wire `ascent` for Datalog rules; ship two smoke-test rules from §Datalog-style inferencing (orphaned backlog item, suspect memory entry).
-    - Graph algorithm API: shortest path, BFS subgraph, SCC, articulation/bridges, topo sort.
-    - No domain types yet — kinds and statuses are registered by consumers (ravel-lite plan KG, future catalog consumer).
-
-    Out of scope (separate tasks): wiring ravel-lite's plan kinds; wiring catalog kinds; CLI verbs.
-- id: ravel-context-new-layout-and-repos-yaml-registry
-  title: 'ravel-context: new layout and repos.yaml registry'
-  category: architecture-next
-  status: not_started
-  dependencies: []
-  description: |
-    Stand up the new `<ravel-context>/` root with config, repo registry, agents/phases/fixed-memory dirs, plans dir, and findings inbox slot. Replaces the v1 `<project>/LLM_STATE/<plan>` rooting and the `dirs::config_dir()` lookup chain.
-
-    Reference: `docs/architecture-next.md` §Layout, §The repo registry.
-
-    Scope:
-    - New layout per §Layout: `config.yaml`, `config.local.yaml`, `repos.yaml`, `findings.yaml`, `agents/`, `phases/`, `fixed-memory/`, `plans/` under `<ravel-context>/`.
-    - One git identity for the context (independent of any target repo).
-    - `repos.yaml` schema: `{ name -> { url, local_path? } }` per §The repo registry.
-    - `ravel-lite repo {add, list, remove}` CLI verbs.
-    - `ravel-lite init` (no path arg) scaffolds context at the default location; precedence: `--config` > `RAVEL_LITE_CONFIG` > default.
-    - Catalog view computes on read as union of `.atlas/components.yaml` from registered repos; ComponentRefs use `repos.yaml` keys as `repo_slug`.
-    - Subsumes the v1 config-location task (currently blocked) — `~/.config/ravel-lite/` is the default for the new context.
-
-    Open question still in play: directory tier under XDG vs macOS-specific; v1's blocked task captures the current prose answer.
 - id: knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
   title: 'knowledge-graph: wire plan KG kinds (intent, backlog, memory, finding)'
   category: architecture-next
