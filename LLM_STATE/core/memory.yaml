@@ -576,7 +576,7 @@ entries:
 - id: capture-scripts-template-documentation-with-real-system-runs
   title: Capture scripts template documentation with real system runs
   body: |
-    `scripts/capture/ravel-lite-tutorial.sh` drives a TestAnyware macOS VM: installs via Homebrew, runs the tutorial scenario interactively, takes screenshots, pulls the resulting `LLM_STATE` tree. Structured into eight named sections with `[STEP-NAME]` log markers for LLM driver correlation. This is the template for all future documentation-with-real-results capture scripts. Known approximation: `testanyware vm list --format json` flag is inferred from README, not validated against a live install; `VNC_ENDPOINT`/`AGENT_ENDPOINT` env overrides are in place for first-run tuning.
+    `scripts/capture/ravel-lite-tutorial.sh` drives a TestAnyware macOS VM: installs via Homebrew, runs the tutorial scenario, takes screenshots, pulls the resulting `LLM_STATE` tree. Structured into named sections with `[STEP-NAME]` log markers. VM identity uses deterministic `VM_ID` passed to `vm start --id`; reused via `--vm` throughout — `vm list --format json` is not used. All testanyware subcommands validated against `--help` output; `bash -n` passes. Chapter 01-02 have 11 named `transcript_at` captures; chapter 03 (`ravel-lite create`) is interactive and not yet captured. This is the template for all future documentation-with-real-results capture scripts.
 - id: after-help-const-avoids-dead-code-warnings-no-intermediate-url-consts
   title: after_help const avoids dead-code warnings; no intermediate URL consts
   body: |
@@ -637,3 +637,7 @@ entries:
   title: Doc publish pipeline reads `website/` via git archive
   body: |
     Doc publish pipeline reads `website/` via git archive; `projects/ravel-lite.html` and `SYNC.yml` do not exist in the current pipeline (post-2026-04-26). No intermediate artifact files are needed; the pipeline consumes the `website/` subtree directly.
+- id: transcript-at-captures-per-command-stdout-stderr-for-asciidoc
+  title: transcript_at captures per-command stdout+stderr for AsciiDoc
+  body: |
+    `transcript_at <label> <command>` helper in capture scripts writes stdout+stderr to `transcripts/<label>.txt` as paste-ready `[source,console]` AsciiDoc blocks. This is the mechanism for folding live VM output into tutorial chapters.
