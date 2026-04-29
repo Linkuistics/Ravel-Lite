@@ -1,21 +1,23 @@
-id: session-89
-timestamp: 2026-04-29T01:03:05Z
+id: session-90
+timestamp: 2026-04-29T01:55:28Z
 phase: work
 body: |
-  ### Session 89 (2026-04-29T01:03:05Z) — Cut over projects.yaml → repos.yaml
+  ### Session 90 (2026-04-29T01:55:28Z) — Refactor knowledge-graph crate to typed ItemKind/ItemStatus traits; register plan vocabulary
 
-  - Deleted `src/projects.rs` (1,094 lines) and `tests/state_projects.rs` (191 lines). The `ProjectsCatalog`/`ProjectEntry` model is gone.
-  - Added `src/repos.rs` (155 lines): `ReposRegistry`, `RepoEntry` (slug → url + optional local_path), `load_for_lookup`, `find_by_local_path`, `try_add`, `save_atomic`, `migrate_projects_yaml_error`.
-  - Introduced `discover::DiscoverTarget { slug, working_tree }` and `working_tree_for` helper in `discover/mod.rs`; working tree resolves to `entry.local_path` or `<context>/.cache/repos/<slug>/` (the architecture-next cache fallback).
-  - Updated all consumers: `related_components.rs`, `discover/{mod,stage1,apply}.rs`, `state/discover_proposals/verbs.rs` — all now read from `ReposRegistry`.
-  - `ensure_in_catalog_interactive` and `register_projects_from_plan_dirs` removed from `main.rs`; auto-add is retired since `repos.yaml` requires a clone URL.
-  - `state projects` retained as a deprecation alias (clap `Vec<String>` catch-all) that unconditionally returns `repos::migrate_projects_yaml_error()`.
-  - Added `tests/migrate_projects_yaml.rs` (4 tests) covering the migration-error UX scenarios.
-  - Updated `tests/discover.rs` and `tests/state_related_components.rs` to use `repo add` instead of `state projects add`.
-  - Updated `docs/architecture.md` and `docs/component-ontology.md` to reflect the new resolver.
-  - `cargo test --workspace`: 682 tests pass, 0 failures. `cargo build --workspace`: clean.
+  - **What was attempted:** Refactor `crates/knowledge-graph` substrate from stringly-typed `Item { kind: String, status: String }` to fully generic `Item<K: ItemKind>` parameterised by a consumer-supplied kind tag type. Register ravel-lite's four plan kinds (intent, backlog-item, memory-entry, finding) and their status vocabularies in a new `src/plan_kg.rs` module. Add a cross-store cascade entry point (`cascade_serves_intent`) for the realistic plan-KG case where intents and backlog items live in separate typed stores.
 
-  - Tutorial/reference docs (`docs/tutorial/`, `docs/reference/`, `docs/captures/`) still reference retired `state projects` verbs — updating requires re-running capture scripts against a TestAnyware VM; deferred to a follow-up task.
-  - `related_components::rename_component_in_edges` is now unused (its only caller was `projects::run_rename`); kept for future repo-rename cascade.
+  - **What worked:**
+    - `ItemKind` trait with `type Status: ItemStatus` and `KIND_STR` const gives consumers a tag-type pattern: unit structs implement `ItemKind`, enums implement `ItemStatus`.
+    - `KindMarker<K>` (zero-sized `PhantomData`-backed struct) handles YAML round-trip for the `kind:` field — serialises as `K::KIND_STR`, deserialises with a mismatch check. Manual `Clone`/`Debug`/`PartialEq`/`Eq` impls avoid over-constraining `K`.
+    - `Item<K>` swaps `kind: String` → `kind: KindMarker<K>` and `status: String` → `status: K::Status`. Serde bounds are spelled out explicitly to avoid over-constraining `K` in the auto-generated impls.
+    - `Store<K>` is now per-kind; `set_status` validates transitions against `K::Status::transitions()` before committing.
+    - `defeat` and `supersede` accept the target terminal status value rather than hardcoding a string — the caller supplies which variant to land on.
+    - `cascade_serves_intent::<P, C>(parents, dependents, status)` in `store.rs` replaces the previous intra-store untyped walk. It iterates non-terminal children, counts active parent references, and cascade-defeats those with no remaining active parent.
+    - `src/plan_kg.rs` implements all four vocabularies (IntentKind, BacklogItemKind, MemoryEntryKind, FindingKind) with status enums, transition tables, `as_str`/`parse`/`is_terminal`, type aliases for typed `Item<K>` and `Store<K>`, and a full test suite covering YAML round-trips, kind-string mismatches, transition enforcement, and the realistic cross-store cascade.
+    - `algorithms.rs` propagated the generic bounds throughout (GraphView<K>, default_edges<K>, etc.); test helpers use a `test_support::TestKind` fixture.
+    - `Cargo.toml` wires `knowledge-graph` as a workspace path dependency with a comment explaining its role.
+    - All tests pass; `cargo check --workspace --all-targets` clean.
 
-  - Promoted follow-up to backlog: `tutorial-update-for-repos-yaml-cutover` (highest-impact gap left by this cutover).
+  - **What this suggests trying next:** The substrate and vocabulary layer are ready. The next increment of this task is migrating existing plan-state files (`backlog.yaml`, `memory.yaml`) to TMS item shape and authoring the `ravel-lite plan` query CLI subcommand for plan KG inspection.
+
+  - **Key learnings:** The per-kind `Store<K>` model means a multi-kind plan KG requires multiple stores (one per kind) joined by the cross-store cascade, not a heterogeneous store. `cascade_serves_intent` is the join point — it reads terminal statuses from a parent store and writes defeat markers into a child store. This is the right abstraction for the intent→backlog cascade and will be the same shape for intent→memory and intent→finding if those cascades land.

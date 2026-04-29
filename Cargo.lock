@@ -1524,6 +1524,7 @@ dependencies = [
  "crossterm",
  "dirs",
  "indexmap",
+ "knowledge-graph",
  "libc",
  "mlua",
  "once_cell",

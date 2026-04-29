@@ -49,6 +49,12 @@ libc = "0.2"
 # workspace as a local path dep during dev to match Atlas's own
 # convention; flip to a git+rev pin at publish time.
 component-ontology = { path = "../atlas-contracts/crates/component-ontology" }
+# Generic typed-knowledge-graph + truth-maintenance substrate.
+# Plan-side TMS shape (intents, backlog items, memory entries,
+# findings) is built on top in `src/plan_kg.rs`; the substrate itself
+# is vocabulary-agnostic. In-tree workspace member during v1; eventual
+# extraction to a separately-published crate per architecture-next.
+knowledge-graph = { path = "crates/knowledge-graph" }
 
 [dev-dependencies]
 tempfile = "3"

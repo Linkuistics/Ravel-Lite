@@ -88,7 +88,7 @@ tasks:
 - id: knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
   title: 'knowledge-graph: wire plan KG kinds (intent, backlog, memory, finding)'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Register ravel-lite's plan-side TMS kinds in the `knowledge-graph` crate and migrate the existing plan state files to TMS item shape.
@@ -104,6 +104,125 @@ tasks:
     - Add `ravel-lite plan <subcommand>` for plan KG inspection (small surface for v2.0).
 
     Coordination: legacy plan migration (separate task) calls into the conversion routines defined here. The dogfood case is `LLM_STATE/core` itself.
+  results: |
+    ## Results
+
+    Increment 1 of the multi-phase task delivered. **Status remains
+    `in_progress`** — the substrate and the consumer-side vocabulary are
+    ready, but the schema migration of existing plan files
+    (`backlog.yaml`, `memory.yaml`, new `intents.yaml`) and the
+    `ravel-lite plan` query CLI are still ahead.
+
+    ### What changed
+
+    **Substrate (`crates/knowledge-graph`).** Mid-task user feedback
+    ("the knowledge graph should be generic over a trait for things like
+    kind/status, rather than untyped strings") triggered a refactor of
+    the substrate before the plan vocabulary went in. The previous
+    `Item { kind: String, status: String, ... }` and heterogeneous
+    `Store` shape moved to:
+
+    - `trait ItemKind` with associated `Status: ItemStatus` and a
+      `KIND_STR` const — the consumer-side tag-type pattern.
+    - `trait ItemStatus` (Copy, Eq, Debug, Serialize, DeserializeOwned,
+      parse/as_str/is_terminal/transitions).
+    - `Item<K: ItemKind>` with `kind: KindMarker<K>` (zero-sized
+      serde-marker that emits `K::KIND_STR` on write and rejects
+      mismatches on read) and `status: K::Status`.
+    - `Store<K>` per-kind, with transition-validating `set_status` and a
+      *intra-store* `defeat` (still useful for sub-intent chains).
+    - `cascade_serves_intent::<P, C>(parents, dependents, status)` — the
+      new cross-kind cascade entry point. The realistic plan-KG case
+      (intent in one store, backlog item in another, joined by
+      `serves-intent` justification) is handled by this cross-store
+      function rather than by the previous untyped intra-store walk.
+
+    The substrate stays vocabulary-agnostic — Atlas can register its own
+    catalog vocabulary against the same traits without substrate
+    changes. Test count went from 23 → 33 (added cross-store cascade,
+    typed transition enforcement, kind-marker mismatch tests). Test-only
+    kind/status types live in a `cfg(test)` `test_support` module so the
+    substrate's own tests don't pull in plan vocabulary.
+
+    **Consumer (`src/plan_kg.rs`).** Four kind tag types
+    (`IntentKind`, `BacklogItemKind`, `MemoryEntryKind`, `FindingKind`)
+    with their per-kind status enums (`IntentStatus`, `BacklogStatus`,
+    `MemoryStatus`, `FindingStatus`) implementing the substrate traits.
+    Type aliases (`IntentItem`, `BacklogStore`, etc.) so callers don't
+    have to spell out generics. Status vocabularies match
+    `docs/architecture-next.md` §Status vocabularies exactly. 11 tests:
+    yaml round-trips per kind, kind-string match, terminal-state
+    correctness, transition-table sanity, cross-store cascade smoke.
+
+    Notably absent: there are no runtime `validate_kind`/`validate_status`
+    helpers. The original draft of this module had them; the typed
+    substrate makes them unreachable by construction —
+    `Item<IntentKind>` cannot carry a backlog status; the YAML wire
+    format rejects kind mismatches at deserialise time. Saved a feedback
+    memory (`feedback_typed_apis_over_strings.md`) capturing this as a
+    durable preference.
+
+    ### What still needs doing under this task
+
+    These naturally split into distinct work-phase increments:
+
+    1. **Schema migration of `backlog.yaml`.** The current schema
+       (`tasks: [{ id, title, category, status, dependencies,
+       description, results }]`) needs to migrate to the TMS item shape
+       (`items: [{ id, kind: backlog-item, claim, justifications,
+       status, ... }]`). The mapping is mostly mechanical
+       (title → claim, dependencies → `blocked-by` extension or
+       serves-intent justifications, description → rationale
+       justification, results → an extension field), but `state backlog
+       *` verbs must be reworked to read/write the new shape, and
+       `LLM_STATE/core/backlog.yaml` (this very plan) needs migration.
+
+    2. **Schema migration of `memory.yaml`.** Same shape transition,
+       plus the `attribution: <component-ref>` extension for entries
+       headed for promotion.
+
+    3. **`intents.yaml` introduction.** New file; new state CRUD verbs
+       (`state intents add/list/set-status/...`). `phase.md` becomes a
+       rendered overview (intent summary + housekeeping) rather than
+       the canonical intent source.
+
+    4. **`ravel-lite plan <subcommand>`.** Small surface: list-items,
+       show-item, query-by-status, query-by-justification. Read-only
+       over the four typed stores.
+
+    5. **Wire `state backlog set-status` to the typed substrate.** Once
+       the schema migration is in, this verb should call into
+       `Store<BacklogItemKind>::set_status` so transition validation is
+       enforced at the CLI boundary. Currently `state backlog
+       set-status` accepts any string (the v1 `Status` enum in
+       `src/state/backlog/schema.rs`).
+
+    ### Suggested next-phase pick
+
+    (2) Schema migration of `memory.yaml` is the smallest of the
+    remaining increments — fewer CRUD verbs, no dependency-graph
+    semantics to preserve, and a clean dogfood case (this plan's own
+    `memory.yaml`). Doing it before backlog migration also exercises the
+    substrate's read/write path on real on-disk data once more before
+    the higher-stakes backlog migration.
+
+    ### Files touched
+
+    - `crates/knowledge-graph/src/{item,store,algorithms,lib}.rs` —
+      substrate refactor.
+    - `src/plan_kg.rs` — new module (consumer-side vocabulary).
+    - `src/lib.rs` — add `pub mod plan_kg;`.
+    - `Cargo.toml` — add `knowledge-graph` workspace dep to ravel-lite.
+
+    ### Verification
+
+    - `cargo build -p knowledge-graph`: clean, no warnings (`warnings =
+      "deny"`).
+    - `cargo build --lib`: clean.
+    - `cargo check --workspace --all-targets`: clean.
+    - `cargo test --workspace`: every test green (33 substrate + 584
+      ravel-lite unit + integration suites). No regressions in any
+      pre-existing test.
 - id: ascent-upgrade-bump-knowledge-graph-crate-from-0-6-to-0-8
   title: 'ascent upgrade: bump knowledge-graph crate from 0.6 to 0.8'
   category: architecture-next

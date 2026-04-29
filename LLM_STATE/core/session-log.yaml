@@ -1296,3 +1296,26 @@ sessions:
     - `related_components::rename_component_in_edges` is now unused (its only caller was `projects::run_rename`); kept for future repo-rename cascade.
 
     - Promoted follow-up to backlog: `tutorial-update-for-repos-yaml-cutover` (highest-impact gap left by this cutover).
+- id: session-90
+  timestamp: 2026-04-29T01:55:28Z
+  phase: work
+  body: |
+    ### Session 90 (2026-04-29T01:55:28Z) — Refactor knowledge-graph crate to typed ItemKind/ItemStatus traits; register plan vocabulary
+
+    - **What was attempted:** Refactor `crates/knowledge-graph` substrate from stringly-typed `Item { kind: String, status: String }` to fully generic `Item<K: ItemKind>` parameterised by a consumer-supplied kind tag type. Register ravel-lite's four plan kinds (intent, backlog-item, memory-entry, finding) and their status vocabularies in a new `src/plan_kg.rs` module. Add a cross-store cascade entry point (`cascade_serves_intent`) for the realistic plan-KG case where intents and backlog items live in separate typed stores.
+
+    - **What worked:**
+      - `ItemKind` trait with `type Status: ItemStatus` and `KIND_STR` const gives consumers a tag-type pattern: unit structs implement `ItemKind`, enums implement `ItemStatus`.
+      - `KindMarker<K>` (zero-sized `PhantomData`-backed struct) handles YAML round-trip for the `kind:` field — serialises as `K::KIND_STR`, deserialises with a mismatch check. Manual `Clone`/`Debug`/`PartialEq`/`Eq` impls avoid over-constraining `K`.
+      - `Item<K>` swaps `kind: String` → `kind: KindMarker<K>` and `status: String` → `status: K::Status`. Serde bounds are spelled out explicitly to avoid over-constraining `K` in the auto-generated impls.
+      - `Store<K>` is now per-kind; `set_status` validates transitions against `K::Status::transitions()` before committing.
+      - `defeat` and `supersede` accept the target terminal status value rather than hardcoding a string — the caller supplies which variant to land on.
+      - `cascade_serves_intent::<P, C>(parents, dependents, status)` in `store.rs` replaces the previous intra-store untyped walk. It iterates non-terminal children, counts active parent references, and cascade-defeats those with no remaining active parent.
+      - `src/plan_kg.rs` implements all four vocabularies (IntentKind, BacklogItemKind, MemoryEntryKind, FindingKind) with status enums, transition tables, `as_str`/`parse`/`is_terminal`, type aliases for typed `Item<K>` and `Store<K>`, and a full test suite covering YAML round-trips, kind-string mismatches, transition enforcement, and the realistic cross-store cascade.
+      - `algorithms.rs` propagated the generic bounds throughout (GraphView<K>, default_edges<K>, etc.); test helpers use a `test_support::TestKind` fixture.
+      - `Cargo.toml` wires `knowledge-graph` as a workspace path dependency with a comment explaining its role.
+      - All tests pass; `cargo check --workspace --all-targets` clean.
+
+    - **What this suggests trying next:** The substrate and vocabulary layer are ready. The next increment of this task is migrating existing plan-state files (`backlog.yaml`, `memory.yaml`) to TMS item shape and authoring the `ravel-lite plan` query CLI subcommand for plan KG inspection.
+
+    - **Key learnings:** The per-kind `Store<K>` model means a multi-kind plan KG requires multiple stores (one per kind) joined by the cross-store cascade, not a heterogeneous store. `cascade_serves_intent` is the join point — it reads terminal statuses from a parent store and writes defeat markers into a child store. This is the right abstraction for the intent→backlog cascade and will be the same shape for intent→memory and intent→finding if those cascades land.

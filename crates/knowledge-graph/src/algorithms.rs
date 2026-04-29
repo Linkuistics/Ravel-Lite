@@ -5,34 +5,34 @@ use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::{Bfs, EdgeRef};
 use petgraph::Direction;
 
-use crate::item::{Item, ItemId};
+use crate::item::{Item, ItemId, ItemKind};
 use crate::store::Store;
 
 /// Default edge function: walk every justification that references another item id.
 /// Edges are drawn from the justifying item to the referenced item.
-pub fn default_edges(item: &Item) -> Vec<ItemId> {
+pub fn default_edges<K: ItemKind>(item: &Item<K>) -> Vec<ItemId> {
     item.justifications
         .iter()
         .filter_map(|j| j.references_item().cloned())
         .collect()
 }
 
-pub struct GraphView<'s> {
-    store: &'s Store,
+pub struct GraphView<'s, K: ItemKind> {
+    store: &'s Store<K>,
     graph: DiGraph<ItemId, ()>,
     node_for: HashMap<ItemId, NodeIndex>,
 }
 
-impl<'s> GraphView<'s> {
+impl<'s, K: ItemKind> GraphView<'s, K> {
     /// Build a graph over the store using `default_edges` (justification refs).
-    pub fn new(store: &'s Store) -> Self {
-        Self::with_edges(store, default_edges)
+    pub fn new(store: &'s Store<K>) -> Self {
+        Self::with_edges(store, default_edges::<K>)
     }
 
     /// Build a graph over the store using a caller-supplied edge function.
-    pub fn with_edges<F>(store: &'s Store, edge_fn: F) -> Self
+    pub fn with_edges<F>(store: &'s Store<K>, edge_fn: F) -> Self
     where
-        F: Fn(&Item) -> Vec<ItemId>,
+        F: Fn(&Item<K>) -> Vec<ItemId>,
     {
         let mut graph = DiGraph::<ItemId, ()>::new();
         let mut node_for = HashMap::new();
@@ -55,7 +55,7 @@ impl<'s> GraphView<'s> {
         }
     }
 
-    pub fn store(&self) -> &Store {
+    pub fn store(&self) -> &Store<K> {
         self.store
     }
 
@@ -77,7 +77,7 @@ impl<'s> GraphView<'s> {
 }
 
 /// Shortest directed path from `from` to `to` (unweighted).
-pub fn shortest_path(view: &GraphView, from: &str, to: &str) -> Option<Vec<ItemId>> {
+pub fn shortest_path<K: ItemKind>(view: &GraphView<K>, from: &str, to: &str) -> Option<Vec<ItemId>> {
     let src = view.node(from)?;
     let dst = view.node(to)?;
     let scores = dijkstra(&view.graph, src, Some(dst), |_| 1usize);
@@ -116,7 +116,11 @@ pub fn shortest_path(view: &GraphView, from: &str, to: &str) -> Option<Vec<ItemI
 
 /// BFS reachable set from `start` up to `max_depth` (inclusive).
 /// Depth 0 returns just the start node; `None` for unbounded BFS.
-pub fn bfs_subgraph(view: &GraphView, start: &str, max_depth: Option<usize>) -> Vec<ItemId> {
+pub fn bfs_subgraph<K: ItemKind>(
+    view: &GraphView<K>,
+    start: &str,
+    max_depth: Option<usize>,
+) -> Vec<ItemId> {
     let Some(src) = view.node(start) else {
         return vec![];
     };
@@ -143,7 +147,7 @@ pub fn bfs_subgraph(view: &GraphView, start: &str, max_depth: Option<usize>) -> 
 }
 
 /// Strongly-connected components, each as a list of item ids.
-pub fn strongly_connected_components(view: &GraphView) -> Vec<Vec<ItemId>> {
+pub fn strongly_connected_components<K: ItemKind>(view: &GraphView<K>) -> Vec<Vec<ItemId>> {
     tarjan_scc(&view.graph)
         .into_iter()
         .map(|scc| scc.into_iter().map(|n| view.id_of(n).clone()).collect())
@@ -151,7 +155,7 @@ pub fn strongly_connected_components(view: &GraphView) -> Vec<Vec<ItemId>> {
 }
 
 /// Topological sort. Returns `Err(id)` on the first node detected to be in a cycle.
-pub fn topological_sort(view: &GraphView) -> Result<Vec<ItemId>, ItemId> {
+pub fn topological_sort<K: ItemKind>(view: &GraphView<K>) -> Result<Vec<ItemId>, ItemId> {
     match toposort(&view.graph, None) {
         Ok(order) => Ok(order.into_iter().map(|n| view.id_of(n).clone()).collect()),
         Err(cycle) => Err(view.id_of(cycle.node_id()).clone()),
@@ -161,7 +165,7 @@ pub fn topological_sort(view: &GraphView) -> Result<Vec<ItemId>, ItemId> {
 /// Articulation points of the graph viewed as undirected. Hand-rolled because
 /// petgraph 0.6 does not export this in its stable surface; the algorithm is
 /// the standard low-link DFS.
-pub fn articulation_points(view: &GraphView) -> Vec<ItemId> {
+pub fn articulation_points<K: ItemKind>(view: &GraphView<K>) -> Vec<ItemId> {
     let n = view.graph.node_count();
     if n == 0 {
         return vec![];
@@ -243,13 +247,14 @@ pub fn articulation_points(view: &GraphView) -> Vec<ItemId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::item::Item;
+    use crate::item::test_support::{TestKind, TestStatus};
+    use crate::item::{Item, KindMarker};
     use crate::justification::Justification;
 
-    fn item(id: &str, refs: Vec<&str>) -> Item {
+    fn item(id: &str, refs: Vec<&str>) -> Item<TestKind> {
         Item {
             id: id.into(),
-            kind: "test".into(),
+            kind: KindMarker::new(),
             claim: "c".into(),
             justifications: refs
                 .into_iter()
@@ -257,7 +262,7 @@ mod tests {
                     intent_id: r.into(),
                 })
                 .collect(),
-            status: "active".into(),
+            status: TestStatus::Active,
             supersedes: vec![],
             superseded_by: None,
             defeated_by: None,
@@ -266,8 +271,8 @@ mod tests {
         }
     }
 
-    fn store_with(items: Vec<Item>) -> Store {
-        let mut s = Store::new();
+    fn store_with(items: Vec<Item<TestKind>>) -> Store<TestKind> {
+        let mut s = Store::<TestKind>::new();
         for i in items {
             s.insert(i).unwrap();
         }
