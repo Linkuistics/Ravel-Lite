@@ -19,10 +19,6 @@ entries:
   title: rationale_text() collects all Rationale bodies for prose scan
   body: |
     `rationale_text()` on a `BacklogEntry` (or any TMS item wrapper) collects all `Justification::Rationale` bodies into a single string. The idiomatic pattern for prose scanning — `lint_dependencies.rs` uses it to scan task prose for dependency id mentions. Do not iterate `justifications` directly.
-- id: run-set-status-transition-guard-not-yet-wired-through-store
-  title: run_set_status transition guard not yet wired through Store
-  body: |
-    `BacklogStatus` serialises as a plain YAML string at write time; `Store<BacklogItemKind>::set_status` transition validation is not enforced at the CLI boundary. Illegal status moves (e.g., `done → active`) do not fail loudly. Next step: wire `run_set_status` in `verbs.rs` through `Store<BacklogItemKind>` so `BacklogStatus::transitions()` is consulted before every write.
 - id: memory-yaml-entries-are-item-memoryentrykind-with-attribution
   title: memory.yaml entries are Item<MemoryEntryKind> with attribution
   body: |
@@ -761,3 +757,7 @@ entries:
   title: datalog.rs smoke tests are the canary for ascent upgrades
   body: |
     Three smoke tests in `crates/knowledge-graph/src/datalog.rs` (`orphaned_rule_finds_backlog_items_without_active_intent`, `suspect_rule_finds_memory_entries_with_changed_sha`, `empty_program_runs_clean`) verify the stable ascent surface (relation declarations, tuple-pattern heads, stratified negation, if-guard predicates). Run these first on any ascent version bump; they are the primary canary for macro-generated code breakage.
+- id: llm-state-core-backlog-yaml-is-in-legacy-format-pending-v1-v2-migrator
+  title: LLM_STATE/core backlog.yaml is in legacy format pending v1→v2 migrator
+  body: |
+    `LLM_STATE/core/backlog.yaml` still uses the legacy `tasks: [...]` shape; the deployed binary (v1.0.2) reads only that shape and hard-fails on the TMS `items:` format. The source migration (`BacklogEntry` wrapping `Item<BacklogItemKind>`) is complete in `main`. File-level cutover belongs to the `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` task. Do not schedule LLM_STATE file-shape changes until the v1→v2 migrator ships. See: `v1→v2 cutover is hard; v2 binary refuses unmigrated plans`.
