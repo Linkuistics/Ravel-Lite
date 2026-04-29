@@ -793,3 +793,7 @@ entries:
     If the v2 design decides to forbid cross-kind status string sharing (e.g., `superseded` means different things for a backlog item vs. a memory entry), `plan query-by-status` is the place that would need an explicit stance — either an error, a disambiguation flag, or a kind-scoped union with explicit labels.
 
     No action needed now; this is an advisory note so the design question doesn't have to be re-derived from first principles.
+- id: no-ci-clippy-gate-lint-errors-accumulate-silently
+  title: No CI clippy gate; lint errors accumulate silently
+  body: |
+    `cargo clippy --all-targets -- -D warnings` is not wired into CI, git hooks, or `scripts/check.sh`. Pre-existing errors can accumulate undetected between sessions. A one-line addition to any of these three enforcement points would catch regressions at write time.
