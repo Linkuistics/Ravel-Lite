@@ -333,6 +333,39 @@ enum AtlasCommands {
         #[arg(long)]
         repo: Option<String>,
     },
+    /// Emit one component's full record as YAML, including a computed
+    /// list of children. `<reference>` accepts the qualified form
+    /// `<repo_slug>/<component_id>` or a bare `<component_id>` (the
+    /// latter must resolve uniquely across fresh repos).
+    Describe {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Component reference: `<repo_slug>/<component_id>` or bare
+        /// `<component_id>` (must be unambiguous across fresh repos).
+        reference: String,
+    },
+    /// Read the component's per-repo `.atlas/memory.yaml` and emit it
+    /// as YAML. A missing file is reported as an empty memory file
+    /// (the expected first-time state). With `--search`, restrict
+    /// output to entries whose claim, attribution, or any
+    /// justification's string fields contain the term (case-
+    /// insensitive substring).
+    Memory {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Component reference: `<repo_slug>/<component_id>` or bare
+        /// `<component_id>` (must be unambiguous across fresh repos).
+        reference: String,
+        /// Restrict output to entries whose claim, attribution, or any
+        /// justification's string fields contain this substring
+        /// (case-insensitive).
+        #[arg(long)]
+        search: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1064,6 +1097,18 @@ fn dispatch_atlas(command: AtlasCommands) -> Result<()> {
         AtlasCommands::Summary { config, repo } => {
             let context_root = resolve_config_dir(config)?;
             atlas::run_summary(&context_root, repo.as_deref())
+        }
+        AtlasCommands::Describe { config, reference } => {
+            let context_root = resolve_config_dir(config)?;
+            atlas::run_describe(&context_root, &reference)
+        }
+        AtlasCommands::Memory {
+            config,
+            reference,
+            search,
+        } => {
+            let context_root = resolve_config_dir(config)?;
+            atlas::run_memory(&context_root, &reference, search.as_deref())
         }
     }
 }

@@ -1476,3 +1476,18 @@ sessions:
     - Added 18 unit tests covering: empty registry, mixed freshness states, registry order preservation, deleted-component filtering, filter combinations, `enforce_repo_filter_known` error cases, `aggregate_summary` grouping, and smoke tests for the two CLI entry points.
     - All tests pass; no regressions.
     - What this suggests trying next: implement `atlas describe <ref>` and `atlas memory <ref>` (already in backlog as a not_started task), which resolve single-component refs from the Catalog.
+- id: session-101
+  timestamp: 2026-04-29T23:58:19Z
+  phase: work
+  body: |
+    ### Session 101 (2026-04-29T23:58:19Z) — Add atlas describe and memory verbs
+
+    - Implemented `atlas describe <ref>` — resolves a component reference (qualified `<repo>/<id>` or bare `<id>`) and emits the full `ComponentEntry` as YAML with a computed `children` list
+    - Implemented `atlas memory <ref> [--search <term>]` — reads the component's `.atlas/memory.yaml`, emits it as YAML; `--search` filters to entries matching a case-insensitive substring across claim, attribution, and all justification string fields
+    - Both verbs wired into `src/main.rs` under the `AtlasCommands` enum and dispatched from `dispatch_atlas`
+    - Comprehensive unit tests added to `src/atlas.rs` covering: reference resolution (qualified, bare, ambiguous, deleted, empty catalog), `compute_children`, `DescribeReport` serialisation, `component_memory_path`, `read_component_memory` (absent, valid, schema-mismatch), `entry_matches`, `justification_matches` (all `Justification` variants), and `run_memory` with and without search filter
+    - All `in_progress` task statuses were already consistent; no stale-status repairs were needed
+
+    What worked: borrowing `ResolvedComponent<'a>` from the catalog avoided a clone-heavy API; routing `--search` needle lowercasing to the call site kept `entry_matches` and `justification_matches` pure (no allocation inside the hot filter loop). The schema-version guard in `read_component_memory` surfaces silent corruption rather than silently treating stale files as empty.
+
+    What this suggests next: the remaining edge-graph verbs (`edges`, `neighbors`, `path`, `scc`, `roots`) need the cross-repo `related-components.yaml` union loader; that loader is a distinct prerequisite task.
