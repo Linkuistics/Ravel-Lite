@@ -83,7 +83,7 @@ impl<K: ItemKind> Default for KindMarker<K> {
 
 impl<K: ItemKind> Clone for KindMarker<K> {
     fn clone(&self) -> Self {
-        Self::new()
+        *self
     }
 }
 

@@ -188,53 +188,55 @@ pub fn articulation_points<K: ItemKind>(view: &GraphView<K>) -> Vec<ItemId> {
     let mut low = vec![0usize; n];
     let mut parent = vec![usize::MAX; n];
     let mut is_ap = vec![false; n];
-    let mut timer = 0usize;
 
-    fn dfs(
-        u: usize,
-        adj: &[Vec<usize>],
-        visited: &mut [bool],
-        disc: &mut [usize],
-        low: &mut [usize],
-        parent: &mut [usize],
-        is_ap: &mut [bool],
-        timer: &mut usize,
-    ) {
-        visited[u] = true;
-        *timer += 1;
-        disc[u] = *timer;
-        low[u] = *timer;
-        let mut children = 0usize;
-        for &v in &adj[u] {
-            if !visited[v] {
-                children += 1;
-                parent[v] = u;
-                dfs(v, adj, visited, disc, low, parent, is_ap, timer);
-                low[u] = low[u].min(low[v]);
-                if parent[u] == usize::MAX && children > 1 {
-                    is_ap[u] = true;
+    struct ArticulationDfs<'a> {
+        adj: &'a [Vec<usize>],
+        visited: &'a mut [bool],
+        disc: &'a mut [usize],
+        low: &'a mut [usize],
+        parent: &'a mut [usize],
+        is_ap: &'a mut [bool],
+        timer: usize,
+    }
+
+    impl ArticulationDfs<'_> {
+        fn run(&mut self, u: usize) {
+            self.visited[u] = true;
+            self.timer += 1;
+            self.disc[u] = self.timer;
+            self.low[u] = self.timer;
+            let mut children = 0usize;
+            for &v in &self.adj[u] {
+                if !self.visited[v] {
+                    children += 1;
+                    self.parent[v] = u;
+                    self.run(v);
+                    self.low[u] = self.low[u].min(self.low[v]);
+                    if self.parent[u] == usize::MAX && children > 1 {
+                        self.is_ap[u] = true;
+                    }
+                    if self.parent[u] != usize::MAX && self.low[v] >= self.disc[u] {
+                        self.is_ap[u] = true;
+                    }
+                } else if v != self.parent[u] {
+                    self.low[u] = self.low[u].min(self.disc[v]);
                 }
-                if parent[u] != usize::MAX && low[v] >= disc[u] {
-                    is_ap[u] = true;
-                }
-            } else if v != parent[u] {
-                low[u] = low[u].min(disc[v]);
             }
         }
     }
 
+    let mut dfs = ArticulationDfs {
+        adj: &adj,
+        visited: &mut visited,
+        disc: &mut disc,
+        low: &mut low,
+        parent: &mut parent,
+        is_ap: &mut is_ap,
+        timer: 0,
+    };
     for u in 0..n {
-        if !visited[u] {
-            dfs(
-                u,
-                &adj,
-                &mut visited,
-                &mut disc,
-                &mut low,
-                &mut parent,
-                &mut is_ap,
-                &mut timer,
-            );
+        if !dfs.visited[u] {
+            dfs.run(u);
         }
     }
 

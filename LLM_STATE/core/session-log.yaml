@@ -1413,3 +1413,16 @@ sessions:
 
     - What worked: the cross-kind `AnyEntry` enum with `#[serde(untagged)]` cleanly serialises each variant with its kind marker without a wrapper discriminant field.
     - What this suggests: the `findings-inbox` task is the natural next unlock — adding `FindingsFile` here would be a small wiring job once that store exists.
+- id: session-98
+  timestamp: 2026-04-29T09:15:23Z
+  phase: work
+  body: |
+    ### Session 98 (2026-04-29T09:15:23Z) — Fix clippy errors in crates/knowledge-graph
+
+    - Fixed two pre-existing clippy errors in `crates/knowledge-graph/` that accumulated on main
+    - `item.rs:85`: `KindMarker::clone` body changed from `Self::new()` to `*self` — canonical Copy path, satisfying `clippy::non_canonical_clone_impl`
+    - `algorithms.rs:188-240`: the nested `dfs` function with 8 arguments was refactored into a local `ArticulationDfs<'a>` struct with a `run(&mut self, u: usize)` method; per-traversal mutable state (`visited`, `disc`, `low`, `parent`, `is_ap`, `timer`) moved to struct fields, reducing the hot call from 8 args to 1
+    - Both changes are purely mechanical; DFS logic and `KindMarker` semantics are unchanged
+    - `cargo clippy --all-targets` is now clean; `cargo test --workspace` passes all 754 tests including the direct DFS exercise `articulation_points_finds_central_node`
+
+    What this suggests next: the project has no CI workflow or clippy gate; a one-line `cargo clippy --all-targets -- -D warnings` step (git hook, `scripts/check.sh`, or GH Actions) would catch future regressions at write time. Worth a triage item.
