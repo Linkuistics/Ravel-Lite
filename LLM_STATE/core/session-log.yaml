@@ -1361,3 +1361,14 @@ sessions:
     - **What this suggests trying next:** The show-verb task unblocks once the v2 context layout (`ravel-lite init` scaffolding) settles where user-owned `fixed-memory/` lives and what the lookup order is. The 17 new architecture-next tasks are ready for triage prioritisation next cycle.
 
     - **Key learnings:** The `init::require_embedded` / disk-overlay tension is structural — any verb that serves embedded content must decide its layering upfront or it re-introduces silent failures. The right model mirrors `compose_prompt` (plan-level override on top of embedded base).
+- id: session-94
+  timestamp: 2026-04-29T06:00:30Z
+  phase: work
+  body: |
+    ### Session 94 (2026-04-29T06:00:30Z) — Upgrade ascent Datalog engine 0.6 → 0.8 in knowledge-graph
+
+    - Attempted: bump `ascent` dependency in `crates/knowledge-graph/Cargo.toml` from 0.6 to 0.8 and verify the workspace compiles and tests pass.
+    - What worked: the upgrade required zero source-code changes. Only the version string in `Cargo.toml` changed; `Cargo.lock` updated automatically with transitive bumps to `ascent_base`, `ascent_macro` (both 0.6→0.8), `duplicate` (1.0.0→2.0.1), and `itertools` (0.12.1→0.13.0). `cargo check --workspace --all-targets` was clean under `warnings = "deny"`, and all 33 `knowledge-graph` tests plus the full workspace suite (591 ravel-lite + integration tests) passed green. Nothing in the workspace uses the BYODS or lattice features that changed between ascent 0.6 and 0.8.
+    - What didn't work: nothing — clean one-step upgrade.
+    - What this suggests trying next: downstream tasks that wire production Datalog rules (plan KG, catalog KG) can now assume ascent 0.8 as the baseline and adopt BYODS/lattice features if needed without a follow-up bump.
+    - Key learnings: the smoke-program tests in `datalog.rs` (`orphaned_rule_finds_backlog_items_without_active_intent`, `suspect_rule_finds_memory_entries_with_changed_sha`, `empty_program_runs_clean`) are a reliable canary for ascent macro-generated code; they caught nothing here because the stable surface (relation declarations, tuple-pattern heads, stratified negation, if-guard predicates) is unchanged in 0.8.
