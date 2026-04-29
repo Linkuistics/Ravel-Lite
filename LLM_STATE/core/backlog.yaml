@@ -125,6 +125,29 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
+- id: add-clippy-gate-to-prevent-silent-accumulation-on-main
+  title: Add clippy gate to prevent silent accumulation on main
+  category: infra
+  status: not_started
+  dependencies: []
+  description: |
+    Add a `cargo clippy --all-targets -- -D warnings` step to prevent clippy errors accumulating silently on `main`.
+
+    **Problem:** Two clippy errors in `crates/knowledge-graph/` accumulated undetected on `main` (see `algorithms.rs` 8-arg `dfs`, `item.rs` non-canonical clone). The project has no CI workflow and no clippy gate in release scripts, so these are only discovered incidentally when someone runs `cargo clippy --all-targets` by hand.
+
+    **Settled in session 98:** The fix is purely a gate addition — no source changes needed. The right insertion point is one of:
+    1. A `pre-push` or `pre-commit` git hook that runs `cargo clippy --all-targets -- -D warnings`.
+    2. A `scripts/check.sh` that CI/contributors can run locally.
+    3. A one-job GitHub Actions workflow (`.github/workflows/clippy.yml`) triggered on push/PR.
+
+    Any of the three is acceptable. Option 1 (git hook) is self-contained and requires no infrastructure; option 3 catches it in PRs but requires GH Actions to be enabled. Option 2 is the minimal documentation step.
+
+    **Scope:**
+    1. Pick one insertion point (hook vs script vs CI).
+    2. Add the `cargo clippy --all-targets -- -D warnings` invocation there.
+    3. Document in `README` or `CONTRIBUTING` if using a hook so contributors know to install it.
+
+    **Dependencies:** None. Self-contained.
 - id: graph-rag-ravel-lite-atlas-cli-for-catalog-queries
   title: 'graph-RAG: ravel-lite atlas CLI for catalog queries'
   category: architecture-next
@@ -378,94 +401,3 @@ tasks:
     4. Tests: rendered output includes intent claims, task counts match backlog, phase transitions leave `phase.md` non-empty and structured.
 
     **Gating constraint:** Must wait until the v1→v2 migrator ships and a new binary deploys — `read_backlog` on `LLM_STATE/core/backlog.yaml` today hits the legacy v1 wire shape and would fail. See `LLM_STATE-shape-frozen` memory entry.
-- id: fix-pre-existing-clippy-errors-in-crates-knowledge-graph
-  title: Fix pre-existing clippy errors in crates/knowledge-graph/
-  category: infra
-  status: done
-  dependencies: []
-  description: |
-    Fix two pre-existing clippy errors in `crates/knowledge-graph/` that appear in `cargo clippy --all-targets` output, unrelated to any feature changes:
-
-    1. `algorithms.rs:193` — `fn dfs` has 8 arguments, exceeding the clippy limit of 7. Refactor to take a struct or split the function.
-    2. `item.rs:85` — `KindMarker::clone` should be `{ *self }` since the type implements `Copy`.
-
-    Confirmed pre-existing on the `main` baseline (not introduced by the `plan-inspect` task). The project has no CI workflow or clippy gate in release scripts, so these silently accumulate. Anyone running `cargo clippy --all-targets` gets failures unrelated to their change.
-
-    Both fixes are mechanical and self-contained within the `crates/knowledge-graph/` sub-crate. No API or schema changes.
-  results: |
-    ## Results
-
-    Both clippy errors gone; `cargo clippy --all-targets` is now clean and
-    `cargo test --workspace` is green (754 tests, 0 failures, 0 ignored).
-
-    ### Fixes
-
-    - `crates/knowledge-graph/src/item.rs:85` — `KindMarker::clone` body
-      changed from `Self::new()` to `*self`. Same observable behaviour
-      (the type is `Copy` and zero-sized) but uses the canonical `Copy`
-      path, which is what `clippy::non_canonical_clone_impl` was asking
-      for. Also collapses two lines into one.
-
-    - `crates/knowledge-graph/src/algorithms.rs` — the recursive `dfs`
-      helper inside `articulation_points` was lifted from a nested
-      function with 8 by-reference args into a local `ArticulationDfs<'a>`
-      struct + `impl::run(&mut self, u: usize)`. Same low-link DFS logic;
-      the per-traversal mutable working arrays (`visited`, `disc`, `low`,
-      `parent`, `is_ap`) and the `timer` counter now live as struct
-      fields. The outer `let mut timer = 0usize;` was dropped — `timer`
-      is initialised to `0` directly in the struct literal, which avoids
-      an `unused_mut` warning that would otherwise have appeared.
-
-      Net effect on the call site: from an 8-arg recursive `fn dfs(...)`
-      declaration plus an 8-arg root-loop call, to a `let mut dfs = ...`
-      + `dfs.run(u)` — the receiver-style call reads better and the
-      function arg count drops to 1 (`u`), well under any threshold.
-
-    ### Verification
-
-    - `cargo clippy --all-targets` — clean.
-    - `cargo test -p knowledge-graph` — 33 pass, including
-      `articulation_points_finds_central_node` (direct exercise of the
-      refactored DFS).
-    - `cargo test --workspace` — 754 pass, 0 fail. `KindMarker::clone`
-      is touched but its semantics are unchanged.
-
-    ### What this suggests next
-
-    - **No CI / no clippy gate.** This task only existed because clippy
-      errors silently accumulated on `main`. The project has no CI
-      workflow and no clippy step in the release scripts (per the task
-      description). Worth raising as a backlog item: a tiny
-      `cargo clippy --all-targets -- -D warnings` step somewhere (a git
-      hook, a `scripts/check.sh`, or a one-line GH Actions workflow)
-      would catch the next regression at write time instead of months
-      later. Out of scope for this task; flagging for triage.
-    - **Local helper struct pattern.** The `ArticulationDfs<'a>` struct
-      is a clean Rust pattern for "recursive helper carrying a bag of
-      per-traversal state", and there are likely other graph algorithms
-      in this crate (or future ones) that would benefit from the same
-      shape rather than a long-arg-list nested fn. No refactor needed
-      now — just a vocabulary item.
-- id: add-clippy-gate-to-prevent-silent-accumulation-on-main
-  title: Add clippy gate to prevent silent accumulation on main
-  category: infra
-  status: not_started
-  dependencies: []
-  description: |
-    Add a `cargo clippy --all-targets -- -D warnings` step to prevent clippy errors accumulating silently on `main`.
-
-    **Problem:** Two clippy errors in `crates/knowledge-graph/` accumulated undetected on `main` (see `algorithms.rs` 8-arg `dfs`, `item.rs` non-canonical clone). The project has no CI workflow and no clippy gate in release scripts, so these are only discovered incidentally when someone runs `cargo clippy --all-targets` by hand.
-
-    **Settled in session 98:** The fix is purely a gate addition — no source changes needed. The right insertion point is one of:
-    1. A `pre-push` or `pre-commit` git hook that runs `cargo clippy --all-targets -- -D warnings`.
-    2. A `scripts/check.sh` that CI/contributors can run locally.
-    3. A one-job GitHub Actions workflow (`.github/workflows/clippy.yml`) triggered on push/PR.
-
-    Any of the three is acceptable. Option 1 (git hook) is self-contained and requires no infrastructure; option 3 catches it in PRs but requires GH Actions to be enabled. Option 2 is the minimal documentation step.
-
-    **Scope:**
-    1. Pick one insertion point (hook vs script vs CI).
-    2. Add the `cargo clippy --all-targets -- -D warnings` invocation there.
-    3. Document in `README` or `CONTRIBUTING` if using a hook so contributors know to install it.
-
-    **Dependencies:** None. Self-contained.
