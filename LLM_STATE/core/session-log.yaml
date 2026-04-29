@@ -1398,3 +1398,18 @@ sessions:
     - `render-overview` / `phase.md` regeneration deliberately deferred: blocked on the v1→v2 migrator (the current plan's own `backlog.yaml` is in legacy wire shape, so calling `read_backlog` from `set-phase` would fail on this very plan). The `no-llm-state-migrations-during-self-dev` constraint holds.
     - Editing verbs (`set-claim`, `set-rationale`, `delete`, `supersede`) deferred until a real consumer surfaces; the TMS model favours supersession over in-place edit.
     - What this suggests next: unblock the five dependent architecture-next tasks; triage should prioritise which is highest leverage now that `intents.yaml` exists. `render-overview` / phase.md regeneration is its own follow-up, gated on the migrator.
+- id: session-97
+  timestamp: 2026-04-29T08:50:30Z
+  phase: work
+  body: |
+    ### Session 97 (2026-04-29T08:50:30Z) — Add ravel-lite plan subcommand for cross-kind KG inspection
+
+    - Implemented the `ravel-lite plan` top-level subcommand with four read-only cross-kind query verbs: `list-items`, `show-item`, `query-by-status`, and `query-by-justification`.
+    - All implementation landed in the new `src/plan_inspect.rs` module (1041 lines), with thin dispatch wiring in `src/main.rs` and a module declaration in `src/lib.rs`.
+    - The `PlanItemKind` and `JustificationKindFilter` types encode finite vocabularies in the type system, consistent with the codebase convention against stringly-typed APIs.
+    - `Finding` kind is forward-compatible (parses, dispatches, errors with a pointer to the `findings-inbox` backlog task) without requiring the underlying file store to exist yet.
+    - Full hermetic test coverage in-module: kind parsing, status vocab validation (per-kind and cross-kind), id collision detection, serialisation correctness.
+    - No mutations; all four verbs are read-only. Per-kind mutation verbs remain in `state <kind>` as designed.
+
+    - What worked: the cross-kind `AnyEntry` enum with `#[serde(untagged)]` cleanly serialises each variant with its kind marker without a wrapper discriminant field.
+    - What this suggests: the `findings-inbox` task is the natural next unlock — adding `FindingsFile` here would be a small wiring job once that store exists.

@@ -147,7 +147,7 @@ tasks:
 - id: ravel-lite-plan-subcommand-for-kg-inspection
   title: ravel-lite plan subcommand for KG inspection
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Add `ravel-lite plan <subcommand>` for read-only inspection of a plan's knowledge graph across all four typed stores.
@@ -166,6 +166,138 @@ tasks:
     - Dependencies: all three schema migrations must land first (memory.yaml, backlog.yaml, intents.yaml) so the plan files have TMS-shaped data for the stores to load.
 
     Out of scope: any mutation verbs (those live in `state backlog`, `state memory`, `state intents`); Datalog query evaluation (deferred per memory entry `datalog-evaluator-deferred-imperative-verbs-sufficient`).
+  results: |
+    ## Results
+
+    ### What was built
+
+    New `ravel-lite plan` top-level subcommand exposing four read-only
+    cross-kind queries over a plan's knowledge graph:
+
+    - `plan list-items <plan-dir> [--kind K] [--format F]` — list every
+      item in a plan; `--kind` filters to one of `intent`,
+      `backlog-item`, `memory-entry`, `finding`. Without `--kind`, emits
+      a unified `items:` list spanning intents + backlog + memory.
+    - `plan show-item <plan-dir> <id> [--format F]` — find an item by id
+      without specifying its kind. Searches all three stores; errors with
+      a helpful message if id is ambiguous across kinds, pointing at the
+      per-kind `state <kind> show` verbs to disambiguate.
+    - `plan query-by-status <plan-dir> [--kind K] --status S [--format F]`
+      — filter items by status. With `--kind`, the status string is
+      parsed against that kind's vocabulary (with a clear error listing
+      the legal values when the input is wrong). Without `--kind`, every
+      kind whose vocabulary includes the status string contributes to a
+      unified result.
+    - `plan query-by-justification <plan-dir> [--kind K]
+      --justification-kind J [--format F]` — filter items carrying at
+      least one justification of a given kind (`code-anchor`,
+      `rationale`, `serves-intent`, `defeats`, `supersedes`, `external`).
+
+    Output is `yaml` (default) or `json`. Per-kind output preserves the
+    on-wire `*File { schema_version, items }` shape so callers parse the
+    same way regardless of filter. Cross-kind output uses an untagged
+    `AnyEntry` sum that relies on each entry's existing `KindMarker<K>`
+    to carry the discriminant — no duplicate `kind:` field.
+
+    ### What works
+
+    - 25 new unit tests in `src/plan_inspect.rs`, all passing. Coverage:
+      per-kind filter functions (status, justification) on synthetic
+      fixtures; parsers for `PlanItemKind`, `JustificationKindFilter`,
+      `OutputFormat`; disk-touching verb dispatch via `tempfile::TempDir`
+      with all three on-disk stores written; cross-kind id-collision
+      error path; kind-specific status-vocabulary error path; unknown-id
+      error path; `Finding` kind error path pointing at the
+      `findings-inbox` task.
+    - Full test suite (635 unit + integration tests) still green — no
+      regressions.
+    - `cargo build` clean.
+
+    ### What didn't work (and why that's correct)
+
+    End-to-end invocation against the live `LLM_STATE/core` plan fails on
+    every verb, exactly as the
+    `LLM_STATE-shape-frozen-until-v1→v2-migrator-exists` memory predicted:
+
+    ```
+    $ ./target/debug/ravel-lite plan list-items LLM_STATE/core --kind intent
+    Error: intents.yaml not found at LLM_STATE/core/intents.yaml.
+
+    $ ./target/debug/ravel-lite plan list-items LLM_STATE/core --kind backlog-item
+    Error: Failed to parse LLM_STATE/core/backlog.yaml as backlog.yaml schema
+    Caused by: missing field `schema_version`
+    ```
+
+    These aren't defects — they're the deploy-gating constraint working
+    as designed. The new TMS schemas are in source, but `LLM_STATE/core`
+    is still on the legacy v1 wire shape (no `schema_version` field, no
+    `intents.yaml`). The verbs error gracefully and name the missing or
+    malformed file. End-to-end exercise against a real plan becomes
+    possible the moment the v1→v2 migrator ships.
+
+    ### What was deliberately left out
+
+    - `Finding` kind is parsed but errors at dispatch with a pointer at
+      the `findings-inbox-context-level-findings-yaml-replaces-subagent-dispatch`
+      task. `FindingKind` already exists in `plan_kg.rs`, so the
+      vocabulary is correct; only the on-disk store is missing. When
+      findings.yaml lands, that task fills in the dispatch arm — the CLI
+      surface is forward-compatible.
+    - No mutation verbs. Per the task's "out of scope" note: mutations
+      stay in `state <kind>`. This module is read-only.
+    - No Datalog evaluation. Per the task's "out of scope" note: imperative
+      filters are sufficient at v1 (memory:
+      `datalog-evaluator-deferred-imperative-verbs-sufficient`).
+    - No new schemas, no new on-disk file formats, no migrations. Reads
+      through the typed `IntentsFile`/`BacklogFile`/`MemoryFile`
+      schemas that the prior cycles already defined.
+
+    ### Files touched
+
+    - `src/plan_inspect.rs` — **new**. 800-odd lines including ~360 lines
+      of unit tests. Pure-function filters separated from disk-touching
+      `run_*` verbs so the filters are unit-testable without I/O.
+    - `src/lib.rs` — added `pub mod plan_inspect;` (one line).
+    - `src/main.rs` — added `Plan { command: PlanCommands }` to the top-
+      level `Commands` enum, defined `PlanCommands` with four subcommands,
+      added `dispatch_plan` and `parse_plan_format` helpers (~85 lines,
+      mirroring the pattern of `dispatch_intents`).
+
+    ### Findings raised for triage to consider separately
+
+    - Pre-existing clippy errors on `main` in `crates/knowledge-graph/`:
+      `algorithms.rs:193` (`fn dfs` has 8 args, limit is 7) and
+      `item.rs:85` (`KindMarker::clone` should be `{ *self }` since the
+      type is `Copy`). Confirmed by `git stash && cargo clippy` on the
+      baseline. Out of scope for this task. Worth a `findings.yaml`
+      entry once the findings-inbox task ships, or a small follow-up
+      cleanup task in `architecture-next` or `infra`.
+    - Currently the project has no CI workflow and no clippy gate in any
+      of the release scripts, so these clippy errors aren't gating
+      release. But anyone running `cargo clippy --all-targets` gets a
+      failure unrelated to their change.
+
+    ### What this suggests next
+
+    - This task naturally feeds into the `migrate-ravel-lite-migrate-for-v1-to-v2-cutover`
+      task: the migrator brings live plans onto the v2 wire shape, after
+      which `plan list-items` etc. become exercisable end-to-end against
+      real data. The migrator already names this verb (and `state intents
+      render-overview`) as downstream consumers waiting for it.
+    - Once `findings-inbox-context-level-findings-yaml-replaces-subagent-dispatch`
+      lands, the `Finding` arm in this module's three `run_*` functions
+      needs a real implementation. The dispatch-error pattern there is
+      scaffolding designed to be swapped in.
+    - The cross-kind `query-by-status` accepts a status string and walks
+      every kind whose vocabulary includes it. If the v2 design wants to
+      forbid status strings shared across kinds (e.g. `superseded`), this
+      is one place that would need an explicit stance — currently it
+      just unions the matches.
+    - A natural extension once the cascade primitives are exercised more
+      is `plan cascade <plan-dir> <id>` — show the items that would be
+      defeated/superseded if `<id>` flips to a terminal status. That's
+      not in the current task's scope; flagging here so it doesn't get
+      re-derived later.
 - id: targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
   title: 'Targets and worktrees: per-repo plan branches and dynamic mounts'
   category: architecture-next

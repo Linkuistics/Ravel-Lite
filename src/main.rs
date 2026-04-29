@@ -212,6 +212,15 @@ enum Commands {
         #[command(subcommand)]
         command: RepoCommands,
     },
+    /// Read-only inspection of a plan's knowledge graph across all
+    /// typed stores (intents, backlog items, memory entries). Mutation
+    /// verbs continue to live under `state <kind>`; this surface is
+    /// for cross-kind queries that the per-kind verbs can't naturally
+    /// express.
+    Plan {
+        #[command(subcommand)]
+        command: PlanCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -639,6 +648,69 @@ enum IntentsCommands {
 }
 
 #[derive(Subcommand)]
+enum PlanCommands {
+    /// List items across the plan's typed stores. Without `--kind`,
+    /// emits a unified `items:` list spanning intents + backlog +
+    /// memory. With `--kind`, emits the matching kind's full file
+    /// (same shape as `state <kind> list`).
+    ListItems {
+        plan_dir: PathBuf,
+        /// One of `intent`, `backlog-item`, `memory-entry`, `finding`.
+        /// Omit to list every kind in one document.
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Find an item by id without specifying its kind. Searches
+    /// intents, backlog, and memory; errors if the id is ambiguous
+    /// across kinds (use the per-kind `state <kind> show` verb to
+    /// disambiguate).
+    ShowItem {
+        plan_dir: PathBuf,
+        id: String,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Items whose status matches `--status`. With `--kind`, the
+    /// status is parsed against that kind's vocabulary. Without
+    /// `--kind`, every kind whose vocabulary includes the status
+    /// string contributes to the unified result.
+    QueryByStatus {
+        plan_dir: PathBuf,
+        /// One of `intent`, `backlog-item`, `memory-entry`, `finding`.
+        /// Omit for cross-kind union.
+        #[arg(long)]
+        kind: Option<String>,
+        /// Status string. Legal values depend on `--kind`:
+        /// intent: `active`/`satisfied`/`defeated`/`superseded`;
+        /// backlog-item: adds `done`/`blocked`;
+        /// memory-entry: only `active`/`defeated`/`superseded`.
+        #[arg(long)]
+        status: String,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Items carrying at least one justification of the given kind.
+    /// Useful for queries like "which backlog items serve an intent?"
+    /// (`--justification-kind serves-intent`) or "which memory
+    /// entries cite a code anchor?" (`--justification-kind code-anchor`).
+    QueryByJustification {
+        plan_dir: PathBuf,
+        /// One of `intent`, `backlog-item`, `memory-entry`, `finding`.
+        /// Omit for cross-kind union.
+        #[arg(long)]
+        kind: Option<String>,
+        /// One of `code-anchor`, `rationale`, `serves-intent`,
+        /// `defeats`, `supersedes`, `external`.
+        #[arg(long)]
+        justification_kind: String,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum SessionLogCommands {
     /// List sessions from session-log.yaml (id + timestamp + phase + body).
     List {
@@ -898,6 +970,52 @@ async fn main() -> Result<()> {
         }
         Commands::State { command } => dispatch_state(command).await,
         Commands::Repo { command } => dispatch_repo(command),
+        Commands::Plan { command } => dispatch_plan(command),
+    }
+}
+
+fn parse_plan_format(input: &str) -> Result<ravel_lite::plan_inspect::OutputFormat> {
+    ravel_lite::plan_inspect::OutputFormat::parse(input)
+        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
+}
+
+fn dispatch_plan(command: PlanCommands) -> Result<()> {
+    use ravel_lite::plan_inspect::{
+        run_list_items, run_query_by_justification, run_query_by_status, run_show_item,
+        JustificationKindFilter, PlanItemKind,
+    };
+
+    match command {
+        PlanCommands::ListItems { plan_dir, kind, format } => {
+            let kind = kind.map(|s| PlanItemKind::parse(&s)).transpose()?;
+            let fmt = parse_plan_format(&format)?;
+            run_list_items(&plan_dir, kind, fmt)
+        }
+        PlanCommands::ShowItem { plan_dir, id, format } => {
+            let fmt = parse_plan_format(&format)?;
+            run_show_item(&plan_dir, &id, fmt)
+        }
+        PlanCommands::QueryByStatus {
+            plan_dir,
+            kind,
+            status,
+            format,
+        } => {
+            let kind = kind.map(|s| PlanItemKind::parse(&s)).transpose()?;
+            let fmt = parse_plan_format(&format)?;
+            run_query_by_status(&plan_dir, kind, &status, fmt)
+        }
+        PlanCommands::QueryByJustification {
+            plan_dir,
+            kind,
+            justification_kind,
+            format,
+        } => {
+            let kind = kind.map(|s| PlanItemKind::parse(&s)).transpose()?;
+            let jk = JustificationKindFilter::parse(&justification_kind)?;
+            let fmt = parse_plan_format(&format)?;
+            run_query_by_justification(&plan_dir, kind, jk, fmt)
+        }
     }
 }
 
