@@ -1372,3 +1372,14 @@ sessions:
     - What didn't work: nothing — clean one-step upgrade.
     - What this suggests trying next: downstream tasks that wire production Datalog rules (plan KG, catalog KG) can now assume ascent 0.8 as the baseline and adopt BYODS/lattice features if needed without a follow-up bump.
     - Key learnings: the smoke-program tests in `datalog.rs` (`orphaned_rule_finds_backlog_items_without_active_intent`, `suspect_rule_finds_memory_entries_with_changed_sha`, `empty_program_runs_clean`) are a reliable canary for ascent macro-generated code; they caught nothing here because the stable surface (relation declarations, tuple-pattern heads, stratified negation, if-guard predicates) is unchanged in 0.8.
+- id: session-95
+  timestamp: 2026-04-29T08:01:13Z
+  phase: work
+  body: |
+    ### Session 95 (2026-04-29T08:01:13Z) — Verify TMS backlog migration already complete; record results and deferral
+
+    - Attempted: verify and complete the `migrate-backlog-yaml-to-tms-item-shape-with-typed-set-status-wiring` task, which called for migrating `backlog.yaml` to TMS `Item` shape with typed `set-status` wiring.
+    - What worked: all source-level scope items were already satisfied on `main` — `BacklogEntry` wraps `Item<BacklogItemKind>` via `#[serde(flatten)]`, CRUD verbs in `verbs.rs` operate end-to-end on the new schema, typed `set-status` in `run_set_status` consults `transitions()` and rejects illegal moves, round-trip YAML tests and transition-validation tests all pass (19 suites, 0 failures).
+    - What didn't: the dogfood cutover (`LLM_STATE/core/backlog.yaml` file) is intentionally deferred — the deployed binary (v1.0.2) reads only the legacy `tasks: [...]` shape; replacing the file in-place would break running phases. The freeze constraint ("LLM_STATE shape frozen until v1→v2 migrator exists") governs; the file-level cutover belongs to the `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` task.
+    - Key learning: the task brief was authored before the freeze constraint was captured in distilled memory. Future triage should check the freeze constraint before scheduling any LLM_STATE file-shape changes.
+    - Suggests next: the migrator task can now treat the TMS-shaped `BacklogEntry` as a finished target. Field map for v1→v2 migration is documented in the task results block.

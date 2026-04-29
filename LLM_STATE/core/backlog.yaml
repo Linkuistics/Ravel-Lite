@@ -128,7 +128,7 @@ tasks:
 - id: migrate-backlog-yaml-to-tms-item-shape-with-typed-set-status-wiring
   title: Migrate backlog.yaml to TMS item shape (with typed set-status wiring)
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Migrate `backlog.yaml` schema from the legacy flat format to TMS item shape (`items: [{ id, kind: backlog-item, claim, justifications, status, ... }]`).
@@ -149,6 +149,109 @@ tasks:
     - All existing tests pass; round-trip YAML tests for the new schema are added.
 
     Out of scope: memory.yaml migration (separate task, recommended first); intents.yaml (separate task).
+  results: |
+    ## Results
+
+    Task scope was already met by code already on `main`. No source changes were
+    needed in this session; the work consisted of verifying that each scope item
+    in the brief is satisfied by code at HEAD, and recording why the one
+    outstanding scope item ("migrate `LLM_STATE/core/backlog.yaml` as the
+    dogfood validation case") is intentionally deferred.
+
+    ### Scope items vs. current state
+
+    - **TMS-shaped `backlog.yaml` schema** — `BacklogEntry` in
+      `src/state/backlog/schema.rs` wraps `Item<BacklogItemKind>` via
+      `#[serde(flatten)]`, with extension fields `category`, `dependencies`,
+      `results`, `handoff`, `blocked_reason`. `KindMarker<BacklogItemKind>`
+      enforces wire-kind verification at the type level. Schema header is
+      `schema_version: 1, items: [...]`. ✅
+    - **Reworked `state backlog` CRUD verbs** — `src/state/backlog/verbs.rs`
+      reads/writes the new schema end-to-end. All public verbs (`add`, `list`,
+      `show`, `set-status`, `set-results`, `set-description`, `set-handoff`,
+      `clear-handoff`, `set-title`, `set-dependencies`, `reorder`, `delete`,
+      `init`) operate on `BacklogEntry`/`BacklogFile`. Externally-visible
+      behaviour preserved (reorder, ready filter, cycle detection,
+      cascade-on-delete, etc.). ✅
+    - **Typed `set-status` wiring** — `run_set_status` (verbs.rs:240–276)
+      rebuilds a `Store<BacklogItemKind>` from the on-disk items, calls
+      `Store::set_status(id, status)`, then copies the mutated `Item` back
+      into the entry. `Store::set_status` (store.rs:128–150) consults
+      `K::Status::transitions()` and returns `StoreError::IllegalTransition`
+      for moves not in the table — `done → active` and similar terminal
+      exits fail loudly at the CLI boundary. ✅
+    - **Round-trip YAML tests + transition validation tests** — `schema.rs`
+      carries `entry_round_trips_through_yaml`, `entry_yaml_carries_kind_string`,
+      `backlog_file_round_trips_through_yaml`,
+      `backlog_file_rejects_yaml_without_schema_version`. `yaml_io.rs` carries
+      `write_then_read_round_trips_entry_fields`,
+      `write_emits_block_scalar_for_multi_line_rationale`,
+      `read_errors_on_schema_version_mismatch`. `verbs.rs` carries
+      `run_set_status_rejects_illegal_transition` (Done → Active) and
+      `run_set_status_self_transition_is_a_noop`. ✅
+    - **`schema_version: 1` hard-fail guard** — `read_backlog`
+      (yaml_io.rs:30–37) bails with a clear error on any value ≠ 1. ✅
+    - **Dogfood: `LLM_STATE/core/backlog.yaml` migrated** — *intentionally
+      deferred*. See "What didn't" below.
+
+    ### What worked
+
+    All `cargo test` suites pass (19 test result lines, 0 failures across
+    unit + integration). The typed-transition test in
+    `run_set_status_rejects_illegal_transition` exercises the full
+    CLI → schema → store → transition-table path, so the contract is
+    validated end to end.
+
+    ### What didn't (and why)
+
+    The on-disk `LLM_STATE/core/backlog.yaml` is *not* in TMS shape on `main`.
+    Commit `7a37e50` ("Migrate backlog.yaml to TMS item shape with typed
+    status enum") migrated both the source code *and* the dogfood file.
+    Subsequent commit `65a794e` ("Add architecture-next backlog entries and
+    compact memory") rolled the file back to the legacy `tasks: [...]` shape
+    with `title:`/`description:` fields. Reason: the deployed binary
+    (`ravel-lite 1.0.2`, built 2026-04-27, predates the migrate commit) reads
+    only the legacy shape; replacing the file in-place breaks every running
+    phase. This is the constraint captured in distilled memory
+    ("LLM_STATE shape frozen until v1→v2 migrator exists, three hard
+    constraints"): source can evolve, but deploy is gated on the migrator
+    landing first.
+
+    The task brief's wording ("Migrate `LLM_STATE/core/backlog.yaml` as the
+    dogfood validation case") was authored before the freeze constraint was
+    articulated. It is no longer actionable in isolation; the file-level
+    cutover is owned by the `migrate-ravel-lite-migrate-for-v1-to-v2-cutover`
+    task, which is explicitly the place where the binary upgrade and the
+    state-file translation happen together.
+
+    ### Suggests next
+
+    - The migrator task can now treat the TMS-shaped backlog as a *finished
+      target* rather than a moving one. Migrator implementation needs to
+      walk the legacy `tasks: [...]` records and emit the new
+      `BacklogEntry { item: Item { id, kind, claim, justifications, status,
+      ... }, category, dependencies, results, handoff, blocked_reason }`
+      shape. Field map:
+      - `title` → `item.claim`
+      - `description` → `item.justifications[0]` as `Justification::Rationale { text }`
+      - `dependencies` → entry-level `dependencies` (extension), unchanged
+      - `category, results, handoff, blocked_reason` → entry-level extensions, unchanged
+      - new fields to synthesise: `kind = KindMarker::new()`,
+        `supersedes = []`, `superseded_by = None`, `defeated_by = None`,
+        `authored_at = "<file-mtime or now>"`, `authored_in = "v1-migration"`
+      - top-level: `tasks: [...]` → `schema_version: 1\nitems: [...]`
+    - The same v1→v2 cutover applies to `memory.yaml` (already migrated in
+      source per `serde-flatten per-kind wrapper is the confirmed TMS
+      migration pattern` memory; deploy gated on the same migrator).
+    - Reflect can now safely reference `BacklogStatus` and the typed
+      `transitions()` table — its task ("Reflect: bounded TMS plus
+      intent-trajectory check") no longer has to negotiate two schemas.
+    - No new memory entries needed: the existing entries
+      ("backlog.yaml entries are BacklogEntry wrapping Item<BacklogItemKind>",
+      "BacklogStatus has 5 states; in_progress eliminated",
+      "Serde-flatten per-kind wrapper is the confirmed TMS migration pattern",
+      "LLM_STATE shape frozen until v1→v2 migrator exists") already capture
+      the durable knowledge.
 - id: introduce-intents-yaml-and-state-intents-crud-verbs
   title: Introduce intents.yaml and state intents CRUD verbs
   category: architecture-next
