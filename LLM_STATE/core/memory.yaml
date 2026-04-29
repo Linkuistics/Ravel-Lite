@@ -794,6 +794,14 @@ entries:
 
     No action needed now; this is an advisory note so the design question doesn't have to be re-derived from first principles.
 - id: no-ci-clippy-gate-lint-errors-accumulate-silently
-  title: No CI clippy gate; lint errors accumulate silently
+  title: scripts/check.sh gates clippy; CI and git hook are not wired
   body: |
-    `cargo clippy --all-targets -- -D warnings` is not wired into CI, git hooks, or `scripts/check.sh`. Pre-existing errors can accumulate undetected between sessions. A one-line addition to any of these three enforcement points would catch regressions at write time.
+    scripts/check.sh runs clippy workspace-wide with -D warnings. Git pre-push hook recipe is documented in the script header but not installed — opt-in by design. CI has no clippy gate; drift between sessions is possible if check.sh is not run manually.
+- id: atlas-cli-routes-via-dispatch-atlas-in-src-atlas-rs
+  title: Atlas CLI routes via dispatch_atlas in src/atlas.rs
+  body: |
+    `src/atlas.rs` implements `dispatch_atlas`; `src/main.rs` routes `Commands::Atlas` to it via `AtlasCommands` enum. `atlas-index` is a workspace path dep in `Cargo.toml`. Two verbs delivered: `atlas list-repos` (delegates to `repos::run_list`) and `atlas freshness [--require-fresh]` with four status outcomes: `fresh`, `missing`, `no_local_path`, `unparseable`. Seven unit tests in `src/atlas.rs`.
+- id: catalog-projects-token-is-not-in-phase-prompts-strip-task-is-no-op
+  title: CATALOG_PROJECTS token is not in phase prompts; strip task is no-op
+  body: |
+    `defaults/phases/*.md` contains no `{{CATALOG_PROJECTS}}` token; grepping returns zero hits. The token lives only in `src/discover/stage1.rs` for repos-list scoping. "Strip atlas catalog from prompts" is a no-op task — triage should drop it.
