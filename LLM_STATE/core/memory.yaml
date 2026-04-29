@@ -6,7 +6,23 @@ entries:
 - id: serde-flatten-per-kind-wrapper-is-the-confirmed-tms-migration-pattern
   title: Serde-flatten per-kind wrapper is the confirmed TMS migration pattern
   body: |
-    The confirmed TMS migration pattern for per-kind schema wrappers is: a per-kind struct (e.g. `MemoryEntry`) that wraps `Item<K>` via `#[serde(flatten)]` and carries kind-specific extension fields as typed struct fields (e.g. `attribution: Option<String>`). This keeps typing tight, round-trips extension data cleanly, and avoids the untyped `extensions: IndexMap<String, Value>` alternative at the substrate layer — which was explicitly rejected because it adds untyped storage at the wrong layer. The `KindMarker<K>` discriminator gives type-level wire-kind verification so a YAML labelled with the wrong `kind:` cannot deserialise as the wrong type. Applied in `src/state/memory/schema.rs`; backlog and intents migrations should follow the same pattern.
+    The confirmed TMS migration pattern for per-kind schema wrappers is: a per-kind struct (e.g. `BacklogEntry`, `MemoryEntry`) that wraps `Item<K>` via `#[serde(flatten)]` and carries kind-specific extension fields as typed struct fields. This keeps typing tight, round-trips extension data cleanly, and avoids the untyped `extensions: IndexMap<String, Value>` alternative. The `KindMarker<K>` discriminator gives type-level wire-kind verification so a YAML labelled with the wrong `kind:` cannot deserialise as the wrong type. Applied in `src/state/memory/schema.rs` and `src/state/backlog/schema.rs`. Intents migration pending.
+- id: backlog-yaml-entries-are-backlogentry-wrapping-item-backlogitemkind
+  title: backlog.yaml entries are BacklogEntry wrapping Item<BacklogItemKind>
+  body: |
+    `BacklogEntry` in `src/state/backlog/schema.rs` wraps `Item<BacklogItemKind>` via `#[serde(flatten)]`. Extension fields: `category`, `dependencies`, `results`, `handoff`, `blocked_reason`. `description` moved into `item.justifications[0]` as `Rationale`. `schema_version: 1` guard in `yaml_io::read_backlog` hard-fails on mismatch. `create.rs` scaffold seeds `schema_version: 1\nitems: []\n`. Mirrors `MemoryEntry`; see: `serde-flatten per-kind wrapper is the confirmed TMS migration pattern`.
+- id: backlogstatus-has-5-states-in-progress-eliminated
+  title: BacklogStatus has 5 states; in_progress eliminated
+  body: |
+    `BacklogStatus` enum in `crates/knowledge-graph/src/plan_kg.rs`: `active`, `done`, `blocked`, `defeated`, `superseded`. `in_progress` is eliminated; `active` covers both "not yet started" and "work staged but not flipped done". `parse_md.rs` maps legacy `not_started` → `active` and `in_progress` → `active` at migration time. `BacklogStatus::transitions()` defines the allowed-move table.
+- id: rationale-text-collects-all-rationale-bodies-for-prose-scan
+  title: rationale_text() collects all Rationale bodies for prose scan
+  body: |
+    `rationale_text()` on a `BacklogEntry` (or any TMS item wrapper) collects all `Justification::Rationale` bodies into a single string. The idiomatic pattern for prose scanning — `lint_dependencies.rs` uses it to scan task prose for dependency id mentions. Do not iterate `justifications` directly.
+- id: run-set-status-transition-guard-not-yet-wired-through-store
+  title: run_set_status transition guard not yet wired through Store
+  body: |
+    `BacklogStatus` serialises as a plain YAML string at write time; `Store<BacklogItemKind>::set_status` transition validation is not enforced at the CLI boundary. Illegal status moves (e.g., `done → active`) do not fail loudly. Next step: wire `run_set_status` in `verbs.rs` through `Store<BacklogItemKind>` so `BacklogStatus::transitions()` is consulted before every write.
 schema_version: 1
 items:
 - id: all-prompt-loading-routes-through-substitute-tokens
@@ -635,7 +651,7 @@ items:
   justifications:
   - kind: rationale
     text: |
-      `TaskCounts { total, not_started, in_progress, done, blocked }` lives in `state::backlog::schema`. `collect_task_counts` gathers per-plan counts; `inject_task_counts` in `survey/schema.rs` writes them onto `PlanRow`. Survey prompts (`survey.md`, `survey-incremental.md`) explicitly forbid the LLM from emitting `task_counts`. See: `PlanRowCounts injects unblocked/blocked/received into survey` for the analogous dep-traversal-based injection.
+      `TaskCounts` lives in `state::backlog::schema`; fields reflect the `BacklogStatus` vocabulary (`active`, `done`, `blocked`, `defeated`, `superseded`). `collect_task_counts` gathers per-plan counts; `inject_task_counts` in `survey/schema.rs` writes them onto `PlanRow`. Survey prompts (`survey.md`, `survey-incremental.md`) explicitly forbid the LLM from emitting `task_counts`. See: `PlanRowCounts injects unblocked/blocked/received into survey` for the analogous dep-traversal-based injection.
   status: active
   authored_at: legacy
   authored_in: legacy
@@ -1125,7 +1141,7 @@ items:
   justifications:
   - kind: rationale
     text: |
-      `src/state/backlog/repair_stale_statuses.rs` exposes `analyse_repairs` and `run_repair_stale_statuses`; types `Repair`, `RepairReport`, `RepairReason`. Flips stale in-progress/blocked statuses. Exit 1 when repairs apply, 0 when no drift.
+      `src/state/backlog/repair_stale_statuses.rs` exposes `analyse_repairs` and `run_repair_stale_statuses`; types `Repair`, `RepairReport`, `RepairReason`. Single repair: flips `blocked → active` when all task dependencies are `done`. `ResultsNonEmpty` repair removed (inapplicable without `in_progress`). Exit 1 when repairs apply, 0 when no drift.
   status: active
   authored_at: legacy
   authored_in: legacy
@@ -1225,7 +1241,7 @@ items:
   justifications:
   - kind: rationale
     text: |
-      `PlanRow.blocked` (computed by `plan_row_counts()`) counts tasks with `status=blocked` OR `status=not_started` with at least one unmet dependency. Matches the `blocked` column key in `src/survey/render.rs:20`. Narrow `status==blocked`-only definitions undercount. See: `PlanRowCounts injects unblocked/blocked/received into survey`.
+      `PlanRow.blocked` (computed by `plan_row_counts()`) counts tasks with `status=blocked` OR `status=active` with at least one unmet dependency. Matches the `blocked` column key in `src/survey/render.rs:20`. Narrow `status==blocked`-only definitions undercount. See: `PlanRowCounts injects unblocked/blocked/received into survey`.
   status: active
   authored_at: legacy
   authored_in: legacy
@@ -1762,16 +1778,6 @@ items:
   - kind: rationale
     text: |
       `state projects <subcommand>` is retained as a clap `Vec<String>` catch-all that unconditionally returns `migrate_projects_yaml_error()`. No functional path survives from the old `projects.yaml` CLI. Any code or test that invokes `state projects add|remove|list|rename` receives this error.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: resolves-working-tree-from-repos-or-cache
-  kind: memory-entry
-  claim: ' resolves working tree from repos or cache'
-  justifications:
-  - kind: rationale
-    text: |
-      `discover::DiscoverTarget { slug, working_tree }` and `working_tree_for` in `discover/mod.rs` resolve a repo's on-disk path: `entry.local_path` when present, otherwise `<context>/.cache/repos/<slug>/` (the architecture-next cache fallback). All discover consumers use this abstraction; direct `RepoEntry` path access is not used in discover paths.
   status: active
   authored_at: legacy
   authored_in: legacy
