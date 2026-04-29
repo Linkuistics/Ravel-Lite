@@ -2,11 +2,11 @@ entries:
 - id: phase-prompt-label-drift-after-memory-yaml-migration
   title: Phase prompt label drift after memory.yaml migration
   body: |
-    After the memory.yaml migration to TMS item shape, `state memory list` output now renders `claim:` and `justifications:` field names instead of the old `title:` and `body:`. Phase prompts that reference old field label names in their prose are stale but continue to function (the phase-loop itself doesn't parse these labels; only the LLM reads them). Low-priority follow-up: scan phase prompt prose for `title:`/`body:` references and update to `claim:`/`justifications:` for coherence.
+    `state memory list` renders `claim:` and `justifications:` field names. Phase prompts referencing `title:`/`body:` are stale but still function — the phase-loop does not parse these labels, only the LLM reads them. Low-priority: scan phase prompt prose for `title:`/`body:` references and update to `claim:`/`justifications:`.
 - id: serde-flatten-per-kind-wrapper-is-the-confirmed-tms-migration-pattern
   title: Serde-flatten per-kind wrapper is the confirmed TMS migration pattern
   body: |
-    The confirmed TMS migration pattern for per-kind schema wrappers is: a per-kind struct (e.g. `BacklogEntry`, `MemoryEntry`) that wraps `Item<K>` via `#[serde(flatten)]` and carries kind-specific extension fields as typed struct fields. This keeps typing tight, round-trips extension data cleanly, and avoids the untyped `extensions: IndexMap<String, Value>` alternative. The `KindMarker<K>` discriminator gives type-level wire-kind verification so a YAML labelled with the wrong `kind:` cannot deserialise as the wrong type. Applied in `src/state/memory/schema.rs` and `src/state/backlog/schema.rs`. Intents migration pending.
+    Per-kind schema wrappers use a per-kind struct (e.g. `BacklogEntry`, `MemoryEntry`) wrapping `Item<K>` via `#[serde(flatten)]`, with kind-specific extension fields as typed struct fields. `KindMarker<K>` gives type-level wire-kind verification: YAML labelled with the wrong `kind:` cannot deserialise as the wrong type. Applied in `src/state/memory/schema.rs` and `src/state/backlog/schema.rs`; intents migration pending.
 - id: backlog-yaml-entries-are-backlogentry-wrapping-item-backlogitemkind
   title: backlog.yaml entries are BacklogEntry wrapping Item<BacklogItemKind>
   body: |
@@ -174,7 +174,7 @@ entries:
 - id: handoff-integration-tests-guard-promote-vs-archive-cycle
   title: '`[HANDOFF]` integration tests guard promote-vs-archive cycle'
   body: |
-    `handoff_marker_in_analyse_work_is_promoted_by_triage` and `handoff_marker_in_analyse_work_is_archived_by_triage` in `tests/phase_loop.rs` run the full analyse-work → git-commit-work → reflect → git-commit-reflect → triage → git-commit-triage cycle. CI-protects the hand-off convention. See: `ContractMockAgent has opt-in handoff injection`.
+    `handoff_marker_in_analyse_work_is_promoted_by_triage` and `handoff_marker_in_analyse_work_is_archived_by_triage` in `tests/phase_loop.rs` run the full analyse-work → git-commit-work → reflect → git-commit-reflect → triage → git-commit-triage cycle. See: `ContractMockAgent has opt-in handoff injection`.
 - id: contractmockagent-has-opt-in-handoff-injection
   title: '`ContractMockAgent` has opt-in handoff injection'
   body: |
@@ -330,7 +330,7 @@ entries:
 - id: rename-cascade-registry-design-consideration
   title: '''repo rename'' needs RenameHook registry before third cascade'
   body: |
-    `rename_component_in_edges` in `src/related_components.rs` is implemented but unused — its only caller (`projects::run_rename`) was deleted with `src/projects.rs`. Reserved for future repo-rename. When implementing repo-rename in `src/repos.rs`, wire `rename_component_in_edges` first; before the cascade reaches three points, extract a `RenameHook` trait registry rather than threading in ad-hoc.
+    `rename_component_in_edges` in `src/related_components.rs` is implemented but unused; its only caller (`projects::run_rename`) was deleted with `src/projects.rs`. Wire it for repo-rename in `src/repos.rs`; before the cascade reaches three points, extract a `RenameHook` trait registry rather than threading in ad-hoc.
 - id: find-conflicting-kind-misses-parent-of-direction-reversals
   title: '`find_directional_conflict` requires same-lifecycle for reversed-pair conflicts'
   body: |
@@ -370,7 +370,7 @@ entries:
 - id: opportunistic-discover-on-catalog-changes-deferred-idea
   title: Opportunistic discover on catalog changes is a deferred idea
   body: |
-    Analyse-work or triage could run `discover` opportunistically when project composition changes (new projects added, catalog membership shifts), keeping `related-projects.yaml` fresher without manual invocation. Ontology v2 design is complete; trigger conditions are not yet defined.
+    Analyse-work or triage could run `discover` opportunistically on catalog membership changes, keeping `related-projects.yaml` fresher without manual invocation. Deferred: trigger conditions not yet defined.
 - id: proposalsfile-source-project-states-stores-full-projectstate
   title: ProposalsFile.source_project_states stores full ProjectState
   body: |
@@ -564,7 +564,7 @@ entries:
 - id: state-filename-constants-live-in-src-state-filenames-rs
   title: State filename constants live in src/state/filenames.rs
   body: |
-    Nine `pub const` items: `BACKLOG_FILENAME`, `MEMORY_FILENAME`, `SESSION_LOG_FILENAME`, `LATEST_SESSION_FILENAME`, `SUBAGENT_DISPATCH_FILENAME`, `COMMITS_FILENAME`, `PHASE_FILENAME`, `RELATED_COMPONENTS_FILENAME`, `DREAM_WORD_COUNT_FILENAME`. All literal string occurrences across `src/state/`, `src/dream.rs`, `src/subagent.rs`, `src/format.rs`, `src/create.rs`, `src/phase_loop.rs`, `src/main.rs`, `src/multi_plan.rs`, `src/git.rs`, `src/state/phase.rs`, and `src/survey/discover.rs` use these constants. `PHASE_HIGHLIGHTS` regexes use `filename_suffix_regex(CONSTANT)` (wraps `regex::escape`) so a constant rename cascades into highlight detection automatically.
+    Nine `pub const` items in `src/state/filenames.rs`: `BACKLOG_FILENAME`, `MEMORY_FILENAME`, `SESSION_LOG_FILENAME`, `LATEST_SESSION_FILENAME`, `SUBAGENT_DISPATCH_FILENAME`, `COMMITS_FILENAME`, `PHASE_FILENAME`, `RELATED_COMPONENTS_FILENAME`, `DREAM_WORD_COUNT_FILENAME`. All state filename string literals across `src/` use these constants — do not introduce raw string literals. `PHASE_HIGHLIGHTS` regexes use `filename_suffix_regex(CONSTANT)` (wraps `regex::escape`) so a constant rename cascades into highlight detection automatically.
 - id: defaults-md-prompt-files-keep-literal-filenames-by-design
   title: defaults/*.md prompt files keep literal filenames by design
   body: |
@@ -576,7 +576,7 @@ entries:
 - id: capture-scripts-template-documentation-with-real-system-runs
   title: Capture scripts template documentation with real system runs
   body: |
-    `scripts/capture/ravel-lite-tutorial.sh` drives a TestAnyware macOS VM: installs via Homebrew, runs the tutorial scenario, takes screenshots, pulls the resulting `LLM_STATE` tree. Structured into named sections with `[STEP-NAME]` log markers. VM identity uses deterministic `VM_ID` passed to `vm start --id`; reused via `--vm` throughout. All testanyware subcommands validated against `--help` output; `bash -n` passes. Chapter 01-02 have 11 named `transcript_at` captures. Chapter 03 (`ravel-lite create`) uses hybrid capture: screenshot-per-prompt for the volatile four-question scope conversation, `transcript_at` for the deterministic post-create state; live VM run complete. Chapter 03 interactive flow uses `install_claude_code`, `transfer_claude_auth`, `pretrust_project`, and `setup_shell_env` harness functions. Chapter 04 `scenario_run` drives `ravel-lite run`, polls every 10s (up to ~20 min), captures mid-cycle screenshots every 60s, and pulls six deterministic post-cycle transcripts; live VM run complete, transcripts folded into chapters 04 and 05. `--from <step>`, `--vm-id <id>`, and `--keep-vm` flags enable resumable partial runs; `maybe_run <step> <fn>` gates each chapter via a STARTED sentinel. `--from` beyond `chapter01` requires `--vm-id` (prerequisite VM state absent on a fresh VM). See: `Hybrid capture splits screenshot vs transcript_at by content stability`.
+    `scripts/capture/ravel-lite-tutorial.sh` drives a TestAnyware macOS VM: installs via Homebrew, runs the tutorial, takes screenshots, pulls `LLM_STATE` transcripts. Sections use `[STEP-NAME]` log markers; VM identity via deterministic `VM_ID` (`vm start --id`). `--from <step>`, `--vm-id <id>`, and `--keep-vm` flags enable resumable partial runs; `maybe_run <step> <fn>` gates each chapter via a STARTED sentinel. `--from` beyond `chapter01` requires `--vm-id`. Chapter 03 interactive flow uses `install_claude_code`, `transfer_claude_auth`, `pretrust_project`, and `setup_shell_env`. Chapter 04 `scenario_run` drives `ravel-lite run` and captures mid-cycle screenshots. See: `Hybrid capture splits screenshot vs transcript_at by content stability`.
 - id: after-help-const-avoids-dead-code-warnings-no-intermediate-url-consts
   title: after_help const avoids dead-code warnings; no intermediate URL consts
   body: |
@@ -636,7 +636,7 @@ entries:
 - id: doc-publish-pipeline-reads-website-via-git-archive
   title: Doc publish pipeline reads `website/` via git archive
   body: |
-    Doc publish pipeline reads `website/` via git archive; `projects/ravel-lite.html` and `SYNC.yml` do not exist in the current pipeline (post-2026-04-26). No intermediate artifact files are needed; the pipeline consumes the `website/` subtree directly.
+    Doc publish pipeline reads `website/` via git archive. `projects/ravel-lite.html` and `SYNC.yml` do not exist in the current pipeline; no intermediate artifact files are needed. The pipeline consumes the `website/` subtree directly.
 - id: transcript-at-captures-per-command-stdout-stderr-for-asciidoc
   title: transcript_at captures per-command stdout+stderr for AsciiDoc
   body: |
@@ -664,11 +664,7 @@ entries:
 - id: testanyware-download-cannot-pull-a-directory-use-per-file-exec-workaround
   title: testanyware download cannot pull a directory; use per-file exec workaround
   body: |
-    `capture_state` in `scripts/capture/ravel-lite-tutorial.sh` uses `testanyware download` on the `LLM_STATE/` directory, which fails with `Error: Agent HTTP 400: Download failed: The file "LLM_STATE" couldn't be opened.` — testanyware download cannot pull a directory.
-
-    Workaround used: capture individual transcripts via headless `testanyware exec` calls; this covers everything the tutorial prose needs.
-
-    Full fix options: (a) recursive walk + per-file download; (b) tar roundtrip (`testanyware exec -- tar czf /tmp/llm_state.tar.gz LLM_STATE && testanyware download /tmp/llm_state.tar.gz`). Low priority because the per-file exec workaround is sufficient for prose-fold tasks.
+    `testanyware download` cannot pull a directory (`LLM_STATE/`); fails with HTTP 400. Workaround: capture individual transcripts via `testanyware exec`. Full-directory options: (a) recursive walk + per-file download; (b) tar roundtrip (`testanyware exec -- tar czf /tmp/llm_state.tar.gz LLM_STATE && testanyware download /tmp/llm_state.tar.gz`). Low priority: per-file exec covers prose-fold tasks.
 - id: capture-chapter-transitions-use-exit-sentinel-echo-before-next-chapter
   title: Capture chapter transitions use /exit + sentinel echo before next chapter
   body: |
@@ -732,7 +728,7 @@ entries:
 - id: src-ontology-removed-import-from-component-ontology-crate
   title: '`src/ontology/` removed; import from `component_ontology` crate'
   body: |
-    All five files under `src/ontology/` (~1,300 lines) were deleted. Import sites across `src/discover/`, `src/state/`, `src/related_components.rs`, `src/projects.rs`, and `src/main.rs` now use `component_ontology`. The crate is owned by Atlas (`atlas-contracts` workspace). `defaults/ontology.yaml` was deleted; `ontology.yaml` added to `RETIRED_PATHS` in `src/init.rs` so existing config dirs are swept clean on next `ravel-lite init`.
+    `src/ontology/` is removed; import from the `component_ontology` crate (`atlas-contracts` workspace). `ontology.yaml` is in `RETIRED_PATHS` in `src/init.rs` — existing config dirs are swept clean on next `ravel-lite init`.
 - id: state-projects-is-a-migration-error-alias
   title: '''state projects'' is a migration-error alias'
   body: |
