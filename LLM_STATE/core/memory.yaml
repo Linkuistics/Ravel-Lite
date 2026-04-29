@@ -239,22 +239,6 @@ entries:
   title: '`state::memory` parses `^## ` headings; empty body is an error'
   body: |
     `parse_md.rs` in `state::memory` splits on `^## ` (not `### ` as backlog uses). An entry with an empty body after the heading is a parse error, not silently skipped. See: `split_into_task_blocks splits on ### headings`.
-- id: src-projects-rs-holds-projectscatalog
-  title: '`src/projects.rs` holds `ProjectsCatalog`'
-  body: |
-    `ProjectsCatalog` (schema_version 1) maps project names to absolute in-memory paths; on disk, paths are relative via `RawProjectsCatalog`/`RawProjectEntry` (resolved on load, relativised on save). `auto_add` is pure and returns `AlreadyCatalogued`/`Added`/`NameCollision`. `ensure_in_catalog_interactive` is generic over `Read + Write`. Saves are atomic. See: `projects.yaml DTO layer separates serde from in-memory shape`.
-- id: state-projects-add-rejects-relative-paths
-  title: '`state projects add` resolves relative paths to absolute'
-  body: |
-    `state projects add` resolves relative paths against the caller's CWD via `std::path::absolute`; stores the absolute form. No filesystem access required.
-- id: state-projects-rename-cascades-into-related-projects-yaml
-  title: '`state projects rename` cascades into `related-components.yaml`'
-  body: |
-    `rename` updates the catalog name and cascades via `rename_component_in_edges` in `src/related_components.rs`.
-- id: register-projects-from-plan-dirs-runs-before-tui-startup
-  title: '`register_projects_from_plan_dirs` runs before TUI startup'
-  body: |
-    Called in `Commands::Run` before Ratatui alternate-screen takeover so any `NameCollision` prompt reaches a real tty.
 - id: src-state-module-structure
   title: '`src/state/` uses module-per-area layout'
   body: |
@@ -291,10 +275,6 @@ entries:
   title: std::path::absolute does pure path math anchored to CWD
   body: |
     `std::path::absolute` performs pure path math anchored to the process CWD without touching the filesystem or resolving symlinks; use when recording a user-stated path without requiring the directory to exist.
-- id: projects-add-name-optional-defaults-to-basename
-  title: projects add --name optional; defaults to basename
-  body: |
-    `projects add --name` is optional; omitting it defaults the catalog name to the directory basename via `basename_as_name`. `basename_as_name` is a shared helper called by both `auto_add` and `run_add`.
 - id: src-discover-schema-surfacefile-and-surfacerecord-r7-1
   title: '`SurfaceFile` and `SurfaceRecord` schema in `src/discover/`'
   body: |
@@ -316,9 +296,9 @@ entries:
   body: |
     Each stage in `src/discover/` exposes `run_<stage>`, `<Stage>Config`, and `<Stage>Outcome`. Internal shape: `Config` → `pub async run` fn → helper `spawn` fn → unit tests. Stages mirror each other; reuse this template for new stages.
 - id: rename-cascade-registry-design-consideration
-  title: '`run_rename` needs a Trait registry before fourth cascade'
+  title: '''repo rename'' needs RenameHook registry before third cascade'
   body: |
-    `run_rename` in `src/projects.rs` cascades into three places: catalog, `related-components.yaml`, and `<config-dir>/discover-cache/<name>.yaml`. Before adding a fourth cascade point, extract into a `RenameHook` Trait registry rather than threading in ad-hoc.
+    `rename_component_in_edges` in `src/related_components.rs` is implemented but unused — its only caller (`projects::run_rename`) was deleted with `src/projects.rs`. Reserved for future repo-rename. When implementing repo-rename in `src/repos.rs`, wire `rename_component_in_edges` first; before the cascade reaches three points, extract a `RenameHook` trait registry rather than threading in ad-hoc.
 - id: find-conflicting-kind-misses-parent-of-direction-reversals
   title: '`find_directional_conflict` requires same-lifecycle for reversed-pair conflicts'
   body: |
@@ -447,14 +427,6 @@ entries:
   title: '`compose_prompt_asserts_plan_only_output_invariant` guards the create INVARIANT'
   body: |
     `compose_prompt_asserts_plan_only_output_invariant` in `src/create.rs` tests asserts both key phrases are present in the composed prompt. Guards the INVARIANT binding against drift. See: `create` spawn binds purpose via INVARIANT in prompt and template.
-- id: projects-yaml-dto-layer-separates-serde-from-in-memory-shape
-  title: projects.yaml DTO layer separates serde from in-memory shape
-  body: |
-    `RawProjectsCatalog`/`RawProjectEntry` handle serde; rich in-memory `ProjectsCatalog`/`ProjectEntry` own logic without derive macros. Load-time resolves relative disk paths to absolute; save-time relativises back via `pathdiff::diff_paths` + `PathClean`. Reuse this pattern for any catalog struct needing on-disk/in-memory shape divergence.
-- id: projects-yaml-migrates-silently-to-relative-paths-on-first-save
-  title: projects.yaml migrates silently to relative paths on first save
-  body: |
-    Pre-existing all-absolute `projects.yaml` files load without error and are rewritten to relative form on the next mutating command. No explicit migration step needed; users with git-shared catalogs benefit automatically.
 - id: bash-var-pat-repl-treats-in-replacement-as-matched-text
   title: Bash ${var//pat/repl} treats & in replacement as matched text
   body: |
@@ -729,3 +701,23 @@ entries:
   title: '`src/ontology/` removed; import from `component_ontology` crate'
   body: |
     All five files under `src/ontology/` (~1,300 lines) were deleted. Import sites across `src/discover/`, `src/state/`, `src/related_components.rs`, `src/projects.rs`, and `src/main.rs` now use `component_ontology`. The crate is owned by Atlas (`atlas-contracts` workspace). `defaults/ontology.yaml` was deleted; `ontology.yaml` added to `RETIRED_PATHS` in `src/init.rs` so existing config dirs are swept clean on next `ravel-lite init`.
+- id: state-projects-is-a-migration-error-alias
+  title: '''state projects'' is a migration-error alias'
+  body: |
+    `state projects <subcommand>` is retained as a clap `Vec<String>` catch-all that unconditionally returns `migrate_projects_yaml_error()`. No functional path survives from the old `projects.yaml` CLI. Any code or test that invokes `state projects add|remove|list|rename` receives this error.
+- id: resolves-working-tree-from-repos-or-cache
+  title: ' resolves working tree from repos or cache'
+  body: |
+    `discover::DiscoverTarget { slug, working_tree }` and `working_tree_for` in `discover/mod.rs` resolve a repo's on-disk path: `entry.local_path` when present, otherwise `<context>/.cache/repos/<slug>/` (the architecture-next cache fallback). All discover consumers use this abstraction; direct `RepoEntry` path access is not used in discover paths.
+- id: discovertarget-resolves-working-tree-from-repos-or-cache
+  title: DiscoverTarget resolves working tree from repos or cache
+  body: |
+    `discover::DiscoverTarget { slug, working_tree }` and `working_tree_for` in `discover/mod.rs` resolve a repo's on-disk path: `entry.local_path` when present, otherwise `<context>/.cache/repos/<slug>/` (the architecture-next cache fallback). All discover consumers use this abstraction; direct `RepoEntry` path access is not used in discover paths.
+- id: tutorial-docs-stale-for-repos-yaml-needs-vm-capture-re-run
+  title: Tutorial docs stale for repos.yaml; needs VM capture re-run
+  body: |
+    `docs/tutorial/`, `docs/reference/`, and `docs/captures/` still reference retired `state projects` verbs. Updating requires re-running `scripts/capture/ravel-lite-tutorial.sh` against a TestAnyware VM. Tracked as backlog task `tutorial-update-for-repos-yaml-cutover`.
+- id: repos-yaml-requires-clone-url-auto-add-is-retired
+  title: repos.yaml requires clone URL; auto-add is retired
+  body: |
+    `ensure_in_catalog_interactive` and `register_projects_from_plan_dirs` were removed from `main.rs`. Interactive auto-add is not viable for `repos.yaml` because a clone URL is required on entry. Users must invoke `ravel-lite repo add <slug> <url>` explicitly.
