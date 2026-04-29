@@ -371,7 +371,7 @@ enum BacklogCommands {
         status: Option<String>,
         #[arg(long)]
         category: Option<String>,
-        /// Shorthand for `status=not_started AND every dep is done`.
+        /// Shorthand for `status=active AND every dep is done`.
         #[arg(long)]
         ready: bool,
         /// Match tasks that carry a hand-off block.
@@ -497,9 +497,8 @@ enum BacklogCommands {
         #[arg(long, default_value = "yaml")]
         format: String,
     },
-    /// Repair stale task statuses: flip `in_progress` tasks with
-    /// non-empty `results` to `done`, and flip `blocked` tasks whose
-    /// structural dependencies are all `done` back to `not_started`.
+    /// Repair stale task statuses: flip `blocked` tasks whose
+    /// structural dependencies are all `done` back to `active`.
     /// Emits a report and (unless `--dry-run`) writes the repaired
     /// backlog. Exit code: 0 if no repairs applied, 1 if any repairs
     /// applied (scripting signal).
@@ -1030,7 +1029,9 @@ async fn dispatch_related_components(command: RelatedComponentsCommands) -> Resu
 }
 
 fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
-    use ravel_lite::state::backlog::{self, GroupBy, ListFilter, ReorderPosition, Status};
+    use knowledge_graph::ItemStatus;
+    use ravel_lite::plan_kg::BacklogStatus;
+    use ravel_lite::state::backlog::{self, GroupBy, ListFilter, ReorderPosition};
 
     match command {
         BacklogCommands::List {
@@ -1046,9 +1047,9 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
             let status = status
                 .as_deref()
                 .map(|s| {
-                    Status::parse(s).ok_or_else(|| {
+                    BacklogStatus::parse(s).ok_or_else(|| {
                         anyhow::anyhow!(
-                            "invalid --status value {s:?}; expected one of not_started, in_progress, done, blocked"
+                            "invalid --status value {s:?}; expected one of active, done, blocked, defeated, superseded"
                         )
                     })
                 })
@@ -1102,8 +1103,11 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
             status,
             reason,
         } => {
-            let status = Status::parse(&status)
-                .ok_or_else(|| anyhow::anyhow!("invalid status {status:?}"))?;
+            let status = BacklogStatus::parse(&status).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "invalid status {status:?}; expected one of active, done, blocked, defeated, superseded"
+                )
+            })?;
             backlog::run_set_status(&plan_dir, &id, status, reason.as_deref())
         }
         BacklogCommands::SetResults { plan_dir, id, body_file, body } => {

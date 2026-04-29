@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use ravel_lite::agent::Agent;
-use ravel_lite::plan_kg::MemoryStatus;
-use ravel_lite::state::backlog::schema::{BacklogFile, Status, Task};
+use ravel_lite::plan_kg::{BacklogStatus, MemoryStatus};
+use ravel_lite::state::backlog::schema::{BacklogEntry, BacklogFile, BACKLOG_SCHEMA_VERSION};
 use ravel_lite::state::backlog::write_backlog;
 use ravel_lite::state::memory::schema::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
 use ravel_lite::state::memory::write_memory;
@@ -48,23 +48,33 @@ pub fn write_memory_yaml_with_word_count(plan: &Path, target_words: usize) {
     write_memory(plan, &memory).unwrap();
 }
 
-/// Seed `backlog.yaml` with a single task whose title embeds `marker`.
+/// Seed `backlog.yaml` with a single item whose claim embeds `marker`.
 /// The marker surfaces in the serialised YAML so tests can assert on
 /// rendered survey output.
 pub fn write_backlog_yaml_with_marker(plan: &Path, marker: &str) {
     let backlog = BacklogFile {
-        tasks: vec![Task {
-            id: "marker-task".into(),
-            title: marker.into(),
+        schema_version: BACKLOG_SCHEMA_VERSION,
+        items: vec![BacklogEntry {
+            item: Item {
+                id: "marker-task".into(),
+                kind: KindMarker::new(),
+                claim: marker.into(),
+                justifications: vec![Justification::Rationale {
+                    text: "Marker body.\n".into(),
+                }],
+                status: BacklogStatus::Active,
+                supersedes: vec![],
+                superseded_by: None,
+                defeated_by: None,
+                authored_at: "test".into(),
+                authored_in: "test".into(),
+            },
             category: "maintenance".into(),
-            status: Status::NotStarted,
             blocked_reason: None,
             dependencies: vec![],
-            description: "Marker body.\n".into(),
             results: None,
             handoff: None,
         }],
-        extra: Default::default(),
     };
     write_backlog(plan, &backlog).unwrap();
 }

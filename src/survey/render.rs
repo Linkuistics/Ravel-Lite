@@ -15,8 +15,8 @@ const WRAP_WIDTH: usize = 78;
 /// see it before the data.
 const PLAN_SUMMARY_KEY: &str = "\
 Task counts column: U/B/D/R  (`-` = zero)
-  U = unblocked  — not_started tasks with no unmet dependencies
-  B = blocked    — status=blocked or not_started with unmet deps
+  U = unblocked  — active tasks with no unmet dependencies
+  B = blocked    — status=blocked or active with unmet deps
   D = done       — status=done
   R = received   — tasks carrying a pending hand-off awaiting triage
 ";

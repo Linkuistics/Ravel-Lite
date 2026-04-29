@@ -1,20 +1,19 @@
-//! Detect and repair stale task statuses in a backlog.
+//! Detect and repair stale item statuses in a backlog.
 //!
-//! Two drift modes are repaired automatically — neither needs operator
-//! judgement, so every cycle spent re-asking the LLM to perform them is
-//! waste:
+//! One drift mode is repaired automatically — it does not need
+//! operator judgement, so every cycle spent re-asking the LLM to do it
+//! is waste:
 //!
-//! 1. `in_progress` + non-empty `results` → `done`. The work agent
-//!    recorded its work but forgot to flip the status; the results
-//!    field is authoritative.
-//! 2. `blocked` + every structural `dependencies` entry now `done` →
-//!    `not_started`. The blocker resolved; the task is unblocked.
+//! 1. `blocked` + every structural `dependencies` entry now `done` →
+//!    `active`. The blocker resolved; the item is unblocked.
 //!
-//! Other apparent drifts (notably `not_started` with a non-empty
-//! `results` field) are intentionally NOT repaired. A result on a task
-//! still marked `not_started` signals intent — a revert, an amended
-//! result, an operator-staged change — not forgetting. Silent flipping
-//! there would lose information.
+//! Other apparent drifts (notably `active` with a non-empty `results`
+//! field) are intentionally NOT repaired. Without an `in_progress`
+//! discriminator (gone with the TMS-shape migration), `active` covers
+//! both "not started" and "work staged but not yet flipped to done".
+//! A result on an active item could equally signal an
+//! operator-staged change, an amended record, or a forgotten flip —
+//! flipping silently would lose information in the first two cases.
 //!
 //! The scan is pure; `run_repair_stale_statuses` reads the backlog,
 //! applies the repairs in memory (unless `--dry-run`), writes the file
@@ -26,22 +25,23 @@ use std::path::Path;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use super::schema::{BacklogFile, Status, Task};
+use crate::plan_kg::BacklogStatus;
+
+use super::schema::{BacklogEntry, BacklogFile};
 use super::verbs::OutputFormat;
 use super::yaml_io::{read_backlog, write_backlog};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RepairReason {
-    ResultsNonEmpty,
     DependenciesSatisfied,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Repair {
     pub task_id: String,
-    pub old_status: Status,
-    pub new_status: Status,
+    pub old_status: BacklogStatus,
+    pub new_status: BacklogStatus,
     pub reason: RepairReason,
 }
 
@@ -55,54 +55,37 @@ pub struct RepairReport {
 /// tests can pin the semantics without tempdir setup.
 pub fn analyse_repairs(backlog: &BacklogFile) -> RepairReport {
     let done_ids: HashSet<&str> = backlog
-        .tasks
+        .items
         .iter()
-        .filter(|t| t.status == Status::Done)
-        .map(|t| t.id.as_str())
+        .filter(|e| e.item.status == BacklogStatus::Done)
+        .map(|e| e.item.id.as_str())
         .collect();
 
     let repairs = backlog
-        .tasks
+        .items
         .iter()
-        .filter_map(|task| detect_repair(task, &done_ids))
+        .filter_map(|entry| detect_repair(entry, &done_ids))
         .collect();
 
     RepairReport { repairs }
 }
 
-fn detect_repair(task: &Task, done_ids: &HashSet<&str>) -> Option<Repair> {
-    match task.status {
-        Status::InProgress if results_non_empty(task.results.as_deref()) => Some(Repair {
-            task_id: task.id.clone(),
-            old_status: Status::InProgress,
-            new_status: Status::Done,
-            reason: RepairReason::ResultsNonEmpty,
-        }),
-        Status::Blocked if dependencies_satisfied(&task.dependencies, done_ids) => Some(Repair {
-            task_id: task.id.clone(),
-            old_status: Status::Blocked,
-            new_status: Status::NotStarted,
+fn detect_repair(entry: &BacklogEntry, done_ids: &HashSet<&str>) -> Option<Repair> {
+    if entry.item.status == BacklogStatus::Blocked
+        && dependencies_satisfied(&entry.dependencies, done_ids)
+    {
+        Some(Repair {
+            task_id: entry.item.id.clone(),
+            old_status: BacklogStatus::Blocked,
+            new_status: BacklogStatus::Active,
             reason: RepairReason::DependenciesSatisfied,
-        }),
-        _ => None,
+        })
+    } else {
+        None
     }
 }
 
-/// Prose convention is that an empty or `_pending_` results body means
-/// "not yet complete". The typed YAML surface uses `Option<String>`,
-/// so `None` is one empty form; whitespace-only or the literal
-/// `_pending_` marker are the others.
-fn results_non_empty(results: Option<&str>) -> bool {
-    match results {
-        Some(body) => {
-            let trimmed = body.trim();
-            !trimmed.is_empty() && trimmed != "_pending_"
-        }
-        None => false,
-    }
-}
-
-/// A `blocked` task auto-unblocks only when it has at least one
+/// A `blocked` item auto-unblocks only when it has at least one
 /// structural dependency AND every one is `done`. With zero explicit
 /// dependencies the blocker is external (operator decision, upstream
 /// project, awaiting review) and must not silently resolve.
@@ -137,13 +120,13 @@ pub fn run_repair_stale_statuses(
 
 fn apply_repairs(backlog: &mut BacklogFile, report: &RepairReport) {
     for repair in &report.repairs {
-        if let Some(task) = backlog.tasks.iter_mut().find(|t| t.id == repair.task_id) {
-            task.status = repair.new_status;
-            // Unblocking a task must clear `blocked_reason` — leaving
-            // the reason behind would fossilise a stale blocker note
-            // on a now-actionable task.
-            if repair.new_status != Status::Blocked {
-                task.blocked_reason = None;
+        if let Some(entry) = backlog.items.iter_mut().find(|e| e.item.id == repair.task_id) {
+            entry.item.status = repair.new_status;
+            // Unblocking an item must clear `blocked_reason` —
+            // leaving the reason behind would fossilise a stale
+            // blocker note on a now-actionable item.
+            if repair.new_status != BacklogStatus::Blocked {
+                entry.blocked_reason = None;
             }
         }
     }
@@ -164,106 +147,94 @@ fn emit(report: &RepairReport, format: OutputFormat) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::backlog::schema::BACKLOG_SCHEMA_VERSION;
+    use knowledge_graph::{Item, Justification, KindMarker};
     use tempfile::TempDir;
 
-    fn task(id: &str, status: Status, deps: &[&str], results: Option<&str>) -> Task {
-        Task {
-            id: id.into(),
-            title: id.into(),
+    fn entry(
+        id: &str,
+        status: BacklogStatus,
+        deps: &[&str],
+        results: Option<&str>,
+    ) -> BacklogEntry {
+        BacklogEntry {
+            item: Item {
+                id: id.into(),
+                kind: KindMarker::new(),
+                claim: id.into(),
+                justifications: vec![Justification::Rationale {
+                    text: "body\n".into(),
+                }],
+                status,
+                supersedes: vec![],
+                superseded_by: None,
+                defeated_by: None,
+                authored_at: "test".into(),
+                authored_in: "test".into(),
+            },
             category: "maintenance".into(),
-            status,
-            blocked_reason: if status == Status::Blocked {
+            blocked_reason: if status == BacklogStatus::Blocked {
                 Some("upstream".into())
             } else {
                 None
             },
             dependencies: deps.iter().map(|s| s.to_string()).collect(),
-            description: "body\n".into(),
             results: results.map(String::from),
             handoff: None,
         }
     }
 
-    fn backlog_with(tasks: Vec<Task>) -> BacklogFile {
+    fn backlog_with(items: Vec<BacklogEntry>) -> BacklogFile {
         BacklogFile {
-            tasks,
-            extra: Default::default(),
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items,
         }
     }
 
     #[test]
-    fn in_progress_with_non_empty_results_repairs_to_done() {
-        let backlog = backlog_with(vec![task(
+    fn active_with_results_is_not_repaired() {
+        // The merge from in_progress + not_started into Active loses
+        // the discriminator that distinguished "forgot to flip" from
+        // "operator-staged result". Repairing here would risk the
+        // latter; the rule is dropped intentionally.
+        let backlog = backlog_with(vec![entry(
             "foo",
-            Status::InProgress,
+            BacklogStatus::Active,
             &[],
             Some("did the thing\n"),
         )]);
-        let report = analyse_repairs(&backlog);
-        assert_eq!(report.repairs.len(), 1);
-        let r = &report.repairs[0];
-        assert_eq!(r.task_id, "foo");
-        assert_eq!(r.old_status, Status::InProgress);
-        assert_eq!(r.new_status, Status::Done);
-        assert_eq!(r.reason, RepairReason::ResultsNonEmpty);
-    }
-
-    #[test]
-    fn not_started_with_non_empty_results_is_not_repaired() {
-        // A result on a not_started task signals intent (revert, amend,
-        // staged change) rather than drift. Silent flipping would lose
-        // information.
-        let backlog = backlog_with(vec![task(
-            "foo",
-            Status::NotStarted,
-            &[],
-            Some("leftover results\n"),
-        )]);
         assert_eq!(analyse_repairs(&backlog), RepairReport::default());
     }
 
     #[test]
-    fn in_progress_with_empty_results_is_not_repaired() {
+    fn blocked_with_all_deps_done_repairs_to_active() {
         let backlog = backlog_with(vec![
-            task("foo", Status::InProgress, &[], None),
-            task("bar", Status::InProgress, &[], Some("  \n")),
-            task("baz", Status::InProgress, &[], Some("_pending_")),
-        ]);
-        assert_eq!(analyse_repairs(&backlog), RepairReport::default());
-    }
-
-    #[test]
-    fn blocked_with_all_deps_done_repairs_to_not_started() {
-        let backlog = backlog_with(vec![
-            task("foo", Status::Done, &[], Some("done\n")),
-            task("bar", Status::Done, &[], Some("done\n")),
-            task("baz", Status::Blocked, &["foo", "bar"], None),
+            entry("foo", BacklogStatus::Done, &[], Some("done\n")),
+            entry("bar", BacklogStatus::Done, &[], Some("done\n")),
+            entry("baz", BacklogStatus::Blocked, &["foo", "bar"], None),
         ]);
         let report = analyse_repairs(&backlog);
         assert_eq!(report.repairs.len(), 1);
         let r = &report.repairs[0];
         assert_eq!(r.task_id, "baz");
-        assert_eq!(r.old_status, Status::Blocked);
-        assert_eq!(r.new_status, Status::NotStarted);
+        assert_eq!(r.old_status, BacklogStatus::Blocked);
+        assert_eq!(r.new_status, BacklogStatus::Active);
         assert_eq!(r.reason, RepairReason::DependenciesSatisfied);
     }
 
     #[test]
     fn blocked_with_some_deps_pending_is_not_repaired() {
         let backlog = backlog_with(vec![
-            task("foo", Status::Done, &[], Some("done\n")),
-            task("bar", Status::NotStarted, &[], None),
-            task("baz", Status::Blocked, &["foo", "bar"], None),
+            entry("foo", BacklogStatus::Done, &[], Some("done\n")),
+            entry("bar", BacklogStatus::Active, &[], None),
+            entry("baz", BacklogStatus::Blocked, &["foo", "bar"], None),
         ]);
         assert_eq!(analyse_repairs(&backlog), RepairReport::default());
     }
 
     #[test]
     fn blocked_with_no_dependencies_is_not_auto_unblocked() {
-        // Zero explicit deps means the blocker is external — an
-        // operator decision, an upstream project, awaiting review.
-        // Do not silently resolve.
-        let backlog = backlog_with(vec![task("foo", Status::Blocked, &[], None)]);
+        let backlog = backlog_with(vec![entry("foo", BacklogStatus::Blocked, &[], None)]);
         assert_eq!(analyse_repairs(&backlog), RepairReport::default());
     }
 
@@ -277,44 +248,38 @@ mod tests {
     fn run_applies_repairs_and_writes_back_when_not_dry_run() {
         let tmp = TempDir::new().unwrap();
         let backlog = backlog_with(vec![
-            task("foo", Status::Done, &[], Some("done\n")),
-            task("bar", Status::InProgress, &[], Some("completed\n")),
-            task("baz", Status::Blocked, &["foo"], None),
+            entry("foo", BacklogStatus::Done, &[], Some("done\n")),
+            entry("baz", BacklogStatus::Blocked, &["foo"], None),
         ]);
         write_backlog(tmp.path(), &backlog).unwrap();
 
         let count = run_repair_stale_statuses(tmp.path(), false, OutputFormat::Yaml).unwrap();
-        assert_eq!(count, 2, "two repairs expected (bar → done, baz → not_started)");
+        assert_eq!(count, 1, "one repair expected (baz → active)");
 
         let reloaded = read_backlog(tmp.path()).unwrap();
-        let bar = reloaded.tasks.iter().find(|t| t.id == "bar").unwrap();
-        let baz = reloaded.tasks.iter().find(|t| t.id == "baz").unwrap();
-        assert_eq!(bar.status, Status::Done);
-        assert_eq!(baz.status, Status::NotStarted);
+        let baz = reloaded.items.iter().find(|e| e.item.id == "baz").unwrap();
+        assert_eq!(baz.item.status, BacklogStatus::Active);
         assert_eq!(
             baz.blocked_reason, None,
-            "blocked_reason must clear when a task is unblocked"
+            "blocked_reason must clear when an item is unblocked"
         );
     }
 
     #[test]
     fn run_dry_run_reports_without_writing() {
         let tmp = TempDir::new().unwrap();
-        let backlog = backlog_with(vec![task(
-            "foo",
-            Status::InProgress,
-            &[],
-            Some("done\n"),
-        )]);
+        let backlog = backlog_with(vec![
+            entry("foo", BacklogStatus::Done, &[], Some("done\n")),
+            entry("baz", BacklogStatus::Blocked, &["foo"], None),
+        ]);
         write_backlog(tmp.path(), &backlog).unwrap();
 
         let count = run_repair_stale_statuses(tmp.path(), true, OutputFormat::Yaml).unwrap();
         assert_eq!(count, 1);
 
-        // Disk is untouched — status still in_progress.
         let reloaded = read_backlog(tmp.path()).unwrap();
-        let foo = reloaded.tasks.iter().find(|t| t.id == "foo").unwrap();
-        assert_eq!(foo.status, Status::InProgress);
+        let baz = reloaded.items.iter().find(|e| e.item.id == "baz").unwrap();
+        assert_eq!(baz.item.status, BacklogStatus::Blocked);
     }
 
     #[test]
@@ -328,27 +293,19 @@ mod tests {
     }
 
     #[test]
-    fn report_serialises_with_snake_case_reason_tags() {
+    fn report_serialises_with_snake_case_reason_tag() {
         let report = RepairReport {
-            repairs: vec![
-                Repair {
-                    task_id: "foo".into(),
-                    old_status: Status::InProgress,
-                    new_status: Status::Done,
-                    reason: RepairReason::ResultsNonEmpty,
-                },
-                Repair {
-                    task_id: "bar".into(),
-                    old_status: Status::Blocked,
-                    new_status: Status::NotStarted,
-                    reason: RepairReason::DependenciesSatisfied,
-                },
-            ],
+            repairs: vec![Repair {
+                task_id: "bar".into(),
+                old_status: BacklogStatus::Blocked,
+                new_status: BacklogStatus::Active,
+                reason: RepairReason::DependenciesSatisfied,
+            }],
         };
         let yaml = serde_yaml::to_string(&report).unwrap();
-        // Reason tags must match the YAML shape advertised in the
-        // CLI spec so downstream scripts can grep on known strings.
-        assert!(yaml.contains("results_non_empty"), "yaml must use snake_case reason: {yaml}");
-        assert!(yaml.contains("dependencies_satisfied"), "yaml must use snake_case reason: {yaml}");
+        assert!(
+            yaml.contains("dependencies_satisfied"),
+            "yaml must use snake_case reason: {yaml}"
+        );
     }
 }

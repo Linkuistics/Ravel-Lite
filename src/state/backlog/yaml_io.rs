@@ -1,13 +1,13 @@
 //! Atomic read/write of `<plan>/backlog.yaml`. Format preservation
 //! note: serde_yaml 0.9 emits multi-line strings as `|` block scalars
-//! automatically when they contain a newline, which renders Results /
-//! description bodies readably without escaping.
+//! automatically when they contain a newline, which renders results
+//! and rationale bodies readably without escaping.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
-use super::schema::BacklogFile;
+use super::schema::{BacklogFile, BACKLOG_SCHEMA_VERSION};
 use crate::state::filenames::BACKLOG_FILENAME;
 
 pub fn backlog_path(plan_dir: &Path) -> PathBuf {
@@ -24,8 +24,17 @@ pub fn read_backlog(plan_dir: &Path) -> Result<BacklogFile> {
     }
     let text = std::fs::read_to_string(&path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
-    let parsed: BacklogFile = serde_yaml::from_str(&text)
-        .with_context(|| format!("Failed to parse {} as {BACKLOG_FILENAME} schema", path.display()))?;
+    let parsed: BacklogFile = serde_yaml::from_str(&text).with_context(|| {
+        format!("Failed to parse {} as {BACKLOG_FILENAME} schema", path.display())
+    })?;
+    if parsed.schema_version != BACKLOG_SCHEMA_VERSION {
+        bail!(
+            "{} declares schema_version {}, expected {}.",
+            path.display(),
+            parsed.schema_version,
+            BACKLOG_SCHEMA_VERSION
+        );
+    }
     Ok(parsed)
 }
 
@@ -55,54 +64,64 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::backlog::schema::{Status, Task};
+    use crate::plan_kg::BacklogStatus;
+    use crate::state::backlog::schema::BacklogEntry;
+    use knowledge_graph::{Item, Justification, KindMarker};
     use tempfile::TempDir;
 
-    fn sample_task() -> Task {
-        Task {
-            id: "sample".into(),
-            title: "Sample task".into(),
+    fn sample_entry() -> BacklogEntry {
+        BacklogEntry {
+            item: Item {
+                id: "sample".into(),
+                kind: KindMarker::new(),
+                claim: "Sample item".into(),
+                justifications: vec![Justification::Rationale {
+                    text: "Paragraph one.\n\nParagraph two, with `code`.\n".into(),
+                }],
+                status: BacklogStatus::Active,
+                supersedes: vec![],
+                superseded_by: None,
+                defeated_by: None,
+                authored_at: "2026-04-29T00:00:00Z".into(),
+                authored_in: "test".into(),
+            },
             category: "maintenance".into(),
-            status: Status::NotStarted,
             blocked_reason: None,
             dependencies: vec![],
-            description: "Paragraph one.\n\nParagraph two, with `code`.\n".into(),
             results: None,
             handoff: None,
         }
     }
 
     #[test]
-    fn write_then_read_round_trips_task_fields() {
+    fn write_then_read_round_trips_entry_fields() {
         let tmp = TempDir::new().unwrap();
         let backlog = BacklogFile {
-            tasks: vec![sample_task()],
-            extra: Default::default(),
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items: vec![sample_entry()],
         };
         write_backlog(tmp.path(), &backlog).unwrap();
 
         let round_tripped = read_backlog(tmp.path()).unwrap();
-        assert_eq!(round_tripped.tasks.len(), 1);
-        assert_eq!(round_tripped.tasks[0].id, "sample");
-        assert_eq!(round_tripped.tasks[0].description, sample_task().description);
+        assert_eq!(round_tripped.items.len(), 1);
+        assert_eq!(round_tripped.items[0].item.id, "sample");
+        assert_eq!(round_tripped.items[0].item.claim, "Sample item");
+        assert_eq!(round_tripped.items[0].item.status, BacklogStatus::Active);
     }
 
     #[test]
-    fn write_emits_block_scalar_for_multi_line_description() {
+    fn write_emits_block_scalar_for_multi_line_rationale() {
         let tmp = TempDir::new().unwrap();
         let backlog = BacklogFile {
-            tasks: vec![sample_task()],
-            extra: Default::default(),
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items: vec![sample_entry()],
         };
         write_backlog(tmp.path(), &backlog).unwrap();
 
         let raw = std::fs::read_to_string(backlog_path(tmp.path())).unwrap();
-        // serde_yaml 0.9 emits multi-line strings as `|` block scalars.
-        // Guard the behaviour so a future dependency swap doesn't silently
-        // regress readability.
         assert!(
-            raw.contains("description: |") || raw.contains("description: |-"),
-            "multi-line description must emit as block scalar: {raw}"
+            raw.contains("text: |") || raw.contains("text: |-"),
+            "multi-line rationale text must emit as block scalar: {raw}"
         );
     }
 
@@ -113,5 +132,19 @@ mod tests {
         let msg = format!("{err:#}");
         assert!(msg.contains(BACKLOG_FILENAME), "error must name {BACKLOG_FILENAME}: {msg}");
         assert!(msg.contains("state migrate"), "error must suggest migrate: {msg}");
+    }
+
+    #[test]
+    fn read_errors_on_schema_version_mismatch() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            backlog_path(tmp.path()),
+            "schema_version: 99\nitems: []\n",
+        )
+        .unwrap();
+        let err = read_backlog(tmp.path()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("schema_version"), "error must cite schema_version: {msg}");
+        assert!(msg.contains("99"), "error must show found version: {msg}");
     }
 }

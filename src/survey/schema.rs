@@ -408,16 +408,17 @@ plans:
             "Ravel/sub-A-global-store".to_string(),
             TaskCounts {
                 total: 16,
-                not_started: 15,
-                in_progress: 0,
+                active: 15,
                 done: 1,
                 blocked: 0,
+                defeated: 0,
+                superseded: 0,
             },
         );
         inject_task_counts(&mut resp, &counts);
         let injected = resp.plans[0].task_counts.unwrap();
         assert_eq!(injected.total, 16);
-        assert_eq!(injected.not_started, 15);
+        assert_eq!(injected.active, 15);
         assert_eq!(injected.done, 1);
 
         // Unmatched map entries are silently ignored; absence is not a
@@ -509,10 +510,11 @@ plans:
             "Ravel/sub-A-global-store".to_string(),
             TaskCounts {
                 total: 3,
-                not_started: 1,
-                in_progress: 1,
+                active: 2,
                 done: 1,
                 blocked: 0,
+                defeated: 0,
+                superseded: 0,
             },
         );
         inject_task_counts(&mut resp, &counts);
@@ -520,7 +522,7 @@ plans:
         assert!(emitted.contains("task_counts:"), "emitted: {emitted}");
         let reparsed = parse_survey_response(&emitted).unwrap();
         assert_eq!(reparsed.plans[0].task_counts.unwrap().total, 3);
-        assert_eq!(reparsed.plans[0].task_counts.unwrap().in_progress, 1);
+        assert_eq!(reparsed.plans[0].task_counts.unwrap().active, 2);
     }
 
     #[test]

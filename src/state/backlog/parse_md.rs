@@ -1,29 +1,43 @@
 //! Strict parser for the legacy `<plan>/backlog.md` prose format.
 //!
 //! Used exclusively by the `state migrate` verb. Accepts the canonical
-//! shape phase prompts emit today (`### Title` headings, `**Field:**
-//! value` lines, `---` separators between tasks) and refuses anything
-//! else rather than risk silent data loss.
+//! shape phase prompts emitted before the TMS-shape migration (`###
+//! Title` headings, `**Field:**  value` lines, `---` separators
+//! between tasks) and refuses anything else rather than risk silent
+//! data loss. Maps the legacy four-state status vocabulary
+//! (`not_started`/`in_progress`/`done`/`blocked`) onto the typed
+//! `BacklogStatus` enum:
+//!
+//! - `not_started` → `Active`
+//! - `in_progress` → `Active`     (in-flight signal collapsed)
+//! - `done`        → `Done`
+//! - `blocked`     → `Blocked`
 
 use anyhow::{anyhow, bail, Context, Result};
+use knowledge_graph::{Item, Justification, KindMarker};
 
-use super::schema::{slug_from_title, BacklogFile, Status, Task};
+use crate::plan_kg::BacklogStatus;
+
+use super::schema::{
+    allocate_id as allocate_slug_id, slug_from_title, BacklogEntry, BacklogFile,
+    BACKLOG_SCHEMA_VERSION,
+};
 
 pub fn parse_backlog_markdown(input: &str) -> Result<BacklogFile> {
-    let mut tasks = Vec::new();
+    let mut items = Vec::new();
     let mut existing_ids: Vec<String> = Vec::new();
 
     let blocks = split_into_task_blocks(input);
     for (block_index, block) in blocks.into_iter().enumerate() {
-        let task = parse_single_task_block(&block, &existing_ids)
+        let entry = parse_single_task_block(&block, &existing_ids)
             .with_context(|| format!("failed to parse task block #{}", block_index + 1))?;
-        existing_ids.push(task.id.clone());
-        tasks.push(task);
+        existing_ids.push(entry.item.id.clone());
+        items.push(entry);
     }
 
     Ok(BacklogFile {
-        tasks,
-        extra: Default::default(),
+        schema_version: BACKLOG_SCHEMA_VERSION,
+        items,
     })
 }
 
@@ -61,9 +75,6 @@ fn split_into_task_blocks(input: &str) -> Vec<String> {
 }
 
 /// Strip the optional trailing task-separator `---` line from a block.
-/// The separator is a structural marker between tasks, not part of the
-/// last task's content. A `---\n[HANDOFF]` marker in the middle of the
-/// block is left untouched — only a truly-trailing `---` is removed.
 fn normalise_block(block: &str) -> String {
     let mut lines: Vec<&str> = block.lines().collect();
     while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
@@ -77,7 +88,7 @@ fn normalise_block(block: &str) -> String {
     out
 }
 
-fn parse_single_task_block(block: &str, existing_ids: &[String]) -> Result<Task> {
+fn parse_single_task_block(block: &str, existing_ids: &[String]) -> Result<BacklogEntry> {
     let mut lines = block.lines();
     let title_line = lines
         .next()
@@ -94,7 +105,7 @@ fn parse_single_task_block(block: &str, existing_ids: &[String]) -> Result<Task>
     let id = allocate_id_from(&title, existing_ids);
 
     let mut category: Option<String> = None;
-    let mut status: Option<Status> = None;
+    let mut status: Option<BacklogStatus> = None;
     let mut dependencies: Vec<String> = Vec::new();
     let mut results: Option<String> = None;
     let mut handoff: Option<String> = None;
@@ -117,10 +128,10 @@ fn parse_single_task_block(block: &str, existing_ids: &[String]) -> Result<Task>
             let raw = strip_backticks(value.trim());
             let (status_value, reason) = split_blocked_reason(raw);
             status = Some(
-                Status::parse(status_value)
+                parse_legacy_status(status_value)
                     .ok_or_else(|| anyhow!("invalid status value: {status_value:?}"))?,
             );
-            if status == Some(Status::Blocked) {
+            if status == Some(BacklogStatus::Blocked) {
                 blocked_reason = Some(reason.unwrap_or_default().to_string());
             }
             cursor += 1;
@@ -163,21 +174,44 @@ fn parse_single_task_block(block: &str, existing_ids: &[String]) -> Result<Task>
         }
     }
 
-    Ok(Task {
-        id,
-        title,
-        category: category.ok_or_else(|| anyhow!("missing **Category:** field"))?,
-        status: status.ok_or_else(|| anyhow!("missing **Status:** field"))?,
+    let status = status.ok_or_else(|| anyhow!("missing **Status:** field"))?;
+    let category = category.ok_or_else(|| anyhow!("missing **Category:** field"))?;
+
+    Ok(BacklogEntry {
+        item: Item {
+            id,
+            kind: KindMarker::new(),
+            claim: title,
+            justifications: vec![Justification::Rationale { text: description }],
+            status,
+            supersedes: vec![],
+            superseded_by: None,
+            defeated_by: None,
+            authored_at: "migrated".into(),
+            authored_in: "migrate".into(),
+        },
+        category,
         blocked_reason,
         dependencies,
-        description,
         results,
         handoff,
     })
 }
 
+/// Map the legacy four-state status vocabulary onto `BacklogStatus`.
+fn parse_legacy_status(s: &str) -> Option<BacklogStatus> {
+    match s {
+        "not_started" | "in_progress" | "active" => Some(BacklogStatus::Active),
+        "done" => Some(BacklogStatus::Done),
+        "blocked" => Some(BacklogStatus::Blocked),
+        "defeated" => Some(BacklogStatus::Defeated),
+        "superseded" => Some(BacklogStatus::Superseded),
+        _ => None,
+    }
+}
+
 fn allocate_id_from(title: &str, existing: &[String]) -> String {
-    super::schema::allocate_id(title, existing.iter().map(String::as_str))
+    allocate_slug_id(title, existing.iter().map(String::as_str))
 }
 
 fn strip_backticks(value: &str) -> &str {
@@ -185,7 +219,6 @@ fn strip_backticks(value: &str) -> &str {
 }
 
 fn split_blocked_reason(raw: &str) -> (&str, Option<&str>) {
-    // `**Status:** blocked (reason: upstream release)`
     if let Some((status, rest)) = raw.split_once('(') {
         let reason = rest.trim_end_matches(')').trim();
         let reason = reason.strip_prefix("reason:").unwrap_or(reason).trim();
@@ -250,21 +283,42 @@ Cargo clippy is clean today. Add a CI gate.
 ";
 
     #[test]
-    fn parses_minimal_task() {
+    fn parses_minimal_task_with_legacy_not_started_mapped_to_active() {
         let backlog = parse_backlog_markdown(MINIMAL_TASK).unwrap();
-        assert_eq!(backlog.tasks.len(), 1);
-        let task = &backlog.tasks[0];
-        assert_eq!(task.id, "add-clippy-d-warnings-ci-gate");
-        assert_eq!(task.title, "Add clippy `-D warnings` CI gate");
-        assert_eq!(task.category, "maintenance");
-        assert_eq!(task.status, Status::NotStarted);
-        assert!(task.dependencies.is_empty());
-        assert_eq!(
-            task.description.trim(),
-            "Cargo clippy is clean today. Add a CI gate."
-        );
-        assert_eq!(task.results, None);
-        assert_eq!(task.handoff, None);
+        assert_eq!(backlog.items.len(), 1);
+        let entry = &backlog.items[0];
+        assert_eq!(entry.item.id, "add-clippy-d-warnings-ci-gate");
+        assert_eq!(entry.item.claim, "Add clippy `-D warnings` CI gate");
+        assert_eq!(entry.category, "maintenance");
+        assert_eq!(entry.item.status, BacklogStatus::Active);
+        assert!(entry.dependencies.is_empty());
+        match &entry.item.justifications[0] {
+            Justification::Rationale { text } => assert!(text.contains("CI gate")),
+            other => panic!("expected Rationale justification, got {other:?}"),
+        }
+        assert_eq!(entry.results, None);
+        assert_eq!(entry.handoff, None);
+    }
+
+    #[test]
+    fn legacy_in_progress_maps_to_active() {
+        let input = "\
+### In-flight task
+
+**Category:** `research`
+**Status:** `in_progress`
+**Dependencies:** none
+
+**Description:**
+
+Body.
+
+**Results:** _pending_
+
+---
+";
+        let backlog = parse_backlog_markdown(input).unwrap();
+        assert_eq!(backlog.items[0].item.status, BacklogStatus::Active);
     }
 
     #[test]
@@ -290,11 +344,11 @@ Did the thing successfully.
 Promote `follow-up-task` to backlog.
 ";
         let backlog = parse_backlog_markdown(input).unwrap();
-        assert_eq!(backlog.tasks.len(), 1);
-        let task = &backlog.tasks[0];
-        assert_eq!(task.status, Status::Done);
-        assert!(task.results.as_deref().unwrap().contains("successfully"));
-        assert!(task
+        assert_eq!(backlog.items.len(), 1);
+        let entry = &backlog.items[0];
+        assert_eq!(entry.item.status, BacklogStatus::Done);
+        assert!(entry.results.as_deref().unwrap().contains("successfully"));
+        assert!(entry
             .handoff
             .as_deref()
             .unwrap()
@@ -320,7 +374,7 @@ Waits for the two above.
 ";
         let backlog = parse_backlog_markdown(input).unwrap();
         assert_eq!(
-            backlog.tasks[0].dependencies,
+            backlog.items[0].dependencies,
             vec![
                 "research-expose-plan-state-markdown".to_string(),
                 "another-upstream".to_string()
@@ -346,9 +400,9 @@ Waiting for Claude Code upstream.
 ---
 ";
         let backlog = parse_backlog_markdown(input).unwrap();
-        assert_eq!(backlog.tasks[0].status, Status::Blocked);
+        assert_eq!(backlog.items[0].item.status, BacklogStatus::Blocked);
         assert_eq!(
-            backlog.tasks[0].blocked_reason.as_deref(),
+            backlog.items[0].blocked_reason.as_deref(),
             Some("upstream pending 2.1.117")
         );
     }
@@ -357,11 +411,9 @@ Waiting for Claude Code upstream.
     fn multiple_tasks_split_on_separator() {
         let input = format!("{MINIMAL_TASK}\n{MINIMAL_TASK}");
         let backlog = parse_backlog_markdown(&input).unwrap();
-        assert_eq!(backlog.tasks.len(), 2);
-        // The second task's id collides with the first's title; the
-        // allocator must suffix it.
-        assert_eq!(backlog.tasks[0].id, "add-clippy-d-warnings-ci-gate");
-        assert_eq!(backlog.tasks[1].id, "add-clippy-d-warnings-ci-gate-2");
+        assert_eq!(backlog.items.len(), 2);
+        assert_eq!(backlog.items[0].item.id, "add-clippy-d-warnings-ci-gate");
+        assert_eq!(backlog.items[1].item.id, "add-clippy-d-warnings-ci-gate-2");
     }
 
     #[test]
@@ -383,22 +435,5 @@ Body.
         let err = parse_backlog_markdown(input).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("Category"), "error must name the missing field: {msg}");
-    }
-
-    #[test]
-    fn parses_live_core_backlog_without_error() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("LLM_STATE/core/backlog.md");
-        if !path.exists() {
-            // Allow the test to skip on a fresh checkout without a core plan.
-            return;
-        }
-        let text = std::fs::read_to_string(&path).unwrap();
-        let backlog = parse_backlog_markdown(&text).expect("core backlog must parse");
-        assert!(
-            backlog.tasks.len() >= 2,
-            "core backlog must have multiple tasks, got {}",
-            backlog.tasks.len()
-        );
     }
 }

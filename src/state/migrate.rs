@@ -111,7 +111,7 @@ impl PendingMigration {
 
     fn record_count(&self) -> usize {
         match self {
-            PendingMigration::Backlog { parsed, .. } => parsed.tasks.len(),
+            PendingMigration::Backlog { parsed, .. } => parsed.items.len(),
             PendingMigration::Memory { parsed, .. } => parsed.items.len(),
             PendingMigration::SessionLog { parsed, .. } => parsed.sessions.len(),
             PendingMigration::LatestSession { .. } => 1,
@@ -405,20 +405,11 @@ fn session_records_equivalent(a: &SessionRecord, b: &SessionRecord) -> bool {
 }
 
 fn backlogs_equivalent(a: &BacklogFile, b: &BacklogFile) -> bool {
-    if a.tasks.len() != b.tasks.len() {
+    if a.schema_version != b.schema_version || a.items.len() != b.items.len() {
         return false;
     }
-    for (task_a, task_b) in a.tasks.iter().zip(b.tasks.iter()) {
-        if task_a.id != task_b.id
-            || task_a.title != task_b.title
-            || task_a.category != task_b.category
-            || task_a.status != task_b.status
-            || task_a.blocked_reason != task_b.blocked_reason
-            || task_a.dependencies != task_b.dependencies
-            || task_a.description != task_b.description
-            || task_a.results != task_b.results
-            || task_a.handoff != task_b.handoff
-        {
+    for (entry_a, entry_b) in a.items.iter().zip(b.items.iter()) {
+        if entry_a != entry_b {
             return false;
         }
     }
@@ -535,7 +526,7 @@ Paragraph body.
         assert!(tmp.path().join("backlog.md").exists(), "default is keep-originals");
 
         let backlog = read_backlog(tmp.path()).unwrap();
-        assert_eq!(backlog.tasks.len(), 2);
+        assert_eq!(backlog.items.len(), 2);
     }
 
     #[test]
@@ -561,7 +552,7 @@ Paragraph body.
 
         run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
 
-        assert_eq!(read_backlog(tmp.path()).unwrap().tasks.len(), 2);
+        assert_eq!(read_backlog(tmp.path()).unwrap().items.len(), 2);
         assert_eq!(read_memory(tmp.path()).unwrap().items.len(), 2);
     }
 
@@ -606,7 +597,7 @@ Paragraph body.
         run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
         run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
 
-        assert_eq!(read_backlog(tmp.path()).unwrap().tasks.len(), 2);
+        assert_eq!(read_backlog(tmp.path()).unwrap().items.len(), 2);
         assert_eq!(read_memory(tmp.path()).unwrap().items.len(), 2);
     }
 
@@ -701,7 +692,7 @@ Paragraph body.
 
         run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
 
-        assert_eq!(read_backlog(tmp.path()).unwrap().tasks.len(), 2);
+        assert_eq!(read_backlog(tmp.path()).unwrap().items.len(), 2);
         assert_eq!(read_memory(tmp.path()).unwrap().items.len(), 2);
         assert_eq!(read_session_log(tmp.path()).unwrap().sessions.len(), 2);
         assert_eq!(

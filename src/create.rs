@@ -91,7 +91,7 @@ pub fn validate_target(plan_dir: &Path) -> Result<PathBuf> {
 /// itself (refusing if it already exists) and writes:
 ///
 /// - `phase.md` = `work\n`
-/// - `backlog.yaml` = `tasks: []\n`
+/// - `backlog.yaml` = `schema_version: 1\nitems: []\n`
 /// - `memory.yaml` = `schema_version: 1\nitems: []\n`
 /// - `dream-word-count` = `0`
 ///
@@ -113,7 +113,7 @@ pub fn scaffold_plan_dir(abs_plan_dir: &Path) -> Result<()> {
 
     let writes: [(&str, &[u8]); 4] = [
         (PHASE_FILENAME, b"work\n"),
-        (BACKLOG_FILENAME, b"tasks: []\n"),
+        (BACKLOG_FILENAME, b"schema_version: 1\nitems: []\n"),
         (MEMORY_FILENAME, b"schema_version: 1\nitems: []\n"),
         (DREAM_WORD_COUNT_FILENAME, b"0"),
     ];
@@ -186,7 +186,7 @@ pub async fn run_create(config_root: &Path, plan_dir: PathBuf) -> Result<()> {
     // stricter (e.g. requiring N tasks) would fight single-task plans.
     let backlog = crate::state::backlog::read_backlog(&abs_plan_dir)
         .context("Failed to read scaffolded backlog.yaml after claude session")?;
-    if backlog.tasks.is_empty() {
+    if backlog.items.is_empty() {
         eprintln!(
             "\nwarning: {} still has no tasks — the session may have exited before the plan was populated.",
             abs_plan_dir.display()
@@ -291,7 +291,10 @@ mod tests {
         scaffold_plan_dir(&plan).unwrap();
         assert!(plan.is_dir(), "plan directory must exist after scaffold");
         assert_eq!(fs::read_to_string(plan.join(PHASE_FILENAME)).unwrap(), "work\n");
-        assert_eq!(fs::read_to_string(plan.join(BACKLOG_FILENAME)).unwrap(), "tasks: []\n");
+        assert_eq!(
+            fs::read_to_string(plan.join(BACKLOG_FILENAME)).unwrap(),
+            "schema_version: 1\nitems: []\n"
+        );
         assert_eq!(
             fs::read_to_string(plan.join(MEMORY_FILENAME)).unwrap(),
             "schema_version: 1\nitems: []\n"
@@ -309,7 +312,7 @@ mod tests {
         scaffold_plan_dir(&plan).unwrap();
 
         let backlog = crate::state::backlog::read_backlog(&plan).unwrap();
-        assert!(backlog.tasks.is_empty(), "scaffolded backlog must have no tasks");
+        assert!(backlog.items.is_empty(), "scaffolded backlog must have no tasks");
 
         let memory = crate::state::memory::read_memory(&plan).unwrap();
         assert!(memory.items.is_empty(), "scaffolded memory must have no entries");

@@ -1,12 +1,15 @@
-id: session-91
-timestamp: 2026-04-29T02:55:06Z
+id: session-92
+timestamp: 2026-04-29T03:47:04Z
 phase: work
 body: |
-  ### Session 91 (2026-04-29T02:55:06Z) — Migrate memory.yaml to TMS item shape
+  ### Session 92 (2026-04-29T03:47:04Z) — Migrate backlog.yaml to TMS item shape
 
-  - Migrated the `memory.yaml` schema from the legacy flat `{id, title, body}` format to TMS-shaped `Item<MemoryEntryKind>` from the knowledge-graph substrate. The new on-disk `MemoryEntry` wraps `Item<MemoryEntryKind>` with one extension: an optional `attribution` field for component promotion at plan finish.
-  - Updated every layer that touches memory entries: `schema.rs` (new types), `verbs.rs` (all CRUD paths, plus a new `run_set_status` with validated transitions), `parse_md.rs` (markdown parser lifts `title`→`claim`, `body`→`Justification::Rationale`), `yaml_io.rs` (schema_version mismatch check on read), `migrate.rs` (field references), `dream.rs` and `phase_summary.rs` (word-count and drift-detection logic), `create.rs`, `main.rs`, and `survey/discover.rs`.
-  - Extended the `memory add` CLI with `--authored-at`, `--authored-in`, and `--attribution` flags; added a new `set-status` subcommand routing through `MemoryStatus::transitions()`.
-  - Migrated the live `LLM_STATE/core/memory.yaml` file to the new format (large on-disk churn: ~2200 lines changed).
-  - All existing tests updated; new tests added for schema-version mismatch, `attribution` round-trip, and `MemoryFile` default invariants.
-  - `schema_version` is now a required top-level field; `read_memory` rejects any file where it is missing or unexpected.
+  - **What was attempted:** Migrate `backlog.yaml` from its legacy `tasks:` schema to a TMS `items:` shape backed by `knowledge-graph::Item<BacklogItemKind>`. The four-state status vocabulary (`not_started`, `in_progress`, `done`, `blocked`) was collapsed onto the five-state `BacklogStatus` enum (`active`, `done`, `blocked`, `defeated`, `superseded`), eliminating `in_progress` as a standalone discriminator. All downstream Rust — `schema.rs`, `verbs.rs`, `yaml_io.rs`, `parse_md.rs`, `render.rs`, `lint_dependencies.rs`, `repair_stale_statuses.rs`, `backlog_transitions.rs`, `phase_summary.rs`, `create.rs`, `migrate.rs`, and the survey layer — was updated. The live `LLM_STATE/core/backlog.yaml` was migrated in-place to the new shape.
+
+  - **What worked:** Full migration landed. The `Task` struct is gone; `BacklogEntry` wraps `Item<BacklogItemKind>` with backlog-specific extension fields (`category`, `dependencies`, `results`, `handoff`, `blocked_reason`). `description` moved into `item.justifications` as a single `Rationale` justification, mirroring the memory.yaml shape. A `schema_version: 1` guard was added to `yaml_io::read_backlog` so schema mismatches fail loudly. `repair_stale_statuses` lost the `ResultsNonEmpty` repair (irrelevant without `in_progress`) and now only repairs `blocked` → `active` when dependencies are all `done`. `lint_dependencies` was updated to scan rationale text via `rationale_text()` instead of the old `description` field. Tests across all affected files were updated; the `parse_md.rs` migration path maps all four legacy statuses to the new vocabulary. `create.rs` scaffold now writes `schema_version: 1\nitems: []\n`.
+
+  - **What didn't work / gaps:** The `status` field is still serialised as a plain string in YAML rather than going through `Store<BacklogItemKind>::set_status` transition validation at write time — `run_set_status` wiring through the `Store` trait was noted in `verbs.rs` doc comment but not fully implemented this session. That is the logical next step.
+
+  - **What to try next:** Wire `run_set_status` through `Store<BacklogItemKind>` so transition validation (the typed `BacklogStatus::transitions()` table) is enforced at the CLI boundary — illegal moves like `done → active` fail loudly rather than corrupting the file.
+
+  - **Key learnings:** Removing `in_progress` from the status vocabulary required relaxing the `repair_stale_statuses` logic — the old heuristic "in_progress + non-empty results → done" no longer applies because `active` covers both "not started" and "work staged but not yet flipped". The `rationale_text()` helper in `lint_dependencies.rs` (collects all `Rationale` justification bodies into one string) is the idiomatic pattern for scanning item prose going forward.

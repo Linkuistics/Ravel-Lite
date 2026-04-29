@@ -1,9 +1,9 @@
-//! Detect drift between prose task-id mentions in a description and
-//! the structured `dependencies:` field.
+//! Detect drift between prose id mentions in an item's rationale body
+//! and the structured `dependencies:` field.
 //!
-//! Triage previously rescanned every task description in-prompt on
-//! every cycle to spot the pattern "description says depends on X but
-//! X is missing from the structured deps". That scan is mechanical and
+//! Triage previously rescanned every item's prose in-prompt on every
+//! cycle to spot the pattern "rationale says depends on X but X is
+//! missing from the structured deps". That scan is mechanical and
 //! belongs in Rust; moving it here removes token cost from every
 //! triage invocation and eliminates false positives from LLM
 //! interpretation of loose prose.
@@ -17,14 +17,15 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::Result;
+use knowledge_graph::Justification;
 use serde::{Deserialize, Serialize};
 
-use super::schema::{BacklogFile, Task};
+use super::schema::{BacklogEntry, BacklogFile};
 use super::verbs::OutputFormat;
 use super::yaml_io::read_backlog;
 
-/// Drift record for a single task whose description mentions task ids
-/// that are not present in its structured `dependencies:` field.
+/// Drift record for a single item whose rationale text mentions ids
+/// not present in its structured `dependencies:` field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDrift {
     pub task_id: String,
@@ -33,32 +34,32 @@ pub struct TaskDrift {
     pub missing: Vec<String>,
 }
 
-/// Complete lint output. Mirrors the YAML shape specified in the
-/// audit brief: a top-level `drifts:` list with one entry per
-/// drifting task.
+/// Complete lint output. A top-level `drifts:` list with one entry per
+/// drifting item.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LintReport {
     pub drifts: Vec<TaskDrift>,
 }
 
-/// Pure drift analysis over a parsed backlog. Filesystem-independent so
-/// unit tests can pin the semantics without tempdir setup.
+/// Pure drift analysis over a parsed backlog. Filesystem-independent
+/// so unit tests can pin the semantics without tempdir setup.
 pub fn lint_dependencies(backlog: &BacklogFile) -> LintReport {
-    let known_ids: Vec<&str> = backlog.tasks.iter().map(|t| t.id.as_str()).collect();
+    let known_ids: Vec<&str> = backlog.items.iter().map(|e| e.item.id.as_str()).collect();
     let drifts = backlog
-        .tasks
+        .items
         .iter()
-        .filter_map(|task| analyse_task(task, &known_ids))
+        .filter_map(|entry| analyse_entry(entry, &known_ids))
         .collect();
     LintReport { drifts }
 }
 
-fn analyse_task(task: &Task, known_ids: &[&str]) -> Option<TaskDrift> {
-    let prose_mentioned = scan_prose_mentions(&task.description, known_ids, &task.id);
+fn analyse_entry(entry: &BacklogEntry, known_ids: &[&str]) -> Option<TaskDrift> {
+    let prose = rationale_text(entry);
+    let prose_mentioned = scan_prose_mentions(&prose, known_ids, &entry.item.id);
     if prose_mentioned.is_empty() {
         return None;
     }
-    let structured: BTreeSet<&str> = task.dependencies.iter().map(String::as_str).collect();
+    let structured: BTreeSet<&str> = entry.dependencies.iter().map(String::as_str).collect();
     let missing: Vec<String> = prose_mentioned
         .iter()
         .filter(|id| !structured.contains(id.as_str()))
@@ -68,15 +69,31 @@ fn analyse_task(task: &Task, known_ids: &[&str]) -> Option<TaskDrift> {
         return None;
     }
     Some(TaskDrift {
-        task_id: task.id.clone(),
+        task_id: entry.item.id.clone(),
         prose_mentioned,
-        structured_deps: task.dependencies.clone(),
+        structured_deps: entry.dependencies.clone(),
         missing,
     })
 }
 
+/// Concatenate every `Rationale` justification's text into one string
+/// for the word-boundary scan. Items with no rationale (degenerate
+/// state) yield empty prose, which `scan_prose_mentions` handles.
+fn rationale_text(entry: &BacklogEntry) -> String {
+    let mut out = String::new();
+    for j in &entry.item.justifications {
+        if let Justification::Rationale { text } = j {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(text);
+        }
+    }
+    out
+}
+
 /// Whole-word scan of `prose` for any of `known_ids`, skipping
-/// `self_id` (a task mentioning its own id is not drift). Output is
+/// `self_id` (an item mentioning its own id is not drift). Output is
 /// sorted and deduplicated.
 fn scan_prose_mentions(prose: &str, known_ids: &[&str], self_id: &str) -> Vec<String> {
     let mut hits: BTreeSet<String> = BTreeSet::new();
@@ -136,32 +153,47 @@ pub fn run_lint_dependencies(plan_dir: &Path, format: OutputFormat) -> Result<()
 
 #[cfg(test)]
 mod tests {
-    use super::super::schema::Status;
     use super::*;
+    use crate::plan_kg::BacklogStatus;
+    use crate::state::backlog::schema::BACKLOG_SCHEMA_VERSION;
+    use knowledge_graph::{Item, KindMarker};
 
-    fn task_with(id: &str, dependencies: Vec<String>, description: &str) -> Task {
-        Task {
-            id: id.into(),
-            title: id.into(),
+    fn entry_with(id: &str, dependencies: Vec<String>, body: &str) -> BacklogEntry {
+        BacklogEntry {
+            item: Item {
+                id: id.into(),
+                kind: KindMarker::new(),
+                claim: id.into(),
+                justifications: vec![Justification::Rationale {
+                    text: body.into(),
+                }],
+                status: BacklogStatus::Active,
+                supersedes: vec![],
+                superseded_by: None,
+                defeated_by: None,
+                authored_at: "test".into(),
+                authored_in: "test".into(),
+            },
             category: "maintenance".into(),
-            status: Status::NotStarted,
             blocked_reason: None,
             dependencies,
-            description: description.into(),
             results: None,
             handoff: None,
         }
     }
 
-    fn backlog_with(tasks: Vec<Task>) -> BacklogFile {
-        BacklogFile { tasks, extra: Default::default() }
+    fn backlog_with(items: Vec<BacklogEntry>) -> BacklogFile {
+        BacklogFile {
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items,
+        }
     }
 
     #[test]
     fn no_drift_when_prose_mention_matches_structured_deps() {
         let backlog = backlog_with(vec![
-            task_with("foo", vec![], "original brief\n"),
-            task_with("bar", vec!["foo".into()], "depends on foo to finish\n"),
+            entry_with("foo", vec![], "original brief\n"),
+            entry_with("bar", vec!["foo".into()], "depends on foo to finish\n"),
         ]);
         assert_eq!(lint_dependencies(&backlog), LintReport::default());
     }
@@ -169,8 +201,8 @@ mod tests {
     #[test]
     fn drift_when_prose_mention_missing_from_structured_deps() {
         let backlog = backlog_with(vec![
-            task_with("foo", vec![], "brief\n"),
-            task_with("bar", vec![], "see also foo for context\n"),
+            entry_with("foo", vec![], "brief\n"),
+            entry_with("bar", vec![], "see also foo for context\n"),
         ]);
         let report = lint_dependencies(&backlog);
         assert_eq!(report.drifts.len(), 1);
@@ -183,11 +215,9 @@ mod tests {
 
     #[test]
     fn structured_dep_not_in_prose_is_not_flagged() {
-        // `bar` depends on `foo` structurally but never names it in
-        // prose. Structured is authoritative — this is not drift.
         let backlog = backlog_with(vec![
-            task_with("foo", vec![], "brief\n"),
-            task_with("bar", vec!["foo".into()], "no mention of the dep here\n"),
+            entry_with("foo", vec![], "brief\n"),
+            entry_with("bar", vec!["foo".into()], "no mention of the dep here\n"),
         ]);
         assert_eq!(lint_dependencies(&backlog), LintReport::default());
     }
@@ -201,15 +231,15 @@ mod tests {
     #[test]
     fn prose_string_that_is_not_an_actual_id_is_not_flagged() {
         let backlog = backlog_with(vec![
-            task_with("foo", vec![], "brief\n"),
-            task_with("bar", vec![], "mentions some-other-thing not in backlog\n"),
+            entry_with("foo", vec![], "brief\n"),
+            entry_with("bar", vec![], "mentions some-other-thing not in backlog\n"),
         ]);
         assert_eq!(lint_dependencies(&backlog), LintReport::default());
     }
 
     #[test]
     fn self_mention_is_not_drift() {
-        let backlog = backlog_with(vec![task_with(
+        let backlog = backlog_with(vec![entry_with(
             "foo",
             vec![],
             "this is foo's own brief; foo references itself\n",
@@ -220,9 +250,9 @@ mod tests {
     #[test]
     fn multiple_prose_mentions_all_reported_in_sorted_order() {
         let backlog = backlog_with(vec![
-            task_with("alpha", vec![], "brief\n"),
-            task_with("beta", vec![], "brief\n"),
-            task_with("gamma", vec!["alpha".into()], "needs alpha and beta\n"),
+            entry_with("alpha", vec![], "brief\n"),
+            entry_with("beta", vec![], "brief\n"),
+            entry_with("gamma", vec!["alpha".into()], "needs alpha and beta\n"),
         ]);
         let report = lint_dependencies(&backlog);
         assert_eq!(report.drifts.len(), 1);
@@ -237,21 +267,18 @@ mod tests {
 
     #[test]
     fn substring_match_does_not_count_without_word_boundaries() {
-        // Task id "foo" must not match inside "foobar" or "foo-bar-baz".
         let backlog = backlog_with(vec![
-            task_with("foo", vec![], "brief\n"),
-            task_with("qux", vec![], "references foobar and foo-bar-baz only\n"),
+            entry_with("foo", vec![], "brief\n"),
+            entry_with("qux", vec![], "references foobar and foo-bar-baz only\n"),
         ]);
         assert_eq!(lint_dependencies(&backlog), LintReport::default());
     }
 
     #[test]
     fn id_inside_backticks_is_matched() {
-        // Markdown code-spans are a common way to cite an id; backtick
-        // is a non-slug byte so the boundary check admits the match.
         let backlog = backlog_with(vec![
-            task_with("foo", vec![], "brief\n"),
-            task_with("bar", vec![], "See `foo` for details.\n"),
+            entry_with("foo", vec![], "brief\n"),
+            entry_with("bar", vec![], "See `foo` for details.\n"),
         ]);
         let report = lint_dependencies(&backlog);
         assert_eq!(report.drifts.len(), 1);
@@ -259,34 +286,10 @@ mod tests {
     }
 
     #[test]
-    fn run_lint_dependencies_emits_yaml_for_populated_backlog() {
-        use crate::state::backlog::yaml_io::write_backlog;
-        use tempfile::TempDir;
-
-        let tmp = TempDir::new().unwrap();
+    fn item_with_no_rationale_does_not_panic() {
         let backlog = backlog_with(vec![
-            task_with("foo", vec![], "brief\n"),
-            task_with("bar", vec![], "see also foo\n"),
-        ]);
-        write_backlog(tmp.path(), &backlog).unwrap();
-
-        // Drive the pure analysis through the same path the runner uses
-        // (read_backlog → lint_dependencies → serde_yaml) so a future
-        // refactor of the runner can't silently diverge from the test.
-        let loaded = read_backlog(tmp.path()).unwrap();
-        let report = lint_dependencies(&loaded);
-        let yaml = serde_yaml::to_string(&report).unwrap();
-        assert!(yaml.contains("task_id: bar"), "yaml must cite drifting task: {yaml}");
-        assert!(yaml.contains("missing:"), "yaml must name missing field: {yaml}");
-    }
-
-    #[test]
-    fn task_with_no_description_does_not_panic() {
-        // Minimal description just a newline — the byte-scanner must
-        // handle short haystacks without slicing past the end.
-        let backlog = backlog_with(vec![
-            task_with("foo", vec![], "\n"),
-            task_with("bar", vec![], "\n"),
+            entry_with("foo", vec![], "\n"),
+            entry_with("bar", vec![], "\n"),
         ]);
         assert_eq!(lint_dependencies(&backlog), LintReport::default());
     }

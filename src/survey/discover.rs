@@ -188,8 +188,10 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan_kg::MemoryStatus;
-    use crate::state::backlog::schema::{BacklogFile, Status, Task};
+    use crate::plan_kg::{BacklogStatus, MemoryStatus};
+    use crate::state::backlog::schema::{
+        BacklogEntry, BacklogFile, BACKLOG_SCHEMA_VERSION,
+    };
     use crate::state::backlog::write_backlog;
     use crate::state::memory::schema::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
     use crate::state::memory::write_memory;
@@ -205,23 +207,33 @@ mod tests {
         fs::create_dir_all(project_dir.join(".git")).unwrap();
     }
 
-    /// Test fixture: a one-task backlog whose identity varies with the
+    /// Test fixture: a one-item backlog whose identity varies with the
     /// provided title. Keeps call sites terse when the actual field
     /// values aren't what the test is asserting on.
     fn one_task_backlog(title: &str) -> BacklogFile {
         BacklogFile {
-            tasks: vec![Task {
-                id: "fixture-task".into(),
-                title: title.into(),
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items: vec![BacklogEntry {
+                item: Item {
+                    id: "fixture-task".into(),
+                    kind: KindMarker::new(),
+                    claim: title.into(),
+                    justifications: vec![Justification::Rationale {
+                        text: "Fixture body.\n".into(),
+                    }],
+                    status: BacklogStatus::Active,
+                    supersedes: vec![],
+                    superseded_by: None,
+                    defeated_by: None,
+                    authored_at: "test".into(),
+                    authored_in: "test".into(),
+                },
                 category: "maintenance".into(),
-                status: Status::NotStarted,
                 blocked_reason: None,
                 dependencies: vec![],
-                description: "Fixture body.\n".into(),
                 results: None,
                 handoff: None,
             }],
-            extra: Default::default(),
         }
     }
 
@@ -494,23 +506,33 @@ mod tests {
 
     #[test]
     fn load_plan_populates_task_counts_from_parseable_backlog_yaml() {
-        // One task in each status. `load_plan`'s Rust-side parse via
+        // One item in each status. `load_plan`'s Rust-side parse via
         // `read_backlog` must populate `task_counts` so the survey
         // prompt no longer has to tally them.
-        fn task(id: &str, status: Status) -> Task {
-            Task {
-                id: id.into(),
-                title: id.into(),
+        fn entry(id: &str, status: BacklogStatus) -> BacklogEntry {
+            BacklogEntry {
+                item: Item {
+                    id: id.into(),
+                    kind: KindMarker::new(),
+                    claim: id.into(),
+                    justifications: vec![Justification::Rationale {
+                        text: "Body.\n".into(),
+                    }],
+                    status,
+                    supersedes: vec![],
+                    superseded_by: None,
+                    defeated_by: None,
+                    authored_at: "test".into(),
+                    authored_in: "test".into(),
+                },
                 category: "maintenance".into(),
-                status,
-                blocked_reason: if status == Status::Blocked {
+                blocked_reason: if status == BacklogStatus::Blocked {
                     Some("upstream".into())
                 } else {
                     None
                 },
                 dependencies: vec![],
-                description: "Body.\n".into(),
-                results: if status == Status::Done {
+                results: if status == BacklogStatus::Done {
                     Some("Done successfully.\n".into())
                 } else {
                     None
@@ -519,13 +541,12 @@ mod tests {
             }
         }
         let backlog = BacklogFile {
-            tasks: vec![
-                task("not-started-task", Status::NotStarted),
-                task("in-progress-task", Status::InProgress),
-                task("done-task", Status::Done),
-                task("blocked-task", Status::Blocked),
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items: vec![
+                entry("active-task", BacklogStatus::Active),
+                entry("done-task", BacklogStatus::Done),
+                entry("blocked-task", BacklogStatus::Blocked),
             ],
-            extra: Default::default(),
         };
 
         let tmp = TempDir::new().unwrap();
@@ -544,9 +565,8 @@ mod tests {
 
         let snapshot = load_plan(&plan_dir).unwrap();
         let counts = snapshot.task_counts.expect("backlog parsed; counts populated");
-        assert_eq!(counts.total, 4);
-        assert_eq!(counts.not_started, 1);
-        assert_eq!(counts.in_progress, 1);
+        assert_eq!(counts.total, 3);
+        assert_eq!(counts.active, 1);
         assert_eq!(counts.done, 1);
         assert_eq!(counts.blocked, 1);
     }

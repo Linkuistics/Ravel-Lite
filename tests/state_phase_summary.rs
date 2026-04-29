@@ -36,22 +36,33 @@ fn phase_summary_triage_reports_done_new_and_obsolete_vs_baseline() {
     let plan = tmp.path();
     init_git_repo(plan);
 
-    // Baseline: foo=not_started, gone=not_started.
+    // Baseline: foo=active, gone=active.
     std::fs::write(
         plan.join("backlog.yaml"),
-        r#"tasks:
+        r#"schema_version: 1
+items:
 - id: foo
-  title: Foo task
+  kind: backlog-item
+  claim: Foo task
+  justifications:
+  - kind: rationale
+    text: |
+      body
+  status: active
+  authored_at: test
+  authored_in: test
   category: core
-  status: not_started
-  description: |
-    body
 - id: gone
-  title: Soon obsolete
+  kind: backlog-item
+  claim: Soon obsolete
+  justifications:
+  - kind: rationale
+    text: |
+      body
+  status: active
+  authored_at: test
+  authored_in: test
   category: core
-  status: not_started
-  description: |
-    body
 "#,
     )
     .unwrap();
@@ -60,21 +71,32 @@ fn phase_summary_triage_reports_done_new_and_obsolete_vs_baseline() {
     // Current: foo=done, new fresh task added, gone removed.
     std::fs::write(
         plan.join("backlog.yaml"),
-        r#"tasks:
+        r#"schema_version: 1
+items:
 - id: foo
-  title: Foo task
-  category: core
+  kind: backlog-item
+  claim: Foo task
+  justifications:
+  - kind: rationale
+    text: |
+      body
   status: done
-  description: |
-    body
+  authored_at: test
+  authored_in: test
+  category: core
   results: |
     did it
 - id: fresh
-  title: Fresh task
+  kind: backlog-item
+  claim: Fresh task
+  justifications:
+  - kind: rationale
+    text: |
+      body
+  status: active
+  authored_at: test
+  authored_in: test
   category: core
-  status: not_started
-  description: |
-    body
 "#,
     )
     .unwrap();
@@ -167,13 +189,19 @@ fn phase_summary_empty_baseline_sha_treats_state_as_first_cycle() {
 
     std::fs::write(
         plan.join("backlog.yaml"),
-        r#"tasks:
+        r#"schema_version: 1
+items:
 - id: first
-  title: First task
+  kind: backlog-item
+  claim: First task
+  justifications:
+  - kind: rationale
+    text: |
+      body
+  status: active
+  authored_at: test
+  authored_in: test
   category: core
-  status: not_started
-  description: |
-    body
 "#,
     )
     .unwrap();

@@ -65,7 +65,7 @@ fn migrate_converts_backlog_md_to_yaml_and_list_emits_ready_tasks() {
     let list = Command::new(bin())
         .args(["state", "backlog", "list"])
         .arg(tmp.path())
-        .args(["--status", "not_started", "--ready"])
+        .args(["--status", "active", "--ready"])
         .output()
         .expect("failed to spawn ravel-lite");
     assert!(
@@ -142,7 +142,11 @@ fn migrate_parse_failure_leaves_filesystem_untouched() {
 fn add_seed_task(plan_dir: &std::path::Path) {
     // Start from an empty backlog.yaml and append one task via the CLI
     // so state_backlog tests share a compact, repeatable setup.
-    std::fs::write(plan_dir.join("backlog.yaml"), "tasks: []\n").unwrap();
+    std::fs::write(
+        plan_dir.join("backlog.yaml"),
+        "schema_version: 1\nitems: []\n",
+    )
+    .unwrap();
     let add = Command::new(bin())
         .args(["state", "backlog", "add"])
         .arg(plan_dir)
@@ -298,7 +302,7 @@ fn set_description_preserves_sibling_fields() {
             String::from_utf8_lossy(&out.stderr)
         );
     };
-    run(&["set-status", "seed-task", "in_progress"]);
+    run(&["set-status", "seed-task", "blocked", "--reason", "upstream"]);
     run(&["set-title", "seed-task", "Renamed Seed"]);
     run(&["set-results", "seed-task", "--body", "Results body.\n"]);
     run(&["set-handoff", "seed-task", "--body", "Handoff body.\n"]);
@@ -313,7 +317,7 @@ fn set_description_preserves_sibling_fields() {
         .unwrap();
     let stdout = String::from_utf8(show.stdout).unwrap();
     assert!(stdout.contains("Rewritten brief."), "desc updated: {stdout}");
-    assert!(stdout.contains("in_progress"), "status preserved: {stdout}");
+    assert!(stdout.contains("blocked"), "status preserved: {stdout}");
     assert!(stdout.contains("Renamed Seed"), "title preserved: {stdout}");
     assert!(stdout.contains("Results body."), "results preserved: {stdout}");
     assert!(stdout.contains("Handoff body."), "handoff preserved: {stdout}");
@@ -327,7 +331,7 @@ fn add_set_status_set_results_round_trip_through_cli() {
     // Start from an empty backlog.yaml so add has nothing to collide with.
     std::fs::write(
         tmp.path().join("backlog.yaml"),
-        "tasks: []\n",
+        "schema_version: 1\nitems: []\n",
     )
     .unwrap();
 
@@ -343,7 +347,7 @@ fn add_set_status_set_results_round_trip_through_cli() {
     let set_status = Command::new(bin())
         .args(["state", "backlog", "set-status"])
         .arg(tmp.path())
-        .args(["new-task", "in_progress"])
+        .args(["new-task", "done"])
         .output()
         .unwrap();
     assert!(set_status.status.success());
@@ -356,9 +360,6 @@ fn add_set_status_set_results_round_trip_through_cli() {
         .unwrap();
     assert!(set_results.status.success());
 
-    // set-results is only meaningful on `done` tasks conceptually, but
-    // the verb itself accepts any status; the conceptual invariant
-    // (flip status to done first) is a prompt-side concern.
     let show = Command::new(bin())
         .args(["state", "backlog", "show"])
         .arg(tmp.path())
@@ -366,14 +367,18 @@ fn add_set_status_set_results_round_trip_through_cli() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(show.stdout).unwrap();
-    assert!(stdout.contains("in_progress"));
+    assert!(stdout.contains("status: done"), "stdout: {stdout}");
     assert!(stdout.contains("Finished."));
 }
 
 #[test]
 fn set_dependencies_round_trips_through_cli() {
     let tmp = TempDir::new().unwrap();
-    std::fs::write(tmp.path().join("backlog.yaml"), "tasks: []\n").unwrap();
+    std::fs::write(
+        tmp.path().join("backlog.yaml"),
+        "schema_version: 1\nitems: []\n",
+    )
+    .unwrap();
 
     let add = |title: &str| {
         let out = Command::new(bin())
@@ -423,31 +428,58 @@ fn set_dependencies_round_trips_through_cli() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(show.stdout).unwrap();
-    assert!(stdout.contains("dependencies: []"), "deps must be cleared: {stdout}");
+    // An empty `dependencies` is omitted from the wire form (skip-empty);
+    // the absence of `dependencies:` is the cleared signal.
+    assert!(
+        !stdout.contains("dependencies:"),
+        "deps must be cleared (skip-empty omits the field): {stdout}"
+    );
+}
+
+/// Seed a TMS-shaped backlog.yaml with a `blocked` item whose only
+/// dep is `done` — the canonical drift mode that the kept repair rule
+/// catches.
+fn seed_unblockable_backlog(plan: &std::path::Path) {
+    let yaml = "\
+schema_version: 1
+items:
+- id: parent
+  kind: backlog-item
+  claim: Parent
+  justifications:
+  - kind: rationale
+    text: |
+      body
+  status: done
+  authored_at: test
+  authored_in: test
+  category: maintenance
+- id: foo
+  kind: backlog-item
+  claim: Foo
+  justifications:
+  - kind: rationale
+    text: |
+      body
+  status: blocked
+  authored_at: test
+  authored_in: test
+  category: maintenance
+  blocked_reason: upstream
+  dependencies:
+  - parent
+";
+    std::fs::write(plan.join("backlog.yaml"), yaml).unwrap();
 }
 
 /// Exit-code contract: `repair-stale-statuses` exits 1 when at least
 /// one repair is applied so scripts can detect drift via `$?` without
 /// re-parsing the YAML report. Also verifies the mutation actually
-/// lands on disk (the stale task flips to `done`).
+/// lands on disk (the unblocked item flips to `active`).
 #[test]
 fn repair_stale_statuses_exits_one_when_repairs_applied() {
     let tmp = TempDir::new().unwrap();
-    // Seed an in_progress task with non-empty results — the canonical
-    // drift mode the prompt safety-net previously caught.
-    let yaml = "\
-tasks:
-- id: foo
-  title: Foo
-  category: maintenance
-  status: in_progress
-  dependencies: []
-  description: |
-    body
-  results: |
-    completed
-";
-    std::fs::write(tmp.path().join("backlog.yaml"), yaml).unwrap();
+    seed_unblockable_backlog(tmp.path());
 
     let out = Command::new(bin())
         .args(["state", "backlog", "repair-stale-statuses"])
@@ -463,15 +495,14 @@ tasks:
     );
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(
-        stdout.contains("task_id: foo") && stdout.contains("results_non_empty"),
-        "report must cite repaired task and reason: {stdout}"
+        stdout.contains("task_id: foo") && stdout.contains("dependencies_satisfied"),
+        "report must cite repaired item and reason: {stdout}"
     );
 
-    // Verify the mutation landed on disk.
     let after = std::fs::read_to_string(tmp.path().join("backlog.yaml")).unwrap();
     assert!(
-        after.contains("status: done"),
-        "repaired backlog must show status: done, got:\n{after}"
+        after.contains("status: active"),
+        "repaired backlog must show status: active, got:\n{after}"
     );
 }
 
@@ -481,14 +512,19 @@ tasks:
 fn repair_stale_statuses_exits_zero_when_no_drift() {
     let tmp = TempDir::new().unwrap();
     let yaml = "\
-tasks:
+schema_version: 1
+items:
 - id: foo
-  title: Foo
+  kind: backlog-item
+  claim: Foo
+  justifications:
+  - kind: rationale
+    text: |
+      body
+  status: active
+  authored_at: test
+  authored_in: test
   category: maintenance
-  status: not_started
-  dependencies: []
-  description: |
-    body
 ";
     std::fs::write(tmp.path().join("backlog.yaml"), yaml).unwrap();
     let before = std::fs::read_to_string(tmp.path().join("backlog.yaml")).unwrap();
@@ -508,25 +544,11 @@ tasks:
     assert_eq!(before, after, "backlog must be byte-identical when no repairs applied");
 }
 
-/// `--dry-run` reports the repair but must not write. Complements the
-/// unit test by going through the built binary's CLI parsing — catches
-/// a regression where `--dry-run` was defined but not threaded through.
+/// `--dry-run` reports the repair but must not write.
 #[test]
 fn repair_stale_statuses_dry_run_does_not_mutate_disk() {
     let tmp = TempDir::new().unwrap();
-    let yaml = "\
-tasks:
-- id: foo
-  title: Foo
-  category: maintenance
-  status: in_progress
-  dependencies: []
-  description: |
-    body
-  results: |
-    completed
-";
-    std::fs::write(tmp.path().join("backlog.yaml"), yaml).unwrap();
+    seed_unblockable_backlog(tmp.path());
     let before = std::fs::read_to_string(tmp.path().join("backlog.yaml")).unwrap();
 
     let out = Command::new(bin())
@@ -535,7 +557,6 @@ tasks:
         .arg("--dry-run")
         .output()
         .unwrap();
-    // Exit 1 still signals that repairs WOULD apply, even under dry-run.
     assert_eq!(
         out.status.code(),
         Some(1),

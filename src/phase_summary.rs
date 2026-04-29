@@ -28,7 +28,8 @@ use std::process::Command;
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 
-use crate::state::backlog::schema::{BacklogFile, Status};
+use crate::plan_kg::BacklogStatus;
+use crate::state::backlog::schema::{BacklogEntry, BacklogFile};
 use crate::state::filenames::{BACKLOG_FILENAME, MEMORY_FILENAME};
 use crate::state::memory::schema::MemoryFile;
 
@@ -138,44 +139,48 @@ fn compute_triage_labels_from_disk(plan_dir: &Path, baseline_sha: &str) -> Resul
 pub fn compute_triage_labels(baseline: &BacklogFile, current: &BacklogFile) -> Vec<Label> {
     use std::collections::HashMap;
 
-    let baseline_by_id: HashMap<&str, &crate::state::backlog::schema::Task> = baseline
-        .tasks
+    let baseline_by_id: HashMap<&str, &BacklogEntry> = baseline
+        .items
         .iter()
-        .map(|t| (t.id.as_str(), t))
+        .map(|e| (e.item.id.as_str(), e))
         .collect();
     let baseline_positions: HashMap<&str, usize> = baseline
-        .tasks
+        .items
         .iter()
         .enumerate()
-        .map(|(i, t)| (t.id.as_str(), i))
+        .map(|(i, e)| (e.item.id.as_str(), i))
         .collect();
     let current_ids: std::collections::HashSet<&str> =
-        current.tasks.iter().map(|t| t.id.as_str()).collect();
+        current.items.iter().map(|e| e.item.id.as_str()).collect();
 
     let mut done = Vec::new();
     let mut new_tasks = Vec::new();
     let mut reprioritised = Vec::new();
 
-    for (pos, task) in current.tasks.iter().enumerate() {
-        match baseline_by_id.get(task.id.as_str()) {
-            Some(prev) if prev.status != Status::Done && task.status == Status::Done => {
-                done.push(Label::simple("DONE", task.title.clone()));
+    for (pos, entry) in current.items.iter().enumerate() {
+        match baseline_by_id.get(entry.item.id.as_str()) {
+            Some(prev)
+                if prev.item.status != BacklogStatus::Done
+                    && entry.item.status == BacklogStatus::Done =>
+            {
+                done.push(Label::simple("DONE", entry.item.claim.clone()));
             }
             Some(_) => {
-                if let Some(&prev_pos) = baseline_positions.get(task.id.as_str()) {
+                if let Some(&prev_pos) = baseline_positions.get(entry.item.id.as_str()) {
                     if prev_pos != pos {
-                        reprioritised.push(Label::simple("REPRIORITISED", task.title.clone()));
+                        reprioritised
+                            .push(Label::simple("REPRIORITISED", entry.item.claim.clone()));
                     }
                 }
             }
-            None => new_tasks.push(Label::simple("NEW", task.title.clone())),
+            None => new_tasks.push(Label::simple("NEW", entry.item.claim.clone())),
         }
     }
 
     let mut obsolete = Vec::new();
-    for task in &baseline.tasks {
-        if !current_ids.contains(task.id.as_str()) {
-            obsolete.push(Label::simple("OBSOLETE", task.title.clone()));
+    for entry in &baseline.items {
+        if !current_ids.contains(entry.item.id.as_str()) {
+            obsolete.push(Label::simple("OBSOLETE", entry.item.claim.clone()));
         }
     }
 
@@ -381,30 +386,47 @@ fn format_labels(labels: &[Label], format: RenderFormat) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::backlog::schema::Task;
     use crate::plan_kg::MemoryStatus;
+    use crate::state::backlog::schema::{BacklogEntry, BACKLOG_SCHEMA_VERSION};
     use crate::state::memory::schema::{MemoryEntry, MEMORY_SCHEMA_VERSION};
     use knowledge_graph::{Item, Justification, KindMarker};
 
-    fn task(id: &str, title: &str, status: Status) -> Task {
-        Task {
-            id: id.into(),
-            title: title.into(),
+    fn task(id: &str, title: &str, status: BacklogStatus) -> BacklogEntry {
+        BacklogEntry {
+            item: Item {
+                id: id.into(),
+                kind: KindMarker::new(),
+                claim: title.into(),
+                justifications: vec![Justification::Rationale {
+                    text: "body\n".into(),
+                }],
+                status,
+                supersedes: vec![],
+                superseded_by: None,
+                defeated_by: None,
+                authored_at: "test".into(),
+                authored_in: "test".into(),
+            },
             category: "core".into(),
-            status,
-            blocked_reason: if status == Status::Blocked {
+            blocked_reason: if status == BacklogStatus::Blocked {
                 Some("upstream".into())
             } else {
                 None
             },
             dependencies: vec![],
-            description: "body\n".into(),
-            results: if status == Status::Done {
+            results: if status == BacklogStatus::Done {
                 Some("done\n".into())
             } else {
                 None
             },
             handoff: None,
+        }
+    }
+
+    fn backlog_file(items: Vec<BacklogEntry>) -> BacklogFile {
+        BacklogFile {
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items,
         }
     }
 
@@ -439,77 +461,53 @@ mod tests {
 
     #[test]
     fn triage_with_no_mutations_emits_no_labels() {
-        let backlog = BacklogFile {
-            tasks: vec![task("a", "A", Status::NotStarted)],
-            extra: Default::default(),
-        };
+        let backlog = backlog_file(vec![task("a", "A", BacklogStatus::Active)]);
         assert!(compute_triage_labels(&backlog, &backlog).is_empty());
     }
 
     #[test]
     fn triage_emits_new_label_for_tasks_absent_in_baseline() {
         let baseline = BacklogFile::default();
-        let current = BacklogFile {
-            tasks: vec![task("a", "Alpha", Status::NotStarted)],
-            extra: Default::default(),
-        };
+        let current = backlog_file(vec![task("a", "Alpha", BacklogStatus::Active)]);
         let labels = compute_triage_labels(&baseline, &current);
         assert_eq!(labels, vec![Label::simple("NEW", "Alpha")]);
     }
 
     #[test]
     fn triage_emits_done_label_only_for_status_flips_into_done() {
-        let baseline = BacklogFile {
-            tasks: vec![
-                task("a", "Alpha", Status::NotStarted),
-                task("b", "Bravo", Status::Done),
-            ],
-            extra: Default::default(),
-        };
-        let current = BacklogFile {
-            tasks: vec![
-                task("a", "Alpha", Status::Done),
-                task("b", "Bravo", Status::Done),
-            ],
-            extra: Default::default(),
-        };
+        let baseline = backlog_file(vec![
+            task("a", "Alpha", BacklogStatus::Active),
+            task("b", "Bravo", BacklogStatus::Done),
+        ]);
+        let current = backlog_file(vec![
+            task("a", "Alpha", BacklogStatus::Done),
+            task("b", "Bravo", BacklogStatus::Done),
+        ]);
         let labels = compute_triage_labels(&baseline, &current);
         assert_eq!(labels, vec![Label::simple("DONE", "Alpha")]);
     }
 
     #[test]
     fn triage_emits_obsolete_label_for_baseline_ids_missing_from_current() {
-        let baseline = BacklogFile {
-            tasks: vec![
-                task("a", "Alpha", Status::NotStarted),
-                task("b", "Bravo", Status::NotStarted),
-            ],
-            extra: Default::default(),
-        };
-        let current = BacklogFile {
-            tasks: vec![task("a", "Alpha", Status::NotStarted)],
-            extra: Default::default(),
-        };
+        let baseline = backlog_file(vec![
+            task("a", "Alpha", BacklogStatus::Active),
+            task("b", "Bravo", BacklogStatus::Active),
+        ]);
+        let current = backlog_file(vec![task("a", "Alpha", BacklogStatus::Active)]);
         let labels = compute_triage_labels(&baseline, &current);
         assert_eq!(labels, vec![Label::simple("OBSOLETE", "Bravo")]);
     }
 
     #[test]
     fn triage_emits_reprioritised_when_index_position_changes() {
-        let baseline = BacklogFile {
-            tasks: vec![
-                task("a", "Alpha", Status::NotStarted),
-                task("b", "Bravo", Status::NotStarted),
-            ],
-            extra: Default::default(),
-        };
-        let current = BacklogFile {
-            tasks: vec![
-                task("b", "Bravo", Status::NotStarted),
-                task("a", "Alpha", Status::NotStarted),
-            ],
-            extra: Default::default(),
-        };
+        let baseline = backlog_file(vec![
+            task("a", "Alpha", BacklogStatus::Active),
+            task("b", "Bravo", BacklogStatus::Active),
+        ]);
+        let current = backlog_file(vec![
+            task("b", "Bravo", BacklogStatus::Active),
+            task("a", "Alpha", BacklogStatus::Active),
+        ]);
         let labels = compute_triage_labels(&baseline, &current);
         // Both moved; both get the label.
         assert_eq!(
@@ -523,22 +521,16 @@ mod tests {
 
     #[test]
     fn triage_orders_done_before_new_before_reprioritised_before_obsolete() {
-        let baseline = BacklogFile {
-            tasks: vec![
-                task("stale", "Stale", Status::NotStarted),
-                task("kept", "Kept", Status::NotStarted),
-                task("finish", "Finish", Status::InProgress),
-            ],
-            extra: Default::default(),
-        };
-        let current = BacklogFile {
-            tasks: vec![
-                task("kept", "Kept", Status::NotStarted),  // reprioritised
-                task("finish", "Finish", Status::Done),    // done
-                task("fresh", "Fresh", Status::NotStarted), // new
-            ],
-            extra: Default::default(),
-        };
+        let baseline = backlog_file(vec![
+            task("stale", "Stale", BacklogStatus::Active),
+            task("kept", "Kept", BacklogStatus::Active),
+            task("finish", "Finish", BacklogStatus::Active),
+        ]);
+        let current = backlog_file(vec![
+            task("kept", "Kept", BacklogStatus::Active),    // reprioritised
+            task("finish", "Finish", BacklogStatus::Done),  // done
+            task("fresh", "Fresh", BacklogStatus::Active),  // new
+        ]);
         let labels = compute_triage_labels(&baseline, &current);
         let kinds: Vec<&str> = labels.iter().map(|l| l.kind.as_str()).collect();
         assert_eq!(kinds, vec!["DONE", "NEW", "REPRIORITISED", "OBSOLETE"]);

@@ -16,7 +16,10 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::state::backlog::schema::{BacklogFile, Status, Task};
+use knowledge_graph::ItemStatus;
+
+use crate::plan_kg::BacklogStatus;
+use crate::state::backlog::schema::{BacklogEntry, BacklogFile};
 use crate::state::filenames::BACKLOG_FILENAME;
 
 /// Top-level entry point used by `phase_loop`. Always returns a printable
@@ -93,13 +96,13 @@ fn read_baseline_backlog(plan_dir: &Path, baseline_sha: &str) -> BaselineResult 
     }
 }
 
-/// Transition record for one task id. Absent-in-baseline and
+/// Transition record for one item id. Absent-in-baseline and
 /// absent-in-current are the two "pure" cases; everything else is a
 /// field-level diff where at least one of status/results/title/deps
 /// differs.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Transitions {
-    status_flips: Vec<(String, Status, Status)>,
+    status_flips: Vec<(String, BacklogStatus, BacklogStatus)>,
     results_added: Vec<(String, usize)>,
     results_modified: Vec<(String, usize, usize)>,
     tasks_added: Vec<(String, String)>,
@@ -119,62 +122,68 @@ enum HandoffChange {
 fn compute_transitions(baseline: &BacklogFile, current: &BacklogFile) -> Transitions {
     use std::collections::HashMap;
 
-    let base_by_id: HashMap<&str, &Task> = baseline
-        .tasks
+    let base_by_id: HashMap<&str, &BacklogEntry> = baseline
+        .items
         .iter()
-        .map(|t| (t.id.as_str(), t))
+        .map(|e| (e.item.id.as_str(), e))
         .collect();
-    let curr_by_id: HashMap<&str, &Task> = current
-        .tasks
+    let curr_by_id: HashMap<&str, &BacklogEntry> = current
+        .items
         .iter()
-        .map(|t| (t.id.as_str(), t))
+        .map(|e| (e.item.id.as_str(), e))
         .collect();
 
     let mut out = Transitions::default();
 
-    for curr in &current.tasks {
-        match base_by_id.get(curr.id.as_str()) {
+    for curr in &current.items {
+        match base_by_id.get(curr.item.id.as_str()) {
             None => {
-                out.tasks_added.push((curr.id.clone(), curr.title.clone()));
+                out.tasks_added
+                    .push((curr.item.id.clone(), curr.item.claim.clone()));
             }
             Some(base) => {
-                diff_task_fields(base, curr, &mut out);
+                diff_entry_fields(base, curr, &mut out);
             }
         }
     }
 
-    for base in &baseline.tasks {
-        if !curr_by_id.contains_key(base.id.as_str()) {
-            out.tasks_deleted.push((base.id.clone(), base.title.clone()));
+    for base in &baseline.items {
+        if !curr_by_id.contains_key(base.item.id.as_str()) {
+            out.tasks_deleted
+                .push((base.item.id.clone(), base.item.claim.clone()));
         }
     }
 
     out
 }
 
-fn diff_task_fields(base: &Task, curr: &Task, out: &mut Transitions) {
-    if base.status != curr.status {
-        out.status_flips.push((curr.id.clone(), base.status, curr.status));
+fn diff_entry_fields(base: &BacklogEntry, curr: &BacklogEntry, out: &mut Transitions) {
+    if base.item.status != curr.item.status {
+        out.status_flips
+            .push((curr.item.id.clone(), base.item.status, curr.item.status));
     }
 
     let base_results_len = base.results.as_deref().map(line_count).unwrap_or(0);
     let curr_results_len = curr.results.as_deref().map(line_count).unwrap_or(0);
     match (base_results_len, curr_results_len) {
-        (0, n) if n > 0 => out.results_added.push((curr.id.clone(), n)),
+        (0, n) if n > 0 => out.results_added.push((curr.item.id.clone(), n)),
         (b, c) if b > 0 && c > 0 && base.results != curr.results => {
-            out.results_modified.push((curr.id.clone(), b, c));
+            out.results_modified.push((curr.item.id.clone(), b, c));
         }
         _ => {}
     }
 
-    if base.title != curr.title {
-        out.title_changes
-            .push((curr.id.clone(), base.title.clone(), curr.title.clone()));
+    if base.item.claim != curr.item.claim {
+        out.title_changes.push((
+            curr.item.id.clone(),
+            base.item.claim.clone(),
+            curr.item.claim.clone(),
+        ));
     }
 
     if base.dependencies != curr.dependencies {
         out.dependency_changes.push((
-            curr.id.clone(),
+            curr.item.id.clone(),
             base.dependencies.clone(),
             curr.dependencies.clone(),
         ));
@@ -187,7 +196,7 @@ fn diff_task_fields(base: &Task, curr: &Task, out: &mut Transitions) {
         _ => None,
     };
     if let Some(hc) = change {
-        out.handoff_changes.push((curr.id.clone(), hc));
+        out.handoff_changes.push((curr.item.id.clone(), hc));
     }
 }
 
@@ -205,7 +214,7 @@ fn render_transitions(t: &Transitions) -> String {
     if !t.status_flips.is_empty() {
         let mut lines = vec!["status flips:".to_string()];
         for (id, from, to) in &t.status_flips {
-            lines.push(format!("  - {id}: {} → {}", status_label(*from), status_label(*to)));
+            lines.push(format!("  - {id}: {} → {}", from.as_str(), to.as_str()));
         }
         sections.push(lines.join("\n"));
     }
@@ -279,44 +288,57 @@ fn render_transitions(t: &Transitions) -> String {
 }
 
 /// Fallback renderer for the "baseline-backlog-missing" case, which
-/// happens on a plan's very first cycle: every task in the current
+/// happens on a plan's very first cycle: every item in the current
 /// backlog is "new" by definition, so we render additions only.
 fn render_additions_only(current: &BacklogFile) -> String {
-    if current.tasks.is_empty() {
+    if current.items.is_empty() {
         return "(no baseline; current backlog is empty)".to_string();
     }
-    let mut lines = vec!["(no baseline found at this SHA — rendering current backlog as additions)".to_string(), String::new(), "tasks added:".to_string()];
-    for task in &current.tasks {
-        lines.push(format!("  + {}: {}", task.id, task.title));
+    let mut lines = vec![
+        "(no baseline found at this SHA — rendering current backlog as additions)".to_string(),
+        String::new(),
+        "tasks added:".to_string(),
+    ];
+    for entry in &current.items {
+        lines.push(format!("  + {}: {}", entry.item.id, entry.item.claim));
     }
     lines.join("\n")
-}
-
-fn status_label(s: Status) -> &'static str {
-    match s {
-        Status::NotStarted => "not_started",
-        Status::InProgress => "in_progress",
-        Status::Done => "done",
-        Status::Blocked => "blocked",
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::backlog::schema::Task;
+    use crate::state::backlog::schema::{BacklogEntry, BACKLOG_SCHEMA_VERSION};
+    use knowledge_graph::{Item, Justification, KindMarker};
 
-    fn task(id: &str, status: Status) -> Task {
-        Task {
-            id: id.into(),
-            title: format!("Task {id}"),
+    fn entry(id: &str, status: BacklogStatus) -> BacklogEntry {
+        BacklogEntry {
+            item: Item {
+                id: id.into(),
+                kind: KindMarker::new(),
+                claim: format!("Task {id}"),
+                justifications: vec![Justification::Rationale {
+                    text: "desc".into(),
+                }],
+                status,
+                supersedes: vec![],
+                superseded_by: None,
+                defeated_by: None,
+                authored_at: "test".into(),
+                authored_in: "test".into(),
+            },
             category: "core".into(),
-            status,
             blocked_reason: None,
             dependencies: vec![],
-            description: "desc".into(),
             results: None,
             handoff: None,
+        }
+    }
+
+    fn file(items: Vec<BacklogEntry>) -> BacklogFile {
+        BacklogFile {
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items,
         }
     }
 
@@ -331,20 +353,20 @@ mod tests {
 
     #[test]
     fn status_flip_is_rendered_with_arrow() {
-        let base = BacklogFile { tasks: vec![task("foo", Status::NotStarted)], ..Default::default() };
-        let curr = BacklogFile { tasks: vec![task("foo", Status::Done)], ..Default::default() };
+        let base = file(vec![entry("foo", BacklogStatus::Active)]);
+        let curr = file(vec![entry("foo", BacklogStatus::Done)]);
         let t = compute_transitions(&base, &curr);
         let rendered = render_transitions(&t);
         assert!(rendered.contains("status flips:"), "missing header: {rendered}");
-        assert!(rendered.contains("foo: not_started → done"), "missing line: {rendered}");
+        assert!(rendered.contains("foo: active → done"), "missing line: {rendered}");
     }
 
     #[test]
     fn results_added_counts_lines() {
-        let base = BacklogFile { tasks: vec![task("foo", Status::Done)], ..Default::default() };
-        let mut with_results = task("foo", Status::Done);
+        let base = file(vec![entry("foo", BacklogStatus::Done)]);
+        let mut with_results = entry("foo", BacklogStatus::Done);
         with_results.results = Some("line one\nline two\nline three".into());
-        let curr = BacklogFile { tasks: vec![with_results], ..Default::default() };
+        let curr = file(vec![with_results]);
         let t = compute_transitions(&base, &curr);
         let rendered = render_transitions(&t);
         assert!(rendered.contains("results added:"), "missing header: {rendered}");
@@ -353,15 +375,12 @@ mod tests {
 
     #[test]
     fn results_modified_shows_old_and_new_line_count() {
-        let mut base_task = task("foo", Status::Done);
-        base_task.results = Some("old\ntext".into());
-        let mut curr_task = task("foo", Status::Done);
-        curr_task.results = Some("new\ntext\nmore\nlines".into());
+        let mut base_entry = entry("foo", BacklogStatus::Done);
+        base_entry.results = Some("old\ntext".into());
+        let mut curr_entry = entry("foo", BacklogStatus::Done);
+        curr_entry.results = Some("new\ntext\nmore\nlines".into());
 
-        let t = compute_transitions(
-            &BacklogFile { tasks: vec![base_task], ..Default::default() },
-            &BacklogFile { tasks: vec![curr_task], ..Default::default() },
-        );
+        let t = compute_transitions(&file(vec![base_entry]), &file(vec![curr_entry]));
         let rendered = render_transitions(&t);
         assert!(rendered.contains("results modified:"), "missing header: {rendered}");
         assert!(rendered.contains("foo: 2 → 4 line(s)"), "missing line: {rendered}");
@@ -370,7 +389,7 @@ mod tests {
     #[test]
     fn added_task_renders_with_plus_marker() {
         let base = BacklogFile::default();
-        let curr = BacklogFile { tasks: vec![task("new-id", Status::NotStarted)], ..Default::default() };
+        let curr = file(vec![entry("new-id", BacklogStatus::Active)]);
         let t = compute_transitions(&base, &curr);
         let rendered = render_transitions(&t);
         assert!(rendered.contains("tasks added:"), "missing header: {rendered}");
@@ -379,7 +398,7 @@ mod tests {
 
     #[test]
     fn deleted_task_renders_with_minus_marker() {
-        let base = BacklogFile { tasks: vec![task("old-id", Status::Done)], ..Default::default() };
+        let base = file(vec![entry("old-id", BacklogStatus::Done)]);
         let curr = BacklogFile::default();
         let t = compute_transitions(&base, &curr);
         let rendered = render_transitions(&t);
@@ -389,14 +408,11 @@ mod tests {
 
     #[test]
     fn dependency_changes_are_reported() {
-        let mut base_task = task("foo", Status::NotStarted);
-        base_task.dependencies = vec!["dep-a".into()];
-        let mut curr_task = task("foo", Status::NotStarted);
-        curr_task.dependencies = vec!["dep-a".into(), "dep-b".into()];
-        let t = compute_transitions(
-            &BacklogFile { tasks: vec![base_task], ..Default::default() },
-            &BacklogFile { tasks: vec![curr_task], ..Default::default() },
-        );
+        let mut base_entry = entry("foo", BacklogStatus::Active);
+        base_entry.dependencies = vec!["dep-a".into()];
+        let mut curr_entry = entry("foo", BacklogStatus::Active);
+        curr_entry.dependencies = vec!["dep-a".into(), "dep-b".into()];
+        let t = compute_transitions(&file(vec![base_entry]), &file(vec![curr_entry]));
         let rendered = render_transitions(&t);
         assert!(rendered.contains("dependency changes:"), "missing header: {rendered}");
         assert!(rendered.contains("foo:"), "missing id line: {rendered}");
@@ -404,13 +420,10 @@ mod tests {
 
     #[test]
     fn handoff_added_is_classified_correctly() {
-        let base_task = task("foo", Status::Done);
-        let mut curr_task = task("foo", Status::Done);
-        curr_task.handoff = Some("design decision".into());
-        let t = compute_transitions(
-            &BacklogFile { tasks: vec![base_task], ..Default::default() },
-            &BacklogFile { tasks: vec![curr_task], ..Default::default() },
-        );
+        let base_entry = entry("foo", BacklogStatus::Done);
+        let mut curr_entry = entry("foo", BacklogStatus::Done);
+        curr_entry.handoff = Some("design decision".into());
+        let t = compute_transitions(&file(vec![base_entry]), &file(vec![curr_entry]));
         assert_eq!(t.handoff_changes, vec![("foo".into(), HandoffChange::Added)]);
     }
 
@@ -421,9 +434,8 @@ mod tests {
         assert!(out.contains("no baseline SHA"), "expected placeholder, got: {out}");
     }
 
-    /// End-to-end: baseline backlog committed in git, current backlog on
-    /// disk differs, `backlog_transitions` reports the diff. Covers the
-    /// `git show <sha>:<full-name>` path resolution.
+    /// End-to-end: baseline backlog committed in git, current backlog
+    /// on disk differs, `backlog_transitions` reports the diff.
     #[test]
     fn backlog_transitions_reads_baseline_from_git_show() {
         use std::process::Command;
@@ -434,7 +446,7 @@ mod tests {
         Command::new("git").current_dir(plan).args(["config", "user.email", "t@t"]).output().unwrap();
         Command::new("git").current_dir(plan).args(["config", "user.name", "t"]).output().unwrap();
 
-        let base = BacklogFile { tasks: vec![task("foo", Status::NotStarted)], ..Default::default() };
+        let base = file(vec![entry("foo", BacklogStatus::Active)]);
         crate::state::backlog::write_backlog(plan, &base).unwrap();
         Command::new("git").current_dir(plan).args(["add", "-A"]).output().unwrap();
         Command::new("git").current_dir(plan).args(["commit", "-q", "-m", "baseline"]).output().unwrap();
@@ -442,16 +454,14 @@ mod tests {
             Command::new("git").current_dir(plan).args(["rev-parse", "HEAD"]).output().unwrap().stdout,
         ).unwrap().trim().to_string();
 
-        let curr = BacklogFile { tasks: vec![task("foo", Status::Done)], ..Default::default() };
+        let curr = file(vec![entry("foo", BacklogStatus::Done)]);
         crate::state::backlog::write_backlog(plan, &curr).unwrap();
 
         let rendered = backlog_transitions(plan, &sha);
-        assert!(rendered.contains("foo: not_started → done"), "expected status flip, got: {rendered}");
+        assert!(rendered.contains("foo: active → done"), "expected status flip, got: {rendered}");
     }
 
-    /// First-cycle case: baseline commit predates backlog.yaml. The
-    /// helper falls back to "additions only" rendering rather than
-    /// errorring out.
+    /// First-cycle case: baseline commit predates backlog.yaml.
     #[test]
     fn backlog_transitions_handles_missing_baseline_file() {
         use std::process::Command;
@@ -469,7 +479,7 @@ mod tests {
             Command::new("git").current_dir(plan).args(["rev-parse", "HEAD"]).output().unwrap().stdout,
         ).unwrap().trim().to_string();
 
-        let curr = BacklogFile { tasks: vec![task("foo", Status::NotStarted)], ..Default::default() };
+        let curr = file(vec![entry("foo", BacklogStatus::Active)]);
         crate::state::backlog::write_backlog(plan, &curr).unwrap();
 
         let rendered = backlog_transitions(plan, &sha);

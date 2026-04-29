@@ -1,68 +1,71 @@
 //! Typed schema for `<plan>/backlog.yaml`.
+//!
+//! Backlog items are TMS-shaped items in the `knowledge-graph`
+//! substrate. The on-disk record wraps `Item<BacklogItemKind>` with
+//! backlog-specific extension fields (`category`, `dependencies`,
+//! `results`, `handoff`, `blocked_reason`). The `description` body
+//! moves into `item.justifications` as a single `Rationale`
+//! justification, mirroring the memory.yaml shape.
+//!
+//! See `docs/architecture-next.md` §Item shape and §Status vocabularies
+//! for the rationale.
 
-use indexmap::IndexMap;
+use std::collections::HashMap;
+
+use knowledge_graph::Item;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Status {
-    NotStarted,
-    InProgress,
-    Done,
-    Blocked,
-}
+use crate::plan_kg::{BacklogItemKind, BacklogStatus};
 
-impl Status {
-    pub fn parse(input: &str) -> Option<Status> {
-        match input {
-            "not_started" => Some(Status::NotStarted),
-            "in_progress" => Some(Status::InProgress),
-            "done" => Some(Status::Done),
-            "blocked" => Some(Status::Blocked),
-            _ => None,
-        }
-    }
-}
+pub const BACKLOG_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Task {
-    pub id: String,
-    pub title: String,
+/// One on-disk backlog entry. The flattened `item` field carries every
+/// substrate-defined slot (id, kind marker, claim, justifications,
+/// status, supersession links, defeat info, provenance); the remaining
+/// fields are backlog-specific extensions retained from v1.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BacklogEntry {
+    #[serde(flatten)]
+    pub item: Item<BacklogItemKind>,
     pub category: String,
-    pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocked_reason: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<String>,
-    pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub results: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handoff: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// The full `backlog.yaml` document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BacklogFile {
+    pub schema_version: u32,
     #[serde(default)]
-    pub tasks: Vec<Task>,
-    /// Preserve unknown top-level keys so a roundtrip through older readers
-    /// never drops fields a newer writer added. Future-proofs the schema
-    /// against the R2–R5 extensions.
-    #[serde(flatten)]
-    pub extra: IndexMap<String, serde_yaml::Value>,
+    pub items: Vec<BacklogEntry>,
 }
 
-/// Per-status tally of a backlog's tasks. Computed from a parsed
-/// `BacklogFile` via `BacklogFile::task_counts` so survey (and any
-/// other caller) never has to ask an LLM to count — mechanical work
-/// belongs in Rust.
+impl Default for BacklogFile {
+    fn default() -> Self {
+        Self {
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items: Vec::new(),
+        }
+    }
+}
+
+/// Per-status tally of a backlog's items. Computed via
+/// `BacklogFile::task_counts` so survey (and any other caller) never
+/// has to ask an LLM to count — mechanical work belongs in Rust.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskCounts {
     pub total: usize,
-    pub not_started: usize,
-    pub in_progress: usize,
+    pub active: usize,
     pub done: usize,
     pub blocked: usize,
+    pub defeated: usize,
+    pub superseded: usize,
 }
 
 /// The three per-row readiness fields the survey `PlanRow` carries
@@ -73,65 +76,64 @@ pub struct TaskCounts {
 /// survey prompt drop the "count these" instruction.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlanRowCounts {
-    /// Tasks with `status == NotStarted` whose every dependency id
-    /// resolves to a task with `status == Done` in the same backlog.
-    /// A dep id with no matching task is treated as unmet so typos or
-    /// renamed ids never accidentally unblock a task.
+    /// Items with `status == Active` whose every dependency id resolves
+    /// to an item with `status == Done` in the same backlog. A dep id
+    /// with no matching item is treated as unmet so typos or renamed
+    /// ids never accidentally unblock an item.
     pub unblocked: usize,
-    /// Tasks with `status == Blocked`, plus tasks with
-    /// `status == NotStarted` that have at least one unmet dep. Matches
-    /// the union the survey render key at `src/survey/render.rs`
-    /// documents as `B = blocked`.
+    /// Items with `status == Blocked`, plus items with
+    /// `status == Active` that have at least one unmet dep. Matches the
+    /// union the survey render key documents as `B = blocked`.
     pub blocked: usize,
-    /// Tasks carrying a `handoff` block — the YAML-era replacement for
+    /// Items carrying a `handoff` block — the YAML-era replacement for
     /// the legacy `## Received` dispatches section. Non-empty means the
-    /// next triage needs to either promote the hand-off to a new task
+    /// next triage needs to either promote the hand-off to a new item
     /// or archive it to memory.
     pub received: usize,
 }
 
 impl BacklogFile {
-    /// Tally tasks by status. `total` is the length of the task list;
-    /// the per-status fields are exact counts of tasks with that
-    /// `Status`. A task always contributes to exactly one per-status
-    /// field, so the sum of `not_started + in_progress + done + blocked`
-    /// equals `total`.
+    /// Tally items by status. `total` is the length of the items list;
+    /// the per-status fields are exact counts of items with that
+    /// `BacklogStatus`. An item always contributes to exactly one
+    /// per-status field, so the sum of `active + done + blocked +
+    /// defeated + superseded` equals `total`.
     pub fn task_counts(&self) -> TaskCounts {
         let mut counts = TaskCounts {
-            total: self.tasks.len(),
+            total: self.items.len(),
             ..TaskCounts::default()
         };
-        for task in &self.tasks {
-            match task.status {
-                Status::NotStarted => counts.not_started += 1,
-                Status::InProgress => counts.in_progress += 1,
-                Status::Done => counts.done += 1,
-                Status::Blocked => counts.blocked += 1,
+        for entry in &self.items {
+            match entry.item.status {
+                BacklogStatus::Active => counts.active += 1,
+                BacklogStatus::Done => counts.done += 1,
+                BacklogStatus::Blocked => counts.blocked += 1,
+                BacklogStatus::Defeated => counts.defeated += 1,
+                BacklogStatus::Superseded => counts.superseded += 1,
             }
         }
         counts
     }
 
     /// One-pass computation of the three survey-row fields whose
-    /// derivation requires cross-task information. Keeping them together
-    /// in `PlanRowCounts` guarantees all three come from a single
-    /// consistent snapshot of the backlog.
+    /// derivation requires cross-task information. Keeping them
+    /// together in `PlanRowCounts` guarantees all three come from a
+    /// single consistent snapshot of the backlog.
     pub fn plan_row_counts(&self) -> PlanRowCounts {
-        use std::collections::HashMap;
         let done_by_id: HashMap<&str, bool> = self
-            .tasks
+            .items
             .iter()
-            .map(|t| (t.id.as_str(), t.status == Status::Done))
+            .map(|e| (e.item.id.as_str(), e.item.status == BacklogStatus::Done))
             .collect();
         let mut counts = PlanRowCounts::default();
-        for task in &self.tasks {
-            if task.handoff.is_some() {
+        for entry in &self.items {
+            if entry.handoff.is_some() {
                 counts.received += 1;
             }
-            match task.status {
-                Status::Blocked => counts.blocked += 1,
-                Status::NotStarted => {
-                    let all_deps_done = task
+            match entry.item.status {
+                BacklogStatus::Blocked => counts.blocked += 1,
+                BacklogStatus::Active => {
+                    let all_deps_done = entry
                         .dependencies
                         .iter()
                         .all(|id| done_by_id.get(id.as_str()).copied().unwrap_or(false));
@@ -141,16 +143,16 @@ impl BacklogFile {
                         counts.blocked += 1;
                     }
                 }
-                Status::InProgress | Status::Done => {}
+                BacklogStatus::Done | BacklogStatus::Defeated | BacklogStatus::Superseded => {}
             }
         }
         counts
     }
 }
 
-/// Derive a slug from a task title. Lowercase, non-alphanumerics → `-`,
-/// collapse repeats, trim leading/trailing `-`. Used at task creation;
-/// the slug is persisted as `Task::id` and never recomputed on read.
+/// Derive a slug from an item title (claim). Lowercase, non-alphanumerics → `-`,
+/// collapse repeats, trim leading/trailing `-`. Used at item creation;
+/// the slug is persisted as `Item.id` and never recomputed on read.
 pub fn slug_from_title(title: &str) -> String {
     let mut out = String::with_capacity(title.len());
     let mut prev_dash = true;
@@ -192,24 +194,74 @@ pub fn allocate_id<'a>(title: &str, existing_ids: impl IntoIterator<Item = &'a s
 #[cfg(test)]
 mod tests {
     use super::*;
+    use knowledge_graph::{Item, Justification, KindMarker};
 
-    #[test]
-    fn status_round_trips_through_yaml() {
-        for status in [Status::NotStarted, Status::InProgress, Status::Done, Status::Blocked] {
-            let serialised = serde_yaml::to_string(&status).unwrap();
-            let parsed: Status = serde_yaml::from_str(&serialised).unwrap();
-            assert_eq!(status, parsed, "roundtrip failed for {status:?}");
+    fn entry(id: &str, claim: &str, status: BacklogStatus, deps: &[&str]) -> BacklogEntry {
+        BacklogEntry {
+            item: Item {
+                id: id.into(),
+                kind: KindMarker::new(),
+                claim: claim.into(),
+                justifications: vec![Justification::Rationale {
+                    text: "Body.\n".into(),
+                }],
+                status,
+                supersedes: vec![],
+                superseded_by: None,
+                defeated_by: None,
+                authored_at: "2026-04-29T00:00:00Z".into(),
+                authored_in: "test".into(),
+            },
+            category: "maintenance".into(),
+            blocked_reason: if status == BacklogStatus::Blocked {
+                Some("upstream".into())
+            } else {
+                None
+            },
+            dependencies: deps.iter().map(|s| (*s).into()).collect(),
+            results: if status == BacklogStatus::Done {
+                Some("Done.\n".into())
+            } else {
+                None
+            },
+            handoff: None,
         }
     }
 
     #[test]
-    fn status_parse_accepts_snake_case_cli_input() {
-        assert_eq!(Status::parse("not_started"), Some(Status::NotStarted));
-        assert_eq!(Status::parse("in_progress"), Some(Status::InProgress));
-        assert_eq!(Status::parse("done"), Some(Status::Done));
-        assert_eq!(Status::parse("blocked"), Some(Status::Blocked));
-        assert_eq!(Status::parse("NotStarted"), None);
-        assert_eq!(Status::parse(""), None);
+    fn entry_round_trips_through_yaml() {
+        let e = entry("ex", "Example claim", BacklogStatus::Active, &[]);
+        let yaml = serde_yaml::to_string(&e).unwrap();
+        let decoded: BacklogEntry = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(decoded, e);
+    }
+
+    #[test]
+    fn entry_yaml_carries_kind_string() {
+        let e = entry("ex", "Example", BacklogStatus::Active, &[]);
+        let yaml = serde_yaml::to_string(&e).unwrap();
+        assert!(yaml.contains("kind: backlog-item"), "yaml was:\n{yaml}");
+    }
+
+    #[test]
+    fn backlog_file_default_has_current_schema_version() {
+        let file = BacklogFile::default();
+        assert_eq!(file.schema_version, BACKLOG_SCHEMA_VERSION);
+        assert!(file.items.is_empty());
+    }
+
+    #[test]
+    fn backlog_file_round_trips_through_yaml() {
+        let file = BacklogFile {
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items: vec![entry("a", "Claim A", BacklogStatus::Active, &[])],
+        };
+        let yaml = serde_yaml::to_string(&file).unwrap();
+        let decoded: BacklogFile = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(decoded.schema_version, BACKLOG_SCHEMA_VERSION);
+        assert_eq!(decoded.items.len(), 1);
+        assert_eq!(decoded.items[0].item.id, "a");
+        assert_eq!(decoded.items[0].item.claim, "Claim A");
     }
 
     #[test]
@@ -237,65 +289,27 @@ mod tests {
     }
 
     #[test]
-    fn task_round_trips_preserving_optional_fields() {
-        let task = Task {
-            id: "example".into(),
-            title: "Example task".into(),
-            category: "maintenance".into(),
-            status: Status::NotStarted,
-            blocked_reason: None,
-            dependencies: vec![],
-            description: "Body.\n".into(),
-            results: None,
-            handoff: None,
-        };
-        let yaml = serde_yaml::to_string(&task).unwrap();
-        // `skip_serializing_if` keeps optional nulls out of the wire form.
-        assert!(!yaml.contains("blocked_reason"), "optional None must not emit: {yaml}");
-        assert!(!yaml.contains("results"), "optional None must not emit: {yaml}");
-        assert!(!yaml.contains("handoff"), "optional None must not emit: {yaml}");
-        let decoded: Task = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(decoded.id, task.id);
-        assert_eq!(decoded.status, task.status);
-    }
-
-    #[test]
     fn task_counts_tallies_every_status_and_sums_to_total() {
-        fn task(status: Status) -> Task {
-            Task {
-                id: format!("t-{status:?}").to_lowercase(),
-                title: "t".into(),
-                category: "maintenance".into(),
-                status,
-                blocked_reason: if status == Status::Blocked {
-                    Some("upstream".into())
-                } else {
-                    None
-                },
-                dependencies: vec![],
-                description: "body\n".into(),
-                results: None,
-                handoff: None,
-            }
-        }
         let backlog = BacklogFile {
-            tasks: vec![
-                task(Status::NotStarted),
-                task(Status::NotStarted),
-                task(Status::InProgress),
-                task(Status::Done),
-                task(Status::Blocked),
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items: vec![
+                entry("a", "A", BacklogStatus::Active, &[]),
+                entry("b", "B", BacklogStatus::Active, &[]),
+                entry("c", "C", BacklogStatus::Done, &[]),
+                entry("d", "D", BacklogStatus::Blocked, &[]),
+                entry("e", "E", BacklogStatus::Defeated, &[]),
+                entry("f", "F", BacklogStatus::Superseded, &[]),
             ],
-            extra: Default::default(),
         };
         let counts = backlog.task_counts();
-        assert_eq!(counts.total, 5);
-        assert_eq!(counts.not_started, 2);
-        assert_eq!(counts.in_progress, 1);
+        assert_eq!(counts.total, 6);
+        assert_eq!(counts.active, 2);
         assert_eq!(counts.done, 1);
         assert_eq!(counts.blocked, 1);
+        assert_eq!(counts.defeated, 1);
+        assert_eq!(counts.superseded, 1);
         assert_eq!(
-            counts.not_started + counts.in_progress + counts.done + counts.blocked,
+            counts.active + counts.done + counts.blocked + counts.defeated + counts.superseded,
             counts.total,
             "per-status sum must equal total"
         );
@@ -309,53 +323,39 @@ mod tests {
         assert_eq!(counts.total, 0);
     }
 
-    fn t(id: &str, status: Status, deps: &[&str]) -> Task {
-        Task {
-            id: id.into(),
-            title: id.into(),
-            category: "maintenance".into(),
-            status,
-            blocked_reason: if status == Status::Blocked {
-                Some("upstream".into())
-            } else {
-                None
-            },
-            dependencies: deps.iter().map(|s| (*s).into()).collect(),
-            description: "Body.\n".into(),
-            results: if status == Status::Done {
-                Some("Done.\n".into())
-            } else {
-                None
-            },
-            handoff: None,
-        }
-    }
-
     #[test]
     fn plan_row_counts_unblocked_requires_every_dep_done() {
         let backlog = BacklogFile {
-            tasks: vec![
-                t("dep-done", Status::Done, &[]),
-                t("dep-in-progress", Status::InProgress, &[]),
-                t("ready", Status::NotStarted, &["dep-done"]),
-                t("waiting", Status::NotStarted, &["dep-in-progress"]),
-                t("partially-ready", Status::NotStarted, &["dep-done", "dep-in-progress"]),
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items: vec![
+                entry("dep-done", "Dep done", BacklogStatus::Done, &[]),
+                entry("dep-active", "Dep active", BacklogStatus::Active, &[]),
+                entry("ready", "Ready", BacklogStatus::Active, &["dep-done"]),
+                entry("waiting", "Waiting", BacklogStatus::Active, &["dep-active"]),
+                entry(
+                    "partially-ready",
+                    "Partially ready",
+                    BacklogStatus::Active,
+                    &["dep-done", "dep-active"],
+                ),
             ],
-            extra: Default::default(),
         };
         let counts = backlog.plan_row_counts();
-        assert_eq!(counts.unblocked, 1);
-        assert_eq!(counts.blocked, 2, "waiting + partially-ready are blocked on unmet deps");
+        assert_eq!(counts.unblocked, 2, "dep-active itself unblocked + ready");
+        assert_eq!(
+            counts.blocked, 2,
+            "waiting + partially-ready are blocked on unmet deps"
+        );
     }
 
     #[test]
-    fn plan_row_counts_not_started_with_no_deps_is_unblocked() {
+    fn plan_row_counts_active_with_no_deps_is_unblocked() {
         let backlog = BacklogFile {
-            tasks: vec![
-                t("a", Status::NotStarted, &[]),
-                t("b", Status::NotStarted, &[]),
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items: vec![
+                entry("a", "A", BacklogStatus::Active, &[]),
+                entry("b", "B", BacklogStatus::Active, &[]),
             ],
-            extra: Default::default(),
         };
         let counts = backlog.plan_row_counts();
         assert_eq!(counts.unblocked, 2);
@@ -364,12 +364,17 @@ mod tests {
 
     #[test]
     fn plan_row_counts_unknown_dep_id_counts_as_unmet() {
-        // A dep id that no task in the backlog matches is treated as
+        // A dep id that no item in the backlog matches is treated as
         // unmet — a typo or renamed id must not accidentally unblock
-        // the task.
+        // the item.
         let backlog = BacklogFile {
-            tasks: vec![t("orphan", Status::NotStarted, &["nonexistent-id"])],
-            extra: Default::default(),
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items: vec![entry(
+                "orphan",
+                "Orphan",
+                BacklogStatus::Active,
+                &["nonexistent-id"],
+            )],
         };
         let counts = backlog.plan_row_counts();
         assert_eq!(counts.unblocked, 0);
@@ -379,12 +384,12 @@ mod tests {
     #[test]
     fn plan_row_counts_status_blocked_always_counts_as_blocked() {
         let backlog = BacklogFile {
-            tasks: vec![
-                t("explicitly-blocked", Status::Blocked, &[]),
-                t("blocked-with-done-deps", Status::Blocked, &["foo"]),
-                t("foo", Status::Done, &[]),
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items: vec![
+                entry("explicitly-blocked", "X", BacklogStatus::Blocked, &[]),
+                entry("blocked-with-done-deps", "Y", BacklogStatus::Blocked, &["foo"]),
+                entry("foo", "Foo", BacklogStatus::Done, &[]),
             ],
-            extra: Default::default(),
         };
         let counts = backlog.plan_row_counts();
         assert_eq!(counts.unblocked, 0);
@@ -392,13 +397,14 @@ mod tests {
     }
 
     #[test]
-    fn plan_row_counts_in_progress_and_done_are_neither_unblocked_nor_blocked() {
+    fn plan_row_counts_terminal_states_neither_unblocked_nor_blocked() {
         let backlog = BacklogFile {
-            tasks: vec![
-                t("in-flight", Status::InProgress, &[]),
-                t("finished", Status::Done, &[]),
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items: vec![
+                entry("d", "D", BacklogStatus::Done, &[]),
+                entry("x", "X", BacklogStatus::Defeated, &[]),
+                entry("s", "S", BacklogStatus::Superseded, &[]),
             ],
-            extra: Default::default(),
         };
         let counts = backlog.plan_row_counts();
         assert_eq!(counts.unblocked, 0);
@@ -406,23 +412,25 @@ mod tests {
     }
 
     #[test]
-    fn plan_row_counts_received_counts_tasks_with_handoff_regardless_of_status() {
-        let mut with_handoff = t("with-handoff", Status::Done, &[]);
+    fn plan_row_counts_received_counts_items_with_handoff_regardless_of_status() {
+        let mut with_handoff = entry("with-handoff", "W", BacklogStatus::Done, &[]);
         with_handoff.handoff = Some("pending design\n".into());
-        let mut pending_handoff = t("pending-handoff", Status::NotStarted, &[]);
+        let mut pending_handoff = entry("pending-handoff", "P", BacklogStatus::Active, &[]);
         pending_handoff.handoff = Some("received dispatch\n".into());
         let backlog = BacklogFile {
-            tasks: vec![
-                t("no-handoff", Status::NotStarted, &[]),
+            schema_version: BACKLOG_SCHEMA_VERSION,
+            items: vec![
+                entry("no-handoff", "N", BacklogStatus::Active, &[]),
                 with_handoff,
                 pending_handoff,
             ],
-            extra: Default::default(),
         };
         let counts = backlog.plan_row_counts();
         assert_eq!(counts.received, 2);
-        // Unrelated fields still compute correctly around handoffs.
-        assert_eq!(counts.unblocked, 2, "no-handoff and pending-handoff both ready");
+        assert_eq!(
+            counts.unblocked, 2,
+            "no-handoff and pending-handoff both ready"
+        );
     }
 
     #[test]
@@ -433,16 +441,12 @@ mod tests {
     }
 
     #[test]
-    fn backlog_file_preserves_unknown_top_level_keys() {
-        // Future schema extensions (R2+) may add top-level keys. The flatten
-        // extra buffer keeps them alive across an R1 read/write cycle.
-        let input = r#"
-tasks: []
-schema_version: 1
-"#;
-        let parsed: BacklogFile = serde_yaml::from_str(input).unwrap();
-        assert!(parsed.extra.contains_key("schema_version"));
-        let re_emitted = serde_yaml::to_string(&parsed).unwrap();
-        assert!(re_emitted.contains("schema_version"), "extra keys must round-trip: {re_emitted}");
+    fn backlog_file_rejects_yaml_without_schema_version() {
+        let yaml = "items: []\n";
+        let result: Result<BacklogFile, _> = serde_yaml::from_str(yaml);
+        assert!(
+            result.is_err(),
+            "schema_version is required; missing must fail"
+        );
     }
 }
