@@ -128,7 +128,7 @@ tasks:
 - id: add-clippy-gate-to-prevent-silent-accumulation-on-main
   title: Add clippy gate to prevent silent accumulation on main
   category: infra
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Add a `cargo clippy --all-targets -- -D warnings` step to prevent clippy errors accumulating silently on `main`.
@@ -148,10 +148,28 @@ tasks:
     3. Document in `README` or `CONTRIBUTING` if using a hook so contributors know to install it.
 
     **Dependencies:** None. Self-contained.
+  results: |
+    Added `scripts/check.sh` running `cargo clippy --all-targets --workspace -- -D warnings` as the project's hygiene gate. Chose option 2 (script, no hook, no CI) over the hook/CI alternatives because:
+
+    - The project's existing release tooling is a set of on-disk shell scripts (`release-doctor.sh`, `release-build.sh`, `release-publish.sh`); a `check.sh` continues that pattern so all gating is one-place and one-style.
+    - README explicitly establishes a "no CI" stance for releases. A CI workflow contradicts that ethos.
+    - A pre-push hook is one line away from `check.sh` (the script header documents the wiring), so contributors who want enforcement get it cheaply, but no per-machine setup is forced on the maintainer.
+    - `check.sh` is the natural home for future gates (`cargo fmt --check`, `cargo test`) without needing to amend hooks/workflows separately.
+
+    **Discovery while landing the gate:** the two clippy errors named in the task body (`algorithms.rs` 8-arg `dfs`, `item.rs` non-canonical clone) had already been fixed since session 98. But two NEW warnings had silently accumulated in `crates/knowledge-graph/src/datalog.rs` (both `clippy::field_reassign_with_default` in test scaffolding) — exactly the failure mode the gate is meant to prevent. Fixed by converting `let mut p = SmokeProgram::default(); p.field = …` to struct-update syntax `SmokeProgram { field: …, ..SmokeProgram::default() }`. All three `datalog::tests` still pass; behaviour preserved.
+
+    **Verification:** `scripts/check.sh` runs clean (clippy passes with `-D warnings`); `cargo test -p knowledge-graph --lib datalog::` passes 3/3.
+
+    **Suggests next:**
+
+    1. The gate is opt-in — running `check.sh` is voluntary. To make it a true gate, the maintainer can install the one-line pre-push hook documented in the script header. A small follow-up task could be "ship a `scripts/install-hooks.sh`" if the project ever gains additional contributors.
+    2. Now that the gate exists, expanding it (`cargo fmt --check`, `cargo test`) is a one-line edit — worth doing as separate small backlog items if/when fmt/test discipline starts drifting.
+    3. The fact that two new warnings accumulated between session 98 and now (despite the prior fix) is direct evidence that human-discipline-only gating doesn't hold. This argues for promoting the hook installation step to a documented prerequisite in README before this work can be considered fully durable.
 - id: graph-rag-ravel-lite-atlas-cli-for-catalog-queries
   title: 'graph-RAG: ravel-lite atlas CLI for catalog queries'
   category: architecture-next
-  status: not_started
+  status: blocked
+  blocked_reason: Scope too large for one cycle; needs split via triage. Foundational scaffolding + atlas list-repos + atlas freshness landed (Cargo.toml/atlas-index dep, src/atlas.rs, AtlasCommands + dispatch in main.rs, 7 unit tests, clippy clean). The 9 remaining graph-query verbs (list-components, describe, edges, neighbors, path, scc, roots, summary, memory) need their own focused cycles.
   dependencies: []
   description: |
     Replace catalog-rendered-into-prompts with on-demand graph-RAG via a `ravel-lite atlas` CLI. The agent shells out to query the catalog instead of reading a YAML dump from the prompt.
@@ -167,6 +185,120 @@ tasks:
     - Strip catalog rendering from existing prompt files.
 
     Forward path: when Atlas runs as an actor in Ravel, this CLI becomes a thin client routing to the service — agent's mental model unchanged.
+  results: |
+    ## Results
+
+    Delivered the foundational slice of `ravel-lite atlas`: clap surface + the
+    two simplest verbs that don't yet need the full graph machinery.
+
+    ### What landed
+
+    - `src/atlas.rs` — new module with `run_list_repos` and `run_freshness`,
+      plus pure `compute_freshness(registry, now)` for deterministic tests.
+    - `src/lib.rs` registers the module.
+    - `src/main.rs` adds `Commands::Atlas` + `AtlasCommands` (`ListRepos`,
+      `Freshness { require_fresh }`) + `dispatch_atlas`.
+    - `Cargo.toml` adds `atlas-index` as a path dep on the sibling
+      `atlas-contracts` workspace, mirroring the existing `component-ontology`
+      convention. No new third-party deps.
+
+    `atlas list-repos` is bit-identical to `repo list`; the duplication is
+    intentional (two mental models — registry management vs. graph-RAG entry
+    points) and called out in a `WHY` doc-comment.
+
+    `atlas freshness` per repo:
+    - `fresh` — `.atlas/components.yaml` present and parses cleanly.
+    - `missing` — local_path exists but no `.atlas/components.yaml` (Atlas
+      hasn't run on this repo yet).
+    - `no_local_path` — repo has no `local_path` configured.
+    - `unparseable` — file present but `atlas_index::load_components` rejects it.
+
+    `--require-fresh` exits non-zero with a diagnostic listing the stale
+    repo slugs. Pure-function design (`compute_freshness` takes `now` as a
+    parameter) keeps unit tests deterministic.
+
+    ### Verification
+
+    - 7 new unit tests in `src/atlas.rs` cover empty registry, NoLocalPath,
+      Missing, Fresh (with valid components.yaml fixture), Unparseable,
+      iteration-order preservation, and YAML omit-None invariants.
+    - `cargo test --lib` → 642 passed, 0 failed.
+    - `bash scripts/check.sh` (clippy `-D warnings` workspace-wide) → clean.
+    - Manual end-to-end smoke against a tempdir-backed config:
+      - empty registry → `repos: {}` / `freshness: []`
+      - populated registry, no .atlas/ → `missing` + `no_local_path`
+      - populated registry, real `components.yaml` snapshot copied in →
+        `fresh` with `generated_at: 2026-04-24T00:00:00Z` and `mtime_age_seconds: 0`
+      - `--require-fresh` exits 1 when stale, 0 when fresh.
+
+    ### Why this is being marked `blocked` not `done`
+
+    The parent task lists 12 subcommands. This cycle delivered 2 (plus help)
+    and the scaffolding. The remaining 9 (`list-components`, `describe`,
+    `edges`, `neighbors`, `path`, `scc`, `roots`, `summary`, `memory`)
+    need the full catalog-union graph + the typed-edge graph from
+    `related-components.yaml`, and most of them are non-trivial graph
+    algorithms (path, SCC, neighbors-with-depth). One cycle per verb is
+    realistic; bundling them all into one is not.
+
+    Honest status: the task as written is too big for a single work cycle.
+    The scaffolding is reusable; the 9 missing verbs deserve their own
+    focused tasks. Triage should split the parent into per-verb (or
+    per-cluster) follow-ups before this is unblocked again.
+
+    ### Surprise: the "strip catalog from prompts" scope item is a no-op
+
+    The task description says: "Strip catalog rendering from existing prompt
+    files." Grepping `defaults/phases/*.md` and `defaults/*.md` for
+    `components.yaml`, `.atlas`, or any catalog-rendering token returns
+    zero hits — no current prompt renders the atlas component catalog.
+    The only `{{CATALOG_PROJECTS}}` substitution lives in
+    `src/discover/stage1.rs` and concerns the **repos.yaml-style project
+    list** for cross-project discovery, not the atlas component graph;
+    that's a different "catalog" and out of scope here.
+
+    So the strip-from-prompts scope item is already satisfied by virtue
+    of nothing existing to strip. Triage should drop it from any follow-up
+    task and not treat it as outstanding work.
+
+    ### What this suggests next
+
+    1. **Split the parent task during triage.** Suggested breakdown:
+       - `atlas-cli-list-components-and-summary` — load `.atlas/components.yaml`
+         from each repo into an in-memory structure, implement `list-components
+         [--repo R] [--kind K]` and `summary [--repo R]`. Caching by
+         `(path, mtime)` belongs here since this is the first verb that
+         reads the file.
+       - `atlas-cli-describe-and-memory` — `describe <ref>` (single-component
+         details) and `memory <ref> [--search T]` (read `.atlas/memory.yaml`).
+         Depends on the catalog loader from the previous task.
+       - `atlas-cli-edge-graph` — load `.atlas/related-components.yaml`,
+         dedupe + union cross-repo edges, implement `edges <ref>`,
+         `neighbors <ref> --depth N`, `roots`. Builds the directed graph.
+       - `atlas-cli-graph-algorithms` — `path <from> <to>` (BFS) and `scc`
+         (Tarjan or similar). Pure graph computation on top of the loader.
+       - `atlas-cli-strip-catalog-from-prompts` — **drop this task**; the
+         scope item is already a no-op (see surprise above).
+
+    2. **Caching design.** When the catalog loader lands, the
+       `(path, mtime)` cache should live behind a single `Catalog` type that
+       `compute_freshness` can also consume — no point paying the file
+       I/O twice in a single CLI invocation.
+
+    3. **`--require-fresh` semantics tightening.** Right now "fresh" means
+       "components.yaml parses". A stricter definition (e.g., compare the
+       repo's HEAD SHA against atlas's recorded fingerprints) would catch
+       the case where Atlas ran but on a stale checkout. Defer until there's
+       a concrete reason to need it; `Fresh = parseable` is the simple
+       default the doc admits is "a soft signal".
+
+    4. **Follow-up housekeeping.** Two pre-existing modifications were
+       present in the working tree at the start of this cycle (`scripts/check.sh`
+       from the clippy-gate task, two clippy fixes in
+       `crates/knowledge-graph/src/datalog.rs`). These predate this work and
+       will be folded into the analyse-work commit alongside this cycle's
+       atlas changes — flagging here so the resulting commit message is
+       coherent about the bundling.
 - id: targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
   title: 'Targets and worktrees: per-repo plan branches and dynamic mounts'
   category: architecture-next

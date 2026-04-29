@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod atlas;
 pub mod backlog_transitions;
 pub mod component_ref;
 pub mod config;

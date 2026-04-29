@@ -221,6 +221,17 @@ enum Commands {
         #[command(subcommand)]
         command: PlanCommands,
     },
+    /// Read-only graph-RAG queries over the union of registered repos'
+    /// `.atlas/components.yaml` (component nodes) and
+    /// `.atlas/related-components.yaml` (typed edges). The catalog is
+    /// produced by the Atlas indexer (sibling `atlas-contracts`
+    /// workspace); this surface lets agents query it on demand without
+    /// rendering the full catalog into prompts. See
+    /// `docs/architecture-next.md` §"Catalog as graph (graph-RAG)".
+    Atlas {
+        #[command(subcommand)]
+        command: AtlasCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -261,6 +272,35 @@ enum RepoCommands {
         #[arg(long)]
         config: Option<PathBuf>,
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum AtlasCommands {
+    /// Emit the registered repos (the entry points to the catalog
+    /// graph) as YAML on stdout. Bit-identical to `ravel-lite repo
+    /// list`; surfaced under `atlas` to match the graph-RAG mental
+    /// model where the registry is the catalog graph's root set.
+    ListRepos {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// Per-repo `.atlas/components.yaml` presence + age check. Always
+    /// emits a YAML report on stdout; with `--require-fresh`, errors
+    /// non-zero when any repo's catalog is missing, unparseable, or
+    /// has no local checkout to read from.
+    Freshness {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Exit non-zero when any repo lacks a fresh catalog. Intended
+        /// for high-stakes pre-flight checks before graph queries that
+        /// would silently return stale results.
+        #[arg(long)]
+        require_fresh: bool,
     },
 }
 
@@ -971,6 +1011,21 @@ async fn main() -> Result<()> {
         Commands::State { command } => dispatch_state(command).await,
         Commands::Repo { command } => dispatch_repo(command),
         Commands::Plan { command } => dispatch_plan(command),
+        Commands::Atlas { command } => dispatch_atlas(command),
+    }
+}
+
+fn dispatch_atlas(command: AtlasCommands) -> Result<()> {
+    use ravel_lite::atlas;
+    match command {
+        AtlasCommands::ListRepos { config } => {
+            let context_root = resolve_config_dir(config)?;
+            atlas::run_list_repos(&context_root)
+        }
+        AtlasCommands::Freshness { config, require_fresh } => {
+            let context_root = resolve_config_dir(config)?;
+            atlas::run_freshness(&context_root, require_fresh)
+        }
     }
 }
 

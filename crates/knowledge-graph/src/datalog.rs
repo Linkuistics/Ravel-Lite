@@ -47,14 +47,16 @@ mod tests {
 
     #[test]
     fn orphaned_rule_finds_backlog_items_without_active_intent() {
-        let mut p = SmokeProgram::default();
-        p.backlog_item = vec![("t-1".into(),), ("t-2".into(),), ("t-3".into(),)];
-        p.intent_active = vec![("i-1".into(),)];
-        p.serves_intent = vec![
-            ("t-1".into(), "i-1".into()),
-            ("t-2".into(), "i-2".into()), // i-2 not active
-            // t-3 has no serves_intent at all
-        ];
+        let mut p = SmokeProgram {
+            backlog_item: vec![("t-1".into(),), ("t-2".into(),), ("t-3".into(),)],
+            intent_active: vec![("i-1".into(),)],
+            serves_intent: vec![
+                ("t-1".into(), "i-1".into()),
+                ("t-2".into(), "i-2".into()), // i-2 not active
+                // t-3 has no serves_intent at all
+            ],
+            ..SmokeProgram::default()
+        };
         p.run();
 
         let mut orphaned: Vec<String> = p.orphaned.into_iter().map(|(s,)| s).collect();
@@ -64,19 +66,21 @@ mod tests {
 
     #[test]
     fn suspect_rule_finds_memory_entries_with_changed_sha() {
-        let mut p = SmokeProgram::default();
-        p.memory_entry = vec![("m-1".into(),), ("m-2".into(),), ("m-3".into(),)];
-        p.code_anchor = vec![
-            ("m-1".into(), "src/foo.rs".into(), "old-sha".into()),
-            ("m-2".into(), "src/bar.rs".into(), "stable-sha".into()),
-            ("m-3".into(), "src/baz.rs".into(), "old-baz".into()),
-        ];
-        p.current_sha = vec![
-            ("src/foo.rs".into(), "new-sha".into()), // changed
-            ("src/bar.rs".into(), "stable-sha".into()), // unchanged
-            ("src/baz.rs".into(), "new-baz".into()), // changed
-            // src/qux.rs absent → m without anchor not flagged
-        ];
+        let mut p = SmokeProgram {
+            memory_entry: vec![("m-1".into(),), ("m-2".into(),), ("m-3".into(),)],
+            code_anchor: vec![
+                ("m-1".into(), "src/foo.rs".into(), "old-sha".into()),
+                ("m-2".into(), "src/bar.rs".into(), "stable-sha".into()),
+                ("m-3".into(), "src/baz.rs".into(), "old-baz".into()),
+            ],
+            current_sha: vec![
+                ("src/foo.rs".into(), "new-sha".into()), // changed
+                ("src/bar.rs".into(), "stable-sha".into()), // unchanged
+                ("src/baz.rs".into(), "new-baz".into()), // changed
+                // src/qux.rs absent → m without anchor not flagged
+            ],
+            ..SmokeProgram::default()
+        };
         p.run();
 
         let mut suspect: Vec<String> = p.suspect.into_iter().map(|(s,)| s).collect();

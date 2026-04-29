@@ -1426,3 +1426,38 @@ sessions:
     - `cargo clippy --all-targets` is now clean; `cargo test --workspace` passes all 754 tests including the direct DFS exercise `articulation_points_finds_central_node`
 
     What this suggests next: the project has no CI workflow or clippy gate; a one-line `cargo clippy --all-targets -- -D warnings` step (git hook, `scripts/check.sh`, or GH Actions) would catch future regressions at write time. Worth a triage item.
+- id: session-99
+  timestamp: 2026-04-29T23:01:42Z
+  phase: work
+  body: |
+    ### Session 99 (2026-04-29T23:01:42Z) — Add atlas CLI foundation and clippy gate
+
+    - Worked two tasks: `add-clippy-gate-to-prevent-silent-accumulation-on-main` (done) and
+      the foundational slice of `graph-rag-ravel-lite-atlas-cli-for-catalog-queries` (blocked).
+    - **Clippy gate:** Added `scripts/check.sh` running
+      `cargo clippy --all-targets --workspace -- -D warnings`. Script pattern matches
+      existing `release-*.sh` tooling. A one-line pre-push hook recipe is documented in
+      the header but not installed — opt-in by design.
+    - **Clippy fixes discovered:** Two `clippy::field_reassign_with_default` warnings in
+      `crates/knowledge-graph/src/datalog.rs` test scaffolding silently accumulated since
+      session 98, exactly the drift the gate is meant to prevent. Fixed by converting
+      `let mut p = SmokeProgram::default(); p.field = …` to struct-update syntax. All
+      three `datalog::tests` still pass.
+    - **Atlas CLI foundation:** Added `src/atlas.rs`, registered in `src/lib.rs`,
+      added `atlas-index` path dep to `Cargo.toml` (mirrors `component-ontology`
+      convention), added `Commands::Atlas` + `AtlasCommands` (`ListRepos`, `Freshness`)
+      + `dispatch_atlas` in `src/main.rs`. Two verbs delivered: `atlas list-repos`
+      (delegates to `repos::run_list`) and `atlas freshness [--require-fresh]` with
+      four statuses (`fresh`, `missing`, `no_local_path`, `unparseable`).
+    - **Coverage:** 7 unit tests in `src/atlas.rs`; `cargo test --lib` → 642/0.
+      `scripts/check.sh` (clippy `-D warnings` workspace-wide) clean.
+    - **Atlas task blocked:** The parent task lists 12 subcommands; this cycle delivered 2
+      plus scaffolding. The remaining 9 graph-query verbs need catalog-union loading and
+      non-trivial graph algorithms. Task set to `blocked` with split guidance in results.
+    - **Discovery:** The "strip catalog from prompts" scope item is already a no-op —
+      grepping `defaults/phases/*.md` returns zero hits for atlas catalog rendering.
+      `{{CATALOG_PROJECTS}}` in `src/discover/stage1.rs` concerns repos-list discovery,
+      not the atlas component graph. Triage should drop it from follow-up tasks.
+    - **Suggests next:** Split the atlas parent into per-cluster tasks during triage:
+      `list-components + summary` (catalog loader + caching), `describe + memory`,
+      `edge-graph`, `graph-algorithms (path, scc)`. Drop the "strip from prompts" task.

@@ -49,6 +49,11 @@ libc = "0.2"
 # workspace as a local path dep during dev to match Atlas's own
 # convention; flip to a git+rev pin at publish time.
 component-ontology = { path = "../atlas-contracts/crates/component-ontology" }
+# Atlas's catalog-file schema and loaders (`components.yaml`,
+# `related-components.yaml` re-export). Used by `src/atlas.rs` to read
+# per-repo `.atlas/` outputs for graph-RAG queries. Same path-dep
+# convention as `component-ontology`; flip to a git+rev pin at publish.
+atlas-index = { path = "../atlas-contracts/crates/atlas-index" }
 # Generic typed-knowledge-graph + truth-maintenance substrate.
 # Plan-side TMS shape (intents, backlog items, memory entries,
 # findings) is built on top in `src/plan_kg.rs`; the substrate itself

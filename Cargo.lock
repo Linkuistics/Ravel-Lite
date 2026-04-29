@@ -142,6 +142,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-index"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "component-ontology",
+ "serde",
+ "serde_yaml",
+]
+
+[[package]]
 name = "atomic"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1520,6 +1530,7 @@ version = "1.0.4"
 dependencies = [
  "anyhow",
  "async-trait",
+ "atlas-index",
  "clap",
  "component-ontology",
  "crossterm",
