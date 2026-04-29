@@ -390,7 +390,7 @@ entries:
 - id: edgekind-has-17-variants-task-briefs-may-cite-16
   title: EdgeKind has 17 variants; task briefs may cite 16
   body: |
-    `EdgeKind::all()` in `src/ontology/schema.rs` defines 17 kebab-case variants. The `conforms-to` family has three members, not two. Prose references (including task briefs) that cite 16 are wrong. Authoritative count: `EdgeKind::all()` or `defaults/ontology.yaml`.
+    `EdgeKind::all()` in the `component_ontology` crate defines 17 kebab-case variants. The `conforms-to` family has three members, not two. Prose references (including task briefs) that cite 16 are wrong. Authoritative count: `EdgeKind::all()` in the crate.
 - id: edge-validate-must-enforce-participant-sort-order
   title: Edge::validate must enforce participant sort order
   body: |
@@ -398,7 +398,7 @@ entries:
 - id: ontology-and-related-components-schema-versions-are-orthogonal
   title: Ontology and related-components schema versions are orthogonal
   body: |
-    `related-components.yaml` uses `SCHEMA_VERSION=2`; `defaults/ontology.yaml` uses `ONTOLOGY_FILE_SCHEMA_VERSION=1`. Separate version fields keep the two evolutions independent; a bump in one does not imply a bump in the other.
+    `related-components.yaml` uses `SCHEMA_VERSION=2`; the `component_ontology` crate's YAML format uses `ONTOLOGY_FILE_SCHEMA_VERSION=1`. Separate version fields keep the two evolutions independent; a bump in one does not imply a bump in the other.
 - id: action-lines-split-title-reason-into-two-row-layout
   title: Action lines split title/reason into two-row layout
   body: |
@@ -406,7 +406,7 @@ entries:
 - id: render-embedded-kinds-for-prompt-injects-edgekind-vocabulary-into-stage-2
   title: render_embedded_kinds_for_prompt injects EdgeKind vocabulary into Stage 2
   body: |
-    `src/ontology/defaults.rs` exposes `render_kinds_for_prompt(&OntologyYaml) -> String` and `render_embedded_kinds_for_prompt() -> Result<String>`. Both are re-exported from `src/ontology/mod.rs`. `src/discover/stage2.rs` calls `render_embedded_kinds_for_prompt()` to substitute `{{ONTOLOGY_KINDS}}` in the Stage 2 prompt. This is the sole injection point for the EdgeKind vocabulary into LLM prompts.
+    The `component_ontology` crate exposes `render_kinds_for_prompt(&OntologyYaml) -> String` and `render_embedded_kinds_for_prompt() -> Result<String>`. `src/discover/stage2.rs` calls `render_embedded_kinds_for_prompt()` to substitute `{{ONTOLOGY_KINDS}}` in the Stage 2 prompt. This is the sole injection point for the EdgeKind vocabulary into LLM prompts.
 - id: interaction-role-hints-spec-is-in-migration-doc-5-2-not-ontology-doc
   title: interaction_role_hints spec is in migration doc §5.2, not ontology doc
   body: |
@@ -439,10 +439,6 @@ entries:
   title: Pre-initialise output file before CLI-driven spawn
   body: |
     Pre-initialise the output file before spawning an LLM with CLI write tools: the zero-calls case produces a valid empty file (load succeeds) rather than a missing-file error. Seed prior-phase failures into the initial file so they survive the round-trip regardless of LLM output. `run_stage2` demonstrates this: creates `discover-proposals.yaml` with Stage 1 failures before spawning Stage 2.
-- id: ontology-cli-rs-imports-from-super-not-related-components
-  title: ontology/cli.rs imports from super, not related_components
-  body: |
-    `src/ontology/cli.rs` imports `{EdgeKind, LifecycleScope, EvidenceGrade}` via `super::`, not via `related_components` re-exports. Avoids a dependency inversion that would block Atlas's standalone ontology crate extraction.
 - id: create-spawn-binds-purpose-via-invariant-in-prompt-and-template
   title: '`create` spawn binds purpose via INVARIANT in prompt and template'
   body: |
@@ -729,3 +725,7 @@ entries:
   title: architecture-next.md config.yaml layout entries are stale
   body: |
     `docs/architecture-next.md` lists `config.yaml` and `config.local.yaml` as `<ravel-context>/` layout artefacts. Implementation uses `config.lua` (layered Lua model); those doc sections do not reflect the current config model. See: `Config model is layered Lua; config_lua.rs owns it`.
+- id: src-ontology-removed-import-from-component-ontology-crate
+  title: '`src/ontology/` removed; import from `component_ontology` crate'
+  body: |
+    All five files under `src/ontology/` (~1,300 lines) were deleted. Import sites across `src/discover/`, `src/state/`, `src/related_components.rs`, `src/projects.rs`, and `src/main.rs` now use `component_ontology`. The crate is owned by Atlas (`atlas-contracts` workspace). `defaults/ontology.yaml` was deleted; `ontology.yaml` added to `RETIRED_PATHS` in `src/init.rs` so existing config dirs are swept clean on next `ravel-lite init`.
