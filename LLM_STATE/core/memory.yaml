@@ -680,7 +680,7 @@ entries:
 - id: ascent-chosen-as-datalog-engine-differential-dataflow-rejected
   title: Ascent chosen as Datalog engine; differential-dataflow rejected
   body: |
-    `ascent` (recompute-based) is the chosen Datalog engine for the knowledge-graph crate. Recompute is fast enough at ravel-lite scale; differential-dataflow's incremental complexity is not warranted. Settled in Phase A of architecture-next.
+    `ascent` 0.8 (recompute-based) is the chosen Datalog engine for the knowledge-graph crate. Recompute is fast enough at ravel-lite scale; differential-dataflow's incremental complexity is not warranted. Settled in Phase A of architecture-next. BYODS and lattice features are available in 0.8 but unused; the stable surface (relation declarations, tuple-pattern heads, stratified negation, if-guard predicates) is unchanged from 0.6.
 - id: v1-v2-cutover-is-hard-v2-binary-refuses-unmigrated-plans
   title: v1→v2 cutover is hard; v2 binary refuses unmigrated plans
   body: |
@@ -757,3 +757,7 @@ entries:
   title: plan_kg.rs registers four plan vocabularies in knowledge-graph crate
   body: |
     `crates/knowledge-graph/src/plan_kg.rs` defines `IntentKind`, `BacklogItemKind`, `MemoryEntryKind`, and `FindingKind`, each with its own status enum and transition table. Type aliases (`IntentItem`, `BacklogStore`, etc.) and the intent→backlog cross-store cascade live here. See: `Store<K> is per-kind; cascade_serves_intent is the cross-store join`.
+- id: datalog-rs-smoke-tests-are-the-canary-for-ascent-upgrades
+  title: datalog.rs smoke tests are the canary for ascent upgrades
+  body: |
+    Three smoke tests in `crates/knowledge-graph/src/datalog.rs` (`orphaned_rule_finds_backlog_items_without_active_intent`, `suspect_rule_finds_memory_entries_with_changed_sha`, `empty_program_runs_clean`) verify the stable ascent surface (relation declarations, tuple-pattern heads, stratified negation, if-guard predicates). Run these first on any ascent version bump; they are the primary canary for macro-generated code breakage.
