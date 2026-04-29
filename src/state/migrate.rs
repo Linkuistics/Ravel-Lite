@@ -112,7 +112,7 @@ impl PendingMigration {
     fn record_count(&self) -> usize {
         match self {
             PendingMigration::Backlog { parsed, .. } => parsed.tasks.len(),
-            PendingMigration::Memory { parsed, .. } => parsed.entries.len(),
+            PendingMigration::Memory { parsed, .. } => parsed.items.len(),
             PendingMigration::SessionLog { parsed, .. } => parsed.sessions.len(),
             PendingMigration::LatestSession { .. } => 1,
         }
@@ -426,14 +426,14 @@ fn backlogs_equivalent(a: &BacklogFile, b: &BacklogFile) -> bool {
 }
 
 fn memories_equivalent(a: &MemoryFile, b: &MemoryFile) -> bool {
-    if a.entries.len() != b.entries.len() {
+    if a.schema_version != b.schema_version {
         return false;
     }
-    for (entry_a, entry_b) in a.entries.iter().zip(b.entries.iter()) {
-        if entry_a.id != entry_b.id
-            || entry_a.title != entry_b.title
-            || entry_a.body != entry_b.body
-        {
+    if a.items.len() != b.items.len() {
+        return false;
+    }
+    for (entry_a, entry_b) in a.items.iter().zip(b.items.iter()) {
+        if entry_a != entry_b {
             return false;
         }
     }
@@ -549,8 +549,8 @@ Paragraph body.
         assert!(tmp.path().join("memory.md").exists());
 
         let memory = read_memory(tmp.path()).unwrap();
-        assert_eq!(memory.entries.len(), 2);
-        assert_eq!(memory.entries[0].title, "Alpha entry");
+        assert_eq!(memory.items.len(), 2);
+        assert_eq!(memory.items[0].item.claim, "Alpha entry");
     }
 
     #[test]
@@ -562,7 +562,7 @@ Paragraph body.
         run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
 
         assert_eq!(read_backlog(tmp.path()).unwrap().tasks.len(), 2);
-        assert_eq!(read_memory(tmp.path()).unwrap().entries.len(), 2);
+        assert_eq!(read_memory(tmp.path()).unwrap().items.len(), 2);
     }
 
     #[test]
@@ -607,7 +607,7 @@ Paragraph body.
         run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
 
         assert_eq!(read_backlog(tmp.path()).unwrap().tasks.len(), 2);
-        assert_eq!(read_memory(tmp.path()).unwrap().entries.len(), 2);
+        assert_eq!(read_memory(tmp.path()).unwrap().items.len(), 2);
     }
 
     #[test]
@@ -617,7 +617,7 @@ Paragraph body.
         run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
 
         let mut memory = read_memory(tmp.path()).unwrap();
-        memory.entries[0].title = "Tampered".into();
+        memory.items[0].item.claim = "Tampered".into();
         write_memory(tmp.path(), &memory).unwrap();
 
         let err = run_migrate(tmp.path(), &MigrateOptions::default()).unwrap_err();
@@ -628,7 +628,7 @@ Paragraph body.
         let opts = MigrateOptions { force: true, ..MigrateOptions::default() };
         run_migrate(tmp.path(), &opts).unwrap();
         let memory = read_memory(tmp.path()).unwrap();
-        assert_eq!(memory.entries[0].title, "Alpha entry");
+        assert_eq!(memory.items[0].item.claim, "Alpha entry");
     }
 
     #[test]
@@ -702,7 +702,7 @@ Paragraph body.
         run_migrate(tmp.path(), &MigrateOptions::default()).unwrap();
 
         assert_eq!(read_backlog(tmp.path()).unwrap().tasks.len(), 2);
-        assert_eq!(read_memory(tmp.path()).unwrap().entries.len(), 2);
+        assert_eq!(read_memory(tmp.path()).unwrap().items.len(), 2);
         assert_eq!(read_session_log(tmp.path()).unwrap().sessions.len(), 2);
         assert_eq!(
             read_latest_session(tmp.path()).unwrap().id,

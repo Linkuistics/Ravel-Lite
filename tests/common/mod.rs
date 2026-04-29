@@ -8,16 +8,18 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use ravel_lite::agent::Agent;
+use ravel_lite::plan_kg::MemoryStatus;
 use ravel_lite::state::backlog::schema::{BacklogFile, Status, Task};
 use ravel_lite::state::backlog::write_backlog;
-use ravel_lite::state::memory::schema::{MemoryEntry, MemoryFile};
+use ravel_lite::state::memory::schema::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
 use ravel_lite::state::memory::write_memory;
 use ravel_lite::types::{LlmPhase, PlanContext};
 use ravel_lite::ui::UISender;
+use knowledge_graph::{Item, Justification, KindMarker};
 
 /// Seed `memory.yaml` so that `dream`'s word counter sees exactly
-/// `target_words` words of content (one entry, empty title, body of
-/// that many tokens). Lets tests focus on threshold behaviour without
+/// `target_words` words of content (one entry, empty claim, rationale
+/// of that many tokens). Lets tests focus on threshold behaviour without
 /// wiring up the whole memory schema by hand.
 pub fn write_memory_yaml_with_word_count(plan: &Path, target_words: usize) {
     let body = if target_words == 0 {
@@ -26,12 +28,22 @@ pub fn write_memory_yaml_with_word_count(plan: &Path, target_words: usize) {
         vec!["word"; target_words].join(" ")
     };
     let memory = MemoryFile {
-        entries: vec![MemoryEntry {
-            id: "test-entry".into(),
-            title: String::new(),
-            body,
+        schema_version: MEMORY_SCHEMA_VERSION,
+        items: vec![MemoryEntry {
+            item: Item {
+                id: "test-entry".into(),
+                kind: KindMarker::new(),
+                claim: String::new(),
+                justifications: vec![Justification::Rationale { text: body }],
+                status: MemoryStatus::Active,
+                supersedes: vec![],
+                superseded_by: None,
+                defeated_by: None,
+                authored_at: "test".into(),
+                authored_in: "test".into(),
+            },
+            attribution: None,
         }],
-        extra: Default::default(),
     };
     write_memory(plan, &memory).unwrap();
 }

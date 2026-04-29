@@ -6,28 +6,40 @@
 //!
 //! Any text before the first `## ` heading is discarded as preamble
 //! (typically `# Memory` and a blank line); it carries no entry content.
+//!
+//! Each parsed `(title, body)` pair is lifted into a TMS-shaped entry:
+//! `title` becomes the `claim`, `body` becomes a single
+//! `Justification::Rationale`. Status defaults to `active`,
+//! provenance is `authored_in: migrate`, and `attribution` is left
+//! `None` — legacy entries pre-date the component-attribution model.
 
 use anyhow::{anyhow, bail, Result};
 
+use knowledge_graph::{Item, Justification, KindMarker};
+
+use crate::plan_kg::MemoryStatus;
 use crate::state::backlog::schema::allocate_id;
 
-use super::schema::{MemoryEntry, MemoryFile};
+use super::schema::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
+
+const LEGACY_AUTHORED_AT: &str = "legacy";
+const LEGACY_AUTHORED_IN: &str = "migrate";
 
 pub fn parse_memory_markdown(input: &str) -> Result<MemoryFile> {
-    let mut entries = Vec::new();
+    let mut entries: Vec<MemoryEntry> = Vec::new();
     let mut existing_ids: Vec<String> = Vec::new();
 
     for (block_index, block) in split_into_entry_blocks(input).into_iter().enumerate() {
         let entry = parse_single_entry_block(&block, &existing_ids).map_err(|err| {
             anyhow!("failed to parse memory entry #{}: {err:#}", block_index + 1)
         })?;
-        existing_ids.push(entry.id.clone());
+        existing_ids.push(entry.item.id.clone());
         entries.push(entry);
     }
 
     Ok(MemoryFile {
-        entries,
-        extra: Default::default(),
+        schema_version: MEMORY_SCHEMA_VERSION,
+        items: entries,
     })
 }
 
@@ -85,7 +97,21 @@ fn parse_single_entry_block(block: &str, existing_ids: &[String]) -> Result<Memo
     let body = body_lines[start..end].join("\n") + "\n";
 
     let id = allocate_id(&title, existing_ids.iter().map(String::as_str));
-    Ok(MemoryEntry { id, title, body })
+    Ok(MemoryEntry {
+        item: Item {
+            id,
+            kind: KindMarker::new(),
+            claim: title,
+            justifications: vec![Justification::Rationale { text: body }],
+            status: MemoryStatus::Active,
+            supersedes: vec![],
+            superseded_by: None,
+            defeated_by: None,
+            authored_at: LEGACY_AUTHORED_AT.into(),
+            authored_in: LEGACY_AUTHORED_IN.into(),
+        },
+        attribution: None,
+    })
 }
 
 #[cfg(test)]
@@ -105,17 +131,20 @@ Ad-hoc `str::replace` bypasses the hard-error guard regex. Drift guards require 
     #[test]
     fn parses_two_entries_skipping_top_level_header() {
         let memory = parse_memory_markdown(MINIMAL_MEMORY).unwrap();
-        assert_eq!(memory.entries.len(), 2);
+        assert_eq!(memory.items.len(), 2);
         assert_eq!(
-            memory.entries[0].id,
+            memory.items[0].item.id,
             "all-prompt-loading-routes-through-substitute-tokens"
         );
         assert_eq!(
-            memory.entries[0].title,
+            memory.items[0].item.claim,
             "All prompt loading routes through `substitute_tokens`"
         );
-        assert!(memory.entries[0].body.contains("str::replace"));
-        assert_eq!(memory.entries[1].id, "config-overlays-use-deep-merge");
+        match &memory.items[0].item.justifications[0] {
+            Justification::Rationale { text } => assert!(text.contains("str::replace")),
+            other => panic!("expected Rationale justification, got {other:?}"),
+        }
+        assert_eq!(memory.items[1].item.id, "config-overlays-use-deep-merge");
     }
 
     #[test]
@@ -130,8 +159,11 @@ First paragraph.
 Second paragraph with `code`.
 ";
         let memory = parse_memory_markdown(input).unwrap();
-        assert_eq!(memory.entries.len(), 1);
-        let body = &memory.entries[0].body;
+        assert_eq!(memory.items.len(), 1);
+        let body = match &memory.items[0].item.justifications[0] {
+            Justification::Rationale { text } => text,
+            other => panic!("expected Rationale, got {other:?}"),
+        };
         assert!(body.contains("First paragraph."));
         assert!(body.contains("Second paragraph with `code`."));
         // Blank line between paragraphs must be preserved.
@@ -150,8 +182,8 @@ First body.
 Second body.
 ";
         let memory = parse_memory_markdown(input).unwrap();
-        assert_eq!(memory.entries[0].id, "same-title");
-        assert_eq!(memory.entries[1].id, "same-title-2");
+        assert_eq!(memory.items[0].item.id, "same-title");
+        assert_eq!(memory.items[1].item.id, "same-title-2");
     }
 
     #[test]
@@ -172,28 +204,23 @@ real body
     #[test]
     fn empty_input_parses_to_zero_entries() {
         let memory = parse_memory_markdown("").unwrap();
-        assert!(memory.entries.is_empty());
+        assert!(memory.items.is_empty());
+        assert_eq!(memory.schema_version, MEMORY_SCHEMA_VERSION);
     }
 
     #[test]
     fn preamble_only_parses_to_zero_entries() {
         let memory = parse_memory_markdown("# Memory\n\nsome preamble\n").unwrap();
-        assert!(memory.entries.is_empty());
+        assert!(memory.items.is_empty());
     }
 
     #[test]
-    fn parses_live_core_memory_without_error() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("LLM_STATE/core/memory.md");
-        if !path.exists() {
-            return;
-        }
-        let text = std::fs::read_to_string(&path).unwrap();
-        let memory = parse_memory_markdown(&text).expect("core memory must parse");
-        assert!(
-            memory.entries.len() >= 10,
-            "core memory must have many entries, got {}",
-            memory.entries.len()
-        );
+    fn migrated_entries_default_to_active_status_and_legacy_provenance() {
+        let memory = parse_memory_markdown(MINIMAL_MEMORY).unwrap();
+        let first = &memory.items[0];
+        assert_eq!(first.item.status, MemoryStatus::Active);
+        assert_eq!(first.item.authored_at, LEGACY_AUTHORED_AT);
+        assert_eq!(first.item.authored_in, LEGACY_AUTHORED_IN);
+        assert!(first.attribution.is_none());
     }
 }

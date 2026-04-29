@@ -527,7 +527,8 @@ enum MemoryCommands {
         #[arg(long, default_value = "yaml")]
         format: String,
     },
-    /// Append a new memory entry.
+    /// Append a new memory entry. `--title` becomes the TMS claim;
+    /// `--body` becomes a single rationale justification.
     Add {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -538,6 +539,15 @@ enum MemoryCommands {
         /// `-` reads stdin; any other value is taken as the body inline.
         #[arg(long)]
         body: Option<String>,
+        /// Authoring timestamp (RFC-3339). Defaults to current UTC.
+        #[arg(long)]
+        authored_at: Option<String>,
+        /// Phase or process that authored this entry. Defaults to `unspecified`.
+        #[arg(long)]
+        authored_in: Option<String>,
+        /// Component this entry should attach to at plan-finish promotion (`<repo_slug>:<component_id>`).
+        #[arg(long)]
+        attribution: Option<String>,
     },
     /// One-shot bulk initialisation for create-plan. Refuses a non-empty memory.
     Init {
@@ -545,7 +555,9 @@ enum MemoryCommands {
         #[arg(long)]
         body_file: PathBuf,
     },
-    /// Rewrite an entry's body from a file or stdin.
+    /// Rewrite the rationale justification text from a file or stdin.
+    /// Verb name retained for phase-prompt continuity; under the TMS
+    /// schema the "body" is the first `Justification::Rationale`.
     SetBody {
         plan_dir: PathBuf,
         id: String,
@@ -554,11 +566,19 @@ enum MemoryCommands {
         #[arg(long)]
         body: Option<String>,
     },
-    /// Update an entry's title. Id is preserved.
+    /// Update an entry's claim (formerly: title). Id is preserved.
     SetTitle {
         plan_dir: PathBuf,
         id: String,
         new_title: String,
+    },
+    /// Set an entry's status. Validates against the typed transition
+    /// table (`active` → `defeated` | `superseded`).
+    SetStatus {
+        plan_dir: PathBuf,
+        id: String,
+        /// One of `active`, `defeated`, `superseded`.
+        status: String,
     },
     /// Delete an entry by id.
     Delete {
@@ -1168,9 +1188,18 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
             title,
             body_file,
             body,
+            authored_at,
+            authored_in,
+            attribution,
         } => {
             let body = resolve_body(body_file, body)?;
-            let req = memory::AddRequest { title, body };
+            let req = memory::AddRequest {
+                title,
+                body,
+                authored_at,
+                authored_in,
+                attribution,
+            };
             memory::run_add(&plan_dir, &req)
         }
         MemoryCommands::Init { plan_dir, body_file } => {
@@ -1186,6 +1215,9 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
         }
         MemoryCommands::SetTitle { plan_dir, id, new_title } => {
             memory::run_set_title(&plan_dir, &id, &new_title)
+        }
+        MemoryCommands::SetStatus { plan_dir, id, status } => {
+            memory::run_set_status(&plan_dir, &id, &status)
         }
         MemoryCommands::Delete { plan_dir, id } => {
             memory::run_delete(&plan_dir, &id)

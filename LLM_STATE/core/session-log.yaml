@@ -1319,3 +1319,15 @@ sessions:
     - **What this suggests trying next:** The substrate and vocabulary layer are ready. The next increment of this task is migrating existing plan-state files (`backlog.yaml`, `memory.yaml`) to TMS item shape and authoring the `ravel-lite plan` query CLI subcommand for plan KG inspection.
 
     - **Key learnings:** The per-kind `Store<K>` model means a multi-kind plan KG requires multiple stores (one per kind) joined by the cross-store cascade, not a heterogeneous store. `cascade_serves_intent` is the join point — it reads terminal statuses from a parent store and writes defeat markers into a child store. This is the right abstraction for the intent→backlog cascade and will be the same shape for intent→memory and intent→finding if those cascades land.
+- id: session-91
+  timestamp: 2026-04-29T02:55:06Z
+  phase: work
+  body: |
+    ### Session 91 (2026-04-29T02:55:06Z) — Migrate memory.yaml to TMS item shape
+
+    - Migrated the `memory.yaml` schema from the legacy flat `{id, title, body}` format to TMS-shaped `Item<MemoryEntryKind>` from the knowledge-graph substrate. The new on-disk `MemoryEntry` wraps `Item<MemoryEntryKind>` with one extension: an optional `attribution` field for component promotion at plan finish.
+    - Updated every layer that touches memory entries: `schema.rs` (new types), `verbs.rs` (all CRUD paths, plus a new `run_set_status` with validated transitions), `parse_md.rs` (markdown parser lifts `title`→`claim`, `body`→`Justification::Rationale`), `yaml_io.rs` (schema_version mismatch check on read), `migrate.rs` (field references), `dream.rs` and `phase_summary.rs` (word-count and drift-detection logic), `create.rs`, `main.rs`, and `survey/discover.rs`.
+    - Extended the `memory add` CLI with `--authored-at`, `--authored-in`, and `--attribution` flags; added a new `set-status` subcommand routing through `MemoryStatus::transitions()`.
+    - Migrated the live `LLM_STATE/core/memory.yaml` file to the new format (large on-disk churn: ~2200 lines changed).
+    - All existing tests updated; new tests added for schema-version mismatch, `attribution` round-trip, and `MemoryFile` default invariants.
+    - `schema_version` is now a required top-level field; `read_memory` rejects any file where it is missing or unexpected.

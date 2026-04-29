@@ -2,24 +2,39 @@
 use std::fs;
 use std::path::Path;
 
+use knowledge_graph::Justification;
+
 use crate::state::filenames::DREAM_WORD_COUNT_FILENAME;
 use crate::state::memory::read_memory;
+use crate::state::memory::schema::MemoryEntry;
 
 fn word_count(text: &str) -> usize {
     text.split_whitespace().count()
 }
 
-/// Sum of words across every parsed memory entry's title and body.
-/// Returns `None` when `memory.yaml` is absent or fails to parse —
-/// treated as "nothing to dream about" by the callers.
+/// Sum of words across every memory entry's claim and the text of
+/// every justification (currently rationale and external URIs are
+/// the only text-bearing variants). Returns `None` when `memory.yaml`
+/// is absent or fails to parse — treated as "nothing to dream about"
+/// by the callers.
 fn memory_content_word_count(plan_dir: &Path) -> Option<usize> {
     let memory = read_memory(plan_dir).ok()?;
-    let mut total = 0;
-    for entry in &memory.entries {
-        total += word_count(&entry.title);
-        total += word_count(&entry.body);
+    Some(memory.items.iter().map(entry_word_count).sum())
+}
+
+fn entry_word_count(entry: &MemoryEntry) -> usize {
+    let mut total = word_count(&entry.item.claim);
+    for j in &entry.item.justifications {
+        match j {
+            Justification::Rationale { text } => total += word_count(text),
+            Justification::External { uri } => total += word_count(uri),
+            Justification::CodeAnchor { .. }
+            | Justification::ServesIntent { .. }
+            | Justification::Defeats { .. }
+            | Justification::Supersedes { .. } => {}
+        }
     }
-    Some(total)
+    total
 }
 
 /// Returns true if memory content has grown beyond baseline + headroom.
@@ -92,12 +107,34 @@ pub fn seed_dream_word_count_if_missing(plan_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::memory::{write_memory, MemoryFile};
-    use crate::state::memory::schema::MemoryEntry;
+    use crate::plan_kg::MemoryStatus;
+    use crate::state::memory::schema::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
+    use crate::state::memory::write_memory;
+    use knowledge_graph::{Item, KindMarker};
     use tempfile::TempDir;
 
+    fn entry_with_claim_and_rationale(id: &str, claim: &str, rationale: &str) -> MemoryEntry {
+        MemoryEntry {
+            item: Item {
+                id: id.into(),
+                kind: KindMarker::new(),
+                claim: claim.into(),
+                justifications: vec![Justification::Rationale {
+                    text: rationale.into(),
+                }],
+                status: MemoryStatus::Active,
+                supersedes: vec![],
+                superseded_by: None,
+                defeated_by: None,
+                authored_at: "test".into(),
+                authored_in: "test".into(),
+            },
+            attribution: None,
+        }
+    }
+
     /// Seed a `memory.yaml` whose parsed content word count equals
-    /// `target_words` (one entry, empty title, body of exactly that
+    /// `target_words` (one entry, empty claim, rationale of exactly that
     /// many space-separated tokens). Keeps tests focused on threshold
     /// behaviour without depending on any particular YAML encoding.
     fn write_memory_with_word_count(dir: &Path, target_words: usize) {
@@ -107,12 +144,8 @@ mod tests {
             vec!["word"; target_words].join(" ")
         };
         let memory = MemoryFile {
-            entries: vec![MemoryEntry {
-                id: "test-entry".into(),
-                title: String::new(),
-                body,
-            }],
-            extra: Default::default(),
+            schema_version: MEMORY_SCHEMA_VERSION,
+            items: vec![entry_with_claim_and_rationale("test-entry", "", &body)],
         };
         write_memory(dir, &memory).unwrap();
     }
@@ -156,26 +189,26 @@ mod tests {
     }
 
     #[test]
-    fn update_counts_entry_titles_and_bodies() {
-        // Regression: word count must cover both title and body of
-        // each memory entry. Counting body only would under-report by
-        // exactly the title-word budget, silently moving the dream
+    fn update_counts_entry_claims_and_rationales() {
+        // Regression: word count must cover both claim and rationale of
+        // each memory entry. Counting rationale only would under-report
+        // by exactly the claim-word budget, silently moving the dream
         // threshold.
         let dir = TempDir::new().unwrap();
         let memory = MemoryFile {
-            entries: vec![
-                MemoryEntry {
-                    id: "a".into(),
-                    title: "Alpha title words".into(), // 3 words
-                    body: "alpha body word one two".into(), // 5 words
-                },
-                MemoryEntry {
-                    id: "b".into(),
-                    title: "Beta".into(), // 1 word
-                    body: "".into(), // 0 words
-                },
+            schema_version: MEMORY_SCHEMA_VERSION,
+            items: vec![
+                entry_with_claim_and_rationale(
+                    "a",
+                    "Alpha title words",         // 3 words
+                    "alpha body word one two",   // 5 words
+                ),
+                entry_with_claim_and_rationale(
+                    "b",
+                    "Beta",                      // 1 word
+                    "",                          // 0 words
+                ),
             ],
-            extra: Default::default(),
         };
         write_memory(dir.path(), &memory).unwrap();
         update_dream_word_count(dir.path());

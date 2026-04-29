@@ -107,11 +107,18 @@ fn phase_summary_dream_always_emits_a_stats_line() {
 
     std::fs::write(
         plan.join("memory.yaml"),
-        r#"entries:
+        r#"schema_version: 1
+items:
 - id: rule
-  title: A rule
-  body: |
-    original wordy body with many words in it
+  kind: memory-entry
+  claim: A rule
+  justifications:
+  - kind: rationale
+    text: |
+      original wordy body with many words in it
+  status: active
+  authored_at: test
+  authored_in: test
 "#,
     )
     .unwrap();
@@ -119,11 +126,18 @@ fn phase_summary_dream_always_emits_a_stats_line() {
 
     std::fs::write(
         plan.join("memory.yaml"),
-        r#"entries:
+        r#"schema_version: 1
+items:
 - id: rule
-  title: A rule
-  body: |
-    shorter
+  kind: memory-entry
+  claim: A rule
+  justifications:
+  - kind: rationale
+    text: |
+      shorter
+  status: active
+  authored_at: test
+  authored_in: test
 "#,
     )
     .unwrap();

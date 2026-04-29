@@ -188,10 +188,12 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plan_kg::MemoryStatus;
     use crate::state::backlog::schema::{BacklogFile, Status, Task};
     use crate::state::backlog::write_backlog;
-    use crate::state::memory::schema::{MemoryEntry, MemoryFile};
+    use crate::state::memory::schema::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
     use crate::state::memory::write_memory;
+    use knowledge_graph::{Item, Justification, KindMarker};
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -223,16 +225,28 @@ mod tests {
         }
     }
 
-    /// Test fixture: one memory entry with the given title. Body is a
-    /// constant so identity still tracks title changes.
+    /// Test fixture: one memory entry with the given claim. Rationale is
+    /// a constant so identity still tracks claim changes.
     fn one_entry_memory(title: &str) -> MemoryFile {
         MemoryFile {
-            entries: vec![MemoryEntry {
-                id: "fixture-entry".into(),
-                title: title.into(),
-                body: "Fixture body.\n".into(),
+            schema_version: MEMORY_SCHEMA_VERSION,
+            items: vec![MemoryEntry {
+                item: Item {
+                    id: "fixture-entry".into(),
+                    kind: KindMarker::new(),
+                    claim: title.into(),
+                    justifications: vec![Justification::Rationale {
+                        text: "Fixture body.\n".into(),
+                    }],
+                    status: MemoryStatus::Active,
+                    supersedes: vec![],
+                    superseded_by: None,
+                    defeated_by: None,
+                    authored_at: "test".into(),
+                    authored_in: "test".into(),
+                },
+                attribution: None,
             }],
-            extra: Default::default(),
         }
     }
 

@@ -196,10 +196,10 @@ fn compute_reflect_labels_from_disk(plan_dir: &Path, baseline_sha: &str) -> Resu
 }
 
 /// Reflect labels recoverable from a structural diff:
-/// - `[NEW] <heading>` for any memory id not present in the baseline
-/// - `[OBSOLETE] <heading>` for any memory id missing from the current
-/// - `[STALE] <heading>` for any memory entry whose body or title
-///   differs from baseline
+/// - `[NEW] <claim>` for any memory id not present in the baseline
+/// - `[OBSOLETE] <claim>` for any memory id missing from the current
+/// - `[STALE] <claim>` for any memory entry whose claim, justifications,
+///   or status differs from baseline
 ///
 /// Dream reuses this same shape; the only distinction is the `[STATS]`
 /// line dream appends (see `compute_dream_labels`).
@@ -207,29 +207,29 @@ pub fn compute_reflect_labels(baseline: &MemoryFile, current: &MemoryFile) -> Ve
     use std::collections::HashMap;
 
     let baseline_by_id: HashMap<&str, &crate::state::memory::schema::MemoryEntry> = baseline
-        .entries
+        .items
         .iter()
-        .map(|e| (e.id.as_str(), e))
+        .map(|e| (e.item.id.as_str(), e))
         .collect();
     let current_ids: std::collections::HashSet<&str> =
-        current.entries.iter().map(|e| e.id.as_str()).collect();
+        current.items.iter().map(|e| e.item.id.as_str()).collect();
 
     let mut new_entries = Vec::new();
     let mut stale = Vec::new();
-    for entry in &current.entries {
-        match baseline_by_id.get(entry.id.as_str()) {
-            Some(prev) if prev.title != entry.title || prev.body != entry.body => {
-                stale.push(Label::simple("STALE", entry.title.clone()));
+    for entry in &current.items {
+        match baseline_by_id.get(entry.item.id.as_str()) {
+            Some(prev) if entry_drifted(prev, entry) => {
+                stale.push(Label::simple("STALE", entry.item.claim.clone()));
             }
             Some(_) => {}
-            None => new_entries.push(Label::simple("NEW", entry.title.clone())),
+            None => new_entries.push(Label::simple("NEW", entry.item.claim.clone())),
         }
     }
 
     let mut obsolete = Vec::new();
-    for entry in &baseline.entries {
-        if !current_ids.contains(entry.id.as_str()) {
-            obsolete.push(Label::simple("OBSOLETE", entry.title.clone()));
+    for entry in &baseline.items {
+        if !current_ids.contains(entry.item.id.as_str()) {
+            obsolete.push(Label::simple("OBSOLETE", entry.item.claim.clone()));
         }
     }
 
@@ -238,6 +238,16 @@ pub fn compute_reflect_labels(baseline: &MemoryFile, current: &MemoryFile) -> Ve
         .chain(stale)
         .chain(obsolete)
         .collect()
+}
+
+fn entry_drifted(
+    prev: &crate::state::memory::schema::MemoryEntry,
+    current: &crate::state::memory::schema::MemoryEntry,
+) -> bool {
+    prev.item.claim != current.item.claim
+        || prev.item.justifications != current.item.justifications
+        || prev.item.status != current.item.status
+        || prev.attribution != current.attribution
 }
 
 // ----- Dream ---------------------------------------------------------
@@ -269,9 +279,27 @@ pub fn compute_dream_labels(baseline: &MemoryFile, current: &MemoryFile) -> Vec<
 
 fn memory_word_count(memory: &MemoryFile) -> usize {
     memory
-        .entries
+        .items
         .iter()
-        .map(|e| word_count(&e.title) + word_count(&e.body))
+        .map(|e| word_count(&e.item.claim) + justifications_word_count(e))
+        .sum()
+}
+
+fn justifications_word_count(entry: &crate::state::memory::schema::MemoryEntry) -> usize {
+    use knowledge_graph::Justification;
+
+    entry
+        .item
+        .justifications
+        .iter()
+        .map(|j| match j {
+            Justification::Rationale { text } => word_count(text),
+            Justification::External { uri } => word_count(uri),
+            Justification::CodeAnchor { .. }
+            | Justification::ServesIntent { .. }
+            | Justification::Defeats { .. }
+            | Justification::Supersedes { .. } => 0,
+        })
         .sum()
 }
 
@@ -354,7 +382,9 @@ fn format_labels(labels: &[Label], format: RenderFormat) -> Result<String> {
 mod tests {
     use super::*;
     use crate::state::backlog::schema::Task;
-    use crate::state::memory::schema::MemoryEntry;
+    use crate::plan_kg::MemoryStatus;
+    use crate::state::memory::schema::{MemoryEntry, MEMORY_SCHEMA_VERSION};
+    use knowledge_graph::{Item, Justification, KindMarker};
 
     fn task(id: &str, title: &str, status: Status) -> Task {
         Task {
@@ -380,9 +410,28 @@ mod tests {
 
     fn mem(id: &str, title: &str, body: &str) -> MemoryEntry {
         MemoryEntry {
-            id: id.into(),
-            title: title.into(),
-            body: body.into(),
+            item: Item {
+                id: id.into(),
+                kind: KindMarker::new(),
+                claim: title.into(),
+                justifications: vec![Justification::Rationale {
+                    text: body.into(),
+                }],
+                status: MemoryStatus::Active,
+                supersedes: vec![],
+                superseded_by: None,
+                defeated_by: None,
+                authored_at: "test".into(),
+                authored_in: "test".into(),
+            },
+            attribution: None,
+        }
+    }
+
+    fn memfile(items: Vec<MemoryEntry>) -> MemoryFile {
+        MemoryFile {
+            schema_version: MEMORY_SCHEMA_VERSION,
+            items,
         }
     }
 
@@ -499,42 +548,24 @@ mod tests {
 
     #[test]
     fn reflect_emits_stale_when_body_changes_for_same_id() {
-        let baseline = MemoryFile {
-            entries: vec![mem("foo", "Foo rule", "old body\n")],
-            extra: Default::default(),
-        };
-        let current = MemoryFile {
-            entries: vec![mem("foo", "Foo rule", "new tighter body\n")],
-            extra: Default::default(),
-        };
+        let baseline = memfile(vec![mem("foo", "Foo rule", "old body\n")]);
+        let current = memfile(vec![mem("foo", "Foo rule", "new tighter body\n")]);
         let labels = compute_reflect_labels(&baseline, &current);
         assert_eq!(labels, vec![Label::simple("STALE", "Foo rule")]);
     }
 
     #[test]
     fn reflect_emits_stale_when_title_changes_even_if_body_identical() {
-        let baseline = MemoryFile {
-            entries: vec![mem("foo", "Old title", "same body\n")],
-            extra: Default::default(),
-        };
-        let current = MemoryFile {
-            entries: vec![mem("foo", "New title", "same body\n")],
-            extra: Default::default(),
-        };
+        let baseline = memfile(vec![mem("foo", "Old title", "same body\n")]);
+        let current = memfile(vec![mem("foo", "New title", "same body\n")]);
         let labels = compute_reflect_labels(&baseline, &current);
         assert_eq!(labels, vec![Label::simple("STALE", "New title")]);
     }
 
     #[test]
     fn reflect_emits_new_and_obsolete_for_added_and_removed_entries() {
-        let baseline = MemoryFile {
-            entries: vec![mem("old", "Retired rule", "body\n")],
-            extra: Default::default(),
-        };
-        let current = MemoryFile {
-            entries: vec![mem("fresh", "Fresh rule", "body\n")],
-            extra: Default::default(),
-        };
+        let baseline = memfile(vec![mem("old", "Retired rule", "body\n")]);
+        let current = memfile(vec![mem("fresh", "Fresh rule", "body\n")]);
         let labels = compute_reflect_labels(&baseline, &current);
         assert_eq!(
             labels,
@@ -547,10 +578,7 @@ mod tests {
 
     #[test]
     fn reflect_with_no_changes_emits_no_labels() {
-        let memory = MemoryFile {
-            entries: vec![mem("a", "A", "body\n")],
-            extra: Default::default(),
-        };
+        let memory = memfile(vec![mem("a", "A", "body\n")]);
         assert!(compute_reflect_labels(&memory, &memory).is_empty());
     }
 
@@ -558,10 +586,7 @@ mod tests {
 
     #[test]
     fn dream_always_appends_a_stats_two_line_entry() {
-        let memory = MemoryFile {
-            entries: vec![mem("a", "A", "one two three\n")],
-            extra: Default::default(),
-        };
+        let memory = memfile(vec![mem("a", "A", "one two three\n")]);
         let labels = compute_dream_labels(&memory, &memory);
         assert_eq!(labels.len(), 1, "unchanged memory still emits STATS");
         let stats = &labels[0];
@@ -572,18 +597,12 @@ mod tests {
 
     #[test]
     fn dream_stats_reports_before_and_after_word_counts_distinctly() {
-        let baseline = MemoryFile {
-            entries: vec![mem(
-                "a",
-                "A",
-                "one two three four five six seven eight nine ten\n",
-            )],
-            extra: Default::default(),
-        };
-        let current = MemoryFile {
-            entries: vec![mem("a", "A", "shorter body here\n")],
-            extra: Default::default(),
-        };
+        let baseline = memfile(vec![mem(
+            "a",
+            "A",
+            "one two three four five six seven eight nine ten\n",
+        )]);
+        let current = memfile(vec![mem("a", "A", "shorter body here\n")]);
         let labels = compute_dream_labels(&baseline, &current);
         let stats = labels.iter().find(|l| l.kind == "STATS").unwrap();
         assert_eq!(stats.subject, "11"); // "A" + 10 words
@@ -594,17 +613,11 @@ mod tests {
     fn dream_consolidation_surfaces_as_new_plus_obsolete_plus_stats() {
         // Merging A + B into C — renderer can't know it's a merge,
         // so it emits structural labels: NEW for C, OBSOLETE for A and B.
-        let baseline = MemoryFile {
-            entries: vec![
-                mem("a", "Fact A", "one two\n"),
-                mem("b", "Fact B", "three four\n"),
-            ],
-            extra: Default::default(),
-        };
-        let current = MemoryFile {
-            entries: vec![mem("c", "Merged fact", "merged content\n")],
-            extra: Default::default(),
-        };
+        let baseline = memfile(vec![
+            mem("a", "Fact A", "one two\n"),
+            mem("b", "Fact B", "three four\n"),
+        ]);
+        let current = memfile(vec![mem("c", "Merged fact", "merged content\n")]);
         let labels = compute_dream_labels(&baseline, &current);
         let kinds: Vec<&str> = labels.iter().map(|l| l.kind.as_str()).collect();
         assert_eq!(kinds, vec!["NEW", "OBSOLETE", "OBSOLETE", "STATS"]);

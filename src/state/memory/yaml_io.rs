@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
-use super::schema::MemoryFile;
+use super::schema::{MemoryFile, MEMORY_SCHEMA_VERSION};
 use crate::state::filenames::MEMORY_FILENAME;
 
 pub fn memory_path(plan_dir: &Path) -> PathBuf {
@@ -23,6 +23,14 @@ pub fn read_memory(plan_dir: &Path) -> Result<MemoryFile> {
         .with_context(|| format!("Failed to read {}", path.display()))?;
     let parsed: MemoryFile = serde_yaml::from_str(&text)
         .with_context(|| format!("Failed to parse {} as {MEMORY_FILENAME} schema", path.display()))?;
+    if parsed.schema_version != MEMORY_SCHEMA_VERSION {
+        bail!(
+            "{} declares schema_version {}, expected {}.",
+            path.display(),
+            parsed.schema_version,
+            MEMORY_SCHEMA_VERSION
+        );
+    }
     Ok(parsed)
 }
 
@@ -52,14 +60,28 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plan_kg::MemoryStatus;
     use crate::state::memory::schema::MemoryEntry;
+    use knowledge_graph::{Item, Justification, KindMarker};
     use tempfile::TempDir;
 
     fn sample_entry() -> MemoryEntry {
         MemoryEntry {
-            id: "sample".into(),
-            title: "Sample entry".into(),
-            body: "Paragraph one.\n\nParagraph two, with `code`.\n".into(),
+            item: Item {
+                id: "sample".into(),
+                kind: KindMarker::new(),
+                claim: "Sample claim".into(),
+                justifications: vec![Justification::Rationale {
+                    text: "Paragraph one.\n\nParagraph two, with `code`.\n".into(),
+                }],
+                status: MemoryStatus::Active,
+                supersedes: vec![],
+                superseded_by: None,
+                defeated_by: None,
+                authored_at: "2026-04-29T00:00:00Z".into(),
+                authored_in: "test".into(),
+            },
+            attribution: None,
         }
     }
 
@@ -67,30 +89,31 @@ mod tests {
     fn write_then_read_round_trips_entry_fields() {
         let tmp = TempDir::new().unwrap();
         let memory = MemoryFile {
-            entries: vec![sample_entry()],
-            extra: Default::default(),
+            schema_version: MEMORY_SCHEMA_VERSION,
+            items: vec![sample_entry()],
         };
         write_memory(tmp.path(), &memory).unwrap();
 
         let round_tripped = read_memory(tmp.path()).unwrap();
-        assert_eq!(round_tripped.entries.len(), 1);
-        assert_eq!(round_tripped.entries[0].id, "sample");
-        assert_eq!(round_tripped.entries[0].body, sample_entry().body);
+        assert_eq!(round_tripped.items.len(), 1);
+        assert_eq!(round_tripped.items[0].item.id, "sample");
+        assert_eq!(round_tripped.items[0].item.claim, "Sample claim");
+        assert_eq!(round_tripped.items[0].item.status, MemoryStatus::Active);
     }
 
     #[test]
-    fn write_emits_block_scalar_for_multi_line_body() {
+    fn write_emits_block_scalar_for_multi_line_rationale() {
         let tmp = TempDir::new().unwrap();
         let memory = MemoryFile {
-            entries: vec![sample_entry()],
-            extra: Default::default(),
+            schema_version: MEMORY_SCHEMA_VERSION,
+            items: vec![sample_entry()],
         };
         write_memory(tmp.path(), &memory).unwrap();
 
         let raw = std::fs::read_to_string(memory_path(tmp.path())).unwrap();
         assert!(
-            raw.contains("body: |") || raw.contains("body: |-"),
-            "multi-line body must emit as block scalar: {raw}"
+            raw.contains("text: |") || raw.contains("text: |-"),
+            "multi-line rationale text must emit as block scalar: {raw}"
         );
     }
 
@@ -101,5 +124,15 @@ mod tests {
         let msg = format!("{err:#}");
         assert!(msg.contains(MEMORY_FILENAME), "error must name {MEMORY_FILENAME}: {msg}");
         assert!(msg.contains("state migrate"), "error must suggest migrate: {msg}");
+    }
+
+    #[test]
+    fn read_errors_on_schema_version_mismatch() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(memory_path(tmp.path()), "schema_version: 99\nitems: []\n").unwrap();
+        let err = read_memory(tmp.path()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("schema_version"), "error must cite schema_version: {msg}");
+        assert!(msg.contains("99"), "error must show found version: {msg}");
     }
 }

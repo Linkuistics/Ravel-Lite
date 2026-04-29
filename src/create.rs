@@ -92,7 +92,7 @@ pub fn validate_target(plan_dir: &Path) -> Result<PathBuf> {
 ///
 /// - `phase.md` = `work\n`
 /// - `backlog.yaml` = `tasks: []\n`
-/// - `memory.yaml` = `entries: []\n`
+/// - `memory.yaml` = `schema_version: 1\nitems: []\n`
 /// - `dream-word-count` = `0`
 ///
 /// Parent directories are NOT created here — `validate_target` handles
@@ -114,7 +114,7 @@ pub fn scaffold_plan_dir(abs_plan_dir: &Path) -> Result<()> {
     let writes: [(&str, &[u8]); 4] = [
         (PHASE_FILENAME, b"work\n"),
         (BACKLOG_FILENAME, b"tasks: []\n"),
-        (MEMORY_FILENAME, b"entries: []\n"),
+        (MEMORY_FILENAME, b"schema_version: 1\nitems: []\n"),
         (DREAM_WORD_COUNT_FILENAME, b"0"),
     ];
     for (name, bytes) in writes {
@@ -292,7 +292,10 @@ mod tests {
         assert!(plan.is_dir(), "plan directory must exist after scaffold");
         assert_eq!(fs::read_to_string(plan.join(PHASE_FILENAME)).unwrap(), "work\n");
         assert_eq!(fs::read_to_string(plan.join(BACKLOG_FILENAME)).unwrap(), "tasks: []\n");
-        assert_eq!(fs::read_to_string(plan.join(MEMORY_FILENAME)).unwrap(), "entries: []\n");
+        assert_eq!(
+            fs::read_to_string(plan.join(MEMORY_FILENAME)).unwrap(),
+            "schema_version: 1\nitems: []\n"
+        );
         assert_eq!(fs::read_to_string(plan.join(DREAM_WORD_COUNT_FILENAME)).unwrap(), "0");
     }
 
@@ -309,7 +312,7 @@ mod tests {
         assert!(backlog.tasks.is_empty(), "scaffolded backlog must have no tasks");
 
         let memory = crate::state::memory::read_memory(&plan).unwrap();
-        assert!(memory.entries.is_empty(), "scaffolded memory must have no entries");
+        assert!(memory.items.is_empty(), "scaffolded memory must have no entries");
     }
 
     #[test]

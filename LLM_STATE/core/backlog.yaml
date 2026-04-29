@@ -146,7 +146,7 @@ tasks:
 - id: migrate-memory-yaml-to-tms-item-shape
   title: Migrate memory.yaml to TMS item shape
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Migrate `memory.yaml` schema from the legacy flat format to TMS item shape (`items: [{ id, kind: memory-entry, claim, justifications, status, ... }]`).
@@ -163,6 +163,50 @@ tasks:
     - All existing tests pass; round-trip YAML tests for the new schema are added.
 
     Out of scope: backlog.yaml migration (separate task); intents.yaml (separate task).
+  results: |
+    ## Results
+
+    `memory.yaml` is now TMS-shaped under `schema_version: 1`. The 182 entries in `LLM_STATE/core/memory.yaml` were migrated as the dogfood validation; all 711 cargo tests pass (598 lib + 113 integration). `knowledge-graph` still compiles cleanly under `warnings = "deny"`.
+
+    ### What was done
+
+    - **Schema** (`src/state/memory/schema.rs`): replaced `MemoryFile { entries: Vec<{id, title, body}> }` with `MemoryFile { schema_version: u32, items: Vec<MemoryEntry> }`. `MemoryEntry` wraps `Item<MemoryEntryKind>` via `#[serde(flatten)]` and adds a typed `attribution: Option<String>` extension. `schema_version` is required on read; missing or non-1 fails loudly with a path-named error.
+    - **I/O** (`yaml_io.rs`): `read_memory` validates `schema_version` against `MEMORY_SCHEMA_VERSION = 1`. Atomic-write semantics (tempfile rename) preserved.
+    - **Verbs** (`verbs.rs`): rewrote every CRUD verb against the TMS shape.
+      - `add` maps `--title → claim`, `--body → Justification::Rationale{text}`, defaults `status=Active`. New optional flags: `--authored-at` (defaults to current UTC RFC-3339), `--authored-in` (defaults to `unspecified`), `--attribution`.
+      - `set-body` retained for phase-prompt continuity; rewrites the first `Rationale` justification's text, inserting one if the entry has no rationale yet.
+      - `set-title` retained; rewrites `claim`.
+      - **NEW** `set-status`: typed transition validation against `MemoryStatus::transitions()`; rejects unknown status strings with a list of legal values; self-transitions are no-op.
+      - `delete`, `list`, `show`, `init` unchanged in shape.
+    - **CLI** (`src/main.rs`): added `MemoryCommands::SetStatus` and the `dispatch_memory` arm; expanded `Add` with the three new optional flags.
+    - **Substrate use**: deliberately bypassed `Store<MemoryEntryKind>` for I/O — extracting items into a transient store and copying back would dwarf direct attribution preservation. The Store API stays available for future cascade work (reflect v2, curate).
+    - **`parse_md.rs`**: legacy `## heading + body` blocks now lift to TMS items with `authored_at: legacy`, `authored_in: migrate`, `status: active`, `attribution: None`. The migrate-pipeline behaviour is unchanged externally; only the produced shape is.
+    - **Callers updated**:
+      - `src/dream.rs` — word counting traverses claim + each rationale/external justification text.
+      - `src/phase_summary.rs` — reflect/dream label diff now compares claim, justifications, status, attribution.
+      - `src/state/migrate.rs` — `memories_equivalent` uses the structural `PartialEq` on items.
+      - `src/create.rs` — scaffold writes `schema_version: 1\nitems: []\n`.
+      - `src/survey/discover.rs`, `tests/common/mod.rs`, `tests/state_memory.rs`, `tests/state_phase_summary.rs` — fixture builders updated to the new shape.
+    - **Dogfood**: a one-shot `examples/migrate_legacy_memory.rs` (deleted after use) read the legacy `entries:[]` shape via a private `LegacyMemoryFile` struct, lifted each entry to `MemoryEntry` with `authored_at/authored_in: legacy`, and round-tripped through `write_memory`. All 182 entries re-load via the canonical reader; `state memory show <id>` and `state memory set-status` work end-to-end.
+
+    ### What worked
+
+    - The `#[serde(flatten)]` wrapper around `Item<MemoryEntryKind>` round-trips attribution cleanly without touching the substrate. The `KindMarker<MemoryEntryKind>` discriminator gives type-level wire-kind verification — a YAML labelled `kind: backlog-item` cannot deserialise as a memory entry.
+    - Keeping `set-body`/`set-title` verb names as semantic synonyms ("rewrite the first rationale text" / "rewrite the claim") let phase prompts in `defaults/phases/{triage,reflect,dream}.md` keep working unchanged.
+    - Manual transition validation against `MemoryStatus::transitions()` was simpler than threading items through `Store<K>` and back; the table itself is the typed-API contract.
+
+    ### What didn't work / was rejected
+
+    - Considered adding a generic `extensions: IndexMap<String, Value>` field to `Item<K>` in the substrate so all kinds could carry kind-specific extensions (memory's `attribution`, future backlog `blocked_by`). Rejected: it adds untyped storage at the wrong layer, and the per-kind wrapper (`MemoryEntry`) keeps typing tight while staying scoped to one task. Backlog-yaml migration can revisit.
+    - Considered making `--authored-at`/`--authored-in` required to enforce provenance. Rejected: existing phase prompts call `state memory add --title X --body-file Y` without them; making them required would break those prompts. Optional + sensible defaults preserves the externally-visible behaviour the task description called for.
+    - Considered extracting `current_utc_rfc3339()` into a shared `src/utc_clock.rs`. Rejected for now: the function already exists `pub(super)` in `src/discover/stage1.rs:258`, but the cross-module dependency from memory→discover felt wrong. Inlined the 30 lines locally with a comment pointing at the duplicate. Promote when a third call site appears.
+
+    ### What this suggests next
+
+    - **Backlog.yaml migration** (already a backlog item) can follow the same wrapper pattern: `BacklogItem` wraps `Item<BacklogItemKind>` and adds typed `blocked_by: Vec<ItemId>`, `dependencies` ports cleanly to `Justification::ServesIntent` for intent-linked items. The verb rework is similar in shape — `set-status` becomes the typed transition gate (the existing v1 `set-status` accepts any string).
+    - **Phase prompts** (`defaults/phases/{triage,reflect,dream}.md`) reference `state memory list` output. The new YAML output uses `claim:`/`justifications:` instead of `title:`/`body:`. Prompts continue to work but the visible field labels in their rendered output shifted; consider a follow-up pass to update prose that names old field labels (low priority — informational).
+    - **`current_utc_rfc3339` consolidation**: third call site has now nearly arrived. If `set-status` ever wants to stamp a `defeated_at`, the shared module case becomes overdue. A small `src/utc_clock.rs` is the natural place.
+    - **Reflect v2** (backlog item depending on this one): bounded TMS pass over recent entries can now defeat memory entries via `set-status … defeated`. The cascade primitive `cascade_serves_intent` in `knowledge-graph` is ready.
 - id: migrate-backlog-yaml-to-tms-item-shape-with-typed-set-status-wiring
   title: Migrate backlog.yaml to TMS item shape (with typed set-status wiring)
   category: architecture-next

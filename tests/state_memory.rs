@@ -95,7 +95,11 @@ fn migrate_is_idempotent_across_repeated_runs_for_memory() {
 fn add_set_body_set_title_delete_round_trip_through_cli() {
     let tmp = TempDir::new().unwrap();
     // Start from an empty memory.yaml.
-    std::fs::write(tmp.path().join("memory.yaml"), "entries: []\n").unwrap();
+    std::fs::write(
+        tmp.path().join("memory.yaml"),
+        "schema_version: 1\nitems: []\n",
+    )
+    .unwrap();
 
     let add = Command::new(bin())
         .args(["state", "memory", "add"])
