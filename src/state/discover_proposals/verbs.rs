@@ -8,7 +8,7 @@
 //!    vocabulary in the error message. The LLM sees this and retries.
 //! 2. Exactly two `--participant` flags are required; anything else is
 //!    a structural error.
-//! 3. Both participants must be in the projects catalog — Stage 2 can
+//! 3. Both participants must be in the repo registry — Stage 2 can
 //!    only propose edges between known components.
 //! 4. `Edge::validate()` catches self-loops, empty rationale, and
 //!    missing `evidence_fields` when the grade is not `weak`.
@@ -23,7 +23,7 @@ use anyhow::{bail, Result};
 use crate::discover::schema::{ProposalRecord, ProposalsFile, PROPOSALS_SCHEMA_VERSION};
 use crate::discover::{load_proposals, proposals_path, save_proposals_atomic};
 use component_ontology::{Edge, EdgeKind, EvidenceGrade, LifecycleScope};
-use crate::projects::{self, ProjectsCatalog};
+use crate::repos::{self, ReposRegistry};
 
 pub struct AddProposalRequest<'a> {
     pub kind: EdgeKind,
@@ -45,9 +45,9 @@ pub fn run_add_proposal(config_root: &Path, req: &AddProposalRequest<'_>) -> Res
     let a = &req.participants[0];
     let b = &req.participants[1];
 
-    let catalog = projects::load_or_empty(config_root)?;
-    require_component_known(&catalog, a)?;
-    require_component_known(&catalog, b)?;
+    let registry = repos::load_for_lookup(config_root)?;
+    require_component_known(&registry, a)?;
+    require_component_known(&registry, b)?;
 
     let participants = canonicalise_participants_for_kind(req.kind, a, b);
     let edge = Edge {
@@ -117,27 +117,27 @@ fn canonicalise_participants_for_kind(kind: EdgeKind, a: &str, b: &str) -> Vec<S
     v
 }
 
-fn require_component_known(catalog: &ProjectsCatalog, name: &str) -> Result<()> {
-    if catalog.find_by_name(name).is_none() {
+fn require_component_known(registry: &ReposRegistry, slug: &str) -> Result<()> {
+    if registry.get(slug).is_none() {
         bail!(
-            "component '{}' is not in the projects catalog; \
-             only catalogued components may be Stage 2 participants. \
+            "component '{}' is not in the repo registry; \
+             only registered components may be Stage 2 participants. \
              Known components: {}",
-            name,
-            known_component_names(catalog),
+            slug,
+            known_component_names(registry),
         );
     }
     Ok(())
 }
 
-fn known_component_names(catalog: &ProjectsCatalog) -> String {
-    if catalog.projects.is_empty() {
+fn known_component_names(registry: &ReposRegistry) -> String {
+    if registry.repos.is_empty() {
         return "(empty)".to_string();
     }
-    catalog
-        .projects
-        .iter()
-        .map(|p| p.name.clone())
+    registry
+        .repos
+        .keys()
+        .cloned()
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -145,20 +145,19 @@ fn known_component_names(catalog: &ProjectsCatalog) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projects::try_add_named;
     use tempfile::TempDir;
 
     fn scaffold_cfg_with_catalog(components: &[&str]) -> (TempDir, std::path::PathBuf) {
         let tmp = TempDir::new().unwrap();
         let cfg = tmp.path().join("cfg");
         std::fs::create_dir_all(&cfg).unwrap();
-        let mut catalog = projects::ProjectsCatalog::default();
+        let mut registry = ReposRegistry::default();
         for name in components {
             let path = tmp.path().join(name);
             std::fs::create_dir_all(&path).unwrap();
-            try_add_named(&mut catalog, name, &path).unwrap();
+            repos::try_add(&mut registry, name, "test-url", Some(&path)).unwrap();
         }
-        projects::save_atomic(&cfg, &catalog).unwrap();
+        repos::save_atomic(&cfg, &registry).unwrap();
         (tmp, cfg)
     }
 

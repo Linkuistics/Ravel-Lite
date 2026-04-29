@@ -12,8 +12,8 @@ fn bin() -> PathBuf {
 }
 
 /// Scaffold: `<tmp>/cfg/` for the config dir and `<tmp>/projects/<name>/`
-/// for each project directory. Seeds the projects catalog with `me` plus
-/// the listed peers.
+/// for each repo's local checkout. Seeds the repo registry with `me`
+/// plus the listed peers.
 fn scaffold(tmp: &Path, me: &str, peers: &[&str]) -> (PathBuf, PathBuf) {
     let cfg = tmp.join("cfg");
     std::fs::create_dir_all(&cfg).unwrap();
@@ -23,13 +23,14 @@ fn scaffold(tmp: &Path, me: &str, peers: &[&str]) -> (PathBuf, PathBuf) {
         let p = projects_root.join(name);
         std::fs::create_dir_all(&p).unwrap();
         let status = Command::new(bin())
-            .args(["state", "projects", "add"])
+            .args(["repo", "add"])
             .args(["--config", cfg.to_str().unwrap()])
-            .args(["--name", name])
-            .args(["--path", p.to_str().unwrap()])
+            .arg(name)
+            .args(["--url", "test-url"])
+            .args(["--local-path", p.to_str().unwrap()])
             .status()
             .unwrap();
-        assert!(status.success(), "seed projects add failed for {name}");
+        assert!(status.success(), "seed repo add failed for {name}");
     }
 
     let plan_dir = projects_root.join(me).join("LLM_STATE").join("core");

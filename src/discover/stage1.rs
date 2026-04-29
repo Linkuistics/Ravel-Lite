@@ -1,15 +1,15 @@
-//! Stage 1: per-project interaction-surface extraction.
+//! Stage 1: per-repo interaction-surface extraction.
 //!
-//! For each project in the catalog:
+//! For each repo target in the registry:
 //!   1. Compute its subtree-scoped tree SHA.
 //!   2. If the cached surface's `tree_sha` matches, use it as-is.
-//!   3. Otherwise, spawn a `claude -p` subagent with CWD = project path
+//!   3. Otherwise, spawn a `claude -p` subagent with CWD = working tree
 //!      and the Stage 1 prompt; parse YAML output; inject identity
 //!      fields; write cache atomically.
 //!
 //! Dispatch is bounded by a `tokio::sync::Semaphore`; default 4.
 //!
-//! Failure policy is best-effort: per-project failures are captured in
+//! Failure policy is best-effort: per-repo failures are captured in
 //! a `Vec<Stage1Failure>` and surfaced in the proposals file. They do
 //! not abort the pipeline.
 
@@ -24,8 +24,7 @@ use tokio::process::Command as TokioCommand;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-use crate::projects::ProjectEntry;
-
+use super::DiscoverTarget;
 use super::cache;
 use super::schema::{Stage1Failure, SurfaceFile, SurfaceRecord, SURFACE_SCHEMA_VERSION};
 use super::tree_sha::compute_project_state;
@@ -54,21 +53,21 @@ pub struct Stage1Config {
 }
 
 pub async fn run_stage1(
-    projects: &[ProjectEntry],
+    targets: &[DiscoverTarget],
     cfg: &Stage1Config,
 ) -> Result<Vec<Stage1Outcome>> {
     let semaphore = Arc::new(Semaphore::new(cfg.concurrency.max(1)));
     let mut join_set: JoinSet<(String, Result<Stage1Outcome>)> = JoinSet::new();
 
-    for project in projects {
+    for target in targets {
         let permit_sem = Arc::clone(&semaphore);
         let config_root = cfg.config_root.clone();
         let model = cfg.model.clone();
         let prompt_template = cfg.prompt_template.clone();
         let catalog_names = cfg.catalog_names.clone();
         let timeout = cfg.timeout;
-        let name = project.name.clone();
-        let path = project.path.clone();
+        let name = target.slug.clone();
+        let path = target.working_tree.clone();
 
         join_set.spawn(async move {
             // Acquire permit; a closed semaphore here is a bug (we never
@@ -92,7 +91,7 @@ pub async fn run_stage1(
         });
     }
 
-    let mut outcomes = Vec::with_capacity(projects.len());
+    let mut outcomes = Vec::with_capacity(targets.len());
     while let Some(join_result) = join_set.join_next().await {
         match join_result {
             Ok((_name, Ok(outcome))) => outcomes.push(outcome),

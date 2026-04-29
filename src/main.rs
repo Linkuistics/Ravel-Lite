@@ -15,7 +15,7 @@ use ravel_lite::state::filenames::PHASE_FILENAME;
 use ravel_lite::types::{AgentConfig, LlmPhase, PlanContext};
 use ravel_lite::ui::{run_tui, UI};
 use ravel_lite::{
-    create, init, multi_plan, phase_loop, projects, related_components, repos, state, survey,
+    create, init, multi_plan, phase_loop, related_components, repos, state, survey,
 };
 
 /// Force `dangerous: true` for every known LLM phase, overriding
@@ -265,15 +265,15 @@ enum StateCommands {
         /// Phase name to write (e.g. `analyse-work`, `git-commit-work`).
         phase: String,
     },
-    /// Manage the per-user projects catalog (`<config-dir>/projects.yaml`)
-    /// that maps component names to absolute paths. The shared
-    /// component-relationship graph (`related-components.yaml`)
-    /// references components by name; this catalog is the per-user
-    /// resolver. Auto-populated on `ravel-lite run` when a new project
-    /// is encountered.
+    /// Deprecated by the architecture-next migration. The per-user
+    /// `projects.yaml` catalog has been replaced by the per-context
+    /// `repos.yaml` registry. Any invocation of `state projects ...`
+    /// prints a migration message and exits non-zero — use
+    /// `ravel-lite repo {add,list,remove}` instead.
     Projects {
-        #[command(subcommand)]
-        command: ProjectsCommands,
+        /// Captured for backwards compatibility; ignored.
+        #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
+        _args: Vec<String>,
     },
     /// Backlog CRUD verbs. Every prompt-side mutation of backlog.yaml
     /// goes through one of these.
@@ -624,54 +624,6 @@ enum SessionLogCommands {
 }
 
 #[derive(Subcommand)]
-enum ProjectsCommands {
-    /// Emit the catalog as YAML on stdout (empty catalog is valid output).
-    List {
-        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and the
-        /// default location at <dirs::config_dir()>/ravel-lite/.
-        #[arg(long)]
-        config: Option<PathBuf>,
-    },
-    /// Add an entry mapping `--name` to `--path`. Relative paths are
-    /// resolved against the current working directory. If `--name` is
-    /// omitted, the basename of the resolved path is used. Rejects
-    /// duplicate names and duplicate paths.
-    Add {
-        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and the
-        /// default location at <dirs::config_dir()>/ravel-lite/.
-        #[arg(long)]
-        config: Option<PathBuf>,
-        /// Project name. Defaults to the basename of `--path`.
-        #[arg(long)]
-        name: Option<String>,
-        /// Project directory. Absolute, or relative to the current
-        /// working directory.
-        #[arg(long)]
-        path: PathBuf,
-    },
-    /// Remove the entry for the given name. Errors if no such entry exists.
-    Remove {
-        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and the
-        /// default location at <dirs::config_dir()>/ravel-lite/.
-        #[arg(long)]
-        config: Option<PathBuf>,
-        name: String,
-    },
-    /// Rename an existing entry. Cascades into
-    /// `<config-dir>/related-components.yaml` (every edge participant
-    /// matching `<old>` is rewritten to `<new>`) and into the discover
-    /// surface cache at `<config-dir>/discover-cache/<name>.yaml`.
-    Rename {
-        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and the
-        /// default location at <dirs::config_dir()>/ravel-lite/.
-        #[arg(long)]
-        config: Option<PathBuf>,
-        old: String,
-        new: String,
-    },
-}
-
-#[derive(Subcommand)]
 enum RelatedComponentsCommands {
     /// Emit the file as YAML. With `--plan`, filter to edges that
     /// involve the component derived from the plan dir. `--kind` and
@@ -770,7 +722,7 @@ enum DiscoverProposalsCommands {
     /// Every validation is enforced here rather than at batch-parse time —
     /// clap rejects an unknown `--kind`/`--lifecycle`/`--evidence-grade`,
     /// `Edge::validate()` rejects self-loops and empty-evidence misuse, and
-    /// the catalog check rejects participants not in `projects.yaml`.
+    /// the catalog check rejects participants not in `repos.yaml`.
     AddProposal {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location.
@@ -820,7 +772,6 @@ async fn main() -> Result<()> {
             if debug {
                 ravel_lite::debug_log::enable(ravel_lite::debug_log::EMBEDDING_DEBUG_FILE)?;
             }
-            register_projects_from_plan_dirs(&config_root, &plan_dirs)?;
             match plan_dirs.len() {
                 0 => unreachable!("clap requires at least one plan_dir"),
                 1 => {
@@ -906,24 +857,7 @@ async fn dispatch_state(command: StateCommands) -> Result<()> {
         StateCommands::SetPhase { plan_dir, phase } => {
             state::run_set_phase(&plan_dir, &phase)
         }
-        StateCommands::Projects { command } => match command {
-            ProjectsCommands::List { config } => {
-                let config_root = resolve_config_dir(config)?;
-                projects::run_list(&config_root)
-            }
-            ProjectsCommands::Add { config, name, path } => {
-                let config_root = resolve_config_dir(config)?;
-                projects::run_add(&config_root, name.as_deref(), &path)
-            }
-            ProjectsCommands::Remove { config, name } => {
-                let config_root = resolve_config_dir(config)?;
-                projects::run_remove(&config_root, &name)
-            }
-            ProjectsCommands::Rename { config, old, new } => {
-                let config_root = resolve_config_dir(config)?;
-                projects::run_rename(&config_root, &old, &new)
-            }
-        },
+        StateCommands::Projects { _args: _ } => Err(repos::migrate_projects_yaml_error()),
         StateCommands::Backlog { command } => dispatch_backlog(command),
         StateCommands::Memory { command } => dispatch_memory(command),
         StateCommands::SessionLog { command } => dispatch_session_log(command),
@@ -1337,35 +1271,6 @@ fn resolve_body(body_file: Option<PathBuf>, body: Option<String>) -> Result<Stri
         (None, None) => Ok(String::new()),
         (Some(_), Some(_)) => bail!("pass only one of --body-file or --body"),
     }
-}
-
-/// Ensure every distinct project implied by the requested plan dirs is
-/// present in the catalog before the TUI takes over stdio. Runs the
-/// collision-prompt interactively against the real stdin/stderr.
-/// Keeping this in main.rs (rather than inside `run_phase_loop`)
-/// guarantees the prompt happens while stdin is still a plain tty and
-/// errors surface before any agent spawn.
-fn register_projects_from_plan_dirs(config_root: &Path, plan_dirs: &[PathBuf]) -> Result<()> {
-    use std::collections::BTreeSet;
-
-    let mut project_paths: BTreeSet<PathBuf> = BTreeSet::new();
-    for plan_dir in plan_dirs {
-        let project = project_root_for_plan(plan_dir)?;
-        project_paths.insert(PathBuf::from(project));
-    }
-    let stdin = std::io::stdin();
-    let mut stdin_lock = stdin.lock();
-    let stderr = std::io::stderr();
-    let mut stderr_lock = stderr.lock();
-    for project_path in project_paths {
-        projects::ensure_in_catalog_interactive(
-            config_root,
-            &project_path,
-            &mut stderr_lock,
-            &mut stdin_lock,
-        )?;
-    }
-    Ok(())
 }
 
 async fn run_phase_loop(config_root: &Path, plan_dir: &Path, dangerous: bool) -> Result<()> {

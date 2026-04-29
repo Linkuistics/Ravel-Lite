@@ -449,7 +449,7 @@ ravel-lite/
     ├── init.rs                 # `init` command — writes defaults + config.lua stub
     ├── create.rs               # `create` command — interactive plan scaffold
     ├── term_title.rs           # OSC-escape terminal title side channel
-    ├── projects.rs             # ProjectsCatalog (name → path)
+    ├── repos.rs                # ReposRegistry (slug → url + optional local_path)
     ├── related_components.rs   # global name-indexed edge store
     ├── backlog_transitions.rs  # status-transition rules shared across verbs
     ├── migrate_v1_to_v2.rs     # one-shot config-file migration helper
@@ -687,12 +687,12 @@ Sub-commands:
 - **`set-phase`** — rewrite `<plan-dir>/phase.md` to the given phase.
   Validates the phase string and requires `phase.md` to already
   exist.
-- **`projects`** — manage the per-user projects catalog
-  (`<config-dir>/projects.yaml`) that maps component names to
-  absolute paths. Auto-populated on `ravel-lite run` when a new
-  project is encountered. The shared component-relationship graph
-  references components by name; this catalog is the per-user
-  resolver.
+- **`projects`** — deprecated alias retired by the architecture-next
+  migration. Any invocation prints a migration message and exits
+  non-zero; use the top-level `repo` subcommand instead. The
+  per-context repo registry at `<config-dir>/repos.yaml` (managed via
+  `ravel-lite repo {add,list,remove}`) is the resolver every
+  component-name reference now leans on.
 - **`backlog`** — backlog CRUD verbs (`list`, `show`, `add`, `init`,
   `set-status`, `set-results`, `set-description`, `set-handoff`,
   `clear-handoff`, `set-title`, `set-dependencies`, `reorder`,

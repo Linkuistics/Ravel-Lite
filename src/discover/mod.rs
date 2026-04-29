@@ -1,8 +1,8 @@
 //! LLM-driven discovery of cross-project relationships.
 //!
-//! Two-stage pipeline keyed from the global projects catalog:
-//! * Stage 1 (per-project, cached): subagent reads the project tree and
-//!   emits a structured interaction-surface record.
+//! Two-stage pipeline keyed from the per-context repo registry:
+//! * Stage 1 (per-repo, cached): subagent reads the repo's working tree
+//!   and emits a structured interaction-surface record.
 //! * Stage 2 (global, uncached): one LLM call over all N surface records
 //!   proposes edges, written to `<config-dir>/discover-proposals.yaml`
 //!   for review.
@@ -23,11 +23,51 @@ pub mod tree_sha;
 
 use crate::config::{load_agent_config, load_shared_config};
 use crate::init::require_embedded;
-use crate::projects::{self, ProjectEntry};
+use crate::repos::{self, ReposRegistry};
 
 use self::schema::{ProposalsFile, Stage1Failure, SurfaceFile};
 use self::stage1::{run_stage1, Stage1Config, Stage1Outcome};
 use self::stage2::{run_stage2, Stage2Config};
+
+/// One discovery target: a repo slug paired with its working tree on
+/// disk. The working tree is `RepoEntry.local_path` when present;
+/// otherwise the deterministic context-cache path
+/// `<context>/.cache/repos/<slug>/` (per architecture-next §"The repo
+/// registry"). Stage 1 reads from this path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoverTarget {
+    pub slug: String,
+    pub working_tree: PathBuf,
+}
+
+/// Fallback subdirectory inside the context root when a repo entry has
+/// no `local_path`. Worktree mounting is owned by a separate
+/// architecture-next task; for now the path is constructed but not
+/// auto-populated. Stage 1 will fail if the directory is absent — that
+/// is the intended signal that the user must either supply
+/// `--local-path` or wait for the worktree machinery.
+pub const REPO_CACHE_SUBDIR: &str = ".cache/repos";
+
+/// Compose the working-tree path for a repo entry. Pure path math; no
+/// disk access.
+pub fn working_tree_for(context_root: &Path, slug: &str, entry: &repos::RepoEntry) -> PathBuf {
+    entry
+        .local_path
+        .clone()
+        .unwrap_or_else(|| context_root.join(REPO_CACHE_SUBDIR).join(slug))
+}
+
+/// Materialise every catalogued repo as a `DiscoverTarget`.
+fn targets_from(registry: &ReposRegistry, context_root: &Path) -> Vec<DiscoverTarget> {
+    registry
+        .repos
+        .iter()
+        .map(|(slug, entry)| DiscoverTarget {
+            slug: slug.clone(),
+            working_tree: working_tree_for(context_root, slug, entry),
+        })
+        .collect()
+}
 
 pub const PROPOSALS_FILE: &str = "discover-proposals.yaml";
 pub const DEFAULT_CONCURRENCY: usize = 4;
@@ -40,19 +80,23 @@ pub struct RunDiscoverOptions {
 }
 
 pub async fn run_discover(config_root: &Path, options: RunDiscoverOptions) -> Result<()> {
-    let catalog = projects::load_or_empty(config_root)?;
-    if catalog.projects.is_empty() {
-        bail!("projects catalog is empty; nothing to discover");
+    let registry = repos::load_for_lookup(config_root)?;
+    if registry.repos.is_empty() {
+        bail!("repo registry is empty; nothing to discover");
     }
 
-    let to_analyse: Vec<ProjectEntry> = match &options.project_filter {
-        Some(name) => vec![catalog
-            .find_by_name(name)
-            .with_context(|| format!("project '{name}' not in catalog"))?
-            .clone()],
-        None => catalog.projects.clone(),
+    let all_targets = targets_from(&registry, config_root);
+    let to_analyse: Vec<DiscoverTarget> = match &options.project_filter {
+        Some(name) => {
+            let target = all_targets
+                .iter()
+                .find(|t| t.slug == *name)
+                .with_context(|| format!("repo '{name}' not in registry"))?
+                .clone();
+            vec![target]
+        }
+        None => all_targets.clone(),
     };
-    let all_projects = catalog.projects.clone();
 
     let shared = load_shared_config(config_root)?;
     let agent_config = load_agent_config(config_root, &shared.agent)?;
@@ -71,13 +115,13 @@ pub async fn run_discover(config_root: &Path, options: RunDiscoverOptions) -> Re
         config_root: config_root.to_path_buf(),
         model: model.clone(),
         prompt_template: stage1_prompt,
-        catalog_names: all_projects.iter().map(|p| p.name.clone()).collect(),
+        catalog_names: all_targets.iter().map(|t| t.slug.clone()).collect(),
         concurrency,
         timeout: Duration::from_secs(stage1::DEFAULT_STAGE1_TIMEOUT_SECS),
     };
 
     eprintln!(
-        "Stage 1: analysing {} project(s) with concurrency={}...",
+        "Stage 1: analysing {} repo(s) with concurrency={}...",
         to_analyse.len(),
         concurrency
     );
@@ -104,17 +148,17 @@ pub async fn run_discover(config_root: &Path, options: RunDiscoverOptions) -> Re
         }
     }
     if options.project_filter.is_some() {
-        for project in &all_projects {
-            if surfaces.iter().any(|s| s.project == project.name) {
+        for target in &all_targets {
+            if surfaces.iter().any(|s| s.project == target.slug) {
                 continue;
             }
-            if failures.iter().any(|f| f.project == project.name) {
+            if failures.iter().any(|f| f.project == target.slug) {
                 continue;
             }
-            match cache::load(config_root, &project.name)? {
+            match cache::load(config_root, &target.slug)? {
                 Some(cached) => surfaces.push(cached),
                 None => failures.push(Stage1Failure {
-                    project: project.name.clone(),
+                    project: target.slug.clone(),
                     error: "not yet analysed; run discover without --project to populate".to_string(),
                 }),
             }

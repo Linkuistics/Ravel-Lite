@@ -138,19 +138,21 @@ fn discover_writes_proposals_and_apply_merges_them() {
     let tmp = TempDir::new().unwrap();
     let (_repo, alpha, _beta, cfg) = scaffold(tmp.path());
 
-    // Catalogue both projects.
+    // Register both repos.
     let status = Command::new(bin_path())
-        .args(["state", "projects", "add", "--config"])
+        .args(["repo", "add", "--config"])
         .arg(&cfg)
-        .args(["--name", "Alpha", "--path"])
+        .arg("Alpha")
+        .args(["--url", "test-url", "--local-path"])
         .arg(&alpha)
         .status()
         .unwrap();
     assert!(status.success());
     let status = Command::new(bin_path())
-        .args(["state", "projects", "add", "--config"])
+        .args(["repo", "add", "--config"])
         .arg(&cfg)
-        .args(["--name", "Beta", "--path"])
+        .arg("Beta")
+        .args(["--url", "test-url", "--local-path"])
         .arg(tmp.path().join("mono").join("beta"))
         .status()
         .unwrap();

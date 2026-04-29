@@ -5,7 +5,7 @@
 //! `component-ontology` crate (atlas-contracts workspace) — that crate
 //! is host-agnostic so it can serve Atlas, Ravel-Lite, or any future
 //! consumer. Everything host-specific (the filename, the
-//! `<config-root>` join, the per-user `projects.yaml` resolver, the CLI
+//! `<config-root>` join, the per-context `repos.yaml` resolver, the CLI
 //! verbs) lives here.
 //!
 //! Schema is v2: every edge carries `(kind, lifecycle, participants,
@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use component_ontology::{self as ontology, Edge, EvidenceGrade, RelatedComponentsFile};
-use crate::projects::{self, ProjectsCatalog};
+use crate::repos::{self, ReposRegistry};
 use crate::state::filenames::RELATED_COMPONENTS_FILENAME;
 
 // Re-export the v2 ontology surface that the host needs to construct
@@ -60,10 +60,12 @@ pub fn save_atomic(config_root: &Path, file: &RelatedComponentsFile) -> Result<(
     ontology::save_atomic(&config_root.join(RELATED_COMPONENTS_FILENAME), file)
 }
 
-/// Cascade for `projects::run_rename`. Loads, rewrites every participant
-/// reference, saves. No-op when the file is absent (a catalog without
-/// any edge file is valid). Symmetric kinds are re-sorted internally by
-/// the ontology layer.
+/// Rewrites every participant reference in `related-components.yaml`
+/// from `old` to `new`. No-op when the file is absent (a catalog
+/// without any edge file is valid). Symmetric kinds are re-sorted
+/// internally by the ontology layer. Currently unused after the
+/// projects.yaml → repos.yaml cutover removed the rename verb; kept as
+/// a building block for any future rename machinery on `repos.yaml`.
 pub fn rename_component_in_edges(config_root: &Path, old: &str, new: &str) -> Result<()> {
     let path = config_root.join(RELATED_COMPONENTS_FILENAME);
     if !path.exists() {
@@ -94,8 +96,8 @@ pub fn run_list(config_root: &Path, filter: &ListFilter<'_>) -> Result<()> {
     let plan_component = match filter.plan {
         None => None,
         Some(plan) => {
-            let catalog = projects::load_or_empty(config_root)?;
-            Some(resolve_plan_component_name(&catalog, plan)?)
+            let registry = repos::load_for_lookup(config_root)?;
+            Some(resolve_plan_component_name(&registry, plan)?)
         }
     };
 
@@ -122,9 +124,9 @@ pub fn run_list(config_root: &Path, filter: &ListFilter<'_>) -> Result<()> {
 /// `evidence_fields` non-empty unless `evidence_grade=weak`, symmetric
 /// kinds stored in sorted order, distinct participants.
 pub fn run_add_edge(config_root: &Path, req: &AddEdgeRequest<'_>) -> Result<()> {
-    let catalog = projects::load_or_empty(config_root)?;
-    require_component_known(&catalog, req.a)?;
-    require_component_known(&catalog, req.b)?;
+    let registry = repos::load_for_lookup(config_root)?;
+    require_component_known(&registry, req.a)?;
+    require_component_known(&registry, req.b)?;
 
     let participants = canonicalise_participants_for_kind(req.kind, req.a, req.b);
     let edge = Edge {
@@ -187,26 +189,28 @@ fn canonicalise_participants_for_kind(kind: EdgeKind, a: &str, b: &str) -> Vec<S
     v
 }
 
-fn require_component_known(catalog: &ProjectsCatalog, name: &str) -> Result<()> {
-    if catalog.find_by_name(name).is_none() {
+fn require_component_known(registry: &ReposRegistry, slug: &str) -> Result<()> {
+    if registry.get(slug).is_none() {
         bail!(
-            "component '{}' is not in the projects catalog; add it with \
-             `ravel-lite state projects add --name {} --path <abs-path>`",
-            name,
-            name
+            "component '{}' is not in the repo registry; register it with \
+             `ravel-lite repo add {} --url <git-url> [--local-path <path>]`",
+            slug,
+            slug
         );
     }
     Ok(())
 }
 
-fn resolve_plan_component_name(catalog: &ProjectsCatalog, plan_dir: &Path) -> Result<String> {
+fn resolve_plan_component_name(registry: &ReposRegistry, plan_dir: &Path) -> Result<String> {
     let project_path = plan_project_path(plan_dir)?;
-    if let Some(entry) = catalog.find_by_path(&project_path) {
-        return Ok(entry.name.clone());
+    if let Some((slug, _entry)) = repos::find_by_local_path(registry, &project_path) {
+        return Ok(slug.to_string());
     }
     bail!(
-        "plan's project {} is not in the catalog; run `ravel-lite run` once or add it with `ravel-lite state projects add`",
-        project_path.display()
+        "plan's project {} is not registered as a repo's local_path; \
+         register the repo with `ravel-lite repo add <slug> --url <git-url> --local-path {}`",
+        project_path.display(),
+        project_path.display(),
     )
 }
 
@@ -239,15 +243,15 @@ mod tests {
     use tempfile::TempDir;
 
     fn mk_catalog_with(config_root: &Path, names: &[&str]) -> Vec<PathBuf> {
-        let mut catalog = ProjectsCatalog::default();
+        let mut registry = ReposRegistry::default();
         let mut paths = Vec::new();
         for name in names {
             let p = config_root.join(name);
             std::fs::create_dir_all(&p).unwrap();
-            projects::try_add_named(&mut catalog, name, &p).unwrap();
+            repos::try_add(&mut registry, name, "test-url", Some(&p)).unwrap();
             paths.push(p);
         }
-        projects::save_atomic(config_root, &catalog).unwrap();
+        repos::save_atomic(config_root, &registry).unwrap();
         paths
     }
 
@@ -337,7 +341,7 @@ mod tests {
         .unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("Stranger"));
-        assert!(msg.contains("state projects add"));
+        assert!(msg.contains("repo add"));
         assert!(!cfg.join(RELATED_COMPONENTS_FILENAME).exists());
     }
 

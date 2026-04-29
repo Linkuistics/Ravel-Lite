@@ -14,7 +14,6 @@ pub mod migrate_v1_to_v2;
 pub mod multi_plan;
 pub mod phase_loop;
 pub mod phase_summary;
-pub mod projects;
 pub mod prompt;
 pub mod related_components;
 pub mod repos;

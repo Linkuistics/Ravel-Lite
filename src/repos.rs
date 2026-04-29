@@ -208,6 +208,62 @@ pub fn run_remove(context_root: &Path, slug: &str) -> Result<()> {
     save_atomic(context_root, &registry)
 }
 
+/// Filename of the legacy per-user catalog. Centralised so the
+/// migration-error helper and any future cleanup path stay in sync.
+pub const LEGACY_PROJECTS_FILENAME: &str = "projects.yaml";
+
+/// Single source of truth for the wording every consumer surfaces when a
+/// pre-cutover `projects.yaml` is detected without a populated
+/// `repos.yaml`. Centralising the message guards against drift between
+/// call sites.
+pub fn migrate_projects_yaml_error() -> anyhow::Error {
+    anyhow::anyhow!(
+        "{} is no longer supported. The per-context repo registry moved to {} \
+         in the architecture-next migration. Migrate by running\n\
+         \n  \
+         ravel-lite repo add <slug> --url <git-url> [--local-path <path>]\n\
+         \n\
+         for each entry in your existing {}, then delete the old file. \
+         See docs/architecture-next.md §\"The repo registry\".",
+        LEGACY_PROJECTS_FILENAME,
+        REGISTRY_FILE,
+        LEGACY_PROJECTS_FILENAME,
+    )
+}
+
+/// Loader used by every consumer that previously read `projects.yaml`.
+/// Returns the registry on success; if the registry would be empty AND
+/// the legacy `projects.yaml` is present in the same context dir, fails
+/// with the canonical migration error so the user gets actionable advice
+/// instead of a misleading "empty catalog" downstream message.
+pub fn load_for_lookup(context_root: &Path) -> Result<ReposRegistry> {
+    let registry = load_or_empty(context_root)?;
+    if registry.repos.is_empty()
+        && context_root.join(LEGACY_PROJECTS_FILENAME).exists()
+    {
+        return Err(migrate_projects_yaml_error());
+    }
+    Ok(registry)
+}
+
+/// Look up a repo entry by absolute `local_path`. Returns `(slug, entry)`
+/// for the first match. `None` when no entry has that local_path. Used
+/// by consumers that only know a working-tree path (e.g.
+/// `state related-components list --plan`) and need to recover the slug.
+pub fn find_by_local_path<'a>(
+    registry: &'a ReposRegistry,
+    local_path: &Path,
+) -> Option<(&'a str, &'a RepoEntry)> {
+    let cleaned = local_path.to_path_buf().clean();
+    registry.repos.iter().find_map(|(slug, entry)| {
+        entry
+            .local_path
+            .as_deref()
+            .filter(|p| *p == cleaned)
+            .map(|_| (slug.as_str(), entry))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,5 +377,104 @@ mod tests {
             !yaml.contains("local_path"),
             "absent local_path should not appear in YAML; got:\n{yaml}"
         );
+    }
+
+    #[test]
+    fn migrate_projects_yaml_error_is_actionable() {
+        let err = migrate_projects_yaml_error();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("projects.yaml is no longer supported"),
+            "message must explain projects.yaml is retired; got:\n{msg}"
+        );
+        assert!(
+            msg.contains("repos.yaml"),
+            "message must name the replacement file; got:\n{msg}"
+        );
+        assert!(
+            msg.contains("ravel-lite repo add"),
+            "message must show the migration command shape; got:\n{msg}"
+        );
+        assert!(
+            msg.contains("docs/architecture-next.md"),
+            "message must point at the design doc; got:\n{msg}"
+        );
+    }
+
+    #[test]
+    fn load_for_lookup_returns_registry_when_repos_yaml_populated() {
+        let tmp = TempDir::new().unwrap();
+        run_add(tmp.path(), "atlas", "u", None).unwrap();
+        let loaded = load_for_lookup(tmp.path()).unwrap();
+        assert!(loaded.repos.contains_key("atlas"));
+    }
+
+    #[test]
+    fn load_for_lookup_returns_empty_when_neither_file_present() {
+        let tmp = TempDir::new().unwrap();
+        let loaded = load_for_lookup(tmp.path()).unwrap();
+        assert!(loaded.repos.is_empty());
+    }
+
+    #[test]
+    fn load_for_lookup_emits_migration_error_when_legacy_projects_yaml_present() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("projects.yaml"),
+            "schema_version: 1\nprojects: []\n",
+        )
+        .unwrap();
+        let err = load_for_lookup(tmp.path()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("projects.yaml is no longer supported"));
+        assert!(msg.contains("ravel-lite repo add"));
+    }
+
+    #[test]
+    fn load_for_lookup_does_not_emit_migration_error_when_repos_yaml_has_entries() {
+        // User has begun migrating: legacy file still on disk but at
+        // least one repo entry is registered. Treat as migrated.
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("projects.yaml"),
+            "schema_version: 1\nprojects: []\n",
+        )
+        .unwrap();
+        run_add(tmp.path(), "atlas", "u", None).unwrap();
+        let loaded = load_for_lookup(tmp.path()).unwrap();
+        assert!(loaded.repos.contains_key("atlas"));
+    }
+
+    #[test]
+    fn find_by_local_path_matches_registered_path() {
+        let tmp = TempDir::new().unwrap();
+        let local = tmp.path().join("checkout");
+        std::fs::create_dir_all(&local).unwrap();
+        let mut registry = ReposRegistry::default();
+        try_add(&mut registry, "atlas", "u", Some(&local)).unwrap();
+
+        let hit = find_by_local_path(&registry, &local);
+        assert!(hit.is_some(), "exact-match lookup should hit");
+        let (slug, _entry) = hit.unwrap();
+        assert_eq!(slug, "atlas");
+    }
+
+    #[test]
+    fn find_by_local_path_returns_none_for_unmatched_path() {
+        let tmp = TempDir::new().unwrap();
+        let local = tmp.path().join("checkout");
+        std::fs::create_dir_all(&local).unwrap();
+        let mut registry = ReposRegistry::default();
+        try_add(&mut registry, "atlas", "u", Some(&local)).unwrap();
+
+        assert!(find_by_local_path(&registry, &tmp.path().join("other")).is_none());
+    }
+
+    #[test]
+    fn find_by_local_path_skips_entries_without_local_path() {
+        let mut registry = ReposRegistry::default();
+        try_add(&mut registry, "url-only", "u", None).unwrap();
+        // Bare lookup against any path: must not panic, must not match.
+        assert!(find_by_local_path(&registry, Path::new("/anything")).is_none());
     }
 }

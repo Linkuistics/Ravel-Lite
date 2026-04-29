@@ -121,18 +121,18 @@ mod tests {
     use super::super::schema::{ProposalRecord, ProposalsFile, PROPOSALS_SCHEMA_VERSION};
     use super::*;
     use component_ontology::{EvidenceGrade, LifecycleScope};
-    use crate::projects;
+    use crate::repos;
     use tempfile::TempDir;
 
     fn seed_two_projects(cfg: &std::path::Path) -> std::path::PathBuf {
-        let mut catalog = projects::ProjectsCatalog::default();
+        let mut registry = repos::ReposRegistry::default();
         let a = cfg.parent().unwrap().join("A");
         let b = cfg.parent().unwrap().join("B");
         std::fs::create_dir_all(&a).unwrap();
         std::fs::create_dir_all(&b).unwrap();
-        projects::try_add_named(&mut catalog, "A", &a).unwrap();
-        projects::try_add_named(&mut catalog, "B", &b).unwrap();
-        projects::save_atomic(cfg, &catalog).unwrap();
+        repos::try_add(&mut registry, "A", "test-url", Some(&a)).unwrap();
+        repos::try_add(&mut registry, "B", "test-url", Some(&b)).unwrap();
+        repos::save_atomic(cfg, &registry).unwrap();
         a
     }
 
@@ -341,11 +341,11 @@ mod tests {
         related_components::save_atomic(&cfg, &file).unwrap();
 
         // Catalogue C so the harmless second proposal can land.
-        let mut catalog = projects::load_or_empty(&cfg).unwrap();
+        let mut registry = repos::load_or_empty(&cfg).unwrap();
         let c_path = tmp.path().join("C");
         std::fs::create_dir_all(&c_path).unwrap();
-        projects::try_add_named(&mut catalog, "C", &c_path).unwrap();
-        projects::save_atomic(&cfg, &catalog).unwrap();
+        repos::try_add(&mut registry, "C", "test-url", Some(&c_path)).unwrap();
+        repos::save_atomic(&cfg, &registry).unwrap();
 
         save_proposals_atomic(
             &cfg,

@@ -88,7 +88,7 @@ tasks:
 - id: cut-over-projects-yaml-repos-yaml-architecture-next-migration
   title: Cut over projects.yaml → repos.yaml (architecture-next migration)
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     **Priority: HIGH** — unblocks every architecture-next task that
@@ -202,6 +202,40 @@ tasks:
     `ComponentsFile`; architecture-next.md (settled 2026-04-28) replaces
     `projects.yaml` with `repos.yaml` instead — a different concept, not
     a wrap. Reasoning preserved in the replaced task's `Results:` block.
+  results: |
+    ## Outcome
+
+    Full cutover landed. `src/projects.rs` (1,094 lines) and `tests/state_projects.rs` deleted; `pub mod projects;` removed from `src/lib.rs`. Every `ProjectsCatalog`/`ProjectEntry` consumer (`related_components.rs`, `discover/{mod,stage1,apply}.rs`, `state/discover_proposals/verbs.rs`) now reads from `ReposRegistry`. `cargo test --workspace`: 682 tests pass, including the new `tests/migrate_projects_yaml.rs` (4 tests) that pins the migration-error UX.
+
+    ## Design decisions
+
+    - **`ensure_in_catalog_interactive` removed, not repurposed.** `repos.yaml` requires a clone URL per entry — there's no reasonable auto-derive from "user pointed `ravel-lite run` at a plan dir." Auto-add was therefore retired; users must explicitly `ravel-lite repo add <slug> --url <git-url> [--local-path <path>]` before running plans. `register_projects_from_plan_dirs` removed from `main.rs` along with the call site in `Commands::Run`.
+    - **Deprecation alias as catch-all subcommand.** `state projects` retained in clap as a `Vec<String>` trailing-args swallow that ignores whatever the user typed and unconditionally returns `repos::migrate_projects_yaml_error()`. Tested for `state projects list` (the most common form).
+    - **Migration-error helper centralised in `repos::migrate_projects_yaml_error()`.** Two new entry points wrap it:
+      - `repos::load_for_lookup(context_root)` — the loader every former `projects.yaml` consumer now calls. Bails with the migration error iff the registry is empty AND `projects.yaml` exists. Lenient by design: once any `repo add` lands, the warning stops firing — users can migrate incrementally.
+      - `repos::find_by_local_path(registry, &Path) -> Option<(&str, &RepoEntry)>` — supports `state related-components list --plan <path>` (used by `resolve_plan_component_name`).
+    - **Discover pipeline target abstraction.** Introduced `discover::DiscoverTarget { slug, working_tree }` plus `working_tree_for(context_root, slug, entry)` helper. Working tree is `entry.local_path` when present; otherwise the deterministic context-cache path `<context>/.cache/repos/<slug>/` (per architecture-next §"The repo registry"). The cache path is computed but not auto-populated — Stage 1 will fail if the dir is absent, surfacing "user must supply `--local-path` or wait for worktree machinery." `Stage1Config.catalog_names` keeps its `Vec<String>` shape (slugs are interchangeable with the v1 names).
+    - **CLI shape correction.** Task brief used `ravel-lite state repos add` in the example migration message, but the actual CLI is `ravel-lite repo add` (top-level, singular). The migration message uses the real shape; the brief's example was incorrect.
+
+    ## What works
+
+    - `cargo test --workspace` — 682 tests pass across 25 binaries (lib, integration, knowledge-graph, component_ontology, etc.); 0 failures.
+    - `cargo build --workspace` — clean.
+    - `cargo clippy --package ravel-lite --all-targets` — no warnings on the package I touched. (Pre-existing clippy errors in `crates/knowledge-graph` are not caused by this cutover; verified by stashing changes and re-running.)
+    - `tests/migrate_projects_yaml.rs` covers four scenarios end-to-end: `state related-components add-edge` with legacy projects.yaml, `state discover-proposals add-proposal` with legacy projects.yaml, `state projects list` deprecation alias, and the lenient case where projects.yaml + populated repos.yaml coexist (must NOT error).
+
+    ## What didn't
+
+    - **Tutorial and reference docs not updated.** `docs/tutorial/01-install-and-config.adoc`, `docs/tutorial/02-the-project.adoc`, `docs/reference/cli-state.adoc`, `docs/reference/cross-plan-files.adoc`, plus `docs/captures/ravel-lite-tutorial/transcripts/{01-projects-list-empty,02-projects-add,02-projects-list-populated}.txt` all still reference the retired `state projects` verbs and `projects.yaml`. Updating the prose alone leaves the captures incoherent (transcripts show the old verbs); fully fixing requires re-running `scripts/capture/ravel-lite-tutorial.sh` against a TestAnyware VM. Out of scope per task brief — exit criteria don't name tutorial/reference docs. **Recommended follow-up: `tutorial-update-for-repos-yaml-cutover`** task that re-records the relevant chapters once the rest of architecture-next stabilises (no point re-recording twice if `ravel-lite run`'s call surface is about to change again).
+    - **`src/related_components.rs::rename_component_in_edges` is now unused** (the only caller was `projects::run_rename`'s cascade, which is gone). Kept the function and renamed its doc comment to reflect "future rename machinery on repos.yaml" — when targets/worktrees lands, repo-rename will need a similar cascade. Leaving it in saves the next session from re-deriving the same primitive. If preferred dead, delete in a follow-up — the source-of-truth for currently-needed cascade points is the rename-cascade-registry memory entry.
+    - **`docs/architecture-next.md:917` mentions the `projects.yaml → repos.yaml` cutover as planned work** — left unchanged because it's a design log, not a current-state description. Future passes through that doc can mark the line as "done" once architecture-next.md graduates to the running architecture.
+
+    ## What this suggests next
+
+    - **`tutorial-update-for-repos-yaml-cutover`** — the highest-impact follow-up. Without it, anyone running through the published tutorial will hit the deprecation alias and bounce. Defer until further architecture-next tasks settle to avoid double-recapture.
+    - **`targets-and-worktrees`** is now genuinely unblocked at the schema layer — `RepoEntry.local_path` is `Option<PathBuf>`, the cache fallback path constant `discover::REPO_CACHE_SUBDIR` is in place, and Stage 1 fails-loud when a working tree is absent. The natural next step is the `Target` abstraction that mounts a worktree at the cache path on demand.
+    - **`ravel-lite repo` could grow a `rename` verb** later. The brief's "no rename in v1" decision (per `repos.rs` doc comment) means a slug is permanent; if/when this changes, `related_components::rename_component_in_edges` is ready to wire up.
+    - **Optional polish: `discover/mod.rs` could compute `working_tree_for` lazily** rather than eagerly building the full `Vec<DiscoverTarget>` then filtering. With one repo per discover-pass the difference is meaningless; with hundreds it might matter. Defer until catalog size is a real constraint.
 - id: knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
   title: 'knowledge-graph: wire plan KG kinds (intent, backlog, memory, finding)'
   category: architecture-next
@@ -491,3 +525,25 @@ tasks:
     7. Backfill memory (one-shot LLM): pass over `legacy_memory.md` produces a `memory.yaml` with `status: legacy` entries. User curates in their own time.
 
     Verification: dogfood by migrating `LLM_STATE/core` (this very plan) as the canonical test case before the v2.0 release.
+- id: update-tutorial-and-reference-docs-for-repos-yaml-cutover
+  title: Update tutorial and reference docs for repos.yaml cutover
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Re-record and update the published tutorial and reference docs to replace retired `state projects` verbs with the new `repo add/list/remove` CLI shape.
+
+    **Problem being solved:** `docs/tutorial/01-install-and-config.adoc`, `docs/tutorial/02-the-project.adoc`, `docs/reference/cli-state.adoc`, `docs/reference/cross-plan-files.adoc`, and capture transcripts under `docs/captures/ravel-lite-tutorial/transcripts/` all reference the retired `state projects` verbs and `projects.yaml`. Anyone following the published tutorial hits the deprecation alias and bounces.
+
+    **Settled decisions from session 89:**
+    - The deprecation alias (`state projects <anything>` → prints migration message, exits non-zero) is intentional and permanent. Don't remove it; just stop documenting the old verbs.
+    - The new CLI shape is `ravel-lite repo {add,list,remove}` (top-level, singular, not `state repos`). Reference: `src/main.rs` — the `Repo` top-level subcommand.
+    - `projects.yaml` is fully retired. The resolver is now `<config-dir>/repos.yaml` managed via `ravel-lite repo`. Reference: `src/repos.rs`.
+    - Capture transcripts at `docs/captures/ravel-lite-tutorial/transcripts/{01-projects-list-empty,02-projects-add,02-projects-list-populated}.txt` must be re-recorded (not hand-edited) to stay coherent with the prose. The re-capture script is `scripts/capture/ravel-lite-tutorial.sh` run against a TestAnyware VM.
+
+    **Dependencies:** Defer until further architecture-next tasks stabilise (especially `targets-and-worktrees` and `ravel-lite create v2`) to avoid double-recapturing the tutorial once more changes land. Only block on this if the tutorial is being actively promoted to new users.
+
+    **Scope:**
+    1. Update prose in `docs/tutorial/` and `docs/reference/` to use `repo add/list/remove` vocabulary.
+    2. Re-run `scripts/capture/ravel-lite-tutorial.sh` against a VM and replace the three stale transcript files.
+    3. Verify no remaining references to `state projects` in docs (grep: `state projects`).

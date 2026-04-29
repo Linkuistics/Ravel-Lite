@@ -15,5 +15,5 @@ Canonical references:
   [`defaults/ontology.yaml`](https://github.com/linkuistics/atlas-contracts/blob/main/defaults/ontology.yaml)
 
 The host-side adapter — filename conventions, `<config-root>` joins,
-the per-user `projects.yaml` resolver, and the `ravel-lite state
+the per-context `repos.yaml` resolver, and the `ravel-lite state
 related-components` CLI verbs — lives in `src/related_components.rs`.

@@ -1275,3 +1275,24 @@ sessions:
     - What worked: Both migrations completed cleanly. All `crate::ontology` import sites across `src/discover/apply.rs`, `src/discover/schema.rs`, `src/discover/stage2.rs`, `src/state/discover_proposals/verbs.rs`, `src/related_components.rs`, `src/projects.rs`, and `src/main.rs` were updated to `component_ontology`. The five files under `src/ontology/` (~1,300 lines) were deleted. `defaults/ontology.yaml` was deleted and its `EMBEDDED_FILES` entry removed from `src/init.rs`; "ontology.yaml" was added to `RETIRED_PATHS` so existing config dirs have the stale copy swept on next `ravel-lite init`. A compatibility guard test (`pre_m2_related_components_yaml_round_trips_bit_identical`) was added to `src/related_components.rs` to verify on-disk YAML shape is unchanged. `docs/component-ontology.md` was heavily trimmed now that the schema source-of-truth lives in the crate. M5 was marked blocked during the session (design constraint on atlas-index consumption).
     - What this suggests trying next: M5 (consume atlas via atlas-index) is unblocked by the stale-status repair — its dependencies M2 and M4 are now done.
     - Key learnings: The `component-ontology` crate already exported everything Ravel-Lite needed; the migration was mechanical. The only non-trivial decision was adding "ontology.yaml" to `RETIRED_PATHS` rather than simply dropping the embed entry, which ensures existing config dirs stay clean without manual intervention.
+- id: session-89
+  timestamp: 2026-04-29T01:03:05Z
+  phase: work
+  body: |
+    ### Session 89 (2026-04-29T01:03:05Z) — Cut over projects.yaml → repos.yaml
+
+    - Deleted `src/projects.rs` (1,094 lines) and `tests/state_projects.rs` (191 lines). The `ProjectsCatalog`/`ProjectEntry` model is gone.
+    - Added `src/repos.rs` (155 lines): `ReposRegistry`, `RepoEntry` (slug → url + optional local_path), `load_for_lookup`, `find_by_local_path`, `try_add`, `save_atomic`, `migrate_projects_yaml_error`.
+    - Introduced `discover::DiscoverTarget { slug, working_tree }` and `working_tree_for` helper in `discover/mod.rs`; working tree resolves to `entry.local_path` or `<context>/.cache/repos/<slug>/` (the architecture-next cache fallback).
+    - Updated all consumers: `related_components.rs`, `discover/{mod,stage1,apply}.rs`, `state/discover_proposals/verbs.rs` — all now read from `ReposRegistry`.
+    - `ensure_in_catalog_interactive` and `register_projects_from_plan_dirs` removed from `main.rs`; auto-add is retired since `repos.yaml` requires a clone URL.
+    - `state projects` retained as a deprecation alias (clap `Vec<String>` catch-all) that unconditionally returns `repos::migrate_projects_yaml_error()`.
+    - Added `tests/migrate_projects_yaml.rs` (4 tests) covering the migration-error UX scenarios.
+    - Updated `tests/discover.rs` and `tests/state_related_components.rs` to use `repo add` instead of `state projects add`.
+    - Updated `docs/architecture.md` and `docs/component-ontology.md` to reflect the new resolver.
+    - `cargo test --workspace`: 682 tests pass, 0 failures. `cargo build --workspace`: clean.
+
+    - Tutorial/reference docs (`docs/tutorial/`, `docs/reference/`, `docs/captures/`) still reference retired `state projects` verbs — updating requires re-running capture scripts against a TestAnyware VM; deferred to a follow-up task.
+    - `related_components::rename_component_in_edges` is now unused (its only caller was `projects::run_rename`); kept for future repo-rename cascade.
+
+    - Promoted follow-up to backlog: `tutorial-update-for-repos-yaml-cutover` (highest-impact gap left by this cutover).
