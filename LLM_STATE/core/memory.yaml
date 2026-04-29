@@ -6,7 +6,7 @@ entries:
 - id: serde-flatten-per-kind-wrapper-is-the-confirmed-tms-migration-pattern
   title: Serde-flatten per-kind wrapper is the confirmed TMS migration pattern
   body: |
-    Per-kind schema wrappers use a per-kind struct (e.g. `BacklogEntry`, `MemoryEntry`) wrapping `Item<K>` via `#[serde(flatten)]`, with kind-specific extension fields as typed struct fields. `KindMarker<K>` gives type-level wire-kind verification: YAML labelled with the wrong `kind:` cannot deserialise as the wrong type. Applied in `src/state/memory/schema.rs` and `src/state/backlog/schema.rs`; intents migration pending.
+    Per-kind schema wrappers use a per-kind struct (e.g. `BacklogEntry`, `MemoryEntry`) wrapping `Item<K>` via `#[serde(flatten)]`, with kind-specific extension fields as typed struct fields. `KindMarker<K>` gives type-level wire-kind verification: YAML labelled with the wrong `kind:` cannot deserialise as the wrong type. Applied in `src/state/memory/schema.rs`, `src/state/backlog/schema.rs`, and `src/state/intents/schema.rs`.
 - id: backlog-yaml-entries-are-backlogentry-wrapping-item-backlogitemkind
   title: backlog.yaml entries are BacklogEntry wrapping Item<BacklogItemKind>
   body: |
@@ -270,7 +270,7 @@ entries:
 - id: src-state-module-structure
   title: '`src/state/` uses module-per-area layout'
   body: |
-    `src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, parse_md, verbs, mod), `memory/` (schema, yaml_io, parse_md, verbs, mod), `session_log/` (schema, yaml_io, parse_md, verbs, mod), and `migrate.rs`. New state areas follow this layout.
+    `src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, parse_md, verbs, mod), `memory/` (schema, yaml_io, parse_md, verbs, mod), `session_log/` (schema, yaml_io, parse_md, verbs, mod), `intents/` (schema, yaml_io, verbs, mod), and `migrate.rs`. New state areas follow this layout.
 - id: find-task-centralises-backlog-id-lookup
   title: '`find_task` centralises backlog id-lookup'
   body: |
@@ -290,7 +290,7 @@ entries:
 - id: dispatch-state-routes-state-subcommands
   title: '`dispatch_state` routes state subcommands'
   body: |
-    `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, or `dispatch_related_components`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
+    `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, `dispatch_intents`, or `dispatch_related_components`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
 - id: r7-design-llm-driven-related-projects-discovery
   title: '`discover` runs two-stage fan-out pipeline to `discover-proposals.yaml`'
   body: |
@@ -498,7 +498,7 @@ entries:
 - id: run-create-pre-seeds-plan-dir-in-rust-before-llm-spawn
   title: run_create pre-seeds plan dir in Rust before LLM spawn
   body: |
-    `src/create.rs` scaffolds the plan directory — creating `backlog.yaml`, `memory.yaml`, and related plan-state files — via CLI calls before the create-plan LLM spawn. Eliminates format drift between LLM-authored YAML and CLI-serialised YAML; `defaults/create-plan.md` carries no scaffolding instructions. See: `Pre-initialise output file before CLI-driven spawn`.
+    `src/create.rs` scaffolds the plan directory — creating `backlog.yaml`, `memory.yaml`, `intents.yaml`, and related plan-state files — via CLI calls before the create-plan LLM spawn. Eliminates format drift between LLM-authored YAML and CLI-serialised YAML; `defaults/create-plan.md` carries no scaffolding instructions. See: `Pre-initialise output file before CLI-driven spawn`.
 - id: headless-output-filters-hr-lines-in-rust
   title: Headless output filters `---` HR lines in Rust
   body: |
@@ -560,7 +560,7 @@ entries:
 - id: state-filename-constants-live-in-src-state-filenames-rs
   title: State filename constants live in src/state/filenames.rs
   body: |
-    Nine `pub const` items in `src/state/filenames.rs`: `BACKLOG_FILENAME`, `MEMORY_FILENAME`, `SESSION_LOG_FILENAME`, `LATEST_SESSION_FILENAME`, `SUBAGENT_DISPATCH_FILENAME`, `COMMITS_FILENAME`, `PHASE_FILENAME`, `RELATED_COMPONENTS_FILENAME`, `DREAM_WORD_COUNT_FILENAME`. All state filename string literals across `src/` use these constants — do not introduce raw string literals. `PHASE_HIGHLIGHTS` regexes use `filename_suffix_regex(CONSTANT)` (wraps `regex::escape`) so a constant rename cascades into highlight detection automatically.
+    Ten `pub const` items in `src/state/filenames.rs`: `BACKLOG_FILENAME`, `MEMORY_FILENAME`, `SESSION_LOG_FILENAME`, `LATEST_SESSION_FILENAME`, `SUBAGENT_DISPATCH_FILENAME`, `COMMITS_FILENAME`, `PHASE_FILENAME`, `RELATED_COMPONENTS_FILENAME`, `DREAM_WORD_COUNT_FILENAME`, `INTENTS_FILENAME`. All state filename string literals across `src/` use these constants — do not introduce raw string literals. `PHASE_HIGHLIGHTS` regexes use `filename_suffix_regex(CONSTANT)` (wraps `regex::escape`) so a constant rename cascades into highlight detection automatically.
 - id: defaults-md-prompt-files-keep-literal-filenames-by-design
   title: defaults/*.md prompt files keep literal filenames by design
   body: |
@@ -761,3 +761,7 @@ entries:
   title: LLM_STATE/core backlog.yaml is in legacy format pending v1→v2 migrator
   body: |
     `LLM_STATE/core/backlog.yaml` still uses the legacy `tasks: [...]` shape; the deployed binary (v1.0.2) reads only that shape and hard-fails on the TMS `items:` format. The source migration (`BacklogEntry` wrapping `Item<BacklogItemKind>`) is complete in `main`. File-level cutover belongs to the `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` task. Do not schedule LLM_STATE file-shape changes until the v1→v2 migrator ships. See: `v1→v2 cutover is hard; v2 binary refuses unmigrated plans`.
+- id: intents-yaml-has-list-show-add-set-status-verb-surface
+  title: intents.yaml has list/show/add/set-status verb surface
+  body: |
+    `src/state/intents/` (schema.rs, yaml_io.rs, verbs.rs, mod.rs) is the plan-intent state layer. CLI verbs: `list`, `show`, `add`, `set-status`. Status transitions validated via `IntentStatus::transitions()` from `plan_kg.rs`. `scaffold_plan_dir` seeds `intents.yaml` alongside `backlog.yaml` and `memory.yaml`. Editing verbs (`set-claim`, `set-rationale`, `delete`, `supersede`) deferred until a consumer surfaces; the TMS model favours supersession over in-place edit. See: `plan_kg.rs registers four plan vocabularies in knowledge-graph crate`.
