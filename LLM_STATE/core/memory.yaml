@@ -1,3 +1,12 @@
+entries:
+- id: phase-prompt-label-drift-after-memory-yaml-migration
+  title: Phase prompt label drift after memory.yaml migration
+  body: |
+    After the memory.yaml migration to TMS item shape, `state memory list` output now renders `claim:` and `justifications:` field names instead of the old `title:` and `body:`. Phase prompts that reference old field label names in their prose are stale but continue to function (the phase-loop itself doesn't parse these labels; only the LLM reads them). Low-priority follow-up: scan phase prompt prose for `title:`/`body:` references and update to `claim:`/`justifications:` for coherence.
+- id: serde-flatten-per-kind-wrapper-is-the-confirmed-tms-migration-pattern
+  title: Serde-flatten per-kind wrapper is the confirmed TMS migration pattern
+  body: |
+    The confirmed TMS migration pattern for per-kind schema wrappers is: a per-kind struct (e.g. `MemoryEntry`) that wraps `Item<K>` via `#[serde(flatten)]` and carries kind-specific extension fields as typed struct fields (e.g. `attribution: Option<String>`). This keeps typing tight, round-trips extension data cleanly, and avoids the untyped `extensions: IndexMap<String, Value>` alternative at the substrate layer — which was explicitly rejected because it adds untyped storage at the wrong layer. The `KindMarker<K>` discriminator gives type-level wire-kind verification so a YAML labelled with the wrong `kind:` cannot deserialise as the wrong type. Applied in `src/state/memory/schema.rs`; backlog and intents migrations should follow the same pattern.
 schema_version: 1
 items:
 - id: all-prompt-loading-routes-through-substitute-tokens
