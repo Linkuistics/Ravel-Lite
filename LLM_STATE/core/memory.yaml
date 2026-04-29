@@ -777,3 +777,19 @@ entries:
   title: Forward-compatible kind stubs error with backlog task pointer
   body: |
     `Finding` in `src/plan_inspect.rs` parses and dispatches without requiring the `findings-inbox` file store to exist; it returns a user-facing error pointing to the `findings-inbox` backlog task. Pattern: wire the dispatch path first, implement the file store when the backlog task executes.
+- id: plan-cascade-extension-defeat-supersede-visibility-verb
+  title: plan cascade extension — defeat/supersede visibility verb
+  body: |
+    A natural extension to `ravel-lite plan` once the cascade primitives are exercised is `plan cascade <plan-dir> <id>` — show the items that would be defeated or superseded if `<id>` flips to a terminal status. This would use `cascade_serves_intent` and related primitives already defined in `crates/knowledge-graph/src/plan_kg.rs`.
+
+    Not in scope for the initial `plan-inspect` task; flagged so it is not re-derived independently. Relevant once `findings-inbox` and `migrate` land and the cascade primitives are exercised against real plan data.
+
+    Forward-compatible: the `plan inspect` CLI surface in `src/plan_inspect.rs` would gain a new `run_cascade` arm; no existing verb needs to change.
+- id: plan-query-by-status-cross-kind-union-design-stance-deferred
+  title: plan query-by-status cross-kind union — design stance deferred
+  body: |
+    In `src/plan_inspect.rs`, `plan query-by-status` without `--kind` walks every known kind whose vocabulary includes the supplied status string and unions the matches. This works correctly today because no status string is shared across kinds with conflicting semantics.
+
+    If the v2 design decides to forbid cross-kind status string sharing (e.g., `superseded` means different things for a backlog item vs. a memory entry), `plan query-by-status` is the place that would need an explicit stance — either an error, a disambiguation flag, or a kind-scoped union with explicit labels.
+
+    No action needed now; this is an advisory note so the design question doesn't have to be re-derived from first principles.
