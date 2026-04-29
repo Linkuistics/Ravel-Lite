@@ -85,108 +85,123 @@ tasks:
       swept to `Bash(ravel-lite show ...)` once the verb existed.
     - `src/prompt.rs` — confirmed token substitution is the only
       composition layer; no other reach path exists today.
-- id: migration-m2-switch-to-atlas-contracts-component-ontology-crate
-  title: 'Migration M2: switch to atlas-contracts component-ontology crate'
-  category: migration
-  status: done
+- id: cut-over-projects-yaml-repos-yaml-architecture-next-migration
+  title: Cut over projects.yaml → repos.yaml (architecture-next migration)
+  category: architecture-next
+  status: not_started
   dependencies: []
   description: |
-    **Priority: MEDIUM.** Unblocks M4 and M5.
+    **Priority: HIGH** — unblocks every architecture-next task that
+    depends on the new repo/component model (targets-and-worktrees,
+    ravel-lite create v2, phase cycle triage-first, etc.). Replaces
+    `migration-m5-consume-atlas-via-atlas-index`, whose brief was
+    incompatible with the architecture-next direction.
 
-    **Design reference:** §9.4 M2 (in Atlas's design doc).
+    **Design reference:** `docs/architecture-next.md` §"The repo
+    registry" (line 135), §"What this replaces or removes" (line 917).
+
+    ## Background
+
+    `src/repos.rs` already implements the full `repos.yaml` schema and
+    exposes `state repos {add,remove,list}` CLI verbs (`main.rs` lines
+    886/895/899); `init.rs:177` seeds an empty `repos.yaml` for new
+    contexts. **The schema and CLI surface are done.** What's missing is
+    the **cutover**: every consumer of `ProjectsCatalog` still reads
+    `projects.yaml` and treats name → path as the authoritative resolver.
 
     ## Scope
 
-    - In the root `Cargo.toml`, add a `[workspace.dependencies]` entry (or plain `[dependencies]` if Ravel-Lite is single-crate):
-      ```toml
-      component-ontology = { git = "https://github.com/linkuistics/atlas-contracts", rev = "<sha>" }
-      ```
-      Pin by commit sha. The canonical repo is `linkuistics/atlas-contracts` (a public Cargo workspace hosting Atlas's data-format / vocabulary crates).
+    ### Cutover
 
-      **Dev convention:** Atlas itself consumes `component-ontology` and `atlas-index` as **local path deps** during development (`path = "../atlas-contracts/crates/component-ontology"`, with a sibling checkout at `~/Development/atlas-contracts/`). Match that convention for Ravel-Lite during dev; flip to `git+rev` at publish time.
-    - Replace every `use crate::ontology::...` or `use ravel_lite::ontology::...` with `use component_ontology::...`.
-    - Delete `src/ontology/` entirely.
-    - Keep `defaults/ontology.yaml` for now — the canonical file is shipped by `component-ontology` via `include_str!`, but removing the local copy is M4.
-    - Run the full test suite; fix any breakage from the import path change.
-    - Commit as a single PR.
+    - Delete `src/projects.rs` after migrating every caller. The replaced
+      surface is:
+      - `ProjectsCatalog::find_by_name(name)` → `ReposRegistry::get(slug)`
+      - `ProjectEntry { name, path }` → `(repo_slug, RepoEntry { url,
+        local_path })`. `local_path` is `Option<PathBuf>` — callers that
+        require a working tree (discovery pipeline, plan-project
+        derivation) should fall back to `<context>/.cache/repos/<slug>/`
+        per architecture-next §"The repo registry" line 153–156.
+      - `ensure_in_catalog_interactive` (currently called from `main.rs`
+        around line 1361 when `ravel-lite run` first encounters a plan in
+        a non-catalogued project) → either repurpose for `repos.yaml`
+        auto-add, or remove and require explicit `state repos add` first.
+        Pick one and explain in results.
+    - Update the consumers:
+      - `src/related_components.rs` — `require_component_known` validates
+        against `ReposRegistry` slugs.
+      - `src/discover/{mod,stage1,apply}.rs` — iterate `RepoEntry` (with
+        a fallback for missing `local_path`).
+      - `src/state/discover_proposals/verbs.rs` — same component-name
+        validation swap.
+      - `src/main.rs` — ensure_in_catalog flow + the doc-comments that
+        mention `projects.yaml`.
+    - Remove the `state projects {list,add,remove,rename}` CLI subcommands
+      from `main.rs`. They become a single deprecation alias that prints
+      a migration message pointing at `state repos`.
+
+    ### Migration error
+
+    When `<context>/projects.yaml` exists but `<context>/repos.yaml` is
+    empty, surface a clear actionable error from any verb that would
+    previously have read `projects.yaml`:
+
+    ```
+    projects.yaml is no longer supported. The per-context repo registry
+    moved to repos.yaml in the architecture-next migration. Migrate by
+    running:
+
+      ravel-lite state repos add --name <slug> --url <git-url> [--local-path <path>]
+
+    for each entry in your existing projects.yaml, then delete the old
+    file. See docs/architecture-next.md §"The repo registry".
+    ```
+
+    Keep this message in **one** place (a `migrate_projects_yaml_error`
+    helper) so the wording stays consistent.
 
     ### Tests
 
-    - Existing tests (targeting the ontology drift assertion, edge validation, etc.) continue to pass.
-    - Compatibility test: load an existing `related-components.yaml` produced pre-M2 and verify it parses bit-identical.
+    - Existing `src/projects.rs` tests are deleted along with the file.
+    - `tests/state_related_components.rs` — replace projects-catalog seed
+      with repos-registry seed; assertions about validation errors update
+      to mention `repos`.
+    - New test: `legacy_projects_yaml_present_emits_migration_error` —
+      scaffold a config dir with only `projects.yaml`, run any consumer
+      verb, assert the migration message.
+    - Existing `src/repos.rs` unit tests stay green (schema unchanged).
 
     ## Out of scope
 
-    - Removing `defaults/ontology.yaml` (M4).
-    - Refactoring `src/projects.rs` (M5).
-    - Any behavioural change — this is purely a dep-source switch.
+    - Reading per-repo `.atlas/components.yaml` (Atlas catalog
+      integration). That's a separate task aligned with the graph-RAG
+      CLI / per-repo catalog work in architecture-next §"Knowledge
+      substrate" — components-within-repos isn't a Ravel-Lite distinction
+      yet.
+    - Worktree mounting / `Target` abstraction (tracked separately as
+      `targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts`).
+    - Discovery-loop replacement by graph-RAG (separate
+      architecture-next task).
 
     ## Exit criteria
 
-    - Compiles and all tests pass with `component-ontology` sourced from `linkuistics/atlas-contracts`.
-    - `src/ontology/` is gone.
-    - A commit titled "Switch component-ontology to atlas-contracts dep" linking to the `atlas-contracts` commit it pins.
-
-    ## Prerequisite
-
-    Ravel-Lite must be quiescent when this lands. Per the Atlas-side note `m2-migration-is-pure-import-path-swap`, the public surface of `component-ontology` at SHA `337c54368eb1393f2c3f8839a5e9042ce72cf964` matches `src/ontology/mod.rs` 1:1, so the migration itself is mechanical — the only real obstacle is in-flight refactors.
+    - `src/projects.rs` deleted; `pub mod projects;` removed from
+      `src/lib.rs`.
+    - Every former `ProjectsCatalog` consumer compiles and tests pass.
+    - `state projects` CLI verb is gone; replaced by deprecation alias
+      pointing at `state repos`.
+    - Running any state verb against a config dir that has only the
+      legacy `projects.yaml` produces the migration error verbatim from
+      the helper.
+    - `cargo test --workspace` clean.
 
     ## Provenance
 
-    Moved from Atlas's backlog (id `ravel-lite-migration-m2-switch-to-atlas-component-ontology-crate`) on 2026-04-28. Rationale: the work happens here; Atlas is the upstream dependency. The cross-project relationship is captured in Atlas's `related-components.yaml` via the `depends-on / build` edge.
-  results: |
-    ## What was done
-
-    - Added `component-ontology` as a local-path workspace dep
-      (`path = "../atlas-contracts/crates/component-ontology"`) in
-      `Cargo.toml`, matching Atlas's dev convention. Publish-time flip to
-      `git+rev` is documented inline.
-    - Removed `pub mod ontology;` from `src/lib.rs` and deleted
-      `src/ontology/` entirely (cli.rs, defaults.rs, mod.rs, schema.rs,
-      yaml_io.rs).
-    - Rewrote every `crate::ontology::…` and `ravel_lite::ontology::…`
-      import to `component_ontology::…`. Touched: `src/main.rs`,
-      `src/related_components.rs`, `src/discover/schema.rs`,
-      `src/discover/stage2.rs`, `src/discover/apply.rs`,
-      `src/state/discover_proposals/verbs.rs`, `src/projects.rs` (test
-      module). Public re-exports from `crate::related_components`
-      (`EdgeKind`, `LifecycleScope`) preserved verbatim — host adapter
-      callers see no API change.
-    - Kept `defaults/ontology.yaml` in place per M2 scope. The
-      `EmbeddedFile { path: "ontology.yaml", … }` registration in
-      `src/init.rs:86` is unchanged. Removal is M4.
-    - Added compatibility test
-      `pre_m2_related_components_yaml_round_trips_bit_identical` in
-      `src/related_components.rs`. Embeds a representative pre-M2
-      `related-components.yaml` fixture, parses it via the new dep,
-      re-serialises, and asserts byte-for-byte equality with the input.
-
-    ## What worked
-
-    - The swap was genuinely mechanical: `diff -r src/ontology/
-      atlas-contracts/crates/component-ontology/src/` showed only
-      doc-comment phrasing and `include_str!` path differences. Public API
-      surface is bijective.
-    - Build went green on the first `cargo check`; no signature drift.
-    - Full workspace test suite (700+ tests across lib + 17 integration
-      files) still passes — no regressions.
-    - The new compat test passes, confirming the on-disk YAML shape is
-      preserved through the new dep.
-
-    ## What didn't / surprises
-
-    - Nothing notable. The crate at `~/Development/atlas-contracts/`
-      (rev `6dab6c2`, current main) has the same ontology API as the SHA
-      noted in the brief (`337c543`) — only a website-bootstrap commit
-      intervened.
-
-    ## What this suggests next
-
-    - M4 (deps cleared) and M5 (deps cleared) are now unblocked.
-    - At publish time, swap the path dep for
-      `git = "https://github.com/linkuistics/atlas-contracts", rev = "<sha>"`
-      pinning to whatever rev `defaults/ontology.yaml` was last verified
-      against.
+    Written 2026-04-28 to replace
+    `migration-m5-consume-atlas-via-atlas-index`. The replaced task's
+    brief assumed a 1:1 wrap of `ProjectsCatalog` over Atlas's
+    `ComponentsFile`; architecture-next.md (settled 2026-04-28) replaces
+    `projects.yaml` with `repos.yaml` instead — a different concept, not
+    a wrap. Reasoning preserved in the replaced task's `Results:` block.
 - id: knowledge-graph-wire-plan-kg-kinds-intent-backlog-memory-finding
   title: 'knowledge-graph: wire plan KG kinds (intent, backlog, memory, finding)'
   category: architecture-next
@@ -476,321 +491,3 @@ tasks:
     7. Backfill memory (one-shot LLM): pass over `legacy_memory.md` produces a `memory.yaml` with `status: legacy` entries. User curates in their own time.
 
     Verification: dogfood by migrating `LLM_STATE/core` (this very plan) as the canonical test case before the v2.0 release.
-- id: migration-m4-delete-in-tree-ontology-copies
-  title: 'Migration M4: delete in-tree ontology copies'
-  category: migration
-  status: done
-  dependencies:
-  - migration-m2-switch-to-atlas-contracts-component-ontology-crate
-  description: |
-    **Priority: MEDIUM.** Removes drift risk by eliminating duplicates.
-
-    **Design reference:** §9.4 M4 (in Atlas's design doc).
-
-    ## Scope
-
-    - Delete `defaults/ontology.yaml`. Ravel-Lite now reads the YAML from the `component-ontology` crate (hosted at `linkuistics/atlas-contracts`) via its exposed `component_ontology::EMBEDDED_ONTOLOGY_YAML` constant.
-    - Delete `docs/component-ontology.md`, or reduce to a one-line redirect stub linking to `atlas-contracts/crates/component-ontology/README.md` (or equivalent upstream docs).
-    - Delete `docs/component-ontology-migration.md` — the migration is done, the doc is obsolete.
-    - Update any tests that previously loaded `defaults/ontology.yaml` from disk to instead use `component_ontology::EMBEDDED_ONTOLOGY_YAML`.
-    - The build-time test that asserts `EdgeKind` matches `ontology.yaml` switches to assert against the crate-exposed constant (which is the canonical file).
-    - Stage 1 / Stage 2 prompts still exist in `defaults/` for this task; they're removed in M5.
-
-    ### Tests
-
-    - Test suite passes.
-    - Build-time `EdgeKind` vs `ontology.yaml` consistency test still runs and passes.
-    - No file other than `component-ontology`-sourced strings references `ontology.yaml` at a Ravel-Lite-local path.
-
-    ## Out of scope
-
-    - Removing Stage 1/2 prompt copies (M5).
-    - Refactoring `src/projects.rs` (M5).
-
-    ## Exit criteria
-
-    - `defaults/ontology.yaml` does not exist.
-    - `docs/component-ontology.md` is a one-line redirect stub or deleted.
-    - Builds and tests pass.
-
-    ## Provenance
-
-    Moved from Atlas's backlog (id `ravel-lite-migration-m4-delete-in-tree-ontology-copies`) on 2026-04-28.
-  results: |
-    ## What was done
-
-    - Deleted `defaults/ontology.yaml`. The canonical copy is now the one
-      shipped by `component-ontology` via `EMBEDDED_ONTOLOGY_YAML`
-      (atlas-contracts workspace).
-    - Removed `EmbeddedFile { path: "ontology.yaml", ... }` from the
-      `EMBEDDED_FILES` table in `src/init.rs`.
-    - Added `"ontology.yaml"` to `RETIRED_PATHS` so `init --force` (and any
-      refresh sweep) cleans the stale materialised copy out of existing
-      user config dirs without manual intervention.
-    - Reduced `docs/component-ontology.md` (596 lines) to a one-line
-      redirect stub pointing at the upstream crate README and the canonical
-      `defaults/ontology.yaml` in atlas-contracts. Kept the file (not
-      deleted) so existing in-source `// see docs/component-ontology.md`
-      cross-references in `src/main.rs`, `src/related_components.rs`, and
-      `src/discover/mod.rs` still resolve to a useful pointer rather than
-      a dead path.
-    - Updated the source-tree map in `docs/architecture.md` to drop the
-      `ontology/` subtree and explain the upstream-crate pivot in its
-      place.
-    - `docs/component-ontology-migration.md` was already absent from the
-      tree (no action needed).
-
-    ## What worked
-
-    - The init drift test (`every_file_under_defaults_is_registered_in_embedded_files`)
-      stayed green: deleting the disk file AND the registration in lock-step
-      kept the bijection invariant intact.
-    - Full workspace test suite still passes (598 lib tests; same
-      integration suite as M2, no regressions). The extra test vs M2 is the
-      `pre_m2_related_components_yaml_round_trips_bit_identical` compat
-      guard added there.
-    - No code references to `defaults/ontology.yaml` remain anywhere under
-      `src/`, `tests/`, `defaults/`, `docs/`, `scripts/`, or `website/`
-      (verified via grep). All ontology drift checking now lives in the
-      upstream crate.
-
-    ## What didn't / surprises
-
-    - Nothing notable. The architecture-doc source-tree pivot turned into a
-      short comment block instead of a structural diagram entry, since
-      there is no longer a host-side subtree to depict.
-
-    ## What this suggests next
-
-    - M5 (the final migration step — consume Atlas via `atlas-index`,
-      refactor `src/projects.rs`) is the only piece left.
-    - Existing user configs that have `ontology.yaml` materialised at
-      `<config-root>/` will only see it cleaned up on `init --force`; that
-      is the documented behaviour of `RETIRED_PATHS` and matches how the
-      former `skills/` cleanup worked.
-- id: migration-m5-consume-atlas-via-atlas-index
-  title: 'Migration M5: consume Atlas via atlas-index'
-  category: migration
-  status: not_started
-  dependencies:
-  - migration-m2-switch-to-atlas-contracts-component-ontology-crate
-  description: |
-    **Priority: MEDIUM.** Completes the migration; single `related-components.yaml` in the ecosystem. Gates Atlas v1 success criterion 5.
-
-    **Design reference:** §9.4 M5 (in Atlas's design doc).
-
-    ## Scope
-
-    ### Depend on atlas-index
-
-    - Add `atlas-index = { git = "https://github.com/linkuistics/atlas-contracts", rev = "<sha>" }` to Cargo.toml. Pin the same rev used for `component-ontology` in M2 (both crates live in the same workspace). Use a local path dep during dev, matching the convention noted in M2.
-
-    ### Refactor projects.rs
-
-    - `ProjectsCatalog` becomes a thin wrapper over Atlas's `ComponentsFile`.
-    - `find_by_name(name)` searches `atlas_index::ComponentsFile.components` by `id`.
-    - Only *internal* components are valid plan targets — external components (from `external-components.yaml`) are rejected with a helpful error per the earlier decision.
-    - Existing callers' API preserved as much as possible; public signatures remain backward-compatible where practical (change the import paths but keep the verbs).
-
-    ### Stage 1/2 prompt copies — resolution of the open question
-
-    Three options for where Ravel-Lite reads Atlas's prompts from once they live in the private Atlas repo:
-
-    1. **Add prompts to `atlas-contracts`** — simplest for Ravel-Lite; exposes Atlas prompt IP publicly.
-    2. **Ravel-Lite keeps its own prompt copies** — Ravel-Lite stays prompt-independent. Reintroduces drift risk.
-    3. **Env-var / path-based lookup** — no prompts of its own; requires a sibling Atlas checkout via `ATLAS_PROMPTS_DIR` or similar.
-
-    Decide during this task. **Default recommendation: option 2.** Rationale: prompts are the heart of Atlas's IP; publishing them via `atlas-contracts` contradicts the "public data-formats, private computational parts" split that motivated the extraction. Ravel-Lite's Stage-1/2 prompts are lighter than Atlas's discover-* prompts and can diverge intentionally.
-
-    If option 2 is picked, this section collapses to "leave `defaults/discover-stage1.md` and `defaults/discover-stage2.md` alone" and the exit criterion below changes accordingly.
-
-    ### CLI surface
-
-    - `ravel-lite state related-components ...` remains as a thin pass-through — the CLI is kept but internally routes through `atlas-index` verbs.
-    - `ravel-lite state projects ...` similarly — the verbs still exist but operate on Atlas-produced `components.yaml` via `atlas-index`.
-    - Existing tests for these CLI surfaces continue to pass.
-
-    ### Tests
-
-    - End-to-end test: run a discover loop on Ravel-Lite itself using Atlas-produced YAMLs as the project catalog. Verify Stage 1/Stage 2 outputs are identical (modulo the project→component rename) to pre-migration outputs.
-    - Compatibility: a user who already has a `projects.yaml` at the old path receives a clear migration error directing them to run Atlas.
-
-    ## Out of scope
-
-    - Atlas-side changes.
-    - Performance optimisation.
-
-    ## Exit criteria
-
-    - A single `related-components.yaml` exists in the ecosystem — Ravel-Lite no longer writes its own.
-    - Test suite passes end to end.
-    - `ravel-lite run` on any plan directory can discover and use components produced by Atlas without any hand-authored `projects.yaml`.
-    - The Stage-1/2 prompt question is answered and the chosen option's sub-steps are applied.
-
-    ## Provenance
-
-    Moved from Atlas's backlog (id `ravel-lite-migration-m5-consume-atlas-via-atlas-index`) on 2026-04-28. Atlas's `verify-atlas-v1-success-criteria-end-to-end` task previously listed this as a structural dependency; that dep is now tracked as prose because cross-plan dep ids aren't supported.
-  results: |
-    ## Outcome: blocked, replaced by a fresh task
-
-    Not started; the brief is incompatible with `docs/architecture-next.md`,
-    which is the canonical design doc for the next architecture (memory:
-    "Architecture redesign in docs/architecture-next.md"). Mechanical
-    execution of M5 as written would lock in a shape we'd have to undo
-    during the architecture-next migration.
-
-    ## The conflict
-
-    | Concern | M5 brief | architecture-next.md |
-    |---|---|---|
-    | Top-level user index | `<config>/components.yaml` (single Atlas-produced file) | `<context>/repos.yaml` + per-repo `<repo>/.atlas/components.yaml` (catalog computed as union; no aggregate) — §"What this replaces" line 917 |
-    | What replaces `projects.yaml` | Wrap by `atlas-index::ComponentsFile` | Replace by a new `repos.yaml` schema (human-curated repo registry) |
-    | Concept of a "project" | Per-monorepo component | Per-repo registry entry (component-as-unit-of-work, repo-as-physical-shell) |
-    | `ProjectEntry::path` | `path_segments` (multiple, repo-relative, requires picking a root) | `local_path` on the repo entry (single absolute path; same shape as today) |
-    | `state projects add/remove/rename` CLI | "Thin pass-through" through atlas-index — but atlas-index has no `add` (components are discovered, not authored) | Replaced by `state repos add/remove/list` (already implemented in `src/repos.rs`; init seeds an empty `repos.yaml`) |
-    | Stage 1/2 prompts | Brief defers the question; default recommendation: keep our copies | Whole discover loop is replaced by graph-RAG via `ravel-lite atlas <q>` (§"What this replaces" line 923) — prompts on a deletion track, not a "keep" track |
-
-    ## What's already on the ground
-
-    - `src/repos.rs` (325 lines) is fully implemented: `ReposRegistry`,
-      `RepoEntry { url, local_path }`, schema_version 1, `try_add` /
-      `save_atomic` / `load_or_empty`, plus full unit tests.
-    - `ravel-lite state repos {list, add, remove}` CLI verbs are wired in
-      `main.rs` (lines 886/895/899).
-    - `init.rs` already seeds an empty `repos.yaml` for new contexts.
-    - What's missing is the **cutover**: every consumer of
-      `ProjectsCatalog` (`related_components.rs`, `discover/{stage1,mod,
-      apply}.rs`, `state/discover_proposals/verbs.rs`,
-      `main.rs::ensure_in_catalog_interactive`) still reads `projects.yaml`.
-
-    ## Replaced by
-
-    New backlog task: **"Cut over projects.yaml → repos.yaml
-    (architecture-next migration)"**. Scopes the actual cutover work that
-    the M5 brief was *trying* to describe, but in the shape settled by
-    architecture-next.md.
-
-    ## Provenance
-
-    This task was provenance-imported from Atlas's backlog on 2026-04-28.
-    The M5 brief there was authored before the architecture-next decisions
-    on 2026-04-28 ("projects.yaml → repos.yaml") were settled in
-    Ravel-Lite. Atlas should be told that Ravel-Lite is doing the cutover
-    under a different shape than its M5 anticipated.
-- id: cut-over-projects-yaml-repos-yaml-architecture-next-migration
-  title: Cut over projects.yaml → repos.yaml (architecture-next migration)
-  category: architecture-next
-  status: not_started
-  dependencies: []
-  description: |
-    **Priority: HIGH** — unblocks every architecture-next task that
-    depends on the new repo/component model (targets-and-worktrees,
-    ravel-lite create v2, phase cycle triage-first, etc.). Replaces
-    `migration-m5-consume-atlas-via-atlas-index`, whose brief was
-    incompatible with the architecture-next direction.
-
-    **Design reference:** `docs/architecture-next.md` §"The repo
-    registry" (line 135), §"What this replaces or removes" (line 917).
-
-    ## Background
-
-    `src/repos.rs` already implements the full `repos.yaml` schema and
-    exposes `state repos {add,remove,list}` CLI verbs (`main.rs` lines
-    886/895/899); `init.rs:177` seeds an empty `repos.yaml` for new
-    contexts. **The schema and CLI surface are done.** What's missing is
-    the **cutover**: every consumer of `ProjectsCatalog` still reads
-    `projects.yaml` and treats name → path as the authoritative resolver.
-
-    ## Scope
-
-    ### Cutover
-
-    - Delete `src/projects.rs` after migrating every caller. The replaced
-      surface is:
-      - `ProjectsCatalog::find_by_name(name)` → `ReposRegistry::get(slug)`
-      - `ProjectEntry { name, path }` → `(repo_slug, RepoEntry { url,
-        local_path })`. `local_path` is `Option<PathBuf>` — callers that
-        require a working tree (discovery pipeline, plan-project
-        derivation) should fall back to `<context>/.cache/repos/<slug>/`
-        per architecture-next §"The repo registry" line 153–156.
-      - `ensure_in_catalog_interactive` (currently called from `main.rs`
-        around line 1361 when `ravel-lite run` first encounters a plan in
-        a non-catalogued project) → either repurpose for `repos.yaml`
-        auto-add, or remove and require explicit `state repos add` first.
-        Pick one and explain in results.
-    - Update the consumers:
-      - `src/related_components.rs` — `require_component_known` validates
-        against `ReposRegistry` slugs.
-      - `src/discover/{mod,stage1,apply}.rs` — iterate `RepoEntry` (with
-        a fallback for missing `local_path`).
-      - `src/state/discover_proposals/verbs.rs` — same component-name
-        validation swap.
-      - `src/main.rs` — ensure_in_catalog flow + the doc-comments that
-        mention `projects.yaml`.
-    - Remove the `state projects {list,add,remove,rename}` CLI subcommands
-      from `main.rs`. They become a single deprecation alias that prints
-      a migration message pointing at `state repos`.
-
-    ### Migration error
-
-    When `<context>/projects.yaml` exists but `<context>/repos.yaml` is
-    empty, surface a clear actionable error from any verb that would
-    previously have read `projects.yaml`:
-
-    ```
-    projects.yaml is no longer supported. The per-context repo registry
-    moved to repos.yaml in the architecture-next migration. Migrate by
-    running:
-
-      ravel-lite state repos add --name <slug> --url <git-url> [--local-path <path>]
-
-    for each entry in your existing projects.yaml, then delete the old
-    file. See docs/architecture-next.md §"The repo registry".
-    ```
-
-    Keep this message in **one** place (a `migrate_projects_yaml_error`
-    helper) so the wording stays consistent.
-
-    ### Tests
-
-    - Existing `src/projects.rs` tests are deleted along with the file.
-    - `tests/state_related_components.rs` — replace projects-catalog seed
-      with repos-registry seed; assertions about validation errors update
-      to mention `repos`.
-    - New test: `legacy_projects_yaml_present_emits_migration_error` —
-      scaffold a config dir with only `projects.yaml`, run any consumer
-      verb, assert the migration message.
-    - Existing `src/repos.rs` unit tests stay green (schema unchanged).
-
-    ## Out of scope
-
-    - Reading per-repo `.atlas/components.yaml` (Atlas catalog
-      integration). That's a separate task aligned with the graph-RAG
-      CLI / per-repo catalog work in architecture-next §"Knowledge
-      substrate" — components-within-repos isn't a Ravel-Lite distinction
-      yet.
-    - Worktree mounting / `Target` abstraction (tracked separately as
-      `targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts`).
-    - Discovery-loop replacement by graph-RAG (separate
-      architecture-next task).
-
-    ## Exit criteria
-
-    - `src/projects.rs` deleted; `pub mod projects;` removed from
-      `src/lib.rs`.
-    - Every former `ProjectsCatalog` consumer compiles and tests pass.
-    - `state projects` CLI verb is gone; replaced by deprecation alias
-      pointing at `state repos`.
-    - Running any state verb against a config dir that has only the
-      legacy `projects.yaml` produces the migration error verbatim from
-      the helper.
-    - `cargo test --workspace` clean.
-
-    ## Provenance
-
-    Written 2026-04-28 to replace
-    `migration-m5-consume-atlas-via-atlas-index`. The replaced task's
-    brief assumed a 1:1 wrap of `ProjectsCatalog` over Atlas's
-    `ComponentsFile`; architecture-next.md (settled 2026-04-28) replaces
-    `projects.yaml` with `repos.yaml` instead — a different concept, not
-    a wrap. Reasoning preserved in the replaced task's `Results:` block.
