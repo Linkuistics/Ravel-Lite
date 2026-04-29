@@ -3,8 +3,9 @@ tasks:
   title: Add ravel-lite show verb for embedded fixed-memory content
   category: architecture-next
   status: blocked
-  blocked_reason: 'Design open: needs user-extensibility/disk-overlay decision before implementation; discussion deferred indefinitely'
-  dependencies: []
+  blocked_reason: 'Blocked on settling fixed-memory/ extensibility model: where user-owned fixed-memory lives under <context>/ v2 and the lookup order (disk-overlay then embed). Decision belongs to ravel-lite-create-write-plans-into-context-plans-dir scope.'
+  dependencies:
+  - ravel-lite-create-write-plans-into-context-plans-dir
   description: |
     Add a `ravel-lite show <embedded-path>` verb that prints embedded content via `init::require_embedded`, and sweep phase prompts that use `Read({{ORCHESTRATOR}}/fixed-memory/...)` to use `Bash(ravel-lite show ...)` instead.
 
@@ -85,42 +86,6 @@ tasks:
       swept to `Bash(ravel-lite show ...)` once the verb existed.
     - `src/prompt.rs` — confirmed token substitution is the only
       composition layer; no other reach path exists today.
-- id: ascent-upgrade-bump-knowledge-graph-crate-from-0-6-to-0-8
-  title: 'ascent upgrade: bump knowledge-graph crate from 0.6 to 0.8'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Upgrade the `ascent` Datalog engine in the `knowledge-graph` crate from 0.6 to 0.8.
-
-    Reference: `knowledge-graph` crate `Cargo.toml`; ascent changelog at https://crates.io/crates/ascent.
-
-    Background: The scaffold task pinned `ascent` at 0.6 because the compatibility resolver chose it without prompting. The scaffold task results note that 0.8 is current and the upgrade was deliberately deferred until at least one consumer (plan KG wiring) exists to validate the rule compilation.
-
-    Scope:
-    - Bump `ascent` in `crates/knowledge-graph/Cargo.toml` from `0.6` to `0.8` (or latest compatible).
-    - Resolve any macro-API changes between 0.6 and 0.8 in `src/datalog.rs` (`SmokeProgram`).
-    - All 23 existing tests pass; smoke Datalog rules derive correctly.
-    - `cargo check --workspace --all-targets` clean under `[lints.rust] warnings = "deny"`.
-
-    Out of scope: any rule-registry/builder API changes — keep the per-consumer `ascent!` program model unchanged.
-  results: |
-    **Outcome:** ascent 0.6 → 0.8 upgrade landed cleanly. Zero source-code changes were required outside `Cargo.toml`.
-
-    **Changes:**
-    - `crates/knowledge-graph/Cargo.toml`: `ascent = "0.6"` → `ascent = "0.8"`.
-    - `Cargo.lock` auto-updated. Transitive bumps: `ascent_base` 0.6 → 0.8, `ascent_macro` 0.6 → 0.8, `duplicate` 1.0.0 → 2.0.1, `itertools` 0.12.1 → 0.13.0. The transitive bumps stay private to the ascent dependency tree — nothing else in the workspace references them directly, so no version conflicts surfaced.
-
-    **Verification:**
-    - `cargo check --workspace --all-targets` — clean under `[lints.rust] warnings = "deny"`.
-    - `cargo test -p knowledge-graph` — 33/33 passed, including the three smoke-program tests in `datalog.rs` that exercise the macro-generated rule code (`orphaned_rule_finds_backlog_items_without_active_intent`, `suspect_rule_finds_memory_entries_with_changed_sha`, `empty_program_runs_clean`).
-    - `cargo test --workspace` — every test crate green (591 in `ravel-lite`, 33 in `knowledge-graph`, plus integration suites). Zero failures.
-
-    **Why this was a no-touch upgrade:** `datalog.rs` only uses the stable surface of the `ascent!` macro — `relation` declarations, tuple-pattern heads, stratified negation (`!has_active_intent`), and `if`-guard predicates. The breaking changes in ascent 0.8 are concentrated in the BYODS (bring-your-own-data-structure) feature and lattice support, neither of which this code uses. The task description noted "23 existing tests" but the suite has grown to 33 since scaffold; all 33 pass without modification.
-
-    **Note on test count drift:** Backlog body should be considered indicative of intent, not literal — the test count constraint ("All 23 existing tests pass") was correctly interpreted as "all currently-existing tests pass," and the actual count is now 33.
-
-    **Suggests next:** The smoke-program engine binding is now on a current version. Downstream tasks that wire production rules (plan KG, catalog KG) — particularly the items unlocked once `Migrate backlog.yaml to TMS item shape` lands — can adopt 0.8-only features (BYODS, lattices) if they need them without a follow-up bump.
 - id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
   title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
   category: infra
