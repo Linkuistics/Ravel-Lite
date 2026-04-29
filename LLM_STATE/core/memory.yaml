@@ -765,3 +765,15 @@ entries:
   title: intents.yaml has list/show/add/set-status verb surface
   body: |
     `src/state/intents/` (schema.rs, yaml_io.rs, verbs.rs, mod.rs) is the plan-intent state layer. CLI verbs: `list`, `show`, `add`, `set-status`. Status transitions validated via `IntentStatus::transitions()` from `plan_kg.rs`. `scaffold_plan_dir` seeds `intents.yaml` alongside `backlog.yaml` and `memory.yaml`. Editing verbs (`set-claim`, `set-rationale`, `delete`, `supersede`) deferred until a consumer surfaces; the TMS model favours supersession over in-place edit. See: `plan_kg.rs registers four plan vocabularies in knowledge-graph crate`.
+- id: ravel-lite-plan-provides-four-read-only-cross-kind-query-verbs
+  title: ravel-lite plan provides four read-only cross-kind query verbs
+  body: |
+    `list-items`, `show-item`, `query-by-status`, and `query-by-justification` live in `src/plan_inspect.rs`. Dispatched from `main.rs` as a top-level subcommand, not via `dispatch_state`. Per-kind mutations remain in `ravel-lite state <kind>`. `PlanItemKind` and `JustificationKindFilter` encode closed vocabularies in the type system.
+- id: anyentry-with-serde-untagged-serialises-cross-kind-output
+  title: 'AnyEntry with #[serde(untagged)] serialises cross-kind output'
+  body: |
+    In `src/plan_inspect.rs`, `AnyEntry` is a serde-untagged enum; each variant carries its own kind-marker field, so no wrapper discriminant is emitted. Use this pattern for cross-kind query output that must remain kind-labelled. Contrast with `#[serde(flatten)]`, which is a struct-inlining pattern, not an enum-variant pattern.
+- id: forward-compatible-kind-stubs-error-with-backlog-task-pointer
+  title: Forward-compatible kind stubs error with backlog task pointer
+  body: |
+    `Finding` in `src/plan_inspect.rs` parses and dispatches without requiring the `findings-inbox` file store to exist; it returns a user-facing error pointing to the `findings-inbox` backlog task. Pattern: wire the dispatch path first, implement the file store when the backlog task executes.
