@@ -737,10 +737,6 @@ entries:
   title: '''state projects'' is a migration-error alias'
   body: |
     `state projects <subcommand>` is retained as a clap `Vec<String>` catch-all that unconditionally returns `migrate_projects_yaml_error()`. No functional path survives from the old `projects.yaml` CLI. Any code or test that invokes `state projects add|remove|list|rename` receives this error.
-- id: resolves-working-tree-from-repos-or-cache
-  title: ' resolves working tree from repos or cache'
-  body: |
-    `discover::DiscoverTarget { slug, working_tree }` and `working_tree_for` in `discover/mod.rs` resolve a repo's on-disk path: `entry.local_path` when present, otherwise `<context>/.cache/repos/<slug>/` (the architecture-next cache fallback). All discover consumers use this abstraction; direct `RepoEntry` path access is not used in discover paths.
 - id: discovertarget-resolves-working-tree-from-repos-or-cache
   title: DiscoverTarget resolves working tree from repos or cache
   body: |
