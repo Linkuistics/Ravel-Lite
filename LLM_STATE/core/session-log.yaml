@@ -1383,3 +1383,18 @@ sessions:
     - What didn't: the dogfood cutover (`LLM_STATE/core/backlog.yaml` file) is intentionally deferred — the deployed binary (v1.0.2) reads only the legacy `tasks: [...]` shape; replacing the file in-place would break running phases. The freeze constraint ("LLM_STATE shape frozen until v1→v2 migrator exists") governs; the file-level cutover belongs to the `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` task.
     - Key learning: the task brief was authored before the freeze constraint was captured in distilled memory. Future triage should check the freeze constraint before scheduling any LLM_STATE file-shape changes.
     - Suggests next: the migrator task can now treat the TMS-shaped `BacklogEntry` as a finished target. Field map for v1→v2 migration is documented in the task results block.
+- id: session-96
+  timestamp: 2026-04-29T08:29:49Z
+  phase: work
+  body: |
+    ### Session 96 (2026-04-29T08:29:49Z) — Add intents.yaml state layer and CRUD verbs
+
+    - Implemented `intents.yaml` as a typed plan-state file with a minimal TMS CRUD surface, mirroring the established `state/memory/` and `state/backlog/` module shape.
+    - New `src/state/intents/` module (schema.rs, yaml_io.rs, verbs.rs, mod.rs) with `list`, `show`, `add`, and `set-status` verbs. Status transitions are validated against `IntentStatus::transitions()` from `plan_kg.rs`.
+    - Added `INTENTS_FILENAME = "intents.yaml"` to `src/state/filenames.rs`.
+    - Registered the module in `src/state/mod.rs` and wired `StateCommands::Intents` + `IntentsCommands` into `src/main.rs`.
+    - `scaffold_plan_dir` in `src/create.rs` now seeds `intents.yaml` alongside `backlog.yaml` and `memory.yaml`; both scaffold tests updated to assert the new file exists and parses cleanly.
+    - 19 new unit tests in `state::intents::*`; full suite (610+ tests) green.
+    - `render-overview` / `phase.md` regeneration deliberately deferred: blocked on the v1→v2 migrator (the current plan's own `backlog.yaml` is in legacy wire shape, so calling `read_backlog` from `set-phase` would fail on this very plan). The `no-llm-state-migrations-during-self-dev` constraint holds.
+    - Editing verbs (`set-claim`, `set-rationale`, `delete`, `supersede`) deferred until a real consumer surfaces; the TMS model favours supersession over in-place edit.
+    - What this suggests next: unblock the five dependent architecture-next tasks; triage should prioritise which is highest leverage now that `intents.yaml` exists. `render-overview` / phase.md regeneration is its own follow-up, gated on the migrator.

@@ -281,6 +281,14 @@ enum StateCommands {
         #[command(subcommand)]
         command: BacklogCommands,
     },
+    /// Intents CRUD verbs. `intents.yaml` is the canonical intent
+    /// source under the architecture-next plan KG; `phase.md` becomes a
+    /// rendered overview generated from intents content. Minimal verb
+    /// surface at v1: `add`, `list`, `show`, `set-status`.
+    Intents {
+        #[command(subcommand)]
+        command: IntentsCommands,
+    },
     /// Memory CRUD verbs. Dream rewrites memory.yaml per-entry through
     /// these verbs rather than bulk-swapping the file.
     Memory {
@@ -587,6 +595,50 @@ enum MemoryCommands {
 }
 
 #[derive(Subcommand)]
+enum IntentsCommands {
+    /// Emit every intent.
+    List {
+        plan_dir: PathBuf,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Emit a single intent by id.
+    Show {
+        plan_dir: PathBuf,
+        id: String,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Append a new intent. `--claim` becomes the TMS claim;
+    /// `--body` becomes a single rationale justification.
+    Add {
+        plan_dir: PathBuf,
+        #[arg(long)]
+        claim: String,
+        /// Path to a file containing the markdown body.
+        #[arg(long, conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        /// `-` reads stdin; any other value is taken as the body inline.
+        #[arg(long)]
+        body: Option<String>,
+        /// Authoring timestamp (RFC-3339). Defaults to current UTC.
+        #[arg(long)]
+        authored_at: Option<String>,
+        /// Phase or process that authored this entry. Defaults to `unspecified`.
+        #[arg(long)]
+        authored_in: Option<String>,
+    },
+    /// Set an intent's status. Validates against the typed transition
+    /// table (`active` → `satisfied` | `defeated` | `superseded`).
+    SetStatus {
+        plan_dir: PathBuf,
+        id: String,
+        /// One of `active`, `satisfied`, `defeated`, `superseded`.
+        status: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum SessionLogCommands {
     /// List sessions from session-log.yaml (id + timestamp + phase + body).
     List {
@@ -878,6 +930,7 @@ async fn dispatch_state(command: StateCommands) -> Result<()> {
         }
         StateCommands::Projects { _args: _ } => Err(repos::migrate_projects_yaml_error()),
         StateCommands::Backlog { command } => dispatch_backlog(command),
+        StateCommands::Intents { command } => dispatch_intents(command),
         StateCommands::Memory { command } => dispatch_memory(command),
         StateCommands::SessionLog { command } => dispatch_session_log(command),
         StateCommands::Migrate {
@@ -1225,6 +1278,46 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
         }
         MemoryCommands::Delete { plan_dir, id } => {
             memory::run_delete(&plan_dir, &id)
+        }
+    }
+}
+
+fn parse_intents_format(input: &str) -> Result<ravel_lite::state::intents::OutputFormat> {
+    ravel_lite::state::intents::OutputFormat::parse(input)
+        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
+}
+
+fn dispatch_intents(command: IntentsCommands) -> Result<()> {
+    use ravel_lite::state::intents;
+
+    match command {
+        IntentsCommands::List { plan_dir, format } => {
+            let fmt = parse_intents_format(&format)?;
+            intents::run_list(&plan_dir, fmt)
+        }
+        IntentsCommands::Show { plan_dir, id, format } => {
+            let fmt = parse_intents_format(&format)?;
+            intents::run_show(&plan_dir, &id, fmt)
+        }
+        IntentsCommands::Add {
+            plan_dir,
+            claim,
+            body_file,
+            body,
+            authored_at,
+            authored_in,
+        } => {
+            let body = resolve_body(body_file, body)?;
+            let req = intents::AddRequest {
+                claim,
+                body,
+                authored_at,
+                authored_in,
+            };
+            intents::run_add(&plan_dir, &req)
+        }
+        IntentsCommands::SetStatus { plan_dir, id, status } => {
+            intents::run_set_status(&plan_dir, &id, &status)
         }
     }
 }

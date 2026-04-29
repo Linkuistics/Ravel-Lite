@@ -3,6 +3,8 @@
 //! Submodules:
 //! - `phase` — `set-phase` (existing)
 //! - `backlog` — typed backlog.yaml + CRUD verbs (R1)
+//! - `intents` — typed intents.yaml + minimal CRUD verbs; canonical
+//!   intent source under the architecture-next plan KG
 //! - `memory` — typed memory.yaml + per-entry CRUD verbs (R2)
 //! - `session_log` — typed session-log.yaml + latest-session.yaml
 //!   verbs, plus the programmatic append used by
@@ -17,6 +19,7 @@
 pub mod backlog;
 pub mod discover_proposals;
 pub mod filenames;
+pub mod intents;
 pub mod memory;
 pub mod migrate;
 pub mod phase;

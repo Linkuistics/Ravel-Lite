@@ -21,7 +21,7 @@ use tokio::process::Command as TokioCommand;
 use crate::config::{load_agent_config, load_shared_config};
 use crate::init::require_embedded;
 use crate::state::filenames::{
-    BACKLOG_FILENAME, DREAM_WORD_COUNT_FILENAME, MEMORY_FILENAME, PHASE_FILENAME,
+    BACKLOG_FILENAME, DREAM_WORD_COUNT_FILENAME, INTENTS_FILENAME, MEMORY_FILENAME, PHASE_FILENAME,
 };
 
 /// Relative path to the create-plan prompt template inside a config dir.
@@ -92,6 +92,7 @@ pub fn validate_target(plan_dir: &Path) -> Result<PathBuf> {
 ///
 /// - `phase.md` = `work\n`
 /// - `backlog.yaml` = `schema_version: 1\nitems: []\n`
+/// - `intents.yaml` = `schema_version: 1\nitems: []\n`
 /// - `memory.yaml` = `schema_version: 1\nitems: []\n`
 /// - `dream-word-count` = `0`
 ///
@@ -99,10 +100,10 @@ pub fn validate_target(plan_dir: &Path) -> Result<PathBuf> {
 /// that — so this function only succeeds when called against a freshly
 /// validated target path.
 ///
-/// After scaffolding, the LLM populates backlog and memory via
-/// `ravel-lite state backlog add` / `state memory add` rather than
-/// writing YAML directly. This keeps the "no LLM-authored mechanical
-/// scaffolding" contract intact.
+/// After scaffolding, the LLM populates backlog, intents, and memory
+/// via `ravel-lite state <area> add` rather than writing YAML directly.
+/// This keeps the "no LLM-authored mechanical scaffolding" contract
+/// intact.
 pub fn scaffold_plan_dir(abs_plan_dir: &Path) -> Result<()> {
     fs::create_dir(abs_plan_dir).with_context(|| {
         format!(
@@ -111,9 +112,10 @@ pub fn scaffold_plan_dir(abs_plan_dir: &Path) -> Result<()> {
         )
     })?;
 
-    let writes: [(&str, &[u8]); 4] = [
+    let writes: [(&str, &[u8]); 5] = [
         (PHASE_FILENAME, b"work\n"),
         (BACKLOG_FILENAME, b"schema_version: 1\nitems: []\n"),
+        (INTENTS_FILENAME, b"schema_version: 1\nitems: []\n"),
         (MEMORY_FILENAME, b"schema_version: 1\nitems: []\n"),
         (DREAM_WORD_COUNT_FILENAME, b"0"),
     ];
@@ -296,6 +298,10 @@ mod tests {
             "schema_version: 1\nitems: []\n"
         );
         assert_eq!(
+            fs::read_to_string(plan.join(INTENTS_FILENAME)).unwrap(),
+            "schema_version: 1\nitems: []\n"
+        );
+        assert_eq!(
             fs::read_to_string(plan.join(MEMORY_FILENAME)).unwrap(),
             "schema_version: 1\nitems: []\n"
         );
@@ -305,14 +311,18 @@ mod tests {
     #[test]
     fn scaffold_plan_dir_writes_cli_parseable_state_files() {
         // The YAML shells must parse via the canonical readers so the
-        // LLM's first `state backlog add` / `state memory add` lands on
-        // valid files rather than triggering a format error.
+        // LLM's first `state backlog add` / `state intents add` /
+        // `state memory add` lands on valid files rather than triggering
+        // a format error.
         let tmp = TempDir::new().unwrap();
         let plan = tmp.path().join("plan-name");
         scaffold_plan_dir(&plan).unwrap();
 
         let backlog = crate::state::backlog::read_backlog(&plan).unwrap();
         assert!(backlog.items.is_empty(), "scaffolded backlog must have no tasks");
+
+        let intents = crate::state::intents::read_intents(&plan).unwrap();
+        assert!(intents.items.is_empty(), "scaffolded intents must have no entries");
 
         let memory = crate::state::memory::read_memory(&plan).unwrap();
         assert!(memory.items.is_empty(), "scaffolded memory must have no entries");

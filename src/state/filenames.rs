@@ -6,6 +6,7 @@
 //! appears in source, prompts, comments, or tests.
 
 pub const BACKLOG_FILENAME: &str = "backlog.yaml";
+pub const INTENTS_FILENAME: &str = "intents.yaml";
 pub const MEMORY_FILENAME: &str = "memory.yaml";
 pub const SESSION_LOG_FILENAME: &str = "session-log.yaml";
 pub const LATEST_SESSION_FILENAME: &str = "latest-session.yaml";

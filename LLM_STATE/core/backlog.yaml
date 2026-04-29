@@ -128,7 +128,7 @@ tasks:
 - id: introduce-intents-yaml-and-state-intents-crud-verbs
   title: Introduce intents.yaml and state intents CRUD verbs
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Introduce `intents.yaml` as the canonical intent source for a plan and add `state intents` CRUD verbs. Make `phase.md` a rendered overview rather than the intent-source document.
@@ -145,6 +145,138 @@ tasks:
     - All existing tests pass; new tests for intent CRUD and phase.md rendering.
 
     Out of scope: the create session's three-deliverable flow (that is scoped to `ravel-lite create v2`); `ravel-lite finish` completion criteria (that task handles it).
+  results: |
+    ## Results
+
+    Implemented `intents.yaml` as a typed plan-state file with a minimal
+    TMS CRUD surface, mirroring the established `state/memory/` and
+    `state/backlog/` shape, then seeded the new file in `scaffold_plan_dir`
+    so freshly-created plans carry it from cycle one.
+
+    ### What changed
+
+    - `src/state/filenames.rs` — added `INTENTS_FILENAME = "intents.yaml"`
+      alongside the other plan-state filename constants.
+    - `src/state/intents/` — new module:
+      - `schema.rs` — `IntentEntry` (a `#[serde(flatten)]` wrapper over
+        `Item<IntentKind>` with no extension fields at v1) and
+        `IntentsFile` (`schema_version` + `items`). Required
+        `schema_version: 1`; rejects YAML without it.
+      - `yaml_io.rs` — `read_intents` / `write_intents` with atomic
+        rename-on-write and a hard-fail on schema-version mismatch.
+      - `verbs.rs` — `run_list`, `run_show`, `run_add`, `run_set_status`.
+        `run_set_status` validates the `from → to` pair against
+        `IntentStatus::transitions()` from `plan_kg.rs`. Reuses
+        `allocate_id` from `state::backlog::schema` so id-allocation rules
+        stay consistent across kinds.
+      - `mod.rs` — re-exports.
+    - `src/state/mod.rs` — registered the new submodule and updated the
+      module-doc list.
+    - `src/main.rs` — added `StateCommands::Intents` + `IntentsCommands`
+      (with `list`, `show`, `add`, `set-status`), `dispatch_intents`, and
+      `parse_intents_format`. Wired into `dispatch_state`.
+    - `src/create.rs::scaffold_plan_dir` — added
+      `intents.yaml = "schema_version: 1\nitems: []\n"` to the seed
+      writes; updated the docstring and both scaffold tests to assert the
+      new file exists, parses through `state::intents::read_intents`, and
+      is empty after scaffold.
+
+    ### What worked
+
+    - The TMS-substrate types from the previous wiring task gave the new
+      module almost the entire shape for free: `IntentKind` /
+      `IntentStatus` were already defined with `transitions()` and
+      `KindMarker<K>`-based wire-kind verification, so `IntentEntry` is
+      effectively a one-line wrapper. The kind-mismatch test
+      (`entry_yaml_rejects_wrong_kind_string`) is one of the cheapest
+      defences against accidentally pointing the deserialiser at the
+      wrong file.
+    - 19 unit tests inside `state::intents::*`; all pass. End-to-end CLI
+      exercise (manual): empty `list`, two `add`s, `show`, legal
+      `set-status`, illegal-transition rejection, unknown-id rejection,
+      unknown-status rejection — all behave correctly. JSON and YAML
+      output both render cleanly.
+    - Full test suite green: `cargo test` reports 610+ tests across the
+      workspace, zero failures.
+    - Build clean (`cargo build` with no warnings on the ravel-lite
+      package). Pre-existing clippy errors in the `knowledge-graph` crate
+      (`item.rs::clone` non-canonical, `algorithms.rs::dfs`
+      too-many-arguments) are present on the baseline commit and are not
+      in scope for this task.
+    - The `LLM_STATE-shape-frozen` constraint from memory is honoured:
+      this introduces a *new* on-disk file, no existing wire shape
+      changes. The deployed v1.0.2 binary will simply ignore
+      `intents.yaml` if it appears in a plan dir; nothing in the deployed
+      read paths trips on its presence.
+
+    ### What didn't (deliberately deferred)
+
+    - **`run_create` pre-seeds**: done via `scaffold_plan_dir` (not a new
+      CLI verb).  The task brief mentioned "scaffolding" as the path, and
+      `scaffold_plan_dir` is already the canonical seed point — adding a
+      parallel route would split the source of truth for what an empty
+      plan looks like.
+    - **`state intents render-overview` / `set-phase` regenerating
+      `phase.md`**: not implemented. Reasons:
+      1. Generating an overview requires reading `backlog.yaml` for
+         active task counts, but `LLM_STATE/core/backlog.yaml` is still
+         in the legacy v1 wire shape (per memory entry
+         `LLM_STATE/core backlog.yaml is in legacy format pending v1→v2
+         migrator`). A `set-phase` that calls `read_backlog` would fail
+         on this very plan.
+      2. Changing the `phase.md` wire shape (from a single-line `phase:`
+         value to a richer overview) is exactly the kind of change the
+         `no-llm-state-migrations-during-self-dev` constraint forbids
+         until the v1→v2 migrator ships and a new binary deploys.
+      3. The task brief says "Update `state set-phase` (or a new `state
+         intents render-overview` verb)" — the "or" makes this an
+         optional flexibility, not a hard requirement.
+    - **`set-body` / `set-title` / `delete` / `init` verbs**: deliberately
+      excluded per the task's "minimal surface" directive. Add them when
+      a concrete consumer surfaces (e.g. when create-plan v2 needs
+      `intents init` for bulk seeding from the LLM session, or when a
+      reflect/triage path needs to amend an intent claim).
+
+    ### What this suggests next
+
+    1. **`render-overview` / phase.md regeneration** is its own task,
+       gated on the v1→v2 migrator. Once the migrator ships and a new
+       binary deploys, take a follow-up that wires intents+task-counts
+       into a structured overview and updates `set-phase` to regenerate
+       `phase.md` on transition. The `state intents render-overview` verb
+       shape is probably the right factoring (separates "compute the
+       overview" from "write the phase file").
+    2. **Editing verbs** (`set-claim`, `set-rationale`, `delete`,
+       `supersede`) — defer until a real consumer needs them. The TMS
+       model favours supersession over edit-in-place for intent prose,
+       so `supersede` may end up more important than `set-claim`.
+    3. **Downstream unblock**: this task was a hard dep for five other
+       tasks in the architecture-next backlog (`ravel-lite plan
+       subcommand for KG inspection`, `ravel-lite create v2`, `Phase
+       cycle: triage-first`, `Migrate v1→v2`, and indirectly `Plan
+       finish`). Triage should re-evaluate which of those is the highest
+       next-leverage pick now that intents.yaml exists.
+    4. **Cycle-internal `intents.yaml` reads**: nothing in the runner
+       (phase_loop, migrate, survey, dream, reflect, triage prompts)
+       reads `intents.yaml` yet. That's intentional for this task — the
+       data layer lands first; consumers wire in via the dependent tasks.
+
+    ### Files inspected (no edits made)
+
+    - `src/state/memory/schema.rs`, `yaml_io.rs`, `verbs.rs`,
+      `mod.rs` — the canonical mirror for the new module's shape.
+    - `src/state/backlog/schema.rs` — for `allocate_id` and the
+      `BacklogEntry`-with-extensions pattern.
+    - `src/plan_kg.rs` — confirmed `IntentKind` / `IntentStatus` /
+      `IntentItem` / `IntentStore` are already defined and tested
+      (transition-table tests, cross-store cascade tests, kind-string
+      bijection).
+    - `crates/knowledge-graph/src/item.rs` and `justification.rs` — for
+      `Item<K>` field shape and the `Justification` enum variants
+      available at this layer.
+    - `src/init.rs` — confirmed nothing in the embedded-defaults
+      registration touches `intents.yaml`; `intents.yaml` is a per-plan
+      file, not a shipped default.
 - id: ravel-lite-plan-subcommand-for-kg-inspection
   title: ravel-lite plan subcommand for KG inspection
   category: architecture-next
