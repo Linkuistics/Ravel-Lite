@@ -343,6 +343,7 @@ tasks:
   - ravel-lite-create-write-plans-into-context-plans-dir
   - targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
   - phase-cycle-triage-first-with-focus-objections-and-commits-yaml
+  - graph-rag-ravel-lite-atlas-cli-for-catalog-queries
   description: |
     Implement plan completion: promote plan memory into component memory, ship code + memory together via PR or local fast-forward, archive the plan dir.
 
