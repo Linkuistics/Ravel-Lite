@@ -23,1841 +23,745 @@ entries:
   title: run_set_status transition guard not yet wired through Store
   body: |
     `BacklogStatus` serialises as a plain YAML string at write time; `Store<BacklogItemKind>::set_status` transition validation is not enforced at the CLI boundary. Illegal status moves (e.g., `done → active`) do not fail loudly. Next step: wire `run_set_status` in `verbs.rs` through `Store<BacklogItemKind>` so `BacklogStatus::transitions()` is consulted before every write.
-schema_version: 1
-items:
-- id: all-prompt-loading-routes-through-substitute-tokens
-  kind: memory-entry
-  claim: All prompt loading routes through `substitute_tokens`
-  justifications:
-  - kind: rationale
-    text: |
-      Ad-hoc `str::replace` bypasses the hard-error guard regex. Any prompt-loading path that does not delegate to `substitute_tokens` silently passes unresolved tokens through. Drift guards require one canonical substitution path.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: shipped-pi-prompts-have-no-dangling-tokens-test-guards-pi-prompts
-  kind: memory-entry
-  claim: '`shipped_pi_prompts_have_no_dangling_tokens` test guards pi prompts'
-  justifications:
-  - kind: rationale
-    text: |
-      The test iterates every on-disk pi prompt file and asserts no unresolved tokens remain. Enforcement mechanism for the canonical-substitution-path rule.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: pi-subagent-definitions-live-at-agents-pi-subagents
-  kind: memory-entry
-  claim: Pi subagent definitions live at `agents/pi/subagents/`
-  justifications:
-  - kind: rationale
-    text: |
-      `defaults/agents/pi/subagents/` holds pi subagent definitions (brainstorming, tdd, writing-plans); `init.rs` embed paths and `pi.rs` reads reference this location.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: init-rs-drift-detection-test-guards-coding-style-registration
-  kind: memory-entry
-  claim: init.rs drift test guards all defaults/ file registration
-  justifications:
-  - kind: rationale
-    text: |
-      `every_file_under_defaults_is_registered_in_embedded_files` recursively walks the entire `defaults/` tree and asserts every file has a matching `EmbeddedFile` entry in `src/init.rs`. Adding any file under `defaults/` without registering it fails the test.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: embedded-defaults-are-valid-asserts-non-empty-model-and-provider
-  kind: memory-entry
-  claim: '`embedded_defaults_are_valid` asserts non-empty model and provider'
-  justifications:
-  - kind: rationale
-    text: |
-      Every (agent, phase) pair in `defaults/agents/claude-code/config.yaml` must have a non-empty model string and non-empty provider. The test catches omissions that would silently delegate model/provider selection to the spawn context.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: work-phase-must-not-commit-source-files
-  kind: memory-entry
-  claim: Work phase must not commit source files
-  justifications:
-  - kind: rationale
-    text: |
-      The work phase leaves non-plan paths dirty; source-commit authority belongs to `analyse-work`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: analyse-work-commits-all-non-plan-paths
-  kind: memory-entry
-  claim: Analyse-work commits all non-plan paths
-  justifications:
-  - kind: rationale
-    text: |
-      Analyse-work stages and commits every path outside the plan dir, or justifies each skipped path in the session log. Mechanism: `commits.yaml` spec authored in step 9; see `Analyse-work writes commits.yaml; git-commit-work applies it`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: analyse-work-receives-dirty-tree-snapshot-as-work-tree-status
-  kind: memory-entry
-  claim: Analyse-work receives dirty-tree snapshot as `{{WORK_TREE_STATUS}}`
-  justifications:
-  - kind: rationale
-    text: |
-      `phase_loop.rs` calls `git::work_tree_snapshot(project_dir, baseline_sha)` when entering `LlmPhase::AnalyseWork` and inserts the result under `{{WORK_TREE_STATUS}}`. Captured at prompt-compose time so hand-edits made after work exits are included.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: streamlineoutcome-enum-distinguishes-ignored-vs-malformed-stream-lines
-  kind: memory-entry
-  claim: '`StreamLineOutcome` enum distinguishes ignored vs malformed stream lines'
-  justifications:
-  - kind: rationale
-    text: |
-      `StreamLineOutcome` distinguishes `valid-but-no-display` from parse failure; an `Option` return collapses both into `None`. Apply this enum pattern wherever an `Option` conflates two semantically distinct outcomes.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: survey-stdout-read-has-300s-timeout
-  kind: memory-entry
-  claim: Survey stdout read has 300s timeout
-  justifications:
-  - kind: rationale
-    text: |
-      `src/survey/invoke.rs` wraps the stdout read in `tokio::time::timeout` (`DEFAULT_SURVEY_TIMEOUT_SECS = 300`); on expiry the child is killed and the error includes elapsed time, captured bytes, partial stdout, and remediations. Override via `--timeout-secs`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: phase-contract-test-validates-per-phase-file-writes
-  kind: memory-entry
-  claim: Phase contract test validates per-phase file writes
-  justifications:
-  - kind: rationale
-    text: |
-      `phase_contract_round_trip_writes_expected_files` runs `phase_loop` from `analyse-work` via `ContractMockAgent`; assertions cover latest-session.md, memory.md updated, backlog.md updated, phase.md ends at `work`, and git log subjects. `commit-message.md` is absent from the flow; analyse-work authors `commits.yaml` instead. See: `Analyse-work writes commits.yaml; git-commit-work applies it`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: tool-read-token-scoped-to-work-md-only
-  kind: memory-entry
-  claim: '`{{TOOL_READ}}` token scoped to `work.md` only'
-  justifications:
-  - kind: rationale
-    text: |
-      Headless phases (analyse-work, reflect, dream) must not include `{{TOOL_READ}}`; an unresolved token in a headless phase fails integration tests. A universal "all tokens substitute cleanly" drift guard produces false negatives for the same reason: `{{TOOL_READ}}` is intentionally absent from headless-phase prompts.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: substitute-tokens-expands-content-macros-before-path-tokens
-  kind: memory-entry
-  claim: '`substitute_tokens` expands content macros before path tokens'
-  justifications:
-  - kind: rationale
-    text: |
-      RELATED_PLANS and custom tokens expand first; atomic path tokens ({{DEV_ROOT}} etc.) expand second. Reversing the order causes fatal errors when RELATED_PLANS content itself contains path tokens.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: pi-stderr-captured-in-4096-byte-rolling-buffer
-  kind: memory-entry
-  claim: Pi stderr captured in 4096-byte rolling buffer
-  justifications:
-  - kind: rationale
-    text: |
-      `PiAgent::invoke_headless` pipes stderr into a fixed-size rolling buffer (`STDERR_BUFFER_CAP = 4096`). Tail surfaces in error messages on failure; eliminates TUI bleed-through during headless invocation.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: pi-phase-cycle-test-guards-runtime-token-substitution
-  kind: memory-entry
-  claim: '`pi_phase_cycle` test guards runtime token substitution'
-  justifications:
-  - kind: rationale
-    text: |
-      `pi_phase_cycle_substitutes_tokens_and_streams_events` runs a full `phase_loop` cycle with a real `PiAgent` and a fake `pi` shell script; asserts zero unresolved `{{…}}` tokens in the captured prompt, correct `UIMessage` variant fan-out (`Progress`, `Persist`, `AgentDone`), and audit commit via `commits.yaml`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: pi-invoke-headless-test-guards-stderr-tail-surfacing
-  kind: memory-entry
-  claim: '`pi_invoke_headless` test guards stderr-tail surfacing'
-  justifications:
-  - kind: rationale
-    text: |
-      `pi_invoke_headless_surfaces_stderr_tail_on_failure` asserts a non-zero `pi` exit (code 17) surfaces the stderr tail in the returned error. Enforces the buffered-stderr invariant. See: `Pi stderr captured in 4096-byte rolling buffer`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: pi-dispatch-subagent-test-pins-dispatch-argv-contract
-  kind: memory-entry
-  claim: '`pi_dispatch_subagent` test pins dispatch argv contract'
-  justifications:
-  - kind: rationale
-    text: |
-      `pi_dispatch_subagent_invokes_pi_with_target_plan_args` pins the exact argv for `dispatch_subagent`: `--no-session`, `--append-system-prompt`, `--provider anthropic`, `--mode json`, `-p`, prompt.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: envoverride-serialises-env-mutation-in-integration-tests
-  kind: memory-entry
-  claim: '`EnvOverride` serialises env mutation in integration tests'
-  justifications:
-  - kind: rationale
-    text: |
-      `EnvOverride` holds a process-wide `OnceLock<Mutex<()>>`; struct-field drop order keeps the lock held until `PATH`/`HOME` restoration completes, preventing fake-pi `PATH` from leaking into concurrent test runners.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: gitcommitwork-appends-latest-session-yaml-to-session-log-yaml
-  kind: memory-entry
-  claim: '`GitCommitWork` appends `latest-session.yaml` to `session-log.yaml`'
-  justifications:
-  - kind: rationale
-    text: |
-      `append_session_log` in `phase_loop.rs` delegates to `session_log::append_latest_to_log`. Idempotent by session id; missing `latest-session.yaml` is a graceful no-op.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: write-phase-precedes-git-commit-plan-in-all-commit-handlers
-  kind: memory-entry
-  claim: '`write_phase` precedes `git_commit_plan` in all commit handlers'
-  justifications:
-  - kind: rationale
-    text: |
-      All four `ScriptPhase::GitCommit*` handlers in `phase_loop.rs` call `write_phase(next)` before `git_commit_plan`. Phase.md is captured in the same commit as other plan-state writes; the plan tree is clean at every user-prompt point.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: work-baseline-seeded-atomically-in-the-triage-commit
-  kind: memory-entry
-  claim: Work-baseline seeded atomically in the triage commit
-  justifications:
-  - kind: rationale
-    text: |
-      `GitCommitTriage` calls `git_commit_plan` first, then `git_save_baseline(plan_dir, "work-baseline")`, so `work-baseline` records the triage commit SHA (not the reflect commit). A follow-on save-baseline commit lands the file; plan tree is dirty-free at user prompt. `LlmPhase::Work` seeds work-baseline only when the file is absent (first-run fallback). `git_save_baseline(plan_dir, filename)` is the generalized helper used by all four `GitCommit*` handlers.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: llmphase-work-does-not-delete-latest-session-yaml
-  kind: memory-entry
-  claim: '`LlmPhase::Work` does not delete `latest-session.yaml`'
-  justifications:
-  - kind: rationale
-    text: |
-      Analyse-work overwrites `latest-session.yaml` unconditionally on entry; the Work handler does not delete it.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: plan-tree-cleanliness-asserted-via-git-status-porcelain
-  kind: memory-entry
-  claim: Plan-tree cleanliness asserted via `git status --porcelain`
-  justifications:
-  - kind: rationale
-    text: |
-      `git_commit_triage_leaves_plan_tree_clean_at_user_prompt` and `git_commit_work_leaves_plan_tree_clean_at_user_prompt` assert `git status --porcelain -- <plan_dir>` is empty after `phase_loop` returns from a user-declined exit.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: spawn-blocking-does-not-cancel-cleanly-in-tokio-select
-  kind: memory-entry
-  claim: '`spawn_blocking` does not cancel cleanly in `tokio::select!`'
-  justifications:
-  - kind: rationale
-    text: |
-      Use `tokio::time::sleep` for tty event polling. A `spawn_blocking` thread is not dropped when the select arm is cancelled; it races the spawned child for the tty. `tokio::time::sleep` is properly cancellable and eliminates the race.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: dream-word-count-sums-entry-titles-and-bodies
-  kind: memory-entry
-  claim: Dream word-count sums entry claims and rationale text
-  justifications:
-  - kind: rationale
-    text: |
-      `dream.rs` computes word count by summing `claim` and `Justification::Rationale` text across all `MemoryEntry` values; markdown punctuation is excluded. `update_baseline_counts_entry_titles_and_bodies` regression test pins this contract. `update_dream_baseline` self-corrects after the first successful dream if a prior raw-markdown baseline drifts.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: dream-baseline-seeded-from-three-call-sites
-  kind: memory-entry
-  claim: dream-word-count seeded from three call sites
-  justifications:
-  - kind: rationale
-    text: |
-      `seed_dream_word_count_if_missing` in `src/dream.rs` is called from `run_create` (post-session scaffolding), `run_set_phase` (every LLM phase transition including coordinators), and `GitCommitReflect`. Seeds `dream-word-count` to 0, not current word count; seeding to current count silently delays the first dream by `headroom` words on populated plans. Legacy migration: if `dream-word-count` is missing and `dream-baseline` parses as a usize, the value is copied and the legacy file is deleted. `dream-baseline` is a SHA file; `dream-word-count` is the word-count store.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: phase-prompts-use-ravel-lite-state-cli-verbs
-  kind: memory-entry
-  claim: Phase prompts use `ravel-lite state` CLI verbs
-  justifications:
-  - kind: rationale
-    text: |
-      All `defaults/phases/*.md` and `create-plan.md` use `ravel-lite state <verb>` for plan-state operations. Direct writes to plan-state files bypass `Phase::parse` validation; LLM phases must use the CLI. `run_set_phase` refuses to create a plan dir that does not already exist.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: cli-integration-tests-use-cargo-bin-exe-ravel-lite
-  kind: memory-entry
-  claim: CLI integration tests use `CARGO_BIN_EXE_ravel-lite`
-  justifications:
-  - kind: rationale
-    text: |
-      CLI integration tests shell out via `CARGO_BIN_EXE_ravel-lite` and assert on-disk effects; the Cargo-idiomatic pattern for end-to-end CLI testing.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: build-rs-emits-timestamp-git-describe-and-sha
-  kind: memory-entry
-  claim: '`build.rs` emits timestamp, git-describe, and SHA'
-  justifications:
-  - kind: rationale
-    text: |
-      `build.rs` emits `BUILD_TIMESTAMP`, `GIT_DESCRIBE`, and `GIT_SHA` as compile-time env vars; `main.rs` concatenates them into a `VERSION` constant used by both `--version` and the `version` subcommand.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: release-toml-disables-publish-and-push
-  kind: memory-entry
-  claim: '`release.toml` disables publish and push'
-  justifications:
-  - kind: rationale
-    text: |
-      `release.toml` sets `publish=false` and `push=false`; `cargo release patch --execute` bumps the version and tags locally without touching crates.io or the remote.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: term-title-rs-sets-phase-title-via-osc-escape
-  kind: memory-entry
-  claim: '`term_title.rs` sets phase title via OSC escape'
-  justifications:
-  - kind: rationale
-    text: |
-      `src/term_title.rs` exposes `set_title(project, plan, phase)` (side-effecting) and `format_title_escape` (testable helper). Writes to stdout; clean side-channel because Ratatui uses stderr backend. Includes tmux passthrough (doubled inner ESCs). Called at `LlmPhase` entry in `phase_loop` and `run_single_plan`. Phase labels uppercased to match the phase-header banner convention.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: reflect-phase-runs-automatically-after-git-commit-work
-  kind: memory-entry
-  claim: Reflect phase runs automatically after git-commit-work
-  justifications:
-  - kind: rationale
-    text: |
-      The runner proceeds from `GitCommitWork` to reflect without user confirmation; no pre-reflect gate exists.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: fake-pi-script-must-be-phase-aware
-  kind: memory-entry
-  claim: Fake-pi script must be phase-aware
-  justifications:
-  - kind: rationale
-    text: |
-      The fake-pi script in `pi_phase_cycle` uses a case statement on the current phase to emit distinct next-phase values. Writing `git-commit-work` unconditionally causes an infinite loop; each phase must map to a different output.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: contractmockagent-for-triage-appends-not-overwrites
-  kind: memory-entry
-  claim: '`ContractMockAgent` for Triage appends, not overwrites'
-  justifications:
-  - kind: rationale
-    text: |
-      `ContractMockAgent::invoke_headless` uses append mode for `Triage` so the safety-net test can observe analyse-work's status flips written earlier in the same cycle.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: hand-off-fields-are-live-in-analyse-work-and-triage-prompts
-  kind: memory-entry
-  claim: Hand-off fields are live in analyse-work and triage prompts
-  justifications:
-  - kind: rationale
-    text: |
-      `defaults/phases/analyse-work.md` and `defaults/phases/triage.md` include the hand-off convention. Analyse-work writes a hand-off block; triage reads it on entry. See: `[HANDOFF] integration tests guard promote-vs-archive cycle`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: handoff-integration-tests-guard-promote-vs-archive-cycle
-  kind: memory-entry
-  claim: '`[HANDOFF]` integration tests guard promote-vs-archive cycle'
-  justifications:
-  - kind: rationale
-    text: |
-      `handoff_marker_in_analyse_work_is_promoted_by_triage` and `handoff_marker_in_analyse_work_is_archived_by_triage` in `tests/phase_loop.rs` run the full analyse-work → git-commit-work → reflect → git-commit-reflect → triage → git-commit-triage cycle. CI-protects the hand-off convention. See: `ContractMockAgent has opt-in handoff injection`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: contractmockagent-has-opt-in-handoff-injection
-  kind: memory-entry
-  claim: '`ContractMockAgent` has opt-in handoff injection'
-  justifications:
-  - kind: rationale
-    text: |
-      `handoff_injection: Option<HandoffInjection>` field with `with_handoff_injection()` builder. `HandoffDisposition` inside `HandoffInjection` pins promote-vs-archive without hardcoding LLM reasoning, keeping hand-off tests deterministic.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: task-blocks-delimited-by-n-separator
-  kind: memory-entry
-  claim: Task blocks delimited by `\n---` separator
-  justifications:
-  - kind: rationale
-    text: |
-      `inject_handoff_into_task_block` and `extract_handoff_from_block` both split on `\n---`. Protocol for separating the main task block from an appended hand-off block.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: warn-if-project-tree-dirty-is-advisory-only
-  kind: memory-entry
-  claim: '`warn_if_project_tree_dirty` is advisory-only'
-  justifications:
-  - kind: rationale
-    text: |
-      `warn_if_project_tree_dirty` at `GitCommitWork` entry has no user-facing gate; the warning fires but the phase proceeds unconditionally. If this becomes unacceptable, promote to a hard error rather than re-adding a gate.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: phase-loop-is-single-cycle-run-single-plan-holds-the-inter-cycle-prompt
-  kind: memory-entry
-  claim: '`phase_loop` is single-cycle; `run_single_plan` holds the inter-cycle prompt'
-  justifications:
-  - kind: rationale
-    text: |
-      `phase_loop` is a single-cycle function. The inter-cycle user prompt ("continue / switch plan / exit") lives in `run_single_plan`, which wraps `phase_loop` in a loop. Multi-plan dispatch calls `phase_loop` directly via `dispatch_one_cycle` in `src/multi_plan.rs`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: src-multi-plan-rs-owns-survey-driven-multi-plan-routing
-  kind: memory-entry
-  claim: '`src/multi_plan.rs` owns survey-driven multi-plan routing'
-  justifications:
-  - kind: rationale
-    text: |
-      `src/multi_plan.rs` implements `build_plan_dir_map`, `options_from_response`, `select_plan_interactive`, and `run_multi_plan`. `ravel-lite run` accepts 1..N plan dirs; `--survey-state` is required when N > 1. Routes to the next plan via `dispatch_one_cycle`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: ravel-lite-survey-emits-structured-yaml
-  kind: memory-entry
-  claim: '`ravel-lite survey` emits structured YAML'
-  justifications:
-  - kind: rationale
-    text: |
-      `src/survey/schema.rs` defines the output schema with `Serialize` derives and a `schema_version` marker. `input_hash` is seeded in Rust post-parse. `task_counts` is injected by Rust via `inject_task_counts` / `collect_task_counts`; `unblocked`, `blocked`, and `received` are injected via `inject_plan_row_counts` / `plan_row_counts`. Survey prompts forbid the LLM from emitting any of these injected fields. `survey-format` subcommand renders YAML output to human-readable form. See: `PlanRowCounts injects unblocked/blocked/received into survey`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: survey-compose-wraps-content-in-yaml-fences
-  kind: memory-entry
-  claim: Survey compose wraps content in YAML fences
-  justifications:
-  - kind: rationale
-    text: |
-      `src/survey/compose.rs` wraps backlog and memory content in ` ```yaml ` fences, labeling sections `backlog.yaml` and `memory.yaml`. `survey.md` and `survey-incremental.md` reference these labels. `PlanSnapshot::backlog` and `.memory` carry re-serialised YAML strings.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: incremental-survey-splits-invoke-rs-into-two-functions
-  kind: memory-entry
-  claim: Incremental survey splits `invoke.rs` into two functions
-  justifications:
-  - kind: rationale
-    text: |
-      `compute_survey_response` is the in-memory core; `run_survey` is the CLI wrapper. `src/survey/delta.rs` owns hash-comparison and delta-merge. `--prior` names the baseline state; `--force` skips the hash guard. `defaults/survey-incremental.md` is the prompt template for the delta path.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: push-plan-stack-yaml-and-src-pivot-rs-removed
-  kind: memory-entry
-  claim: '`push-plan`, `stack.yaml`, and `src/pivot.rs` removed'
-  justifications:
-  - kind: rationale
-    text: |
-      `push-plan` CLI verb, `run_stack`, `stack.yaml`, and `src/pivot.rs` are deleted. `src/state.rs` reduced from ~230 to ~80 lines; `src/phase_loop.rs` de-pivoted. Multi-plan routing is exclusively in `src/multi_plan.rs`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: project-root-for-plan-derives-project-root-as-plan
-  kind: memory-entry
-  claim: '`project_root_for_plan` derives project root as `<plan>/../..`'
-  justifications:
-  - kind: rationale
-    text: |
-      Pure path math; no disk walk, no `.git` requirement. Contract: `<plan>` must be at least three path components deep.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: git-query-functions-scope-to-project-dir-via-pathspec
-  kind: memory-entry
-  claim: Git query functions scope to project dir via pathspec
-  justifications:
-  - kind: rationale
-    text: |
-      `working_tree_status`, `paths_changed_since_baseline`, and `work_tree_snapshot` append `-- <project_dir>` pathspec. `git_commit_plan` is intentionally unscoped; it runs from `plan_dir` CWD, already limiting `git add .` to plan-state files.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: integration-tests-use-three-level-project-llm-state-plan-layout
-  kind: memory-entry
-  claim: Integration tests use three-level `<project>/LLM_STATE/<plan>` layout
-  justifications:
-  - kind: rationale
-    text: |
-      Integration tests and `src/multi_plan.rs` tests construct `<project>/LLM_STATE/<plan>` directory trees matching ravel-lite convention. New integration tests must follow this layout.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: format-result-text-renders-as-continuation-lines
-  kind: memory-entry
-  claim: '`format_result_text` renders `→` as continuation lines'
-  justifications:
-  - kind: rationale
-    text: |
-      Lines matching `^\s*→\s*(.*)` immediately after an action marker are re-indented to the detail column and styled with the preceding action's intent. Blank lines, insight blocks, and non-continuation lines break the chain. `last_action_intent: Option<Option<Intent>>` encodes "no prior action" (outer None) vs "prior action with no intent" (Some(None)).
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: promoted-and-archived-are-valid-action-tags
-  kind: memory-entry
-  claim: '`PROMOTED` and `ARCHIVED` are valid action tags'
-  justifications:
-  - kind: rationale
-    text: |
-      `ACTION_INTENTS` in `src/format.rs` includes `PROMOTED` and `ARCHIVED` as triage hand-off markers; they emit new backlog tasks or memory entries.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: work-phase-allows-multiple-tasks-when-requested
-  kind: memory-entry
-  claim: Work phase allows multiple tasks when requested
-  justifications:
-  - kind: rationale
-    text: |
-      `work.md` step 10 allows multiple tasks per session when the user explicitly requests them; the default remains single-task-per-phase.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: dream-output-uses-label-continuation-format
-  kind: memory-entry
-  claim: Dream output uses label + `→` continuation format
-  justifications:
-  - kind: rationale
-    text: |
-      `defaults/phases/dream.md` specifies a two-line entry layout (label line + `→ detail` continuation) matching the continuation-line renderer in `format_result_text`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: read-related-plans-markdown-centralises-related-plans-md-access
-  kind: memory-entry
-  claim: '`read_related_plans_markdown` centralises `related-plans.md` access'
-  justifications:
-  - kind: rationale
-    text: |
-      `read_related_plans_markdown(plan_dir)` is the single access point for plan-local `related-plans.md` prose. Returns `""` gracefully on absent file; `{{RELATED_PLANS}}` token substitutes to an empty block. Both `src/main.rs` and `src/multi_plan.rs` route through it.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: related-plans-stored-as-global-name-indexed-edge-list
-  kind: memory-entry
-  claim: '`related-components.yaml` stores global name-indexed edge list'
-  justifications:
-  - kind: rationale
-    text: |
-      `related-components.yaml` stores project-level (not plan-level) edges keyed by component name, shareable across all plans in a project. Schema version 2; uses v2 `EdgeKind` vocabulary. Full CRUD with `Edge::validate` (rejects self-loops, unsorted symmetric participants). See: `run_rename needs a Trait registry before fourth cascade`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: sibling-edges-dedup-by-sorted-participants-parent-of-by-order
-  kind: memory-entry
-  claim: Sibling edges dedup by sorted participants; parent-of by order
-  justifications:
-  - kind: rationale
-    text: |
-      In `src/related_components.rs` and `src/discover/apply.rs`, symmetric edge kinds use sorted participants for identity (order-insensitive dedup); directed edge kinds preserve participant order. Reversing this rule silently creates duplicate or missing edges. See: `Edge::validate must enforce participant sort order`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: plan-state-md-readers-fully-migrated
-  kind: memory-entry
-  claim: LLM_STATE/core plan-state migrated to typed YAML
-  justifications:
-  - kind: rationale
-    text: |
-      `src/dream.rs` and `src/survey/discover.rs` use the typed YAML API; `.md` originals deleted from `LLM_STATE/core`. `src/multi_plan.rs` and `src/main.rs` tolerate absent `.md` files.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: state-migrate-takes-plan-dir-as-positional-argument
-  kind: memory-entry
-  claim: '`state migrate` takes `PLAN_DIR` as positional argument'
-  justifications:
-  - kind: rationale
-    text: |
-      `--plan-dir` is not a valid flag; the CLI expects `PLAN_DIR` positionally. Correct usage: `ravel-lite state migrate <PLAN_DIR>`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: plan-state-migration-requires-atomicity-idempotency-dry-run-validation
-  kind: memory-entry
-  claim: Plan-state migration requires atomicity, idempotency, dry-run, validation
-  justifications:
-  - kind: rationale
-    text: |
-      Any plan-state migration tool must apply changes atomically, be safe to re-run (idempotent), support `--dry-run` preview, and validate round-trip fidelity.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: migrate-rs-uses-parse-all-then-write-all-planner
-  kind: memory-entry
-  claim: '`migrate.rs` uses parse-all-then-write-all planner'
-  justifications:
-  - kind: rationale
-    text: |
-      `plan_backlog_migration`, `plan_memory_migration`, `plan_session_log_migration`, and `plan_latest_session_migration` each return `Option<PendingMigration>`; `run_migrate` errors if set is empty, then writes all only after all parses succeed.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: state-memory-parses-headings-empty-body-is-an-error
-  kind: memory-entry
-  claim: 'parse_md.rs maps ## headings to claim; empty body is an error'
-  justifications:
-  - kind: rationale
-    text: |
-      `parse_md.rs` in `state::memory` splits on `^## ` (not `### ` as backlog uses). Headings map to the `claim` field; body text maps to `Justification::Rationale`. An entry with an empty body is a parse error, not silently skipped. See: `split_into_task_blocks splits on ### headings`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: src-state-module-structure
-  kind: memory-entry
-  claim: '`src/state/` uses module-per-area layout'
-  justifications:
-  - kind: rationale
-    text: |
-      `src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, parse_md, verbs, mod), `memory/` (schema, yaml_io, parse_md, verbs, mod), `session_log/` (schema, yaml_io, parse_md, verbs, mod), and `migrate.rs`. New state areas follow this layout.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: find-task-centralises-backlog-id-lookup
-  kind: memory-entry
-  claim: '`find_task` centralises backlog id-lookup'
-  justifications:
-  - kind: rationale
-    text: |
-      `find_task` in `src/state/backlog/verbs.rs` is the single resolution point for task-id lookup; all mutation verbs call it. Do not duplicate id-lookup logic.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: backlogfile-task-counts-injects-counts-into-survey
-  kind: memory-entry
-  claim: '`BacklogFile::task_counts` injects counts into survey'
-  justifications:
-  - kind: rationale
-    text: |
-      `TaskCounts` lives in `state::backlog::schema`; fields reflect the `BacklogStatus` vocabulary (`active`, `done`, `blocked`, `defeated`, `superseded`). `collect_task_counts` gathers per-plan counts; `inject_task_counts` in `survey/schema.rs` writes them onto `PlanRow`. Survey prompts (`survey.md`, `survey-incremental.md`) explicitly forbid the LLM from emitting `task_counts`. See: `PlanRowCounts injects unblocked/blocked/received into survey` for the analogous dep-traversal-based injection.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: state-session-log-provides-full-verb-surface
-  kind: memory-entry
-  claim: '`state session-log` provides full verb surface'
-  justifications:
-  - kind: rationale
-    text: |
-      `src/state/session_log/` holds `SessionRecord` / `SessionLogFile` types. CLI verbs: `list`, `show`, `append`, `set-latest`, `show-latest`. `append_record` is idempotent by session id; duplicate appends are silently skipped.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: split-into-task-blocks-splits-on-headings
-  kind: memory-entry
-  claim: '`split_into_task_blocks` splits on `### ` headings'
-  justifications:
-  - kind: rationale
-    text: |
-      `split_into_task_blocks` uses `### ` heading boundaries, not `\n---`; `\n---` incorrectly fragments `[HANDOFF]` blocks appended to task bodies. See: `Task blocks delimited by \n--- separator`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: dispatch-state-routes-state-subcommands
-  kind: memory-entry
-  claim: '`dispatch_state` routes state subcommands'
-  justifications:
-  - kind: rationale
-    text: |
-      `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, or `dispatch_related_components`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: r7-design-llm-driven-related-projects-discovery
-  kind: memory-entry
-  claim: '`discover` runs two-stage fan-out pipeline to `discover-proposals.yaml`'
-  justifications:
-  - kind: rationale
-    text: |
-      `state related-components discover` fans out one subagent per project (two-stage pipeline: per-project interaction-surface extraction then global edge proposal) and writes `discover-proposals.yaml`; `discover-apply` merges after human review. Cache key is `(tree_sha, dirty_hash)` pair; see `Discover cache key is tree_sha + dirty_hash pair`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: state-migrate-force-required-when-yaml-predates-md
-  kind: memory-entry
-  claim: state migrate --force required when .yaml predates .md
-  justifications:
-  - kind: rationale
-    text: |
-      When pre-existing `.yaml` files are stale relative to the authoritative `.md` originals, `state migrate` aborts without `--force`. `--force` re-derives from `.md` and overwrites `.yaml`. `.md` is the authoritative source; `.yaml` is a derived cache.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: std-path-absolute-does-pure-path-math-anchored-to-cwd
-  kind: memory-entry
-  claim: std::path::absolute does pure path math anchored to CWD
-  justifications:
-  - kind: rationale
-    text: |
-      `std::path::absolute` performs pure path math anchored to the process CWD without touching the filesystem or resolving symlinks; use when recording a user-stated path without requiring the directory to exist.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: src-discover-schema-surfacefile-and-surfacerecord-r7-1
-  kind: memory-entry
-  claim: '`SurfaceFile` and `SurfaceRecord` schema in `src/discover/`'
-  justifications:
-  - kind: rationale
-    text: |
-      `src/discover/schema.rs` defines `SurfaceFile` (identity fields: `plan_name`, `tree_sha`) and `SurfaceRecord` (data fields). Two round-trip YAML tests guard the schema. Module wired at `src/lib.rs` as `pub mod discover`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: discover-schema-serde-default-on-data-fields-only
-  kind: memory-entry
-  claim: 'Discover schema: serde(default) on data fields only'
-  justifications:
-  - kind: rationale
-    text: |
-      In `SurfaceRecord`, data fields carry `#[serde(default)]` to tolerate partial LLM emission; identity fields on `SurfaceFile` deliberately omit `default` so a missing identity field hard-fails on deserialise.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: macos-tempdir-path-needs-canonicalize-before-strip-prefix
-  kind: memory-entry
-  claim: macOS TempDir path needs canonicalize before strip_prefix
-  justifications:
-  - kind: rationale
-    text: |
-      `git rev-parse --show-toplevel` resolves through macOS's `/var → /private/var` symlink; `TempDir` paths do not. Call `std::fs::canonicalize` on both sides before `strip_prefix` or the prefix check silently fails.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: display-only-timestamps-avoid-chrono-dep
-  kind: memory-entry
-  claim: Display-only timestamps avoid chrono dep
-  justifications:
-  - kind: rationale
-    text: |
-      `format_unix_utc` in `src/discover/stage1.rs` hand-rolls proleptic-Gregorian formatting for the `analysed_at` field. When a timestamp is display-only (never parsed back), a small tested helper avoids the `chrono` dependency entirely.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: multi-stage-llm-pipeline-uses-run-config-outcome-submodule-shape
-  kind: memory-entry
-  claim: Multi-stage LLM pipeline uses run/Config/Outcome submodule shape
-  justifications:
-  - kind: rationale
-    text: |
-      Each stage in `src/discover/` exposes `run_<stage>`, `<Stage>Config`, and `<Stage>Outcome`. Internal shape: `Config` → `pub async run` fn → helper `spawn` fn → unit tests. Stages mirror each other; reuse this template for new stages.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: rename-cascade-registry-design-consideration
-  kind: memory-entry
-  claim: '''repo rename'' needs RenameHook registry before third cascade'
-  justifications:
-  - kind: rationale
-    text: |
-      `rename_component_in_edges` in `src/related_components.rs` is implemented but unused — its only caller (`projects::run_rename`) was deleted with `src/projects.rs`. Reserved for future repo-rename. When implementing repo-rename in `src/repos.rs`, wire `rename_component_in_edges` first; before the cascade reaches three points, extract a `RenameHook` trait registry rather than threading in ad-hoc.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: find-conflicting-kind-misses-parent-of-direction-reversals
-  kind: memory-entry
-  claim: '`find_directional_conflict` requires same-lifecycle for reversed-pair conflicts'
-  justifications:
-  - kind: rationale
-    text: |
-      `src/discover/apply.rs::find_directional_conflict` flags a conflict when a directed-kind edge with the same lifecycle and reversed participants already exists. Cross-lifecycle reversals are not flagged; whether they should be is an open design question. See: `Sibling edges dedup by sorted participants; parent-of by order`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: discover-e2e-uses-a-fake-claude-bash-shim-per-stage
-  kind: memory-entry
-  claim: Discover e2e uses a fake-claude bash shim per stage
-  justifications:
-  - kind: rationale
-    text: |
-      Discover e2e tests use a fake-claude bash shim that distinguishes Stage 1 vs Stage 2 by grepping the prompt header. Stage 1: extracts the YAML surface-file path from the prompt body and writes a canned YAML surface response. Stage 2: issues `ravel-lite state discover-proposals add-proposal` CLI calls for each canned proposal edge; no YAML path extraction.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: discover-cache-key-is-tree-sha-dirty-hash-pair
-  kind: memory-entry
-  claim: Discover cache key is tree_sha + dirty_hash pair
-  justifications:
-  - kind: rationale
-    text: |
-      `compute_project_state` returns `{ tree_sha, dirty_hash }`. `dirty_hash` is SHA-1 (via `git hash-object --stdin`) over `git diff HEAD -- <rel>` plus untracked file paths and contents (subtree-scoped via `git ls-files --others -- <rel>`). Clean working trees use `dirty_hash = ""`. Cache hit requires both fields to match.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: stage-1-injects-catalog-projects-to-scope-edge-evidence
-  kind: memory-entry
-  claim: Stage 1 injects CATALOG_PROJECTS to scope edge evidence
-  justifications:
-  - kind: rationale
-    text: |
-      `{{CATALOG_PROJECTS}}` (catalog minus the current project) is injected into the Stage 1 prompt. Rules forbid non-catalog entries in `explicit_cross_project_mentions`. Without scoping, third-party projects appear as sibling evidence (e.g. Raycast, swift-lispkit).
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: stage-2-must-not-propose-edges-from-weak-signals-alone
-  kind: memory-entry
-  claim: Stage 2 must not propose edges from weak signals alone
-  justifications:
-  - kind: rationale
-    text: |
-      `defaults/discover-stage2.md` forbids proposals based solely on: shared upstream dependencies, same ecosystem, trivial glob overlap, or shared generic tools. These signals in combination can still contribute; any one alone is insufficient.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: stage-1-yaml-list-items-forbid-parenthetical-colon-annotations
-  kind: memory-entry
-  claim: Stage 1 YAML list items forbid parenthetical colon annotations
-  justifications:
-  - kind: rationale
-    text: |
-      Parenthetical annotations with colons inside YAML list items (e.g., `- foo (format: bar)`) cause `data_formats[n]: invalid type: map` deserialization failures. Disambiguation belongs in the `notes` field, not inline in the list item.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: stage-2-skips-when-all-stage-1-outcomes-are-cached
-  kind: memory-entry
-  claim: Stage 2 skips when all Stage 1 outcomes are Cached
-  justifications:
-  - kind: rationale
-    text: |
-      When every Stage 1 outcome is `Cached` and no failures occurred, `discover` skips Stage 2 and preserves the existing `discover-proposals.yaml`. Prevents non-deterministic LLM output from overwriting user-curated proposals on incremental re-runs.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: stage-2-skips-when-all-stage-1-attempts-failed
-  kind: memory-entry
-  claim: Stage 2 skips when all Stage 1 attempts failed
-  justifications:
-  - kind: rationale
-    text: |
-      When every Stage 1 attempt produces `Stage1Outcome::Failed`, Stage 2 is skipped and a failure-only proposals file is written. Each failure surfaces via `eprintln!`. Inferring edges from zero surfaces is meaningless.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: discover-stage-spawns-need-allowed-tools-and-add-dir
-  kind: memory-entry
-  claim: Discover stage spawns need --allowed-tools and --add-dir
-  justifications:
-  - kind: rationale
-    text: |
-      `--setting-sources project,local` excludes the user's allowlist; writes to dirs outside cwd are silently blocked. Stage 1 spawns require `--allowed-tools "Read,Grep,Glob,Bash,Write,Task"` and `--add-dir <cache-dir>`. Stage 2 spawns require only `--allowed-tools Bash` and `--add-dir <config_root>`; Stage 2 issues CLI calls rather than writing files directly.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: opportunistic-discover-on-catalog-changes-deferred-idea
-  kind: memory-entry
-  claim: Opportunistic discover on catalog changes is a deferred idea
-  justifications:
-  - kind: rationale
-    text: |
-      Analyse-work or triage could run `discover` opportunistically when project composition changes (new projects added, catalog membership shifts), keeping `related-projects.yaml` fresher without manual invocation. Ontology v2 design is complete; trigger conditions are not yet defined.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: proposalsfile-source-project-states-stores-full-projectstate
-  kind: memory-entry
-  claim: ProposalsFile.source_project_states stores full ProjectState
-  justifications:
-  - kind: rationale
-    text: |
-      `ProposalsFile.source_project_states` is `BTreeMap<String, ProjectState>` (tree_sha + dirty_hash per surface), not `BTreeMap<String, String>`. The proposals file cache-state is identical to the in-memory cache key. Legacy `source_tree_shas` key is silently dropped on read; `proposals_file_reads_legacy_source_tree_shas_as_empty_states` pins this behaviour. See: `Discover cache key is tree_sha + dirty_hash pair`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: serde-default-on-added-fields-avoids-schema-version-bump
-  kind: memory-entry
-  claim: serde(default) on added fields avoids schema version bump
-  justifications:
-  - kind: rationale
-    text: |
-      Adding `#[serde(default)]` to a newly introduced field on an existing serialised struct maintains read-compat with pre-existing files. No schema_version bump needed when the field is informational (not identity-determining). `ProjectState.dirty_hash` demonstrates this pattern.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: component-ontology-v2-spec-at-docs-component-ontology-md
-  kind: memory-entry
-  claim: Component ontology v2 spec at docs/component-ontology.md
-  justifications:
-  - kind: rationale
-    text: |
-      `docs/component-ontology.md` is the canonical v2 ontology spec (reference section only); migration guidance is in a separate companion doc. Implementation pending. See: `Component ontology v2 uses kind × lifecycle × direction axes`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: component-ontology-v2-uses-kind-lifecycle-direction-axes
-  kind: memory-entry
-  claim: Component ontology v2 uses kind × lifecycle × direction axes
-  justifications:
-  - kind: rationale
-    text: |
-      Three orthogonal axes (kind, lifecycle, direction) give sufficient expressiveness without hyperedges or numeric confidence. Vocabulary anchored in SPDX 3.0.1's `RelationshipType × LifecycleScopeType` factoring. See: `Component ontology v2 spec at docs/component-ontology.md`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: generated-derived-artifacts-need-no-migrators-delete-and-regenerate
-  kind: memory-entry
-  claim: Generated derived artifacts need no migrators; delete-and-regenerate
-  justifications:
-  - kind: rationale
-    text: |
-      `related-projects.yaml` is a generated artifact; delete-and-regenerate is the upgrade path when the schema changes. No v1→v2 migrator is needed. Generalises: generated derived files never need forward-migration tools.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: unquoted-paths-in-error-messages-hide-empty-path-bugs
-  kind: memory-entry
-  claim: Unquoted paths in error messages hide empty-path bugs
-  justifications:
-  - kind: rationale
-    text: |
-      Quote all path values in user-facing error messages so an empty path appears as `""` rather than a silent double-space gap. Applies anywhere a path is interpolated into a string literal. An unquoted empty path is indistinguishable from surrounding whitespace, delaying diagnosis.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: project-root-for-plan-uses-canonicalize-latent-catalog-path-mismatch-risk
-  kind: memory-entry
-  claim: project_root_for_plan uses canonicalize; latent catalog-path mismatch risk
-  justifications:
-  - kind: rationale
-    text: |
-      `project_root_for_plan` in `src/git.rs:153` uses `canonicalize` with a raw-path fallback; `plan_project_path` and `projects::run_add` both use `std::path::absolute`. On macOS with symlinks in `/Users` or `/Development`, `canonicalize` introduces `/private/...` prefixes that desynchronise lookup from catalog-stored paths. No current consumer cross-compares the two outputs. Fix `project_root_for_plan` to use `std::path::absolute` only if a comparison against a catalog-stored path is introduced.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: edgekind-has-17-variants-task-briefs-may-cite-16
-  kind: memory-entry
-  claim: EdgeKind has 17 variants; task briefs may cite 16
-  justifications:
-  - kind: rationale
-    text: |
-      `EdgeKind::all()` in the `component_ontology` crate defines 17 kebab-case variants. The `conforms-to` family has three members, not two. Prose references (including task briefs) that cite 16 are wrong. Authoritative count: `EdgeKind::all()` in the crate.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: edge-validate-must-enforce-participant-sort-order
-  kind: memory-entry
-  claim: Edge::validate must enforce participant sort order
-  justifications:
-  - kind: rationale
-    text: |
-      Distinctness checks alone do not catch reversed symmetric-participant pairs; canonical-key dedup silently fails for `[A, B]` vs `[B, A]`. `Edge::validate` must sort participants and reject unsorted input, not merely check uniqueness. See: `Sibling edges dedup by sorted participants; parent-of by order`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: ontology-and-related-components-schema-versions-are-orthogonal
-  kind: memory-entry
-  claim: Ontology and related-components schema versions are orthogonal
-  justifications:
-  - kind: rationale
-    text: |
-      `related-components.yaml` uses `SCHEMA_VERSION=2`; the `component_ontology` crate's YAML format uses `ONTOLOGY_FILE_SCHEMA_VERSION=1`. Separate version fields keep the two evolutions independent; a bump in one does not imply a bump in the other.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: action-lines-split-title-reason-into-two-row-layout
-  kind: memory-entry
-  claim: Action lines split title/reason into two-row layout
-  justifications:
-  - kind: rationale
-    text: |
-      \`format_result_text\` in \`src/format.rs\` splits action-line detail text on \`" — "\` (em-dash with spaces) via \`str::split_once\`; the title row keeps the intent colour, the reason row is indented to the detail column and rendered dim. A \`trim().is_empty()\` guard suppresses the second row when the separator is trailing. The \` — \` separator is now load-bearing protocol in phase prompts: using \`-\` or \`–\` instead silently collapses back to single-row output.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: render-embedded-kinds-for-prompt-injects-edgekind-vocabulary-into-stage-2
-  kind: memory-entry
-  claim: render_embedded_kinds_for_prompt injects EdgeKind vocabulary into Stage 2
-  justifications:
-  - kind: rationale
-    text: |
-      The `component_ontology` crate exposes `render_kinds_for_prompt(&OntologyYaml) -> String` and `render_embedded_kinds_for_prompt() -> Result<String>`. `src/discover/stage2.rs` calls `render_embedded_kinds_for_prompt()` to substitute `{{ONTOLOGY_KINDS}}` in the Stage 2 prompt. This is the sole injection point for the EdgeKind vocabulary into LLM prompts.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: interaction-role-hints-spec-is-in-migration-doc-5-2-not-ontology-doc
-  kind: memory-entry
-  claim: interaction_role_hints spec is in migration doc §5.2, not ontology doc
-  justifications:
-  - kind: rationale
-    text: |
-      `docs/component-ontology.md` has no §13.2 or §14.1. The `interaction_role_hints` design lives in `docs/component-ontology-migration.md §5.2`. Task briefs that cite the former section numbers are wrong; use the migration companion doc.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: prompt-vocab-enum-variant-bijection-tests-guard-llm-code-alignment
-  kind: memory-entry
-  claim: Prompt vocab ↔ enum variant bijection tests guard LLM/code alignment
-  justifications:
-  - kind: rationale
-    text: |
-      A test asserting bijection between an enum's variants and a prompt's listed vocabulary (e.g. `InteractionRoleHint` vs `defaults/discover-stage1.md`) catches prompt-vocabulary drift before any production run. Adding a new enum variant without updating the prompt fails the test; adding a new prompt term without a matching variant also fails. Apply for any closed-vocabulary enum whose terms appear in an LLM prompt.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: format-result-text-inserts-blank-line-between-consecutive-action-blocks
-  kind: memory-entry
-  claim: '`format_result_text` inserts blank line between consecutive ACTION blocks'
-  justifications:
-  - kind: rationale
-    text: |
-      `src/format.rs::format_result_text` inserts a blank line when an `[ACTION]` marker immediately follows a previous `[ACTION]` block (including its continuation lines). Keeps multi-action output visually scannable; phase prompts do not need manual blank lines between action outputs.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: remove-edge-requires-lifecycle-v1-style-calls-fail-at-clap
-  kind: memory-entry
-  claim: '`remove-edge` requires --lifecycle; v1-style calls fail at clap'
-  justifications:
-  - kind: rationale
-    text: |
-      `ravel-lite state related-components remove-edge` requires `--lifecycle`; omitting it is a clap parse error. v1-style two-argument invocations (without lifecycle) are not accepted. See: `related-components.yaml stores global name-indexed edge list`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: stage-2-hints-as-priors-enforcement-is-prose-only-hard-assertion-deferred
-  kind: memory-entry
-  claim: Stage 2 hints-as-priors enforcement is prose-only; hard assertion deferred
-  justifications:
-  - kind: rationale
-    text: |
-      Stage 2 `priors-not-verdicts` section is prose only. If real discover runs show Stage 2 over-weighting `interaction_role_hints` (e.g., proposing `strong` edges where the only evidence is a hint), consider adding a per-edge hard assertion: `evidence_fields must include at least one non-hint field for strong-grade proposals`. The prompt change alone may be sufficient.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: docs-architecture-md-not-audited-for-v1-vocabulary
-  kind: memory-entry
-  claim: docs/architecture.md has no v1 edge-kind vocabulary
-  justifications:
-  - kind: rationale
-    text: |
-      `docs/architecture.md` carries no v1 edge-kind vocabulary or `related-projects` references. Matches for `sibling`/`parent`/`child` are filesystem or process-context English, not ontology edge kinds.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: stage-2-writes-proposals-via-per-edge-add-proposal-cli
-  kind: memory-entry
-  claim: Stage 2 writes proposals via per-edge add-proposal CLI
-  justifications:
-  - kind: rationale
-    text: |
-      `run_stage2` spawns claude with `--allowed-tools Bash`; the LLM issues `ravel-lite state discover-proposals add-proposal` for each edge. Validation in `src/state/discover_proposals/` enforces: clap enum parsing, participant count, catalog-membership, `Edge::validate()`, and exact-duplicate rejection. Post-spawn, `run_stage2` loads the accumulated `discover-proposals.yaml`. The prior `RawStage2Output` YAML-parse approach is removed. Mirrors the main phase-loop CLI pattern.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: pre-initialise-output-file-before-cli-driven-spawn
-  kind: memory-entry
-  claim: Pre-initialise output file before CLI-driven spawn
-  justifications:
-  - kind: rationale
-    text: |
-      Pre-initialise the output file before spawning an LLM with CLI write tools: the zero-calls case produces a valid empty file (load succeeds) rather than a missing-file error. Seed prior-phase failures into the initial file so they survive the round-trip regardless of LLM output. `run_stage2` demonstrates this: creates `discover-proposals.yaml` with Stage 1 failures before spawning Stage 2.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: create-spawn-binds-purpose-via-invariant-in-prompt-and-template
-  kind: memory-entry
-  claim: '`create` spawn binds purpose via INVARIANT in prompt and template'
-  justifications:
-  - kind: rationale
-    text: |
-      `compose_create_prompt` in `src/create.rs` appends an INVARIANT paragraph after the path instruction. `defaults/create-plan.md` §0 leads with the invariant heading before the §1 clarification dialogue. Without both, the agent interprets a concrete problem description (bug report, feature request) as a pivot signal and skips plan creation. Single-task plans are explicitly named as valid to prevent "only one thing to do" being treated as a non-plan.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: compose-prompt-asserts-plan-only-output-invariant-guards-the-create-invariant
-  kind: memory-entry
-  claim: '`compose_prompt_asserts_plan_only_output_invariant` guards the create INVARIANT'
-  justifications:
-  - kind: rationale
-    text: |
-      `compose_prompt_asserts_plan_only_output_invariant` in `src/create.rs` tests asserts both key phrases are present in the composed prompt. Guards the INVARIANT binding against drift. See: `create` spawn binds purpose via INVARIANT in prompt and template.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: bash-var-pat-repl-treats-in-replacement-as-matched-text
-  kind: memory-entry
-  claim: Bash ${var//pat/repl} treats & in replacement as matched text
-  justifications:
-  - kind: rationale
-    text: |
-      In bash 5.2+, `&` in the replacement side of `${var//pat/repl}` expands to the matched pattern, not a literal ampersand. HTML entities like `&lt;` in replacement content become the matched text, silently corrupting output. Escape `&` → `\&` before using content as a replacement string.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: build-docs-sh-esc-must-wrap-every-substitution-replacement
-  kind: memory-entry
-  claim: build-docs.sh esc() must wrap every substitution replacement
-  justifications:
-  - kind: rationale
-    text: |
-      The `esc()` helper in `scripts/build-docs.sh` escapes `&` → `\&` before every bash string substitution call. Omitting it on any substitution silently corrupts HTML entities. This is a mandatory pipeline invariant; the comment block above the substitution calls documents it. See: `Bash ${var//pat/repl} treats & in replacement as matched text`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: clap-empty-string-normalisation-belongs-at-dispatch-boundary
-  kind: memory-entry
-  claim: Clap empty-string normalisation belongs at dispatch boundary
-  justifications:
-  - kind: rationale
-    text: |
-      Clap `value_delimiter` + `--arg ""` hands back `[""]`, not `[]`. Unit tests miss this (they receive `&[String]` directly and never exercise the clap parse path); only CLI integration tests surface it. Normalise empty strings at dispatch in `main.rs`, not inside the library verb, to keep the library contract clean.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: triage-prose-dep-reconciliation-is-a-mechanical-scan
-  kind: memory-entry
-  claim: '`backlog lint-dependencies` detects prose-dep drift'
-  justifications:
-  - kind: rationale
-    text: |
-      `state backlog lint-dependencies <PLAN_DIR>` reports drift between prose task-id mentions in task descriptions and structured `dependencies:` fields. Byte-scan whole-word matching; `[a-zA-Z0-9_-]` chars are id-body, any other byte is a boundary. Output is `LintReport`/`TaskDrift` serde types (YAML/JSON). Linter output is advisory, not authoritative; triage uses `set-dependencies` to reconcile. Triage prompt leads with a **Preflight** directive instructing the LLM to run the linter before triage work.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: analyse-work-stale-status-repair-is-a-mechanical-scan
-  kind: memory-entry
-  claim: '`repair-stale-statuses` exits 1 on drift, 0 on clean'
-  justifications:
-  - kind: rationale
-    text: |
-      `src/state/backlog/repair_stale_statuses.rs` exposes `analyse_repairs` and `run_repair_stale_statuses`; types `Repair`, `RepairReport`, `RepairReason`. Single repair: flips `blocked → active` when all task dependencies are `done`. `ResultsNonEmpty` repair removed (inapplicable without `in_progress`). Exit 1 when repairs apply, 0 when no drift.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: datalog-evaluator-deferred-imperative-verbs-sufficient
-  kind: memory-entry
-  claim: Datalog evaluator deferred; imperative verbs sufficient
-  justifications:
-  - kind: rationale
-    text: |
-      A Datalog query evaluator for backlog queries was considered and explicitly deferred. All current LLM query needs (dep-traversal, count derivation) are satisfiable by purpose-built imperative Rust verbs; Datalog adds complexity without corresponding expressiveness gain.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: lint-dependencies-id-slug-collision-risk
-  kind: memory-entry
-  claim: lint-dependencies id-slug collision risk
-  justifications:
-  - kind: rationale
-    text: |
-      `lint_dependencies` word-boundary matching will false-match any task id that coincides with a common English word; every occurrence of that word in any task description is reported as drift. Risk is low with current slug generation (ids are long title-derived strings), but audit `allocate_id` if very short ids appear in practice.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: backlog-transitions-token-computed-by-src-backlog-transitions-rs
-  kind: memory-entry
-  claim: '{{BACKLOG_TRANSITIONS}} token computed by src/backlog_transitions.rs'
-  justifications:
-  - kind: rationale
-    text: |
-      `src/backlog_transitions.rs` diffs `backlog.yaml` at the work-baseline SHA against the current state. Covers status flips, result additions/modifications, added/deleted tasks, dependency changes, and handoff changes. Soft-fails to a human-readable placeholder on any error. Wired into `phase_loop.rs` `AnalyseWork` branch alongside `{{WORK_TREE_STATUS}}`; `analyse-work.md` presents the block as context for understanding what moved — the commit title must describe the shape of the changes (e.g., "Extract auth module", "Remove deprecated sync path"), not cite task ids. The commits.yaml authoring step in `analyse-work.md` explicitly forbids task ids in commit titles or bodies.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: work-baseline-is-prior-triage-commit-triage-additions-bleed-into-backlog-transitions
-  kind: memory-entry
-  claim: Work-baseline is prior triage commit; triage additions bleed into {{BACKLOG_TRANSITIONS}}
-  justifications:
-  - kind: rationale
-    text: |
-      The work-baseline SHA is captured at the triage commit (end of the previous cycle), not at session start. Triage additions from the prior cycle therefore appear in the `{{BACKLOG_TRANSITIONS}}` diff alongside this cycle's work changes. `analyse-work.md` includes a caveat about this. A cleaner fix requires a separate session-start baseline snapshot. See: `Work-baseline seeded atomically in the triage commit`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: llm-reasoning-preamble-in-reflect-dream-triage-is-a-preserved-feature
-  kind: memory-entry
-  claim: LLM reasoning preamble in reflect/dream/triage is a preserved feature
-  justifications:
-  - kind: rationale
-    text: |
-      The LLM-authored prose preamble above the label list in reflect, dream, and triage is intentional — it carries the LLM's reasoning, not just the action list. Preserve it across prompt and renderer changes: label-rendering code replaces only the label block, not the whole output; `format_result_text` must not filter paragraph text, only structural noise (`---` separators, stray code fences). Output-format sections in `defaults/phases/{reflect,dream,triage}.md` must explicitly list every intent label the LLM is expected to emit in the preamble — omitting the list causes the LLM to silently drop them. `format_result_text` handles all intent labels; a missing label in output is always a prompt omission, not a renderer gap.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: run-create-pre-seeds-plan-dir-in-rust-before-llm-spawn
-  kind: memory-entry
-  claim: run_create pre-seeds plan dir in Rust before LLM spawn
-  justifications:
-  - kind: rationale
-    text: |
-      `src/create.rs` scaffolds the plan directory — creating `backlog.yaml`, `memory.yaml`, and related plan-state files — via CLI calls before the create-plan LLM spawn. Eliminates format drift between LLM-authored YAML and CLI-serialised YAML; `defaults/create-plan.md` carries no scaffolding instructions. See: `Pre-initialise output file before CLI-driven spawn`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: headless-output-filters-hr-lines-in-rust
-  kind: memory-entry
-  claim: Headless output filters `---` HR lines in Rust
-  justifications:
-  - kind: rationale
-    text: |
-      `src/format.rs` strips bare `---` horizontal-rule lines from headless phase output (reflect, dream, triage). Only `---` is filtered; `***` and `___` variants are not.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: planrowcounts-injects-unblocked-blocked-received-into-survey
-  kind: memory-entry
-  claim: PlanRowCounts injects unblocked/blocked/received into survey
-  justifications:
-  - kind: rationale
-    text: |
-      `PlanRowCounts { unblocked, blocked, received }` lives in `state::backlog::schema`. `BacklogFile::plan_row_counts()` computes all three in one dep-traversal pass. `inject_plan_row_counts()` in `survey/schema.rs` writes them onto `PlanRow` across cold, incremental, and `is_noop` fast paths. Survey prompts forbid the LLM from emitting these fields. See: `survey blocked count is status-blocked-or-dep-unmet union`; `survey received count is handoff-based not session-diff`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: survey-received-count-is-handoff-based-not-session-diff
-  kind: memory-entry
-  claim: survey received count is handoff-based not session-diff
-  justifications:
-  - kind: rationale
-    text: |
-      `PlanRow.received` counts tasks in the current backlog that carry handoff data (a `[HANDOFF]` block). It is NOT the count of tasks that transitioned to in_progress/done this cycle. `SessionRecord` carries only id/timestamp/phase/body — no structured backlog snapshot — making a cycle-diff computation impossible. See: `PlanRowCounts injects unblocked/blocked/received into survey`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: survey-blocked-count-is-status-blocked-or-dep-unmet-union
-  kind: memory-entry
-  claim: survey blocked count is status-blocked-or-dep-unmet union
-  justifications:
-  - kind: rationale
-    text: |
-      `PlanRow.blocked` (computed by `plan_row_counts()`) counts tasks with `status=blocked` OR `status=active` with at least one unmet dependency. Matches the `blocked` column key in `src/survey/render.rs:20`. Narrow `status==blocked`-only definitions undercount. See: `PlanRowCounts injects unblocked/blocked/received into survey`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: analyse-work-writes-commits-yaml-git-commit-work-applies-it
-  kind: memory-entry
-  claim: Analyse-work writes commits.yaml; git-commit-work applies it
-  justifications:
-  - kind: rationale
-    text: |
-      `analyse-work.md` step 9 writes a `commits.yaml` spec (ordered `{paths, message}` list) covering the full work diff. `GitCommitWork` calls `apply_commits_spec` in `src/git.rs`, applies each commit scoped to the project subtree, then removes the spec file before staging to prevent self-inclusion. Fallback on missing/malformed/empty spec: single catch-all commit of the whole subtree. Plan-state is folded into the first/only source commit by default; no separate plan-state commit is produced. See: `Analyse-work commits all non-plan paths`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: phase-summary-render-computes-structural-labels-only
-  kind: memory-entry
-  claim: phase-summary render computes structural labels only
-  justifications:
-  - kind: rationale
-    text: |
-      `state phase-summary render` computes structural labels only. Intent-required labels (e.g., a purposeful `[REPRIORITISED]`) are excluded because a diff alone cannot distinguish a deliberate reorder from an accidental one; the LLM preamble carries that reasoning. Structural label sets: `[DONE]`, `[NEW]`, `[OBSOLETE]`, `[REPRIORITISED]` (triage); `[NEW]`, `[OBSOLETE]`, `[STALE]` (reflect/dream); `[STATS]` (dream). Implementation in `src/phase_summary.rs`. See: `LLM reasoning preamble in reflect/dream/triage is a preserved feature`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: phase-summary-render-prompt-wiring-needs-orchestrator-baseline
-  kind: memory-entry
-  claim: Phase prompts invoke `phase-summary render` via CLI directive
-  justifications:
-  - kind: rationale
-    text: |
-      `defaults/phases/{reflect,dream,triage}.md` `## Output format` sections each contain a single CLI directive: `ravel-lite state phase-summary render {{PLAN}} --phase <phase> --baseline $(cat {{PLAN}}/<phase>-baseline 2>/dev/null || echo "")`. Emitting that directive's output verbatim is the LLM's only structural obligation; the narrative preamble and intent-required labels remain the LLM's authoring responsibility. Baseline wiring: `GitCommitWork` → `reflect-baseline`; `GitCommitReflect` → `dream-baseline` (or `triage-baseline` when skipping dream); `GitCommitDream` → `triage-baseline`; `GitCommitTriage` → `work-baseline`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: each-phase-baseline-holds-the-sha-from-the-preceding-commit
-  kind: memory-entry
-  claim: Each <phase>-baseline holds the SHA from the preceding commit
-  justifications:
-  - kind: rationale
-    text: |
-      Each `<phase>-baseline` file holds the commit SHA from just before that phase started — written by the preceding `git-commit-*` step, not by the phase itself. Mapping: `reflect-baseline` ← `GitCommitWork`; `dream-baseline` ← `GitCommitReflect`; `triage-baseline` ← `GitCommitDream` (or `GitCommitReflect` when `should_dream` is false); `work-baseline` ← `GitCommitTriage`. Enables `state phase-summary render --baseline $(cat <phase>-baseline)` calls from phase prompts.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: init-rs-drift-sentinel-checks-phase-prompts-for-state-phase-summary-render
-  kind: memory-entry
-  claim: '`init.rs` drift sentinel checks phase prompts for `state phase-summary render`'
-  justifications:
-  - kind: rationale
-    text: |
-      `src/init.rs` contains a drift-guard sentinel asserting phase prompt templates include the substring `state phase-summary render`. Any change to how phase prompts emit their output requires updating this sentinel.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: ops-log-yaml-mechanism-for-intent-label-capture-deferred
-  kind: memory-entry
-  claim: ops.log.yaml mechanism for intent-label capture (deferred)
-  justifications:
-  - kind: rationale
-    text: |
-      `src/phase_summary.rs:21-23` describes an `ops.log.yaml` mechanism: mutating verbs record `--intent <label>` and `--reason "<text>"` at mutation time; the renderer merges structural diff with intent records, removing the LLM's responsibility for emitting intent labels.
-
-      **Deferred**: intent is currently LLM reasoning, not mechanical — the verb caller does not yet hold the intent value before invoking the verb. Only worth pursuing when intent becomes mechanical enough that LLM authorship is redundant.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: triage-reprioritised-requires-an-llm-authored-reason
-  kind: memory-entry
-  claim: Triage `[REPRIORITISED]` requires an LLM-authored reason
-  justifications:
-  - kind: rationale
-    text: |
-      `defaults/phases/triage.md` requires a ` — <reason>` suffix on every `[REPRIORITISED]` action line. The renderer at `src/format.rs:134` classifies `REPRIORITISED` as `Intent::Changed`; a missing reason collapses to single-row output with no dim reason row. See: `action-lines-split-title-reason-into-two-row-layout`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: dead-code-grep-must-include-tests-scope
-  kind: memory-entry
-  claim: Dead-code grep must include tests/ scope
-  justifications:
-  - kind: rationale
-    text: |
-      A code path that writes no production output may remain live through test fixture side-effects. Precondition greps for dead-code tasks must include `tests/`; production-source-only searches produce false negatives.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: latest-session-md-highlight-rule-targets-wrong-filename
-  kind: memory-entry
-  claim: PHASE_HIGHLIGHTS detection is unit-tested but TUI-unverified
-  justifications:
-  - kind: rationale
-    text: |
-      `PHASE_HIGHLIGHTS` regexes target `.yaml` extensions; `format_tool_call` detects both `Write`/`Edit` tool paths and `ravel-lite state <subcommand>` Bash invocations and maps them to canonical filenames. Four unit tests cover session-log, memory, and backlog state-CLI paths. Whether labels fire in live TUI runs remains unverified — end-to-end verification is still a follow-up.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: tests-mirroring-stale-impl-values-cannot-detect-drift
-  kind: memory-entry
-  claim: Tests mirroring stale impl values cannot detect drift
-  justifications:
-  - kind: rationale
-    text: |
-      When a test hardcodes the same incorrect string as the implementation (e.g., a stale filename extension), both pass and the bug is invisible. The test only exposes the bug when the implementation is corrected — it then fails, revealing its own co-contamination. Test inputs must not copy internal implementation strings; prefer on-disk golden paths or independently-authored constants.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: state-filename-constants-live-in-src-state-filenames-rs
-  kind: memory-entry
-  claim: State filename constants live in src/state/filenames.rs
-  justifications:
-  - kind: rationale
-    text: |
-      Nine `pub const` items: `BACKLOG_FILENAME`, `MEMORY_FILENAME`, `SESSION_LOG_FILENAME`, `LATEST_SESSION_FILENAME`, `SUBAGENT_DISPATCH_FILENAME`, `COMMITS_FILENAME`, `PHASE_FILENAME`, `RELATED_COMPONENTS_FILENAME`, `DREAM_WORD_COUNT_FILENAME`. All literal string occurrences across `src/state/`, `src/dream.rs`, `src/subagent.rs`, `src/format.rs`, `src/create.rs`, `src/phase_loop.rs`, `src/main.rs`, `src/multi_plan.rs`, `src/git.rs`, `src/state/phase.rs`, and `src/survey/discover.rs` use these constants. `PHASE_HIGHLIGHTS` regexes use `filename_suffix_regex(CONSTANT)` (wraps `regex::escape`) so a constant rename cascades into highlight detection automatically.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: defaults-md-prompt-files-keep-literal-filenames-by-design
-  kind: memory-entry
-  claim: defaults/*.md prompt files keep literal filenames by design
-  justifications:
-  - kind: rationale
-    text: |
-      Prompt files under `defaults/` use literal filenames (e.g., `backlog.yaml`, `memory.yaml`) rather than referencing constants from `src/state/filenames.rs`. Converting them would require token substitution or build-time replacement; complexity without proportional benefit. Only `src/` code uses the filename constants — prompts are deliberately out-of-scope.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: cargo-dist-wired-homebrew-pipeline-needs-operator-provisioning
-  kind: memory-entry
-  claim: Release pipeline uses manual scripts, not cargo-dist
-  justifications:
-  - kind: rationale
-    text: |
-      Cargo-dist CI removed; releases use manual scripts: `cargo release patch --execute && git push --follow-tags && ./scripts/release-build.sh && ./scripts/release-publish.sh`. `release-build.sh` builds 4 tarballs (native `cargo build` for Darwin; `cargo zigbuild` glibc-2.17 for Linux). `release-publish.sh` creates the GitHub Release and updates the sibling `homebrew-taps` formula from `scripts/templates/ravel-lite.rb.tmpl`. `release-doctor.sh` runs as the first step in `release-build.sh`; verifies zig, cargo-zigbuild, four rustup targets, and gh auth — exits non-zero with a complete punch-list and remediation commands if anything is missing. The TARGETS array is intentionally duplicated between `release-doctor.sh` and `release-build.sh`; no shared sourced file (two duplicates beats the indirection of a third file). Pipeline validated; end-user smoke test (`brew install linkuistics/taps/ravel-lite && ravel-lite --version`) passes.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: capture-scripts-template-documentation-with-real-system-runs
-  kind: memory-entry
-  claim: Capture scripts template documentation with real system runs
-  justifications:
-  - kind: rationale
-    text: |
-      `scripts/capture/ravel-lite-tutorial.sh` drives a TestAnyware macOS VM: installs via Homebrew, runs the tutorial scenario, takes screenshots, pulls the resulting `LLM_STATE` tree. Structured into named sections with `[STEP-NAME]` log markers. VM identity uses deterministic `VM_ID` passed to `vm start --id`; reused via `--vm` throughout. All testanyware subcommands validated against `--help` output; `bash -n` passes. Chapter 01-02 have 11 named `transcript_at` captures. Chapter 03 (`ravel-lite create`) uses hybrid capture: screenshot-per-prompt for the volatile four-question scope conversation, `transcript_at` for the deterministic post-create state; live VM run complete. Chapter 03 interactive flow uses `install_claude_code`, `transfer_claude_auth`, `pretrust_project`, and `setup_shell_env` harness functions. Chapter 04 `scenario_run` drives `ravel-lite run`, polls every 10s (up to ~20 min), captures mid-cycle screenshots every 60s, and pulls six deterministic post-cycle transcripts; live VM run complete, transcripts folded into chapters 04 and 05. `--from <step>`, `--vm-id <id>`, and `--keep-vm` flags enable resumable partial runs; `maybe_run <step> <fn>` gates each chapter via a STARTED sentinel. `--from` beyond `chapter01` requires `--vm-id` (prerequisite VM state absent on a fresh VM). See: `Hybrid capture splits screenshot vs transcript_at by content stability`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: after-help-const-avoids-dead-code-warnings-no-intermediate-url-consts
-  kind: memory-entry
-  claim: after_help const avoids dead-code warnings; no intermediate URL consts
-  justifications:
-  - kind: rationale
-    text: |
-      `src/main.rs` exposes repo and docs URLs via clap's `after_help` field. Defined as a single `AFTER_HELP: &str` string literal rather than separate `REPO_URL`/`WEBSITE_URL` constants; intermediate named string constants with no other consumers trigger dead-code warnings under `[lints.rust] warnings = "deny"`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: config-model-is-layered-lua-config-lua-rs-owns-it
-  kind: memory-entry
-  claim: Config model is layered Lua; `config_lua.rs` owns it
-  justifications:
-  - kind: rationale
-    text: |
-      `src/config_lua.rs` implements the `ravel` Lua global table (`set_agent`, `set_headroom`, `set_model_for`, `set_token`, `append_prompt`, `config`). Backed by `mlua` (vendored Lua 5.4). Global + plan layers apply in order; setter functions use last-write-wins; `append_prompt` is append-only and accumulates across both layers in registration order — prompts cannot be replaced via config. All config loaders delegate to `config_lua::resolve`; `src/config.rs` does not contain `merge_yaml` or overlay machinery.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: shipped-defaults-read-from-embedded-binary-not-disk
-  kind: memory-entry
-  claim: Shipped defaults read from embedded binary, not disk
-  justifications:
-  - kind: rationale
-    text: |
-      All call sites for shipped prompts and agent-definitions use `init::require_embedded` / `init::embedded_entries_with_prefix`; disk reads of embedded-path files are prohibited. `run_init` writes only a commented-out `config.lua` stub and prunes `RETIRED_PATHS` — no shipped defaults are written to disk. `tests/embedded_defaults_drift.rs` enforces that no source file reads an embedded path from disk.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: debug-log-rs-uses-oncelock-singleton-paths-are-constants
-  kind: memory-entry
-  claim: '`debug_log.rs` uses OnceLock singleton; paths are constants'
-  justifications:
-  - kind: rationale
-    text: |
-      `OnceLock<DebugLog>` singleton with `enable`, `is_enabled`, `log`, `log_stream_line`, and `format_argv`. Constants `CLAUDE_DEBUG_FILE` and `EMBEDDING_DEBUG_FILE` centralise `/tmp/` paths so spawn sites and the CLI handler share one source of truth. Singleton chosen over threading `Option<Arc<DebugLog>>` through the call graph because debug-on/off is process-wide state.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: debug-instruments-run-spawn-sites-only
-  kind: memory-entry
-  claim: '`--debug` instruments `run` spawn sites only'
-  justifications:
-  - kind: rationale
-    text: |
-      `--debug` is a `run` flag; `create::run_create` and `discover::stage1` are intentionally uninstrumented because they are unreachable from `ravel-lite run`. Four instrumented spawn sites: `src/agent/claude_code.rs` (interactive + headless), `src/agent/pi.rs` (interactive + headless), `src/agent/common.rs` (`pump_stdout_to_ui`, `spawn_stderr_drain`, exit in `run_streaming_child`), and `src/survey/invoke.rs` (`spawn_claude_and_read`).
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: interactive-tui-paths-log-stdio-inherited-not-transcript
-  kind: memory-entry
-  claim: Pi interactive logs "inherited"; claude_code uses PTY under --debug
-  justifications:
-  - kind: rationale
-    text: |
-      `pi` interactive spawn paths: stdio is inherited and not capturable; `--debug` records "stdio: inherited (no transcript available)" to avoid silent lossiness. `claude_code` interactive paths: `--debug` routes through `spawn_claude_via_pty` in `src/agent/claude_code.rs`, enabling PTY byte-stream capture via `log_pty_chunk`/`render_pty_bytes` in `debug_log.rs`. The "inherited" log message is pi-only. Headless paths capture full output in both cases.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: select-config-dir-strips-trailing-slashes-via-components-collect
-  kind: memory-entry
-  claim: select_config_dir strips trailing slashes via components().collect
-  justifications:
-  - kind: rationale
-    text: |
-      `src/config.rs::select_config_dir` normalises all candidate paths with `candidate.components().collect::<PathBuf>()` before any downstream use. This is the single normalisation point; trailing slashes on user-supplied config dirs do not propagate. Regression test: `trailing_slash_in_candidate_is_normalised_away`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: interactive-work-phase-spawn-omits-add-dir-for-plan-dir
-  kind: memory-entry
-  claim: Interactive work-phase spawn omits --add-dir for plan dir
-  justifications:
-  - kind: rationale
-    text: |
-      `invoke_interactive` in `src/agent/claude_code.rs` does not pass `--add-dir <plan_dir>`. The plan dir is always a descendant of the cwd claude launches in; the flag is redundant and on a fresh machine triggers a trust-grant modal that hangs the work phase. See: `Discover stage spawns need --allowed-tools and --add-dir` for stage spawns, which do require `--add-dir`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: v1-v2-config-migration-wired-into-config-lua-resolve
-  kind: memory-entry
-  claim: v1→v2 config migration wired into config_lua::resolve
-  justifications:
-  - kind: rationale
-    text: |
-      `src/migrate_v1_to_v2.rs` migrates legacy materialised YAML config (global `config.yaml`, `config.local.yaml`, per-agent `config.yaml`/`tokens.yaml`) to a `config.lua` with version marker. Detects legacy layout by intersecting embedded-default paths with disk. Crash-safe: file writes precede deletes; a mid-run crash leaves legacy files on disk for the next call to complete. Wired in `config_lua::resolve` as the first-touch call before any config layer is read. See: `Config model is layered Lua; config_lua.rs owns it`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: pty-capture-rs-is-the-pty-orchestrator-for-claude-code-debug-capture
-  kind: memory-entry
-  claim: pty_capture.rs is the PTY orchestrator for claude_code debug capture
-  justifications:
-  - kind: rationale
-    text: |
-      `src/agent/pty_capture.rs` exposes `run_pty_session` (production entry, called via `spawn_blocking`), `drive_pty_io` (three-thread orchestrator: stdout pump, stdin pump, SIGWINCH forwarder), `pump_stdin_with_shutdown` (`libc::poll`-based with `AtomicBool` shutdown to avoid `spawn_blocking` cancellation), `tee_to` (byte-copy with tap closure), and `current_terminal_size` (TIOCGWINSZ, 24×80 fallback). Dependencies: `portable-pty = "0.9"`, `libc = "0.2"`. See: `Pi interactive logs "inherited"; claude_code uses PTY under --debug`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: masterpty-send-not-sync-take-reader-writer-before-moving-master
-  kind: memory-entry
-  claim: 'MasterPty Send-not-Sync: take reader/writer before moving master'
-  justifications:
-  - kind: rationale
-    text: |
-      `portable-pty`'s `MasterPty` is `Send` but not `Sync`. Pattern: call `take_writer()` and `take_reader()` on the master before moving it into the resize thread (which calls `resize_pty`). The main thread retains the reader/writer; the resize thread owns the master exclusively. Attempting to share across threads without this ownership split is a compile error.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: render-docs-sh-produces-html-fragments-via-asciidoctor-embedded
-  kind: memory-entry
-  claim: render-docs.sh produces HTML fragments via asciidoctor --embedded
-  justifications:
-  - kind: rationale
-    text: |
-      No custom template needed; `asciidoctor --embedded` strips the document shell and emits a clean fragment. Script loops `docs/reference/*.adoc` and `docs/tutorial/*.adoc`; outputs land in `website/docs/` and `website/tutorials/` for the eleventy pipeline to consume.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: asciidoctor-table-cells-bare-pipe-is-a-column-delimiter
-  kind: memory-entry
-  claim: 'Asciidoctor table cells: bare pipe is a column delimiter'
-  justifications:
-  - kind: rationale
-    text: |
-      `before|after` inside a table cell is parsed as two cells, not one. Escape as `before\|after` or restructure. Applies to all `.adoc` files under `docs/`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: config-dir-resolves-config-ravel-lite-config-dirs-config-dir-ravel-lite
-  kind: memory-entry
-  claim: 'Config-dir resolves: --config → RAVEL_LITE_CONFIG → dirs::config_dir()/ravel-lite'
-  justifications:
-  - kind: rationale
-    text: |
-      `config_lua::resolve` tries in order: `--config` CLI flag, `RAVEL_LITE_CONFIG` env var, `dirs::config_dir()/ravel-lite`. First match wins. See: `Config model is layered Lua; config_lua.rs owns it`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: doc-publish-pipeline-reads-website-via-git-archive
-  kind: memory-entry
-  claim: Doc publish pipeline reads `website/` via git archive
-  justifications:
-  - kind: rationale
-    text: |
-      Doc publish pipeline reads `website/` via git archive; `projects/ravel-lite.html` and `SYNC.yml` do not exist in the current pipeline (post-2026-04-26). No intermediate artifact files are needed; the pipeline consumes the `website/` subtree directly.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: transcript-at-captures-per-command-stdout-stderr-for-asciidoc
-  kind: memory-entry
-  claim: transcript_at captures per-command stdout+stderr for AsciiDoc
-  justifications:
-  - kind: rationale
-    text: |
-      `transcript_at <label> <command>` helper in capture scripts writes stdout+stderr to `transcripts/<label>.txt` as paste-ready `[source,console]` AsciiDoc blocks. This is the mechanism for folding live VM output into tutorial chapters.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: hybrid-capture-splits-screenshot-vs-transcript-at-by-content-stability
-  kind: memory-entry
-  claim: Hybrid capture splits screenshot vs transcript_at by content stability
-  justifications:
-  - kind: rationale
-    text: |
-      For interactive CLI phases where the agent paraphrases questions, use screenshot-per-prompt for the volatile conversation and `transcript_at` for any deterministic post-command state. Maps capture fidelity to content stability: screenshots tolerate paraphrase variance; `transcript_at` is reproducible text. A marker-echo (`echo CHAPTER_03_CREATE_DONE`) after the interactive command provides a deterministic `find-text` sync point. Chapter 03 `ravel-lite create` demonstrates the pattern.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: capture-response-files-are-authored-source-live-outside-docs-captures
-  kind: memory-entry
-  claim: Capture response files are authored source, live outside docs/captures/
-  justifications:
-  - kind: rationale
-    text: |
-      `scripts/capture/responses/` holds authored verbatim responses for interactive capture scenarios (e.g. `03-purpose.txt`, `03-project.txt`). Located outside `docs/captures/` so `.gitignore`'s `docs/captures/` rule does not silently exclude them; they are authored source content, not captured output.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: capture-harness-bypasses-three-claude-security-gates
-  kind: memory-entry
-  claim: Capture harness bypasses three Claude security gates
-  justifications:
-  - kind: rationale
-    text: |
-      Per-project JSON settings must be configured before any harness-driven `claude` invocation: `hasTrustDialogAccepted` (project trust dialog), `defaultMode: bypassPermissions` (tool permission prompts), `skipDangerousModePermissionPrompt` (bypass-mode confirmation modal). All three are required; omitting any one will hang or block an automated run. Implemented via `pretrust_project` and `setup_shell_env` in `scripts/capture/ravel-lite-tutorial.sh`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: create-plan-capture-uses-single-shot-comprehensive-response
-  kind: memory-entry
-  claim: create-plan capture uses single-shot comprehensive response
-  justifications:
-  - kind: rationale
-    text: |
-      `scripts/capture/responses/03-comprehensive.txt` provides the full plan description as a single message. Per-question response files misalign with the `create-plan` template because question paraphrasing varies between runs; a single comprehensive description sidesteps alignment issues entirely. See: `Hybrid capture splits screenshot vs transcript_at by content stability`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: tui-banner-text-differs-from-yaml-phase-field
-  kind: memory-entry
-  claim: TUI banner text differs from YAML `phase:` field
-  justifications:
-  - kind: rationale
-    text: |
-      `find-text "phase: work"` will never match in a capture run: the string `phase: work` lives in YAML state files only; the TUI renders the phase name via `term_title.rs` OSC escapes and banner text, not the raw YAML field. Use a screenshot or a banner-text string for phase-change sync points.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: testanyware-download-cannot-pull-a-directory-use-per-file-exec-workaround
-  kind: memory-entry
-  claim: testanyware download cannot pull a directory; use per-file exec workaround
-  justifications:
-  - kind: rationale
-    text: |
-      `capture_state` in `scripts/capture/ravel-lite-tutorial.sh` uses `testanyware download` on the `LLM_STATE/` directory, which fails with `Error: Agent HTTP 400: Download failed: The file "LLM_STATE" couldn't be opened.` — testanyware download cannot pull a directory.
-
-      Workaround used: capture individual transcripts via headless `testanyware exec` calls; this covers everything the tutorial prose needs.
-
-      Full fix options: (a) recursive walk + per-file download; (b) tar roundtrip (`testanyware exec -- tar czf /tmp/llm_state.tar.gz LLM_STATE && testanyware download /tmp/llm_state.tar.gz`). Low priority because the per-file exec workaround is sufficient for prose-fold tasks.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: capture-chapter-transitions-use-exit-sentinel-echo-before-next-chapter
-  kind: memory-entry
-  claim: Capture chapter transitions use /exit + sentinel echo before next chapter
-  justifications:
-  - kind: rationale
-    text: |
-      At the tail of a capture chapter that may leave Claude running (e.g., `capture_chapter03_create_session`), send `/exit` + Return into the GUI Terminal, type `echo <SENTINEL>` + Return, and wait with `testanyware find-text "<SENTINEL>" --timeout 30`. Robust to Claude having already exited: `/exit` becomes harmless command-not-found and the sentinel still renders. Prevents the next chapter from typing into a Claude TUI instead of the shell. See: `Hybrid capture splits screenshot vs transcript_at by content stability`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: config-lua-rs-doc-comment-can-drift-from-registered-api
-  kind: memory-entry
-  claim: config_lua.rs doc comment can drift from registered API
-  justifications:
-  - kind: rationale
-    text: |
-      Grep `set_function`/`set` registration calls in `src/config_lua.rs` to audit the live Lua API surface; the module-level doc comment listing exported names is not guaranteed to match. See: `Config model is layered Lua; config_lua.rs owns it`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: knowledge-graph-crate-is-in-tree-extraction-deferred-post-v2-0
-  kind: memory-entry
-  claim: knowledge-graph crate is in-tree; extraction deferred post-v2.0
-  justifications:
-  - kind: rationale
-    text: |
-      `knowledge-graph` is the TMS substrate crate name; in-tree Cargo workspace member. Extraction to a standalone crate is deferred until after v2.0 ships. See: `docs/architecture-next.md` Settled decisions §crate name.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: ascent-chosen-as-datalog-engine-differential-dataflow-rejected
-  kind: memory-entry
-  claim: Ascent chosen as Datalog engine; differential-dataflow rejected
-  justifications:
-  - kind: rationale
-    text: |
-      `ascent` (recompute-based) is the chosen Datalog engine for the knowledge-graph crate. Recompute is fast enough at ravel-lite scale; differential-dataflow's incremental complexity is not warranted. Settled in Phase A of architecture-next.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: v1-v2-cutover-is-hard-v2-binary-refuses-unmigrated-plans
-  kind: memory-entry
-  claim: v1→v2 cutover is hard; v2 binary refuses unmigrated plans
-  justifications:
-  - kind: rationale
-    text: |
-      No migration window: the v2 binary hard-fails on unmigrated plans. Users must run `ravel-lite state migrate` before switching to v2. Settled in Phase A of architecture-next.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: legacy-backfill-uses-one-shot-llm-extraction-at-migrate-time
-  kind: memory-entry
-  claim: Legacy backfill uses one-shot LLM extraction at migrate time
-  justifications:
-  - kind: rationale
-    text: |
-      One-shot LLM-driven extraction at `migrate` time backfills the knowledge graph from existing plan history. Entries with no attributable session land with `status: legacy`. No incremental or post-hoc repair path. Settled in Phase A of architecture-next.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: petgraph-0-6-lacks-articulation-points-api-hand-rolled-dfs-needed
-  kind: memory-entry
-  claim: petgraph 0.6 lacks articulation-points API; hand-rolled DFS needed
-  justifications:
-  - kind: rationale
-    text: |
-      `petgraph` 0.6 does not expose articulation points on its stable surface. The knowledge-graph `algorithms` module uses a hand-rolled low-link DFS (~50 lines) instead. Audit algorithm crate APIs for missing stable-surface functions before committing to a dependency at crate-scaffold time.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: knowledge-graph-consumers-each-author-their-own-ascent-program
-  kind: memory-entry
-  claim: knowledge-graph consumers each author their own ascent! program
-  justifications:
-  - kind: rationale
-    text: |
-      No shared runtime rule-registry exists in the knowledge-graph crate. Each consumer authors its own `ascent!` Datalog program with the rules it needs. Centralising rules would couple the generic substrate to consumer-specific vocabulary.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: blocked-by-is-kind-specific-extension-data-not-a-justification-edge
-  kind: memory-entry
-  claim: blocked_by is kind-specific extension data, not a justification edge
-  justifications:
-  - kind: rationale
-    text: |
-      `blocked_by` relationships belong in kind-specific extension data, not in the generic `justification` edge enum. Threading `blocked_by` through the substrate `store` would re-couple the generic substrate to ravel-lite plan vocabulary. The wiring task handles it as a domain wrapper.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: src-repos-rs-holds-reposregistry-on-disk-is-name-keyed-map
-  kind: memory-entry
-  claim: '`src/repos.rs` holds `ReposRegistry`; on-disk is name-keyed map'
-  justifications:
-  - kind: rationale
-    text: |
-      `ReposRegistry` in `src/repos.rs` owns `repos.yaml`; on-disk shape is a name-keyed `IndexMap<String, RepoEntry>` (per architecture-next §The repo registry). `local_path` is stored absolute; omitted from YAML when absent. `try_add` rejects duplicate slugs. CLI verbs: `repo add`, `repo list`, `repo remove`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: componentref-canonical-string-is-repo-component
-  kind: memory-entry
-  claim: '`ComponentRef` canonical string is `<repo>:<component>`'
-  justifications:
-  - kind: rationale
-    text: |
-      `ComponentRef { repo_slug, component_id }` in `src/component_ref.rs`. `Display`/`FromStr`/serde all produce the `<repo>:<component>` form. Validation rejects empty halves and extra colons (exactly one colon required).
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: show-fixed-memory-verb-requires-disk-first-lookup
-  kind: memory-entry
-  claim: '''show'' fixed-memory verb requires disk-first lookup'
-  justifications:
-  - kind: rationale
-    text: |
-      `require_embedded` alone silently fails for user-added files (e.g., `coding-style-<lang>.md`). Correct lookup order: disk first, embedded fallback, deterministic error. Mirrors `compose_prompt` layering for phase prompts. See: `fixed-memory/ extensibility model depends on init v2 layout`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: fixed-memory-extensibility-model-depends-on-init-v2-layout
-  kind: memory-entry
-  claim: '''fixed-memory/'' extensibility model depends on ''init v2'' layout'
-  justifications:
-  - kind: rationale
-    text: |
-      The `<context>/` directory layout (settled in `init v2`) determines where user-owned `fixed-memory/` lives. Deciding the lookup root before `init v2` either pre-empts v2 or requires re-litigation under it. Unblock the `show` verb after `init v2` fixes the location. See: `'show' fixed-memory verb requires disk-first lookup`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: git-subrepo-in-test-tree-requires-initial-commit
-  kind: memory-entry
-  claim: Git subrepo in test tree requires initial commit
-  justifications:
-  - kind: rationale
-    text: |
-      `git init` alone in a test's project subtree triggers `does not have a commit checked out` errors from outer `git add`. Issue `git commit --allow-empty` after init. When no global git identity is configured, supply fallback identity using an RFC 2606-reserved domain such as `.invalid.local` (e.g. `ravel-lite-test@test.invalid.local`) to prevent accidental attribution on mis-published commits.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: architecture-next-md-config-yaml-layout-entries-are-stale
-  kind: memory-entry
-  claim: architecture-next.md config.yaml layout entries are stale
-  justifications:
-  - kind: rationale
-    text: |
-      `docs/architecture-next.md` lists `config.yaml` and `config.local.yaml` as `<ravel-context>/` layout artefacts. Implementation uses `config.lua` (layered Lua model); those doc sections do not reflect the current config model. See: `Config model is layered Lua; config_lua.rs owns it`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: src-ontology-removed-import-from-component-ontology-crate
-  kind: memory-entry
-  claim: '`src/ontology/` removed; import from `component_ontology` crate'
-  justifications:
-  - kind: rationale
-    text: |
-      All five files under `src/ontology/` (~1,300 lines) were deleted. Import sites across `src/discover/`, `src/state/`, `src/related_components.rs`, `src/projects.rs`, and `src/main.rs` now use `component_ontology`. The crate is owned by Atlas (`atlas-contracts` workspace). `defaults/ontology.yaml` was deleted; `ontology.yaml` added to `RETIRED_PATHS` in `src/init.rs` so existing config dirs are swept clean on next `ravel-lite init`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: state-projects-is-a-migration-error-alias
-  kind: memory-entry
-  claim: '''state projects'' is a migration-error alias'
-  justifications:
-  - kind: rationale
-    text: |
-      `state projects <subcommand>` is retained as a clap `Vec<String>` catch-all that unconditionally returns `migrate_projects_yaml_error()`. No functional path survives from the old `projects.yaml` CLI. Any code or test that invokes `state projects add|remove|list|rename` receives this error.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: discovertarget-resolves-working-tree-from-repos-or-cache
-  kind: memory-entry
-  claim: DiscoverTarget resolves working tree from repos or cache
-  justifications:
-  - kind: rationale
-    text: |
-      `discover::DiscoverTarget { slug, working_tree }` and `working_tree_for` in `discover/mod.rs` resolve a repo's on-disk path: `entry.local_path` when present, otherwise `<context>/.cache/repos/<slug>/` (the architecture-next cache fallback). All discover consumers use this abstraction; direct `RepoEntry` path access is not used in discover paths.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: tutorial-docs-stale-for-repos-yaml-needs-vm-capture-re-run
-  kind: memory-entry
-  claim: Tutorial docs stale for repos.yaml; needs VM capture re-run
-  justifications:
-  - kind: rationale
-    text: |
-      `docs/tutorial/`, `docs/reference/`, and `docs/captures/` still reference retired `state projects` verbs. Updating requires re-running `scripts/capture/ravel-lite-tutorial.sh` against a TestAnyware VM. Tracked as backlog task `tutorial-update-for-repos-yaml-cutover`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: repos-yaml-requires-clone-url-auto-add-is-retired
-  kind: memory-entry
-  claim: repos.yaml requires clone URL; auto-add is retired
-  justifications:
-  - kind: rationale
-    text: |
-      `ensure_in_catalog_interactive` and `register_projects_from_plan_dirs` were removed from `main.rs`. Interactive auto-add is not viable for `repos.yaml` because a clone URL is required on entry. Users must invoke `ravel-lite repo add <slug> <url>` explicitly.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: store-k-is-per-kind-cascade-serves-intent-is-the-cross-store-join
-  kind: memory-entry
-  claim: Store<K> is per-kind; cascade_serves_intent is the cross-store join
-  justifications:
-  - kind: rationale
-    text: |
-      Multi-kind plan KG requires one `Store<K>` per kind, not a heterogeneous store. `cascade_serves_intent::<P, C>(parents, dependents, status)` in `store.rs` is the join point: reads terminal statuses from a parent store, writes defeat markers into a child store. Shape is the same for all cross-kind cascades (intent→backlog, intent→memory, intent→finding).
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: itemkind-uses-unit-struct-tags-itemstatus-enums-encode-transitions
-  kind: memory-entry
-  claim: ItemKind uses unit-struct tags; ItemStatus enums encode transitions
-  justifications:
-  - kind: rationale
-    text: |
-      `ItemKind` is implemented on zero-sized unit structs (`KIND_STR: &'static str`, `type Status: ItemStatus`). Status vocabularies are enums implementing `ItemStatus` with `transitions()`, `is_terminal()`, `as_str()`, and `parse()`. `KindMarker<K>` handles YAML serde: serialises as `K::KIND_STR`, rejects kind mismatches on deserialise. `Store<K>::set_status` enforces `K::Status::transitions()` before committing.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
-- id: plan-kg-rs-registers-four-plan-vocabularies-in-knowledge-graph-crate
-  kind: memory-entry
-  claim: plan_kg.rs registers four plan vocabularies in knowledge-graph crate
-  justifications:
-  - kind: rationale
-    text: |
-      `crates/knowledge-graph/src/plan_kg.rs` defines `IntentKind`, `BacklogItemKind`, `MemoryEntryKind`, and `FindingKind`, each with its own status enum and transition table. Type aliases (`IntentItem`, `BacklogStore`, etc.) and the intent→backlog cross-store cascade live here. See: `Store<K> is per-kind; cascade_serves_intent is the cross-store join`.
-  status: active
-  authored_at: legacy
-  authored_in: legacy
 - id: memory-yaml-entries-are-item-memoryentrykind-with-attribution
-  kind: memory-entry
-  claim: memory.yaml entries are Item<MemoryEntryKind> with attribution
-  justifications:
-  - kind: rationale
-    text: |
-      On-disk `MemoryEntry` wraps `Item<MemoryEntryKind>`: fields `claim`, `justifications` (one `Rationale`), `status`, `authored_at`, `authored_in`. Optional `attribution` field extends the base type for component-promotion at plan finish. `memory add` CLI accepts `--authored-at`, `--authored-in`, `--attribution`.
-  status: active
-  authored_at: 2026-04-29T03:02:20Z
-  authored_in: unspecified
+  title: memory.yaml entries are Item<MemoryEntryKind> with attribution
+  body: |
+    On-disk `MemoryEntry` wraps `Item<MemoryEntryKind>`: fields `claim`, `justifications` (one `Rationale`), `status`, `authored_at`, `authored_in`. Optional `attribution` field extends the base type for component-promotion at plan finish. `memory add` CLI accepts `--authored-at`, `--authored-in`, `--attribution`.
 - id: memory-yaml-schema-version-required-read-rejects-mismatch
-  kind: memory-entry
-  claim: memory.yaml schema_version required; read rejects mismatch
-  justifications:
-  - kind: rationale
-    text: |
-      `schema_version` is a required top-level field in `memory.yaml`. `read_memory` (via `yaml_io.rs`) returns an error if the field is absent or does not match the expected version. Prevents silent schema drift across binary upgrades.
-  status: active
-  authored_at: 2026-04-29T03:02:26Z
-  authored_in: unspecified
+  title: memory.yaml schema_version required; read rejects mismatch
+  body: |
+    `schema_version` is a required top-level field in `memory.yaml`. `read_memory` (via `yaml_io.rs`) returns an error if the field is absent or does not match the expected version. Prevents silent schema drift across binary upgrades.
+- id: all-prompt-loading-routes-through-substitute-tokens
+  title: All prompt loading routes through `substitute_tokens`
+  body: |
+    Ad-hoc `str::replace` bypasses the hard-error guard regex. Any prompt-loading path that does not delegate to `substitute_tokens` silently passes unresolved tokens through. Drift guards require one canonical substitution path.
+- id: shipped-pi-prompts-have-no-dangling-tokens-test-guards-pi-prompts
+  title: '`shipped_pi_prompts_have_no_dangling_tokens` test guards pi prompts'
+  body: |
+    The test iterates every on-disk pi prompt file and asserts no unresolved tokens remain. Enforcement mechanism for the canonical-substitution-path rule.
+- id: pi-subagent-definitions-live-at-agents-pi-subagents
+  title: Pi subagent definitions live at `agents/pi/subagents/`
+  body: |
+    `defaults/agents/pi/subagents/` holds pi subagent definitions (brainstorming, tdd, writing-plans); `init.rs` embed paths and `pi.rs` reads reference this location.
+- id: init-rs-drift-detection-test-guards-coding-style-registration
+  title: init.rs drift test guards all defaults/ file registration
+  body: |
+    `every_file_under_defaults_is_registered_in_embedded_files` recursively walks the entire `defaults/` tree and asserts every file has a matching `EmbeddedFile` entry in `src/init.rs`. Adding any file under `defaults/` without registering it fails the test.
+- id: embedded-defaults-are-valid-asserts-non-empty-model-and-provider
+  title: '`embedded_defaults_are_valid` asserts non-empty model and provider'
+  body: |
+    Every (agent, phase) pair in `defaults/agents/claude-code/config.yaml` must have a non-empty model string and non-empty provider. The test catches omissions that would silently delegate model/provider selection to the spawn context.
+- id: work-phase-must-not-commit-source-files
+  title: Work phase must not commit source files
+  body: |
+    The work phase leaves non-plan paths dirty; source-commit authority belongs to `analyse-work`.
+- id: analyse-work-commits-all-non-plan-paths
+  title: Analyse-work commits all non-plan paths
+  body: |
+    Analyse-work stages and commits every path outside the plan dir, or justifies each skipped path in the session log. Mechanism: `commits.yaml` spec authored in step 9; see `Analyse-work writes commits.yaml; git-commit-work applies it`.
+- id: analyse-work-receives-dirty-tree-snapshot-as-work-tree-status
+  title: Analyse-work receives dirty-tree snapshot as `{{WORK_TREE_STATUS}}`
+  body: |
+    `phase_loop.rs` calls `git::work_tree_snapshot(project_dir, baseline_sha)` when entering `LlmPhase::AnalyseWork` and inserts the result under `{{WORK_TREE_STATUS}}`. Captured at prompt-compose time so hand-edits made after work exits are included.
+- id: streamlineoutcome-enum-distinguishes-ignored-vs-malformed-stream-lines
+  title: '`StreamLineOutcome` enum distinguishes ignored vs malformed stream lines'
+  body: |
+    `StreamLineOutcome` distinguishes `valid-but-no-display` from parse failure; an `Option` return collapses both into `None`. Apply this enum pattern wherever an `Option` conflates two semantically distinct outcomes.
+- id: survey-stdout-read-has-300s-timeout
+  title: Survey stdout read has 300s timeout
+  body: |
+    `src/survey/invoke.rs` wraps the stdout read in `tokio::time::timeout` (`DEFAULT_SURVEY_TIMEOUT_SECS = 300`); on expiry the child is killed and the error includes elapsed time, captured bytes, partial stdout, and remediations. Override via `--timeout-secs`.
+- id: phase-contract-test-validates-per-phase-file-writes
+  title: Phase contract test validates per-phase file writes
+  body: |
+    `phase_contract_round_trip_writes_expected_files` runs `phase_loop` from `analyse-work` via `ContractMockAgent`; assertions cover latest-session.md, memory.md updated, backlog.md updated, phase.md ends at `work`, and git log subjects. `commit-message.md` is absent from the flow; analyse-work authors `commits.yaml` instead. See: `Analyse-work writes commits.yaml; git-commit-work applies it`.
+- id: tool-read-token-scoped-to-work-md-only
+  title: '`{{TOOL_READ}}` token scoped to `work.md` only'
+  body: |
+    Headless phases (analyse-work, reflect, dream) must not include `{{TOOL_READ}}`; an unresolved token in a headless phase fails integration tests. A universal "all tokens substitute cleanly" drift guard produces false negatives for the same reason: `{{TOOL_READ}}` is intentionally absent from headless-phase prompts.
+- id: substitute-tokens-expands-content-macros-before-path-tokens
+  title: '`substitute_tokens` expands content macros before path tokens'
+  body: |
+    RELATED_PLANS and custom tokens expand first; atomic path tokens ({{DEV_ROOT}} etc.) expand second. Reversing the order causes fatal errors when RELATED_PLANS content itself contains path tokens.
+- id: pi-stderr-captured-in-4096-byte-rolling-buffer
+  title: Pi stderr captured in 4096-byte rolling buffer
+  body: |
+    `PiAgent::invoke_headless` pipes stderr into a fixed-size rolling buffer (`STDERR_BUFFER_CAP = 4096`). Tail surfaces in error messages on failure; eliminates TUI bleed-through during headless invocation.
+- id: pi-phase-cycle-test-guards-runtime-token-substitution
+  title: '`pi_phase_cycle` test guards runtime token substitution'
+  body: |
+    `pi_phase_cycle_substitutes_tokens_and_streams_events` runs a full `phase_loop` cycle with a real `PiAgent` and a fake `pi` shell script; asserts zero unresolved `{{…}}` tokens in the captured prompt, correct `UIMessage` variant fan-out (`Progress`, `Persist`, `AgentDone`), and audit commit via `commits.yaml`.
+- id: pi-invoke-headless-test-guards-stderr-tail-surfacing
+  title: '`pi_invoke_headless` test guards stderr-tail surfacing'
+  body: |
+    `pi_invoke_headless_surfaces_stderr_tail_on_failure` asserts a non-zero `pi` exit (code 17) surfaces the stderr tail in the returned error. Enforces the buffered-stderr invariant. See: `Pi stderr captured in 4096-byte rolling buffer`.
+- id: pi-dispatch-subagent-test-pins-dispatch-argv-contract
+  title: '`pi_dispatch_subagent` test pins dispatch argv contract'
+  body: |
+    `pi_dispatch_subagent_invokes_pi_with_target_plan_args` pins the exact argv for `dispatch_subagent`: `--no-session`, `--append-system-prompt`, `--provider anthropic`, `--mode json`, `-p`, prompt.
+- id: envoverride-serialises-env-mutation-in-integration-tests
+  title: '`EnvOverride` serialises env mutation in integration tests'
+  body: |
+    `EnvOverride` holds a process-wide `OnceLock<Mutex<()>>`; struct-field drop order keeps the lock held until `PATH`/`HOME` restoration completes, preventing fake-pi `PATH` from leaking into concurrent test runners.
+- id: gitcommitwork-appends-latest-session-yaml-to-session-log-yaml
+  title: '`GitCommitWork` appends `latest-session.yaml` to `session-log.yaml`'
+  body: |
+    `append_session_log` in `phase_loop.rs` delegates to `session_log::append_latest_to_log`. Idempotent by session id; missing `latest-session.yaml` is a graceful no-op.
+- id: write-phase-precedes-git-commit-plan-in-all-commit-handlers
+  title: '`write_phase` precedes `git_commit_plan` in all commit handlers'
+  body: |
+    All four `ScriptPhase::GitCommit*` handlers in `phase_loop.rs` call `write_phase(next)` before `git_commit_plan`. Phase.md is captured in the same commit as other plan-state writes; the plan tree is clean at every user-prompt point.
+- id: work-baseline-seeded-atomically-in-the-triage-commit
+  title: Work-baseline seeded atomically in the triage commit
+  body: |
+    `GitCommitTriage` calls `git_commit_plan` first, then `git_save_baseline(plan_dir, "work-baseline")`, so `work-baseline` records the triage commit SHA (not the reflect commit). A follow-on save-baseline commit lands the file; plan tree is dirty-free at user prompt. `LlmPhase::Work` seeds work-baseline only when the file is absent (first-run fallback). `git_save_baseline(plan_dir, filename)` is the generalized helper used by all four `GitCommit*` handlers.
+- id: llmphase-work-does-not-delete-latest-session-yaml
+  title: '`LlmPhase::Work` does not delete `latest-session.yaml`'
+  body: |
+    Analyse-work overwrites `latest-session.yaml` unconditionally on entry; the Work handler does not delete it.
+- id: plan-tree-cleanliness-asserted-via-git-status-porcelain
+  title: Plan-tree cleanliness asserted via `git status --porcelain`
+  body: |
+    `git_commit_triage_leaves_plan_tree_clean_at_user_prompt` and `git_commit_work_leaves_plan_tree_clean_at_user_prompt` assert `git status --porcelain -- <plan_dir>` is empty after `phase_loop` returns from a user-declined exit.
+- id: spawn-blocking-does-not-cancel-cleanly-in-tokio-select
+  title: '`spawn_blocking` does not cancel cleanly in `tokio::select!`'
+  body: |
+    Use `tokio::time::sleep` for tty event polling. A `spawn_blocking` thread is not dropped when the select arm is cancelled; it races the spawned child for the tty. `tokio::time::sleep` is properly cancellable and eliminates the race.
+- id: dream-word-count-sums-entry-titles-and-bodies
+  title: Dream word-count sums entry titles and bodies
+  body: |
+    `dream.rs` computes word count by summing title and body text across all parsed `MemoryEntry` values; markdown punctuation is excluded. `update_baseline_counts_entry_titles_and_bodies` regression test pins this contract. `update_dream_baseline` self-corrects after the first successful dream if a prior raw-markdown baseline drifts.
+- id: dream-baseline-seeded-from-three-call-sites
+  title: dream-word-count seeded from three call sites
+  body: |
+    `seed_dream_word_count_if_missing` in `src/dream.rs` is called from `run_create` (post-session scaffolding), `run_set_phase` (every LLM phase transition including coordinators), and `GitCommitReflect`. Seeds `dream-word-count` to 0, not current word count; seeding to current count silently delays the first dream by `headroom` words on populated plans. Legacy migration: if `dream-word-count` is missing and `dream-baseline` parses as a usize, the value is copied and the legacy file is deleted. `dream-baseline` is a SHA file; `dream-word-count` is the word-count store.
+- id: phase-prompts-use-ravel-lite-state-cli-verbs
+  title: Phase prompts use `ravel-lite state` CLI verbs
+  body: |
+    All `defaults/phases/*.md` and `create-plan.md` use `ravel-lite state <verb>` for plan-state operations. Direct writes to plan-state files bypass `Phase::parse` validation; LLM phases must use the CLI. `run_set_phase` refuses to create a plan dir that does not already exist.
+- id: cli-integration-tests-use-cargo-bin-exe-ravel-lite
+  title: CLI integration tests use `CARGO_BIN_EXE_ravel-lite`
+  body: |
+    CLI integration tests shell out via `CARGO_BIN_EXE_ravel-lite` and assert on-disk effects; the Cargo-idiomatic pattern for end-to-end CLI testing.
+- id: build-rs-emits-timestamp-git-describe-and-sha
+  title: '`build.rs` emits timestamp, git-describe, and SHA'
+  body: |
+    `build.rs` emits `BUILD_TIMESTAMP`, `GIT_DESCRIBE`, and `GIT_SHA` as compile-time env vars; `main.rs` concatenates them into a `VERSION` constant used by both `--version` and the `version` subcommand.
+- id: release-toml-disables-publish-and-push
+  title: '`release.toml` disables publish and push'
+  body: |
+    `release.toml` sets `publish=false` and `push=false`; `cargo release patch --execute` bumps the version and tags locally without touching crates.io or the remote.
+- id: term-title-rs-sets-phase-title-via-osc-escape
+  title: '`term_title.rs` sets phase title via OSC escape'
+  body: |
+    `src/term_title.rs` exposes `set_title(project, plan, phase)` (side-effecting) and `format_title_escape` (testable helper). Writes to stdout; clean side-channel because Ratatui uses stderr backend. Includes tmux passthrough (doubled inner ESCs). Called at `LlmPhase` entry in `phase_loop` and `run_single_plan`. Phase labels uppercased to match the phase-header banner convention.
+- id: reflect-phase-runs-automatically-after-git-commit-work
+  title: Reflect phase runs automatically after git-commit-work
+  body: |
+    The runner proceeds from `GitCommitWork` to reflect without user confirmation; no pre-reflect gate exists.
+- id: fake-pi-script-must-be-phase-aware
+  title: Fake-pi script must be phase-aware
+  body: |
+    The fake-pi script in `pi_phase_cycle` uses a case statement on the current phase to emit distinct next-phase values. Writing `git-commit-work` unconditionally causes an infinite loop; each phase must map to a different output.
+- id: contractmockagent-for-triage-appends-not-overwrites
+  title: '`ContractMockAgent` for Triage appends, not overwrites'
+  body: |
+    `ContractMockAgent::invoke_headless` uses append mode for `Triage` so the safety-net test can observe analyse-work's status flips written earlier in the same cycle.
+- id: hand-off-fields-are-live-in-analyse-work-and-triage-prompts
+  title: Hand-off fields are live in analyse-work and triage prompts
+  body: |
+    `defaults/phases/analyse-work.md` and `defaults/phases/triage.md` include the hand-off convention. Analyse-work writes a hand-off block; triage reads it on entry. See: `[HANDOFF] integration tests guard promote-vs-archive cycle`.
+- id: handoff-integration-tests-guard-promote-vs-archive-cycle
+  title: '`[HANDOFF]` integration tests guard promote-vs-archive cycle'
+  body: |
+    `handoff_marker_in_analyse_work_is_promoted_by_triage` and `handoff_marker_in_analyse_work_is_archived_by_triage` in `tests/phase_loop.rs` run the full analyse-work → git-commit-work → reflect → git-commit-reflect → triage → git-commit-triage cycle. CI-protects the hand-off convention. See: `ContractMockAgent has opt-in handoff injection`.
+- id: contractmockagent-has-opt-in-handoff-injection
+  title: '`ContractMockAgent` has opt-in handoff injection'
+  body: |
+    `handoff_injection: Option<HandoffInjection>` field with `with_handoff_injection()` builder. `HandoffDisposition` inside `HandoffInjection` pins promote-vs-archive without hardcoding LLM reasoning, keeping hand-off tests deterministic.
+- id: task-blocks-delimited-by-n-separator
+  title: Task blocks delimited by `\n---` separator
+  body: |
+    `inject_handoff_into_task_block` and `extract_handoff_from_block` both split on `\n---`. Protocol for separating the main task block from an appended hand-off block.
+- id: warn-if-project-tree-dirty-is-advisory-only
+  title: '`warn_if_project_tree_dirty` is advisory-only'
+  body: |
+    `warn_if_project_tree_dirty` at `GitCommitWork` entry has no user-facing gate; the warning fires but the phase proceeds unconditionally. If this becomes unacceptable, promote to a hard error rather than re-adding a gate.
+- id: phase-loop-is-single-cycle-run-single-plan-holds-the-inter-cycle-prompt
+  title: '`phase_loop` is single-cycle; `run_single_plan` holds the inter-cycle prompt'
+  body: |
+    `phase_loop` is a single-cycle function. The inter-cycle user prompt ("continue / switch plan / exit") lives in `run_single_plan`, which wraps `phase_loop` in a loop. Multi-plan dispatch calls `phase_loop` directly via `dispatch_one_cycle` in `src/multi_plan.rs`.
+- id: src-multi-plan-rs-owns-survey-driven-multi-plan-routing
+  title: '`src/multi_plan.rs` owns survey-driven multi-plan routing'
+  body: |
+    `src/multi_plan.rs` implements `build_plan_dir_map`, `options_from_response`, `select_plan_interactive`, and `run_multi_plan`. `ravel-lite run` accepts 1..N plan dirs; `--survey-state` is required when N > 1. Routes to the next plan via `dispatch_one_cycle`.
+- id: ravel-lite-survey-emits-structured-yaml
+  title: '`ravel-lite survey` emits structured YAML'
+  body: |
+    `src/survey/schema.rs` defines the output schema with `Serialize` derives and a `schema_version` marker. `input_hash` is seeded in Rust post-parse. `task_counts` is injected by Rust via `inject_task_counts` / `collect_task_counts`; `unblocked`, `blocked`, and `received` are injected via `inject_plan_row_counts` / `plan_row_counts`. Survey prompts forbid the LLM from emitting any of these injected fields. `survey-format` subcommand renders YAML output to human-readable form. See: `PlanRowCounts injects unblocked/blocked/received into survey`.
+- id: survey-compose-wraps-content-in-yaml-fences
+  title: Survey compose wraps content in YAML fences
+  body: |
+    `src/survey/compose.rs` wraps backlog and memory content in ` ```yaml ` fences, labeling sections `backlog.yaml` and `memory.yaml`. `survey.md` and `survey-incremental.md` reference these labels. `PlanSnapshot::backlog` and `.memory` carry re-serialised YAML strings.
+- id: incremental-survey-splits-invoke-rs-into-two-functions
+  title: Incremental survey splits `invoke.rs` into two functions
+  body: |
+    `compute_survey_response` is the in-memory core; `run_survey` is the CLI wrapper. `src/survey/delta.rs` owns hash-comparison and delta-merge. `--prior` names the baseline state; `--force` skips the hash guard. `defaults/survey-incremental.md` is the prompt template for the delta path.
+- id: push-plan-stack-yaml-and-src-pivot-rs-removed
+  title: '`push-plan`, `stack.yaml`, and `src/pivot.rs` removed'
+  body: |
+    `push-plan` CLI verb, `run_stack`, `stack.yaml`, and `src/pivot.rs` are deleted. `src/state.rs` reduced from ~230 to ~80 lines; `src/phase_loop.rs` de-pivoted. Multi-plan routing is exclusively in `src/multi_plan.rs`.
+- id: project-root-for-plan-derives-project-root-as-plan
+  title: '`project_root_for_plan` derives project root as `<plan>/../..`'
+  body: |
+    Pure path math; no disk walk, no `.git` requirement. Contract: `<plan>` must be at least three path components deep.
+- id: git-query-functions-scope-to-project-dir-via-pathspec
+  title: Git query functions scope to project dir via pathspec
+  body: |
+    `working_tree_status`, `paths_changed_since_baseline`, and `work_tree_snapshot` append `-- <project_dir>` pathspec. `git_commit_plan` is intentionally unscoped; it runs from `plan_dir` CWD, already limiting `git add .` to plan-state files.
+- id: integration-tests-use-three-level-project-llm-state-plan-layout
+  title: Integration tests use three-level `<project>/LLM_STATE/<plan>` layout
+  body: |
+    Integration tests and `src/multi_plan.rs` tests construct `<project>/LLM_STATE/<plan>` directory trees matching ravel-lite convention. New integration tests must follow this layout.
+- id: format-result-text-renders-as-continuation-lines
+  title: '`format_result_text` renders `→` as continuation lines'
+  body: |
+    Lines matching `^\s*→\s*(.*)` immediately after an action marker are re-indented to the detail column and styled with the preceding action's intent. Blank lines, insight blocks, and non-continuation lines break the chain. `last_action_intent: Option<Option<Intent>>` encodes "no prior action" (outer None) vs "prior action with no intent" (Some(None)).
+- id: promoted-and-archived-are-valid-action-tags
+  title: '`PROMOTED` and `ARCHIVED` are valid action tags'
+  body: |
+    `ACTION_INTENTS` in `src/format.rs` includes `PROMOTED` and `ARCHIVED` as triage hand-off markers; they emit new backlog tasks or memory entries.
+- id: work-phase-allows-multiple-tasks-when-requested
+  title: Work phase allows multiple tasks when requested
+  body: |
+    `work.md` step 10 allows multiple tasks per session when the user explicitly requests them; the default remains single-task-per-phase.
+- id: dream-output-uses-label-continuation-format
+  title: Dream output uses label + `→` continuation format
+  body: |
+    `defaults/phases/dream.md` specifies a two-line entry layout (label line + `→ detail` continuation) matching the continuation-line renderer in `format_result_text`.
+- id: read-related-plans-markdown-centralises-related-plans-md-access
+  title: '`read_related_plans_markdown` centralises `related-plans.md` access'
+  body: |
+    `read_related_plans_markdown(plan_dir)` is the single access point for plan-local `related-plans.md` prose. Returns `""` gracefully on absent file; `{{RELATED_PLANS}}` token substitutes to an empty block. Both `src/main.rs` and `src/multi_plan.rs` route through it.
+- id: related-plans-stored-as-global-name-indexed-edge-list
+  title: '`related-components.yaml` stores global name-indexed edge list'
+  body: |
+    `related-components.yaml` stores project-level (not plan-level) edges keyed by component name, shareable across all plans in a project. Schema version 2; uses v2 `EdgeKind` vocabulary. Full CRUD with `Edge::validate` (rejects self-loops, unsorted symmetric participants). See: `run_rename needs a Trait registry before fourth cascade`.
+- id: sibling-edges-dedup-by-sorted-participants-parent-of-by-order
+  title: Sibling edges dedup by sorted participants; parent-of by order
+  body: |
+    In `src/related_components.rs` and `src/discover/apply.rs`, symmetric edge kinds use sorted participants for identity (order-insensitive dedup); directed edge kinds preserve participant order. Reversing this rule silently creates duplicate or missing edges. See: `Edge::validate must enforce participant sort order`.
+- id: plan-state-md-readers-fully-migrated
+  title: LLM_STATE/core plan-state migrated to typed YAML
+  body: |
+    `src/dream.rs` and `src/survey/discover.rs` use the typed YAML API; `.md` originals deleted from `LLM_STATE/core`. `src/multi_plan.rs` and `src/main.rs` tolerate absent `.md` files.
+- id: state-migrate-takes-plan-dir-as-positional-argument
+  title: '`state migrate` takes `PLAN_DIR` as positional argument'
+  body: |
+    `--plan-dir` is not a valid flag; the CLI expects `PLAN_DIR` positionally. Correct usage: `ravel-lite state migrate <PLAN_DIR>`.
+- id: plan-state-migration-requires-atomicity-idempotency-dry-run-validation
+  title: Plan-state migration requires atomicity, idempotency, dry-run, validation
+  body: |
+    Any plan-state migration tool must apply changes atomically, be safe to re-run (idempotent), support `--dry-run` preview, and validate round-trip fidelity.
+- id: migrate-rs-uses-parse-all-then-write-all-planner
+  title: '`migrate.rs` uses parse-all-then-write-all planner'
+  body: |
+    `plan_backlog_migration`, `plan_memory_migration`, `plan_session_log_migration`, and `plan_latest_session_migration` each return `Option<PendingMigration>`; `run_migrate` errors if set is empty, then writes all only after all parses succeed.
+- id: state-memory-parses-headings-empty-body-is-an-error
+  title: '`state::memory` parses `^## ` headings; empty body is an error'
+  body: |
+    `parse_md.rs` in `state::memory` splits on `^## ` (not `### ` as backlog uses). An entry with an empty body after the heading is a parse error, not silently skipped. See: `split_into_task_blocks splits on ### headings`.
+- id: src-state-module-structure
+  title: '`src/state/` uses module-per-area layout'
+  body: |
+    `src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, parse_md, verbs, mod), `memory/` (schema, yaml_io, parse_md, verbs, mod), `session_log/` (schema, yaml_io, parse_md, verbs, mod), and `migrate.rs`. New state areas follow this layout.
+- id: find-task-centralises-backlog-id-lookup
+  title: '`find_task` centralises backlog id-lookup'
+  body: |
+    `find_task` in `src/state/backlog/verbs.rs` is the single resolution point for task-id lookup; all mutation verbs call it. Do not duplicate id-lookup logic.
+- id: backlogfile-task-counts-injects-counts-into-survey
+  title: '`BacklogFile::task_counts` injects counts into survey'
+  body: |
+    `TaskCounts { total, not_started, in_progress, done, blocked }` lives in `state::backlog::schema`. `collect_task_counts` gathers per-plan counts; `inject_task_counts` in `survey/schema.rs` writes them onto `PlanRow`. Survey prompts (`survey.md`, `survey-incremental.md`) explicitly forbid the LLM from emitting `task_counts`. See: `PlanRowCounts injects unblocked/blocked/received into survey` for the analogous dep-traversal-based injection.
+- id: state-session-log-provides-full-verb-surface
+  title: '`state session-log` provides full verb surface'
+  body: |
+    `src/state/session_log/` holds `SessionRecord` / `SessionLogFile` types. CLI verbs: `list`, `show`, `append`, `set-latest`, `show-latest`. `append_record` is idempotent by session id; duplicate appends are silently skipped.
+- id: split-into-task-blocks-splits-on-headings
+  title: '`split_into_task_blocks` splits on `### ` headings'
+  body: |
+    `split_into_task_blocks` uses `### ` heading boundaries, not `\n---`; `\n---` incorrectly fragments `[HANDOFF]` blocks appended to task bodies. See: `Task blocks delimited by \n--- separator`.
+- id: dispatch-state-routes-state-subcommands
+  title: '`dispatch_state` routes state subcommands'
+  body: |
+    `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, or `dispatch_related_components`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
+- id: r7-design-llm-driven-related-projects-discovery
+  title: '`discover` runs two-stage fan-out pipeline to `discover-proposals.yaml`'
+  body: |
+    `state related-components discover` fans out one subagent per project (two-stage pipeline: per-project interaction-surface extraction then global edge proposal) and writes `discover-proposals.yaml`; `discover-apply` merges after human review. Cache key is `(tree_sha, dirty_hash)` pair; see `Discover cache key is tree_sha + dirty_hash pair`.
+- id: state-migrate-force-required-when-yaml-predates-md
+  title: state migrate --force required when .yaml predates .md
+  body: |
+    When pre-existing `.yaml` files are stale relative to the authoritative `.md` originals, `state migrate` aborts without `--force`. `--force` re-derives from `.md` and overwrites `.yaml`. `.md` is the authoritative source; `.yaml` is a derived cache.
+- id: std-path-absolute-does-pure-path-math-anchored-to-cwd
+  title: std::path::absolute does pure path math anchored to CWD
+  body: |
+    `std::path::absolute` performs pure path math anchored to the process CWD without touching the filesystem or resolving symlinks; use when recording a user-stated path without requiring the directory to exist.
+- id: src-discover-schema-surfacefile-and-surfacerecord-r7-1
+  title: '`SurfaceFile` and `SurfaceRecord` schema in `src/discover/`'
+  body: |
+    `src/discover/schema.rs` defines `SurfaceFile` (identity fields: `plan_name`, `tree_sha`) and `SurfaceRecord` (data fields). Two round-trip YAML tests guard the schema. Module wired at `src/lib.rs` as `pub mod discover`.
+- id: discover-schema-serde-default-on-data-fields-only
+  title: 'Discover schema: serde(default) on data fields only'
+  body: |
+    In `SurfaceRecord`, data fields carry `#[serde(default)]` to tolerate partial LLM emission; identity fields on `SurfaceFile` deliberately omit `default` so a missing identity field hard-fails on deserialise.
+- id: macos-tempdir-path-needs-canonicalize-before-strip-prefix
+  title: macOS TempDir path needs canonicalize before strip_prefix
+  body: |
+    `git rev-parse --show-toplevel` resolves through macOS's `/var → /private/var` symlink; `TempDir` paths do not. Call `std::fs::canonicalize` on both sides before `strip_prefix` or the prefix check silently fails.
+- id: display-only-timestamps-avoid-chrono-dep
+  title: Display-only timestamps avoid chrono dep
+  body: |
+    `format_unix_utc` in `src/discover/stage1.rs` hand-rolls proleptic-Gregorian formatting for the `analysed_at` field. When a timestamp is display-only (never parsed back), a small tested helper avoids the `chrono` dependency entirely.
+- id: multi-stage-llm-pipeline-uses-run-config-outcome-submodule-shape
+  title: Multi-stage LLM pipeline uses run/Config/Outcome submodule shape
+  body: |
+    Each stage in `src/discover/` exposes `run_<stage>`, `<Stage>Config`, and `<Stage>Outcome`. Internal shape: `Config` → `pub async run` fn → helper `spawn` fn → unit tests. Stages mirror each other; reuse this template for new stages.
+- id: rename-cascade-registry-design-consideration
+  title: '''repo rename'' needs RenameHook registry before third cascade'
+  body: |
+    `rename_component_in_edges` in `src/related_components.rs` is implemented but unused — its only caller (`projects::run_rename`) was deleted with `src/projects.rs`. Reserved for future repo-rename. When implementing repo-rename in `src/repos.rs`, wire `rename_component_in_edges` first; before the cascade reaches three points, extract a `RenameHook` trait registry rather than threading in ad-hoc.
+- id: find-conflicting-kind-misses-parent-of-direction-reversals
+  title: '`find_directional_conflict` requires same-lifecycle for reversed-pair conflicts'
+  body: |
+    `src/discover/apply.rs::find_directional_conflict` flags a conflict when a directed-kind edge with the same lifecycle and reversed participants already exists. Cross-lifecycle reversals are not flagged; whether they should be is an open design question. See: `Sibling edges dedup by sorted participants; parent-of by order`.
+- id: discover-e2e-uses-a-fake-claude-bash-shim-per-stage
+  title: Discover e2e uses a fake-claude bash shim per stage
+  body: |
+    Discover e2e tests use a fake-claude bash shim that distinguishes Stage 1 vs Stage 2 by grepping the prompt header. Stage 1: extracts the YAML surface-file path from the prompt body and writes a canned YAML surface response. Stage 2: issues `ravel-lite state discover-proposals add-proposal` CLI calls for each canned proposal edge; no YAML path extraction.
+- id: discover-cache-key-is-tree-sha-dirty-hash-pair
+  title: Discover cache key is tree_sha + dirty_hash pair
+  body: |
+    `compute_project_state` returns `{ tree_sha, dirty_hash }`. `dirty_hash` is SHA-1 (via `git hash-object --stdin`) over `git diff HEAD -- <rel>` plus untracked file paths and contents (subtree-scoped via `git ls-files --others -- <rel>`). Clean working trees use `dirty_hash = ""`. Cache hit requires both fields to match.
+- id: stage-1-injects-catalog-projects-to-scope-edge-evidence
+  title: Stage 1 injects CATALOG_PROJECTS to scope edge evidence
+  body: |
+    `{{CATALOG_PROJECTS}}` (catalog minus the current project) is injected into the Stage 1 prompt. Rules forbid non-catalog entries in `explicit_cross_project_mentions`. Without scoping, third-party projects appear as sibling evidence (e.g. Raycast, swift-lispkit).
+- id: stage-2-must-not-propose-edges-from-weak-signals-alone
+  title: Stage 2 must not propose edges from weak signals alone
+  body: |
+    `defaults/discover-stage2.md` forbids proposals based solely on: shared upstream dependencies, same ecosystem, trivial glob overlap, or shared generic tools. These signals in combination can still contribute; any one alone is insufficient.
+- id: stage-1-yaml-list-items-forbid-parenthetical-colon-annotations
+  title: Stage 1 YAML list items forbid parenthetical colon annotations
+  body: |
+    Parenthetical annotations with colons inside YAML list items (e.g., `- foo (format: bar)`) cause `data_formats[n]: invalid type: map` deserialization failures. Disambiguation belongs in the `notes` field, not inline in the list item.
+- id: stage-2-skips-when-all-stage-1-outcomes-are-cached
+  title: Stage 2 skips when all Stage 1 outcomes are Cached
+  body: |
+    When every Stage 1 outcome is `Cached` and no failures occurred, `discover` skips Stage 2 and preserves the existing `discover-proposals.yaml`. Prevents non-deterministic LLM output from overwriting user-curated proposals on incremental re-runs.
+- id: stage-2-skips-when-all-stage-1-attempts-failed
+  title: Stage 2 skips when all Stage 1 attempts failed
+  body: |
+    When every Stage 1 attempt produces `Stage1Outcome::Failed`, Stage 2 is skipped and a failure-only proposals file is written. Each failure surfaces via `eprintln!`. Inferring edges from zero surfaces is meaningless.
+- id: discover-stage-spawns-need-allowed-tools-and-add-dir
+  title: Discover stage spawns need --allowed-tools and --add-dir
+  body: |
+    `--setting-sources project,local` excludes the user's allowlist; writes to dirs outside cwd are silently blocked. Stage 1 spawns require `--allowed-tools "Read,Grep,Glob,Bash,Write,Task"` and `--add-dir <cache-dir>`. Stage 2 spawns require only `--allowed-tools Bash` and `--add-dir <config_root>`; Stage 2 issues CLI calls rather than writing files directly.
+- id: opportunistic-discover-on-catalog-changes-deferred-idea
+  title: Opportunistic discover on catalog changes is a deferred idea
+  body: |
+    Analyse-work or triage could run `discover` opportunistically when project composition changes (new projects added, catalog membership shifts), keeping `related-projects.yaml` fresher without manual invocation. Ontology v2 design is complete; trigger conditions are not yet defined.
+- id: proposalsfile-source-project-states-stores-full-projectstate
+  title: ProposalsFile.source_project_states stores full ProjectState
+  body: |
+    `ProposalsFile.source_project_states` is `BTreeMap<String, ProjectState>` (tree_sha + dirty_hash per surface), not `BTreeMap<String, String>`. The proposals file cache-state is identical to the in-memory cache key. Legacy `source_tree_shas` key is silently dropped on read; `proposals_file_reads_legacy_source_tree_shas_as_empty_states` pins this behaviour. See: `Discover cache key is tree_sha + dirty_hash pair`.
+- id: serde-default-on-added-fields-avoids-schema-version-bump
+  title: serde(default) on added fields avoids schema version bump
+  body: |
+    Adding `#[serde(default)]` to a newly introduced field on an existing serialised struct maintains read-compat with pre-existing files. No schema_version bump needed when the field is informational (not identity-determining). `ProjectState.dirty_hash` demonstrates this pattern.
+- id: component-ontology-v2-spec-at-docs-component-ontology-md
+  title: Component ontology v2 spec at docs/component-ontology.md
+  body: |
+    `docs/component-ontology.md` is the canonical v2 ontology spec (reference section only); migration guidance is in a separate companion doc. Implementation pending. See: `Component ontology v2 uses kind × lifecycle × direction axes`.
+- id: component-ontology-v2-uses-kind-lifecycle-direction-axes
+  title: Component ontology v2 uses kind × lifecycle × direction axes
+  body: |
+    Three orthogonal axes (kind, lifecycle, direction) give sufficient expressiveness without hyperedges or numeric confidence. Vocabulary anchored in SPDX 3.0.1's `RelationshipType × LifecycleScopeType` factoring. See: `Component ontology v2 spec at docs/component-ontology.md`.
+- id: generated-derived-artifacts-need-no-migrators-delete-and-regenerate
+  title: Generated derived artifacts need no migrators; delete-and-regenerate
+  body: |
+    `related-projects.yaml` is a generated artifact; delete-and-regenerate is the upgrade path when the schema changes. No v1→v2 migrator is needed. Generalises: generated derived files never need forward-migration tools.
+- id: unquoted-paths-in-error-messages-hide-empty-path-bugs
+  title: Unquoted paths in error messages hide empty-path bugs
+  body: |
+    Quote all path values in user-facing error messages so an empty path appears as `""` rather than a silent double-space gap. Applies anywhere a path is interpolated into a string literal. An unquoted empty path is indistinguishable from surrounding whitespace, delaying diagnosis.
+- id: project-root-for-plan-uses-canonicalize-latent-catalog-path-mismatch-risk
+  title: project_root_for_plan uses canonicalize; latent catalog-path mismatch risk
+  body: |
+    `project_root_for_plan` in `src/git.rs:153` uses `canonicalize` with a raw-path fallback; `plan_project_path` and `projects::run_add` both use `std::path::absolute`. On macOS with symlinks in `/Users` or `/Development`, `canonicalize` introduces `/private/...` prefixes that desynchronise lookup from catalog-stored paths. No current consumer cross-compares the two outputs. Fix `project_root_for_plan` to use `std::path::absolute` only if a comparison against a catalog-stored path is introduced.
+- id: edgekind-has-17-variants-task-briefs-may-cite-16
+  title: EdgeKind has 17 variants; task briefs may cite 16
+  body: |
+    `EdgeKind::all()` in the `component_ontology` crate defines 17 kebab-case variants. The `conforms-to` family has three members, not two. Prose references (including task briefs) that cite 16 are wrong. Authoritative count: `EdgeKind::all()` in the crate.
+- id: edge-validate-must-enforce-participant-sort-order
+  title: Edge::validate must enforce participant sort order
+  body: |
+    Distinctness checks alone do not catch reversed symmetric-participant pairs; canonical-key dedup silently fails for `[A, B]` vs `[B, A]`. `Edge::validate` must sort participants and reject unsorted input, not merely check uniqueness. See: `Sibling edges dedup by sorted participants; parent-of by order`.
+- id: ontology-and-related-components-schema-versions-are-orthogonal
+  title: Ontology and related-components schema versions are orthogonal
+  body: |
+    `related-components.yaml` uses `SCHEMA_VERSION=2`; the `component_ontology` crate's YAML format uses `ONTOLOGY_FILE_SCHEMA_VERSION=1`. Separate version fields keep the two evolutions independent; a bump in one does not imply a bump in the other.
+- id: action-lines-split-title-reason-into-two-row-layout
+  title: Action lines split title/reason into two-row layout
+  body: |
+    \`format_result_text\` in \`src/format.rs\` splits action-line detail text on \`" — "\` (em-dash with spaces) via \`str::split_once\`; the title row keeps the intent colour, the reason row is indented to the detail column and rendered dim. A \`trim().is_empty()\` guard suppresses the second row when the separator is trailing. The \` — \` separator is now load-bearing protocol in phase prompts: using \`-\` or \`–\` instead silently collapses back to single-row output.
+- id: render-embedded-kinds-for-prompt-injects-edgekind-vocabulary-into-stage-2
+  title: render_embedded_kinds_for_prompt injects EdgeKind vocabulary into Stage 2
+  body: |
+    The `component_ontology` crate exposes `render_kinds_for_prompt(&OntologyYaml) -> String` and `render_embedded_kinds_for_prompt() -> Result<String>`. `src/discover/stage2.rs` calls `render_embedded_kinds_for_prompt()` to substitute `{{ONTOLOGY_KINDS}}` in the Stage 2 prompt. This is the sole injection point for the EdgeKind vocabulary into LLM prompts.
+- id: interaction-role-hints-spec-is-in-migration-doc-5-2-not-ontology-doc
+  title: interaction_role_hints spec is in migration doc §5.2, not ontology doc
+  body: |
+    `docs/component-ontology.md` has no §13.2 or §14.1. The `interaction_role_hints` design lives in `docs/component-ontology-migration.md §5.2`. Task briefs that cite the former section numbers are wrong; use the migration companion doc.
+- id: prompt-vocab-enum-variant-bijection-tests-guard-llm-code-alignment
+  title: Prompt vocab ↔ enum variant bijection tests guard LLM/code alignment
+  body: |
+    A test asserting bijection between an enum's variants and a prompt's listed vocabulary (e.g. `InteractionRoleHint` vs `defaults/discover-stage1.md`) catches prompt-vocabulary drift before any production run. Adding a new enum variant without updating the prompt fails the test; adding a new prompt term without a matching variant also fails. Apply for any closed-vocabulary enum whose terms appear in an LLM prompt.
+- id: format-result-text-inserts-blank-line-between-consecutive-action-blocks
+  title: '`format_result_text` inserts blank line between consecutive ACTION blocks'
+  body: |
+    `src/format.rs::format_result_text` inserts a blank line when an `[ACTION]` marker immediately follows a previous `[ACTION]` block (including its continuation lines). Keeps multi-action output visually scannable; phase prompts do not need manual blank lines between action outputs.
+- id: remove-edge-requires-lifecycle-v1-style-calls-fail-at-clap
+  title: '`remove-edge` requires --lifecycle; v1-style calls fail at clap'
+  body: |
+    `ravel-lite state related-components remove-edge` requires `--lifecycle`; omitting it is a clap parse error. v1-style two-argument invocations (without lifecycle) are not accepted. See: `related-components.yaml stores global name-indexed edge list`.
+- id: stage-2-hints-as-priors-enforcement-is-prose-only-hard-assertion-deferred
+  title: Stage 2 hints-as-priors enforcement is prose-only; hard assertion deferred
+  body: |
+    Stage 2 `priors-not-verdicts` section is prose only. If real discover runs show Stage 2 over-weighting `interaction_role_hints` (e.g., proposing `strong` edges where the only evidence is a hint), consider adding a per-edge hard assertion: `evidence_fields must include at least one non-hint field for strong-grade proposals`. The prompt change alone may be sufficient.
+- id: docs-architecture-md-not-audited-for-v1-vocabulary
+  title: docs/architecture.md has no v1 edge-kind vocabulary
+  body: |
+    `docs/architecture.md` carries no v1 edge-kind vocabulary or `related-projects` references. Matches for `sibling`/`parent`/`child` are filesystem or process-context English, not ontology edge kinds.
+- id: stage-2-writes-proposals-via-per-edge-add-proposal-cli
+  title: Stage 2 writes proposals via per-edge add-proposal CLI
+  body: |
+    `run_stage2` spawns claude with `--allowed-tools Bash`; the LLM issues `ravel-lite state discover-proposals add-proposal` for each edge. Validation in `src/state/discover_proposals/` enforces: clap enum parsing, participant count, catalog-membership, `Edge::validate()`, and exact-duplicate rejection. Post-spawn, `run_stage2` loads the accumulated `discover-proposals.yaml`. The prior `RawStage2Output` YAML-parse approach is removed. Mirrors the main phase-loop CLI pattern.
+- id: pre-initialise-output-file-before-cli-driven-spawn
+  title: Pre-initialise output file before CLI-driven spawn
+  body: |
+    Pre-initialise the output file before spawning an LLM with CLI write tools: the zero-calls case produces a valid empty file (load succeeds) rather than a missing-file error. Seed prior-phase failures into the initial file so they survive the round-trip regardless of LLM output. `run_stage2` demonstrates this: creates `discover-proposals.yaml` with Stage 1 failures before spawning Stage 2.
+- id: create-spawn-binds-purpose-via-invariant-in-prompt-and-template
+  title: '`create` spawn binds purpose via INVARIANT in prompt and template'
+  body: |
+    `compose_create_prompt` in `src/create.rs` appends an INVARIANT paragraph after the path instruction. `defaults/create-plan.md` §0 leads with the invariant heading before the §1 clarification dialogue. Without both, the agent interprets a concrete problem description (bug report, feature request) as a pivot signal and skips plan creation. Single-task plans are explicitly named as valid to prevent "only one thing to do" being treated as a non-plan.
+- id: compose-prompt-asserts-plan-only-output-invariant-guards-the-create-invariant
+  title: '`compose_prompt_asserts_plan_only_output_invariant` guards the create INVARIANT'
+  body: |
+    `compose_prompt_asserts_plan_only_output_invariant` in `src/create.rs` tests asserts both key phrases are present in the composed prompt. Guards the INVARIANT binding against drift. See: `create` spawn binds purpose via INVARIANT in prompt and template.
+- id: bash-var-pat-repl-treats-in-replacement-as-matched-text
+  title: Bash ${var//pat/repl} treats & in replacement as matched text
+  body: |
+    In bash 5.2+, `&` in the replacement side of `${var//pat/repl}` expands to the matched pattern, not a literal ampersand. HTML entities like `&lt;` in replacement content become the matched text, silently corrupting output. Escape `&` → `\&` before using content as a replacement string.
+- id: build-docs-sh-esc-must-wrap-every-substitution-replacement
+  title: build-docs.sh esc() must wrap every substitution replacement
+  body: |
+    The `esc()` helper in `scripts/build-docs.sh` escapes `&` → `\&` before every bash string substitution call. Omitting it on any substitution silently corrupts HTML entities. This is a mandatory pipeline invariant; the comment block above the substitution calls documents it. See: `Bash ${var//pat/repl} treats & in replacement as matched text`.
+- id: clap-empty-string-normalisation-belongs-at-dispatch-boundary
+  title: Clap empty-string normalisation belongs at dispatch boundary
+  body: |
+    Clap `value_delimiter` + `--arg ""` hands back `[""]`, not `[]`. Unit tests miss this (they receive `&[String]` directly and never exercise the clap parse path); only CLI integration tests surface it. Normalise empty strings at dispatch in `main.rs`, not inside the library verb, to keep the library contract clean.
+- id: triage-prose-dep-reconciliation-is-a-mechanical-scan
+  title: '`backlog lint-dependencies` detects prose-dep drift'
+  body: |
+    `state backlog lint-dependencies <PLAN_DIR>` reports drift between prose task-id mentions in task descriptions and structured `dependencies:` fields. Byte-scan whole-word matching; `[a-zA-Z0-9_-]` chars are id-body, any other byte is a boundary. Output is `LintReport`/`TaskDrift` serde types (YAML/JSON). Linter output is advisory, not authoritative; triage uses `set-dependencies` to reconcile. Triage prompt leads with a **Preflight** directive instructing the LLM to run the linter before triage work.
+- id: analyse-work-stale-status-repair-is-a-mechanical-scan
+  title: '`repair-stale-statuses` exits 1 on drift, 0 on clean'
+  body: |
+    `src/state/backlog/repair_stale_statuses.rs` exposes `analyse_repairs` and `run_repair_stale_statuses`; types `Repair`, `RepairReport`, `RepairReason`. Flips stale in-progress/blocked statuses. Exit 1 when repairs apply, 0 when no drift.
+- id: datalog-evaluator-deferred-imperative-verbs-sufficient
+  title: Datalog evaluator deferred; imperative verbs sufficient
+  body: |
+    A Datalog query evaluator for backlog queries was considered and explicitly deferred. All current LLM query needs (dep-traversal, count derivation) are satisfiable by purpose-built imperative Rust verbs; Datalog adds complexity without corresponding expressiveness gain.
+- id: lint-dependencies-id-slug-collision-risk
+  title: lint-dependencies id-slug collision risk
+  body: |
+    `lint_dependencies` word-boundary matching will false-match any task id that coincides with a common English word; every occurrence of that word in any task description is reported as drift. Risk is low with current slug generation (ids are long title-derived strings), but audit `allocate_id` if very short ids appear in practice.
+- id: backlog-transitions-token-computed-by-src-backlog-transitions-rs
+  title: '{{BACKLOG_TRANSITIONS}} token computed by src/backlog_transitions.rs'
+  body: |
+    `src/backlog_transitions.rs` diffs `backlog.yaml` at the work-baseline SHA against the current state. Covers status flips, result additions/modifications, added/deleted tasks, dependency changes, and handoff changes. Soft-fails to a human-readable placeholder on any error. Wired into `phase_loop.rs` `AnalyseWork` branch alongside `{{WORK_TREE_STATUS}}`; `analyse-work.md` presents the block as context for understanding what moved — the commit title must describe the shape of the changes (e.g., "Extract auth module", "Remove deprecated sync path"), not cite task ids. The commits.yaml authoring step in `analyse-work.md` explicitly forbids task ids in commit titles or bodies.
+- id: work-baseline-is-prior-triage-commit-triage-additions-bleed-into-backlog-transitions
+  title: Work-baseline is prior triage commit; triage additions bleed into {{BACKLOG_TRANSITIONS}}
+  body: |
+    The work-baseline SHA is captured at the triage commit (end of the previous cycle), not at session start. Triage additions from the prior cycle therefore appear in the `{{BACKLOG_TRANSITIONS}}` diff alongside this cycle's work changes. `analyse-work.md` includes a caveat about this. A cleaner fix requires a separate session-start baseline snapshot. See: `Work-baseline seeded atomically in the triage commit`.
+- id: llm-reasoning-preamble-in-reflect-dream-triage-is-a-preserved-feature
+  title: LLM reasoning preamble in reflect/dream/triage is a preserved feature
+  body: |
+    The LLM-authored prose preamble above the label list in reflect, dream, and triage is intentional — it carries the LLM's reasoning, not just the action list. Preserve it across prompt and renderer changes: label-rendering code replaces only the label block, not the whole output; `format_result_text` must not filter paragraph text, only structural noise (`---` separators, stray code fences). Output-format sections in `defaults/phases/{reflect,dream,triage}.md` must explicitly list every intent label the LLM is expected to emit in the preamble — omitting the list causes the LLM to silently drop them. `format_result_text` handles all intent labels; a missing label in output is always a prompt omission, not a renderer gap.
+- id: run-create-pre-seeds-plan-dir-in-rust-before-llm-spawn
+  title: run_create pre-seeds plan dir in Rust before LLM spawn
+  body: |
+    `src/create.rs` scaffolds the plan directory — creating `backlog.yaml`, `memory.yaml`, and related plan-state files — via CLI calls before the create-plan LLM spawn. Eliminates format drift between LLM-authored YAML and CLI-serialised YAML; `defaults/create-plan.md` carries no scaffolding instructions. See: `Pre-initialise output file before CLI-driven spawn`.
+- id: headless-output-filters-hr-lines-in-rust
+  title: Headless output filters `---` HR lines in Rust
+  body: |
+    `src/format.rs` strips bare `---` horizontal-rule lines from headless phase output (reflect, dream, triage). Only `---` is filtered; `***` and `___` variants are not.
+- id: planrowcounts-injects-unblocked-blocked-received-into-survey
+  title: PlanRowCounts injects unblocked/blocked/received into survey
+  body: |
+    `PlanRowCounts { unblocked, blocked, received }` lives in `state::backlog::schema`. `BacklogFile::plan_row_counts()` computes all three in one dep-traversal pass. `inject_plan_row_counts()` in `survey/schema.rs` writes them onto `PlanRow` across cold, incremental, and `is_noop` fast paths. Survey prompts forbid the LLM from emitting these fields. See: `survey blocked count is status-blocked-or-dep-unmet union`; `survey received count is handoff-based not session-diff`.
+- id: survey-received-count-is-handoff-based-not-session-diff
+  title: survey received count is handoff-based not session-diff
+  body: |
+    `PlanRow.received` counts tasks in the current backlog that carry handoff data (a `[HANDOFF]` block). It is NOT the count of tasks that transitioned to in_progress/done this cycle. `SessionRecord` carries only id/timestamp/phase/body — no structured backlog snapshot — making a cycle-diff computation impossible. See: `PlanRowCounts injects unblocked/blocked/received into survey`.
+- id: survey-blocked-count-is-status-blocked-or-dep-unmet-union
+  title: survey blocked count is status-blocked-or-dep-unmet union
+  body: |
+    `PlanRow.blocked` (computed by `plan_row_counts()`) counts tasks with `status=blocked` OR `status=not_started` with at least one unmet dependency. Matches the `blocked` column key in `src/survey/render.rs:20`. Narrow `status==blocked`-only definitions undercount. See: `PlanRowCounts injects unblocked/blocked/received into survey`.
+- id: analyse-work-writes-commits-yaml-git-commit-work-applies-it
+  title: Analyse-work writes commits.yaml; git-commit-work applies it
+  body: |
+    `analyse-work.md` step 9 writes a `commits.yaml` spec (ordered `{paths, message}` list) covering the full work diff. `GitCommitWork` calls `apply_commits_spec` in `src/git.rs`, applies each commit scoped to the project subtree, then removes the spec file before staging to prevent self-inclusion. Fallback on missing/malformed/empty spec: single catch-all commit of the whole subtree. Plan-state is folded into the first/only source commit by default; no separate plan-state commit is produced. See: `Analyse-work commits all non-plan paths`.
+- id: phase-summary-render-computes-structural-labels-only
+  title: phase-summary render computes structural labels only
+  body: |
+    `state phase-summary render` computes structural labels only. Intent-required labels (e.g., a purposeful `[REPRIORITISED]`) are excluded because a diff alone cannot distinguish a deliberate reorder from an accidental one; the LLM preamble carries that reasoning. Structural label sets: `[DONE]`, `[NEW]`, `[OBSOLETE]`, `[REPRIORITISED]` (triage); `[NEW]`, `[OBSOLETE]`, `[STALE]` (reflect/dream); `[STATS]` (dream). Implementation in `src/phase_summary.rs`. See: `LLM reasoning preamble in reflect/dream/triage is a preserved feature`.
+- id: phase-summary-render-prompt-wiring-needs-orchestrator-baseline
+  title: Phase prompts invoke `phase-summary render` via CLI directive
+  body: |
+    `defaults/phases/{reflect,dream,triage}.md` `## Output format` sections each contain a single CLI directive: `ravel-lite state phase-summary render {{PLAN}} --phase <phase> --baseline $(cat {{PLAN}}/<phase>-baseline 2>/dev/null || echo "")`. Emitting that directive's output verbatim is the LLM's only structural obligation; the narrative preamble and intent-required labels remain the LLM's authoring responsibility. Baseline wiring: `GitCommitWork` → `reflect-baseline`; `GitCommitReflect` → `dream-baseline` (or `triage-baseline` when skipping dream); `GitCommitDream` → `triage-baseline`; `GitCommitTriage` → `work-baseline`.
+- id: each-phase-baseline-holds-the-sha-from-the-preceding-commit
+  title: Each <phase>-baseline holds the SHA from the preceding commit
+  body: |
+    Each `<phase>-baseline` file holds the commit SHA from just before that phase started — written by the preceding `git-commit-*` step, not by the phase itself. Mapping: `reflect-baseline` ← `GitCommitWork`; `dream-baseline` ← `GitCommitReflect`; `triage-baseline` ← `GitCommitDream` (or `GitCommitReflect` when `should_dream` is false); `work-baseline` ← `GitCommitTriage`. Enables `state phase-summary render --baseline $(cat <phase>-baseline)` calls from phase prompts.
+- id: init-rs-drift-sentinel-checks-phase-prompts-for-state-phase-summary-render
+  title: '`init.rs` drift sentinel checks phase prompts for `state phase-summary render`'
+  body: |
+    `src/init.rs` contains a drift-guard sentinel asserting phase prompt templates include the substring `state phase-summary render`. Any change to how phase prompts emit their output requires updating this sentinel.
+- id: ops-log-yaml-mechanism-for-intent-label-capture-deferred
+  title: ops.log.yaml mechanism for intent-label capture (deferred)
+  body: |
+    `src/phase_summary.rs:21-23` describes an `ops.log.yaml` mechanism: mutating verbs record `--intent <label>` and `--reason "<text>"` at mutation time; the renderer merges structural diff with intent records, removing the LLM's responsibility for emitting intent labels.
+
+    **Deferred**: intent is currently LLM reasoning, not mechanical — the verb caller does not yet hold the intent value before invoking the verb. Only worth pursuing when intent becomes mechanical enough that LLM authorship is redundant.
+- id: triage-reprioritised-requires-an-llm-authored-reason
+  title: Triage `[REPRIORITISED]` requires an LLM-authored reason
+  body: |
+    `defaults/phases/triage.md` requires a ` — <reason>` suffix on every `[REPRIORITISED]` action line. The renderer at `src/format.rs:134` classifies `REPRIORITISED` as `Intent::Changed`; a missing reason collapses to single-row output with no dim reason row. See: `action-lines-split-title-reason-into-two-row-layout`.
+- id: dead-code-grep-must-include-tests-scope
+  title: Dead-code grep must include tests/ scope
+  body: |
+    A code path that writes no production output may remain live through test fixture side-effects. Precondition greps for dead-code tasks must include `tests/`; production-source-only searches produce false negatives.
+- id: latest-session-md-highlight-rule-targets-wrong-filename
+  title: PHASE_HIGHLIGHTS detection is unit-tested but TUI-unverified
+  body: |
+    `PHASE_HIGHLIGHTS` regexes target `.yaml` extensions; `format_tool_call` detects both `Write`/`Edit` tool paths and `ravel-lite state <subcommand>` Bash invocations and maps them to canonical filenames. Four unit tests cover session-log, memory, and backlog state-CLI paths. Whether labels fire in live TUI runs remains unverified — end-to-end verification is still a follow-up.
+- id: tests-mirroring-stale-impl-values-cannot-detect-drift
+  title: Tests mirroring stale impl values cannot detect drift
+  body: |
+    When a test hardcodes the same incorrect string as the implementation (e.g., a stale filename extension), both pass and the bug is invisible. The test only exposes the bug when the implementation is corrected — it then fails, revealing its own co-contamination. Test inputs must not copy internal implementation strings; prefer on-disk golden paths or independently-authored constants.
+- id: state-filename-constants-live-in-src-state-filenames-rs
+  title: State filename constants live in src/state/filenames.rs
+  body: |
+    Nine `pub const` items: `BACKLOG_FILENAME`, `MEMORY_FILENAME`, `SESSION_LOG_FILENAME`, `LATEST_SESSION_FILENAME`, `SUBAGENT_DISPATCH_FILENAME`, `COMMITS_FILENAME`, `PHASE_FILENAME`, `RELATED_COMPONENTS_FILENAME`, `DREAM_WORD_COUNT_FILENAME`. All literal string occurrences across `src/state/`, `src/dream.rs`, `src/subagent.rs`, `src/format.rs`, `src/create.rs`, `src/phase_loop.rs`, `src/main.rs`, `src/multi_plan.rs`, `src/git.rs`, `src/state/phase.rs`, and `src/survey/discover.rs` use these constants. `PHASE_HIGHLIGHTS` regexes use `filename_suffix_regex(CONSTANT)` (wraps `regex::escape`) so a constant rename cascades into highlight detection automatically.
+- id: defaults-md-prompt-files-keep-literal-filenames-by-design
+  title: defaults/*.md prompt files keep literal filenames by design
+  body: |
+    Prompt files under `defaults/` use literal filenames (e.g., `backlog.yaml`, `memory.yaml`) rather than referencing constants from `src/state/filenames.rs`. Converting them would require token substitution or build-time replacement; complexity without proportional benefit. Only `src/` code uses the filename constants — prompts are deliberately out-of-scope.
+- id: cargo-dist-wired-homebrew-pipeline-needs-operator-provisioning
+  title: Release pipeline uses manual scripts, not cargo-dist
+  body: |
+    Cargo-dist CI removed; releases use manual scripts: `cargo release patch --execute && git push --follow-tags && ./scripts/release-build.sh && ./scripts/release-publish.sh`. `release-build.sh` builds 4 tarballs (native `cargo build` for Darwin; `cargo zigbuild` glibc-2.17 for Linux). `release-publish.sh` creates the GitHub Release and updates the sibling `homebrew-taps` formula from `scripts/templates/ravel-lite.rb.tmpl`. `release-doctor.sh` runs as the first step in `release-build.sh`; verifies zig, cargo-zigbuild, four rustup targets, and gh auth — exits non-zero with a complete punch-list and remediation commands if anything is missing. The TARGETS array is intentionally duplicated between `release-doctor.sh` and `release-build.sh`; no shared sourced file (two duplicates beats the indirection of a third file). Pipeline validated; end-user smoke test (`brew install linkuistics/taps/ravel-lite && ravel-lite --version`) passes.
+- id: capture-scripts-template-documentation-with-real-system-runs
+  title: Capture scripts template documentation with real system runs
+  body: |
+    `scripts/capture/ravel-lite-tutorial.sh` drives a TestAnyware macOS VM: installs via Homebrew, runs the tutorial scenario, takes screenshots, pulls the resulting `LLM_STATE` tree. Structured into named sections with `[STEP-NAME]` log markers. VM identity uses deterministic `VM_ID` passed to `vm start --id`; reused via `--vm` throughout. All testanyware subcommands validated against `--help` output; `bash -n` passes. Chapter 01-02 have 11 named `transcript_at` captures. Chapter 03 (`ravel-lite create`) uses hybrid capture: screenshot-per-prompt for the volatile four-question scope conversation, `transcript_at` for the deterministic post-create state; live VM run complete. Chapter 03 interactive flow uses `install_claude_code`, `transfer_claude_auth`, `pretrust_project`, and `setup_shell_env` harness functions. Chapter 04 `scenario_run` drives `ravel-lite run`, polls every 10s (up to ~20 min), captures mid-cycle screenshots every 60s, and pulls six deterministic post-cycle transcripts; live VM run complete, transcripts folded into chapters 04 and 05. `--from <step>`, `--vm-id <id>`, and `--keep-vm` flags enable resumable partial runs; `maybe_run <step> <fn>` gates each chapter via a STARTED sentinel. `--from` beyond `chapter01` requires `--vm-id` (prerequisite VM state absent on a fresh VM). See: `Hybrid capture splits screenshot vs transcript_at by content stability`.
+- id: after-help-const-avoids-dead-code-warnings-no-intermediate-url-consts
+  title: after_help const avoids dead-code warnings; no intermediate URL consts
+  body: |
+    `src/main.rs` exposes repo and docs URLs via clap's `after_help` field. Defined as a single `AFTER_HELP: &str` string literal rather than separate `REPO_URL`/`WEBSITE_URL` constants; intermediate named string constants with no other consumers trigger dead-code warnings under `[lints.rust] warnings = "deny"`.
+- id: config-model-is-layered-lua-config-lua-rs-owns-it
+  title: Config model is layered Lua; `config_lua.rs` owns it
+  body: |
+    `src/config_lua.rs` implements the `ravel` Lua global table (`set_agent`, `set_headroom`, `set_model_for`, `set_token`, `append_prompt`, `config`). Backed by `mlua` (vendored Lua 5.4). Global + plan layers apply in order; setter functions use last-write-wins; `append_prompt` is append-only and accumulates across both layers in registration order — prompts cannot be replaced via config. All config loaders delegate to `config_lua::resolve`; `src/config.rs` does not contain `merge_yaml` or overlay machinery.
+- id: shipped-defaults-read-from-embedded-binary-not-disk
+  title: Shipped defaults read from embedded binary, not disk
+  body: |
+    All call sites for shipped prompts and agent-definitions use `init::require_embedded` / `init::embedded_entries_with_prefix`; disk reads of embedded-path files are prohibited. `run_init` writes only a commented-out `config.lua` stub and prunes `RETIRED_PATHS` — no shipped defaults are written to disk. `tests/embedded_defaults_drift.rs` enforces that no source file reads an embedded path from disk.
+- id: debug-log-rs-uses-oncelock-singleton-paths-are-constants
+  title: '`debug_log.rs` uses OnceLock singleton; paths are constants'
+  body: |
+    `OnceLock<DebugLog>` singleton with `enable`, `is_enabled`, `log`, `log_stream_line`, and `format_argv`. Constants `CLAUDE_DEBUG_FILE` and `EMBEDDING_DEBUG_FILE` centralise `/tmp/` paths so spawn sites and the CLI handler share one source of truth. Singleton chosen over threading `Option<Arc<DebugLog>>` through the call graph because debug-on/off is process-wide state.
+- id: debug-instruments-run-spawn-sites-only
+  title: '`--debug` instruments `run` spawn sites only'
+  body: |
+    `--debug` is a `run` flag; `create::run_create` and `discover::stage1` are intentionally uninstrumented because they are unreachable from `ravel-lite run`. Four instrumented spawn sites: `src/agent/claude_code.rs` (interactive + headless), `src/agent/pi.rs` (interactive + headless), `src/agent/common.rs` (`pump_stdout_to_ui`, `spawn_stderr_drain`, exit in `run_streaming_child`), and `src/survey/invoke.rs` (`spawn_claude_and_read`).
+- id: interactive-tui-paths-log-stdio-inherited-not-transcript
+  title: Pi interactive logs "inherited"; claude_code uses PTY under --debug
+  body: |
+    `pi` interactive spawn paths: stdio is inherited and not capturable; `--debug` records "stdio: inherited (no transcript available)" to avoid silent lossiness. `claude_code` interactive paths: `--debug` routes through `spawn_claude_via_pty` in `src/agent/claude_code.rs`, enabling PTY byte-stream capture via `log_pty_chunk`/`render_pty_bytes` in `debug_log.rs`. The "inherited" log message is pi-only. Headless paths capture full output in both cases.
+- id: select-config-dir-strips-trailing-slashes-via-components-collect
+  title: select_config_dir strips trailing slashes via components().collect
+  body: |
+    `src/config.rs::select_config_dir` normalises all candidate paths with `candidate.components().collect::<PathBuf>()` before any downstream use. This is the single normalisation point; trailing slashes on user-supplied config dirs do not propagate. Regression test: `trailing_slash_in_candidate_is_normalised_away`.
+- id: interactive-work-phase-spawn-omits-add-dir-for-plan-dir
+  title: Interactive work-phase spawn omits --add-dir for plan dir
+  body: |
+    `invoke_interactive` in `src/agent/claude_code.rs` does not pass `--add-dir <plan_dir>`. The plan dir is always a descendant of the cwd claude launches in; the flag is redundant and on a fresh machine triggers a trust-grant modal that hangs the work phase. See: `Discover stage spawns need --allowed-tools and --add-dir` for stage spawns, which do require `--add-dir`.
+- id: v1-v2-config-migration-wired-into-config-lua-resolve
+  title: v1→v2 config migration wired into config_lua::resolve
+  body: |
+    `src/migrate_v1_to_v2.rs` migrates legacy materialised YAML config (global `config.yaml`, `config.local.yaml`, per-agent `config.yaml`/`tokens.yaml`) to a `config.lua` with version marker. Detects legacy layout by intersecting embedded-default paths with disk. Crash-safe: file writes precede deletes; a mid-run crash leaves legacy files on disk for the next call to complete. Wired in `config_lua::resolve` as the first-touch call before any config layer is read. See: `Config model is layered Lua; config_lua.rs owns it`.
+- id: pty-capture-rs-is-the-pty-orchestrator-for-claude-code-debug-capture
+  title: pty_capture.rs is the PTY orchestrator for claude_code debug capture
+  body: |
+    `src/agent/pty_capture.rs` exposes `run_pty_session` (production entry, called via `spawn_blocking`), `drive_pty_io` (three-thread orchestrator: stdout pump, stdin pump, SIGWINCH forwarder), `pump_stdin_with_shutdown` (`libc::poll`-based with `AtomicBool` shutdown to avoid `spawn_blocking` cancellation), `tee_to` (byte-copy with tap closure), and `current_terminal_size` (TIOCGWINSZ, 24×80 fallback). Dependencies: `portable-pty = "0.9"`, `libc = "0.2"`. See: `Pi interactive logs "inherited"; claude_code uses PTY under --debug`.
+- id: masterpty-send-not-sync-take-reader-writer-before-moving-master
+  title: 'MasterPty Send-not-Sync: take reader/writer before moving master'
+  body: |
+    `portable-pty`'s `MasterPty` is `Send` but not `Sync`. Pattern: call `take_writer()` and `take_reader()` on the master before moving it into the resize thread (which calls `resize_pty`). The main thread retains the reader/writer; the resize thread owns the master exclusively. Attempting to share across threads without this ownership split is a compile error.
+- id: render-docs-sh-produces-html-fragments-via-asciidoctor-embedded
+  title: render-docs.sh produces HTML fragments via asciidoctor --embedded
+  body: |
+    No custom template needed; `asciidoctor --embedded` strips the document shell and emits a clean fragment. Script loops `docs/reference/*.adoc` and `docs/tutorial/*.adoc`; outputs land in `website/docs/` and `website/tutorials/` for the eleventy pipeline to consume.
+- id: asciidoctor-table-cells-bare-pipe-is-a-column-delimiter
+  title: 'Asciidoctor table cells: bare pipe is a column delimiter'
+  body: |
+    `before|after` inside a table cell is parsed as two cells, not one. Escape as `before\|after` or restructure. Applies to all `.adoc` files under `docs/`.
+- id: config-dir-resolves-config-ravel-lite-config-dirs-config-dir-ravel-lite
+  title: 'Config-dir resolves: --config → RAVEL_LITE_CONFIG → dirs::config_dir()/ravel-lite'
+  body: |
+    `config_lua::resolve` tries in order: `--config` CLI flag, `RAVEL_LITE_CONFIG` env var, `dirs::config_dir()/ravel-lite`. First match wins. See: `Config model is layered Lua; config_lua.rs owns it`.
+- id: doc-publish-pipeline-reads-website-via-git-archive
+  title: Doc publish pipeline reads `website/` via git archive
+  body: |
+    Doc publish pipeline reads `website/` via git archive; `projects/ravel-lite.html` and `SYNC.yml` do not exist in the current pipeline (post-2026-04-26). No intermediate artifact files are needed; the pipeline consumes the `website/` subtree directly.
+- id: transcript-at-captures-per-command-stdout-stderr-for-asciidoc
+  title: transcript_at captures per-command stdout+stderr for AsciiDoc
+  body: |
+    `transcript_at <label> <command>` helper in capture scripts writes stdout+stderr to `transcripts/<label>.txt` as paste-ready `[source,console]` AsciiDoc blocks. This is the mechanism for folding live VM output into tutorial chapters.
+- id: hybrid-capture-splits-screenshot-vs-transcript-at-by-content-stability
+  title: Hybrid capture splits screenshot vs transcript_at by content stability
+  body: |
+    For interactive CLI phases where the agent paraphrases questions, use screenshot-per-prompt for the volatile conversation and `transcript_at` for any deterministic post-command state. Maps capture fidelity to content stability: screenshots tolerate paraphrase variance; `transcript_at` is reproducible text. A marker-echo (`echo CHAPTER_03_CREATE_DONE`) after the interactive command provides a deterministic `find-text` sync point. Chapter 03 `ravel-lite create` demonstrates the pattern.
+- id: capture-response-files-are-authored-source-live-outside-docs-captures
+  title: Capture response files are authored source, live outside docs/captures/
+  body: |
+    `scripts/capture/responses/` holds authored verbatim responses for interactive capture scenarios (e.g. `03-purpose.txt`, `03-project.txt`). Located outside `docs/captures/` so `.gitignore`'s `docs/captures/` rule does not silently exclude them; they are authored source content, not captured output.
+- id: capture-harness-bypasses-three-claude-security-gates
+  title: Capture harness bypasses three Claude security gates
+  body: |
+    Per-project JSON settings must be configured before any harness-driven `claude` invocation: `hasTrustDialogAccepted` (project trust dialog), `defaultMode: bypassPermissions` (tool permission prompts), `skipDangerousModePermissionPrompt` (bypass-mode confirmation modal). All three are required; omitting any one will hang or block an automated run. Implemented via `pretrust_project` and `setup_shell_env` in `scripts/capture/ravel-lite-tutorial.sh`.
+- id: create-plan-capture-uses-single-shot-comprehensive-response
+  title: create-plan capture uses single-shot comprehensive response
+  body: |
+    `scripts/capture/responses/03-comprehensive.txt` provides the full plan description as a single message. Per-question response files misalign with the `create-plan` template because question paraphrasing varies between runs; a single comprehensive description sidesteps alignment issues entirely. See: `Hybrid capture splits screenshot vs transcript_at by content stability`.
+- id: tui-banner-text-differs-from-yaml-phase-field
+  title: TUI banner text differs from YAML `phase:` field
+  body: |
+    `find-text "phase: work"` will never match in a capture run: the string `phase: work` lives in YAML state files only; the TUI renders the phase name via `term_title.rs` OSC escapes and banner text, not the raw YAML field. Use a screenshot or a banner-text string for phase-change sync points.
+- id: testanyware-download-cannot-pull-a-directory-use-per-file-exec-workaround
+  title: testanyware download cannot pull a directory; use per-file exec workaround
+  body: |
+    `capture_state` in `scripts/capture/ravel-lite-tutorial.sh` uses `testanyware download` on the `LLM_STATE/` directory, which fails with `Error: Agent HTTP 400: Download failed: The file "LLM_STATE" couldn't be opened.` — testanyware download cannot pull a directory.
+
+    Workaround used: capture individual transcripts via headless `testanyware exec` calls; this covers everything the tutorial prose needs.
+
+    Full fix options: (a) recursive walk + per-file download; (b) tar roundtrip (`testanyware exec -- tar czf /tmp/llm_state.tar.gz LLM_STATE && testanyware download /tmp/llm_state.tar.gz`). Low priority because the per-file exec workaround is sufficient for prose-fold tasks.
+- id: capture-chapter-transitions-use-exit-sentinel-echo-before-next-chapter
+  title: Capture chapter transitions use /exit + sentinel echo before next chapter
+  body: |
+    At the tail of a capture chapter that may leave Claude running (e.g., `capture_chapter03_create_session`), send `/exit` + Return into the GUI Terminal, type `echo <SENTINEL>` + Return, and wait with `testanyware find-text "<SENTINEL>" --timeout 30`. Robust to Claude having already exited: `/exit` becomes harmless command-not-found and the sentinel still renders. Prevents the next chapter from typing into a Claude TUI instead of the shell. See: `Hybrid capture splits screenshot vs transcript_at by content stability`.
+- id: config-lua-rs-doc-comment-can-drift-from-registered-api
+  title: config_lua.rs doc comment can drift from registered API
+  body: |
+    Grep `set_function`/`set` registration calls in `src/config_lua.rs` to audit the live Lua API surface; the module-level doc comment listing exported names is not guaranteed to match. See: `Config model is layered Lua; config_lua.rs owns it`.
+- id: knowledge-graph-crate-is-in-tree-extraction-deferred-post-v2-0
+  title: knowledge-graph crate is in-tree; extraction deferred post-v2.0
+  body: |
+    `knowledge-graph` is the TMS substrate crate name; in-tree Cargo workspace member. Extraction to a standalone crate is deferred until after v2.0 ships. See: `docs/architecture-next.md` Settled decisions §crate name.
+- id: ascent-chosen-as-datalog-engine-differential-dataflow-rejected
+  title: Ascent chosen as Datalog engine; differential-dataflow rejected
+  body: |
+    `ascent` (recompute-based) is the chosen Datalog engine for the knowledge-graph crate. Recompute is fast enough at ravel-lite scale; differential-dataflow's incremental complexity is not warranted. Settled in Phase A of architecture-next.
+- id: v1-v2-cutover-is-hard-v2-binary-refuses-unmigrated-plans
+  title: v1→v2 cutover is hard; v2 binary refuses unmigrated plans
+  body: |
+    No migration window: the v2 binary hard-fails on unmigrated plans. Users must run `ravel-lite state migrate` before switching to v2. Settled in Phase A of architecture-next.
+- id: legacy-backfill-uses-one-shot-llm-extraction-at-migrate-time
+  title: Legacy backfill uses one-shot LLM extraction at migrate time
+  body: |
+    One-shot LLM-driven extraction at `migrate` time backfills the knowledge graph from existing plan history. Entries with no attributable session land with `status: legacy`. No incremental or post-hoc repair path. Settled in Phase A of architecture-next.
+- id: petgraph-0-6-lacks-articulation-points-api-hand-rolled-dfs-needed
+  title: petgraph 0.6 lacks articulation-points API; hand-rolled DFS needed
+  body: |
+    `petgraph` 0.6 does not expose articulation points on its stable surface. The knowledge-graph `algorithms` module uses a hand-rolled low-link DFS (~50 lines) instead. Audit algorithm crate APIs for missing stable-surface functions before committing to a dependency at crate-scaffold time.
+- id: knowledge-graph-consumers-each-author-their-own-ascent-program
+  title: knowledge-graph consumers each author their own ascent! program
+  body: |
+    No shared runtime rule-registry exists in the knowledge-graph crate. Each consumer authors its own `ascent!` Datalog program with the rules it needs. Centralising rules would couple the generic substrate to consumer-specific vocabulary.
+- id: blocked-by-is-kind-specific-extension-data-not-a-justification-edge
+  title: blocked_by is kind-specific extension data, not a justification edge
+  body: |
+    `blocked_by` relationships belong in kind-specific extension data, not in the generic `justification` edge enum. Threading `blocked_by` through the substrate `store` would re-couple the generic substrate to ravel-lite plan vocabulary. The wiring task handles it as a domain wrapper.
+- id: src-repos-rs-holds-reposregistry-on-disk-is-name-keyed-map
+  title: '`src/repos.rs` holds `ReposRegistry`; on-disk is name-keyed map'
+  body: |
+    `ReposRegistry` in `src/repos.rs` owns `repos.yaml`; on-disk shape is a name-keyed `IndexMap<String, RepoEntry>` (per architecture-next §The repo registry). `local_path` is stored absolute; omitted from YAML when absent. `try_add` rejects duplicate slugs. CLI verbs: `repo add`, `repo list`, `repo remove`.
+- id: componentref-canonical-string-is-repo-component
+  title: '`ComponentRef` canonical string is `<repo>:<component>`'
+  body: |
+    `ComponentRef { repo_slug, component_id }` in `src/component_ref.rs`. `Display`/`FromStr`/serde all produce the `<repo>:<component>` form. Validation rejects empty halves and extra colons (exactly one colon required).
+- id: show-fixed-memory-verb-requires-disk-first-lookup
+  title: '''show'' fixed-memory verb requires disk-first lookup'
+  body: |
+    `require_embedded` alone silently fails for user-added files (e.g., `coding-style-<lang>.md`). Correct lookup order: disk first, embedded fallback, deterministic error. Mirrors `compose_prompt` layering for phase prompts. See: `fixed-memory/ extensibility model depends on init v2 layout`.
+- id: fixed-memory-extensibility-model-depends-on-init-v2-layout
+  title: '''fixed-memory/'' extensibility model depends on ''init v2'' layout'
+  body: |
+    The `<context>/` directory layout (settled in `init v2`) determines where user-owned `fixed-memory/` lives. Deciding the lookup root before `init v2` either pre-empts v2 or requires re-litigation under it. Unblock the `show` verb after `init v2` fixes the location. See: `'show' fixed-memory verb requires disk-first lookup`.
+- id: git-subrepo-in-test-tree-requires-initial-commit
+  title: Git subrepo in test tree requires initial commit
+  body: |
+    `git init` alone in a test's project subtree triggers `does not have a commit checked out` errors from outer `git add`. Issue `git commit --allow-empty` after init. When no global git identity is configured, supply fallback identity using an RFC 2606-reserved domain such as `.invalid.local` (e.g. `ravel-lite-test@test.invalid.local`) to prevent accidental attribution on mis-published commits.
+- id: architecture-next-md-config-yaml-layout-entries-are-stale
+  title: architecture-next.md config.yaml layout entries are stale
+  body: |
+    `docs/architecture-next.md` lists `config.yaml` and `config.local.yaml` as `<ravel-context>/` layout artefacts. Implementation uses `config.lua` (layered Lua model); those doc sections do not reflect the current config model. See: `Config model is layered Lua; config_lua.rs owns it`.
+- id: src-ontology-removed-import-from-component-ontology-crate
+  title: '`src/ontology/` removed; import from `component_ontology` crate'
+  body: |
+    All five files under `src/ontology/` (~1,300 lines) were deleted. Import sites across `src/discover/`, `src/state/`, `src/related_components.rs`, `src/projects.rs`, and `src/main.rs` now use `component_ontology`. The crate is owned by Atlas (`atlas-contracts` workspace). `defaults/ontology.yaml` was deleted; `ontology.yaml` added to `RETIRED_PATHS` in `src/init.rs` so existing config dirs are swept clean on next `ravel-lite init`.
+- id: state-projects-is-a-migration-error-alias
+  title: '''state projects'' is a migration-error alias'
+  body: |
+    `state projects <subcommand>` is retained as a clap `Vec<String>` catch-all that unconditionally returns `migrate_projects_yaml_error()`. No functional path survives from the old `projects.yaml` CLI. Any code or test that invokes `state projects add|remove|list|rename` receives this error.
+- id: resolves-working-tree-from-repos-or-cache
+  title: ' resolves working tree from repos or cache'
+  body: |
+    `discover::DiscoverTarget { slug, working_tree }` and `working_tree_for` in `discover/mod.rs` resolve a repo's on-disk path: `entry.local_path` when present, otherwise `<context>/.cache/repos/<slug>/` (the architecture-next cache fallback). All discover consumers use this abstraction; direct `RepoEntry` path access is not used in discover paths.
+- id: discovertarget-resolves-working-tree-from-repos-or-cache
+  title: DiscoverTarget resolves working tree from repos or cache
+  body: |
+    `discover::DiscoverTarget { slug, working_tree }` and `working_tree_for` in `discover/mod.rs` resolve a repo's on-disk path: `entry.local_path` when present, otherwise `<context>/.cache/repos/<slug>/` (the architecture-next cache fallback). All discover consumers use this abstraction; direct `RepoEntry` path access is not used in discover paths.
+- id: tutorial-docs-stale-for-repos-yaml-needs-vm-capture-re-run
+  title: Tutorial docs stale for repos.yaml; needs VM capture re-run
+  body: |
+    `docs/tutorial/`, `docs/reference/`, and `docs/captures/` still reference retired `state projects` verbs. Updating requires re-running `scripts/capture/ravel-lite-tutorial.sh` against a TestAnyware VM. Tracked as backlog task `tutorial-update-for-repos-yaml-cutover`.
+- id: repos-yaml-requires-clone-url-auto-add-is-retired
+  title: repos.yaml requires clone URL; auto-add is retired
+  body: |
+    `ensure_in_catalog_interactive` and `register_projects_from_plan_dirs` were removed from `main.rs`. Interactive auto-add is not viable for `repos.yaml` because a clone URL is required on entry. Users must invoke `ravel-lite repo add <slug> <url>` explicitly.
+- id: store-k-is-per-kind-cascade-serves-intent-is-the-cross-store-join
+  title: Store<K> is per-kind; cascade_serves_intent is the cross-store join
+  body: |
+    Multi-kind plan KG requires one `Store<K>` per kind, not a heterogeneous store. `cascade_serves_intent::<P, C>(parents, dependents, status)` in `store.rs` is the join point: reads terminal statuses from a parent store, writes defeat markers into a child store. Shape is the same for all cross-kind cascades (intent→backlog, intent→memory, intent→finding).
+- id: itemkind-uses-unit-struct-tags-itemstatus-enums-encode-transitions
+  title: ItemKind uses unit-struct tags; ItemStatus enums encode transitions
+  body: |
+    `ItemKind` is implemented on zero-sized unit structs (`KIND_STR: &'static str`, `type Status: ItemStatus`). Status vocabularies are enums implementing `ItemStatus` with `transitions()`, `is_terminal()`, `as_str()`, and `parse()`. `KindMarker<K>` handles YAML serde: serialises as `K::KIND_STR`, rejects kind mismatches on deserialise. `Store<K>::set_status` enforces `K::Status::transitions()` before committing.
+- id: plan-kg-rs-registers-four-plan-vocabularies-in-knowledge-graph-crate
+  title: plan_kg.rs registers four plan vocabularies in knowledge-graph crate
+  body: |
+    `crates/knowledge-graph/src/plan_kg.rs` defines `IntentKind`, `BacklogItemKind`, `MemoryEntryKind`, and `FindingKind`, each with its own status enum and transition table. Type aliases (`IntentItem`, `BacklogStore`, etc.) and the intent→backlog cross-store cascade live here. See: `Store<K> is per-kind; cascade_serves_intent is the cross-store join`.

@@ -1,30 +1,25 @@
-schema_version: 1
-items:
+tasks:
 - id: add-ravel-lite-show-verb-for-embedded-fixed-memory-content
-  kind: backlog-item
-  claim: Add ravel-lite show verb for embedded fixed-memory content
-  justifications:
-  - kind: rationale
-    text: |
-      Add a `ravel-lite show <embedded-path>` verb that prints embedded content via `init::require_embedded`, and sweep phase prompts that use `Read({{ORCHESTRATOR}}/fixed-memory/...)` to use `Bash(ravel-lite show ...)` instead.
-
-      Problem: `defaults/fixed-memory/*.md` are referenced by phase prompts (e.g. `Read {{ORCHESTRATOR}}/fixed-memory/...`) but `ravel-lite init` no longer materialises those files to disk (see `src/init.rs:130`). The LLM is instructed to read files that do not exist, causing silent failures.
-
-      Scope:
-      - Add `ravel-lite show <embedded-path>` subcommand. `<embedded-path>` is a relative path within the embedded asset bundle (e.g. `fixed-memory/norms.md`). Command prints the content to stdout and exits 0, or exits non-zero with a clear message if the path is not found.
-      - Implementation: thin wrapper over `init::require_embedded(path)` — that function already returns `&'static str` from the compile-time embed.
-      - Sweep `defaults/phases/*.md` and any other prompt templates for `Read({{ORCHESTRATOR}}/fixed-memory/...)` occurrences; replace with `Bash(ravel-lite show fixed-memory/<name>)`.
-
-      Reference examples:
-      - `src/init.rs` — `require_embedded` is defined here; the embed catalogue is already known at compile time.
-      - `defaults/phases/` — the prompt files that reference fixed-memory paths.
-
-      No new dependencies. Self-contained once `ravel-lite show` is wired into `src/main.rs`.
-  status: blocked
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: Add ravel-lite show verb for embedded fixed-memory content
   category: architecture-next
+  status: blocked
   blocked_reason: 'Design open: needs user-extensibility/disk-overlay decision before implementation; discussion deferred indefinitely'
+  dependencies: []
+  description: |
+    Add a `ravel-lite show <embedded-path>` verb that prints embedded content via `init::require_embedded`, and sweep phase prompts that use `Read({{ORCHESTRATOR}}/fixed-memory/...)` to use `Bash(ravel-lite show ...)` instead.
+
+    Problem: `defaults/fixed-memory/*.md` are referenced by phase prompts (e.g. `Read {{ORCHESTRATOR}}/fixed-memory/...`) but `ravel-lite init` no longer materialises those files to disk (see `src/init.rs:130`). The LLM is instructed to read files that do not exist, causing silent failures.
+
+    Scope:
+    - Add `ravel-lite show <embedded-path>` subcommand. `<embedded-path>` is a relative path within the embedded asset bundle (e.g. `fixed-memory/norms.md`). Command prints the content to stdout and exits 0, or exits non-zero with a clear message if the path is not found.
+    - Implementation: thin wrapper over `init::require_embedded(path)` — that function already returns `&'static str` from the compile-time embed.
+    - Sweep `defaults/phases/*.md` and any other prompt templates for `Read({{ORCHESTRATOR}}/fixed-memory/...)` occurrences; replace with `Bash(ravel-lite show fixed-memory/<name>)`.
+
+    Reference examples:
+    - `src/init.rs` — `require_embedded` is defined here; the embed catalogue is already known at compile time.
+    - `defaults/phases/` — the prompt files that reference fixed-memory paths.
+
+    No new dependencies. Self-contained once `ravel-lite show` is wired into `src/main.rs`.
   results: |
     ## Results
 
@@ -91,523 +86,362 @@ items:
     - `src/prompt.rs` — confirmed token substitution is the only
       composition layer; no other reach path exists today.
 - id: ascent-upgrade-bump-knowledge-graph-crate-from-0-6-to-0-8
-  kind: backlog-item
-  claim: 'ascent upgrade: bump knowledge-graph crate from 0.6 to 0.8'
-  justifications:
-  - kind: rationale
-    text: |
-      Upgrade the `ascent` Datalog engine in the `knowledge-graph` crate from 0.6 to 0.8.
-
-      Reference: `knowledge-graph` crate `Cargo.toml`; ascent changelog at https://crates.io/crates/ascent.
-
-      Background: The scaffold task pinned `ascent` at 0.6 because the compatibility resolver chose it without prompting. The scaffold task results note that 0.8 is current and the upgrade was deliberately deferred until at least one consumer (plan KG wiring) exists to validate the rule compilation.
-
-      Scope:
-      - Bump `ascent` in `crates/knowledge-graph/Cargo.toml` from `0.6` to `0.8` (or latest compatible).
-      - Resolve any macro-API changes between 0.6 and 0.8 in `src/datalog.rs` (`SmokeProgram`).
-      - All 23 existing tests pass; smoke Datalog rules derive correctly.
-      - `cargo check --workspace --all-targets` clean under `[lints.rust] warnings = "deny"`.
-
-      Out of scope: any rule-registry/builder API changes — keep the per-consumer `ascent!` program model unchanged.
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: 'ascent upgrade: bump knowledge-graph crate from 0.6 to 0.8'
   category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Upgrade the `ascent` Datalog engine in the `knowledge-graph` crate from 0.6 to 0.8.
+
+    Reference: `knowledge-graph` crate `Cargo.toml`; ascent changelog at https://crates.io/crates/ascent.
+
+    Background: The scaffold task pinned `ascent` at 0.6 because the compatibility resolver chose it without prompting. The scaffold task results note that 0.8 is current and the upgrade was deliberately deferred until at least one consumer (plan KG wiring) exists to validate the rule compilation.
+
+    Scope:
+    - Bump `ascent` in `crates/knowledge-graph/Cargo.toml` from `0.6` to `0.8` (or latest compatible).
+    - Resolve any macro-API changes between 0.6 and 0.8 in `src/datalog.rs` (`SmokeProgram`).
+    - All 23 existing tests pass; smoke Datalog rules derive correctly.
+    - `cargo check --workspace --all-targets` clean under `[lints.rust] warnings = "deny"`.
+
+    Out of scope: any rule-registry/builder API changes — keep the per-consumer `ascent!` program model unchanged.
 - id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
-  kind: backlog-item
-  claim: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
-  justifications:
-  - kind: rationale
-    text: |
-      Add the same PTY-capture path to `pi.rs::invoke_interactive` that was
-      built for `claude_code.rs` in the PTY-capture task. The mechanism is
-      already implemented in `src/agent/pty_capture.rs`; this task is a
-      small scope wiring job.
-
-      ## Why
-
-      When debug logging is enabled, `claude_code.rs::invoke_interactive` now
-      routes through `pty_capture::run_pty_session`, capturing every byte
-      exchanged with the claude subprocess in the debug log. The `pi.rs`
-      equivalent still uses inherited stdio (`stdio: inherited (no transcript
-      available)` per the Results from the PTY-capture task). A pi TUI hang
-      would have the same diagnostic blind spot the claude hang had before the
-      PTY work shipped.
-
-      ## Scope
-
-      - In `src/agent/pi.rs::invoke_interactive`, add an early branch:
-        when `debug_log::is_enabled()`, call
-        `pty_capture::run_pty_session("pi", &args, &cwd, "pi")` via
-        `spawn_blocking`, matching the pattern in `claude_code.rs`.
-      - Existing argv construction is shared; only the spawn mechanism differs.
-      - Update the log entry text to read `stdio: pty (full byte transcript
-        follows)` on the debug path, matching the claude path.
-
-      ## Verification
-
-      - `cargo test` passes (all PTY-capture unit/integration tests still
-        pass; the pi tests are unaffected because none exercise the debug path).
-      - Non-debug pi invocation: TUI renders identically, no behaviour change.
-      - Debug-enabled pi invocation: TUI renders identically AND debug log
-        captures the pi byte stream.
-  status: blocked
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
   category: infra
+  status: blocked
   blocked_reason: Not needed yet; defer until pi-side TUI debugging actually requires it
+  dependencies: []
+  description: |
+    Add the same PTY-capture path to `pi.rs::invoke_interactive` that was
+    built for `claude_code.rs` in the PTY-capture task. The mechanism is
+    already implemented in `src/agent/pty_capture.rs`; this task is a
+    small scope wiring job.
+
+    ## Why
+
+    When debug logging is enabled, `claude_code.rs::invoke_interactive` now
+    routes through `pty_capture::run_pty_session`, capturing every byte
+    exchanged with the claude subprocess in the debug log. The `pi.rs`
+    equivalent still uses inherited stdio (`stdio: inherited (no transcript
+    available)` per the Results from the PTY-capture task). A pi TUI hang
+    would have the same diagnostic blind spot the claude hang had before the
+    PTY work shipped.
+
+    ## Scope
+
+    - In `src/agent/pi.rs::invoke_interactive`, add an early branch:
+      when `debug_log::is_enabled()`, call
+      `pty_capture::run_pty_session("pi", &args, &cwd, "pi")` via
+      `spawn_blocking`, matching the pattern in `claude_code.rs`.
+    - Existing argv construction is shared; only the spawn mechanism differs.
+    - Update the log entry text to read `stdio: pty (full byte transcript
+      follows)` on the debug path, matching the claude path.
+
+    ## Verification
+
+    - `cargo test` passes (all PTY-capture unit/integration tests still
+      pass; the pi tests are unaffected because none exercise the debug path).
+    - Non-debug pi invocation: TUI renders identically, no behaviour change.
+    - Debug-enabled pi invocation: TUI renders identically AND debug log
+      captures the pi byte stream.
 - id: migrate-backlog-yaml-to-tms-item-shape-with-typed-set-status-wiring
-  kind: backlog-item
-  claim: Migrate backlog.yaml to TMS item shape (with typed set-status wiring)
-  justifications:
-  - kind: rationale
-    text: |
-      Migrate `backlog.yaml` schema from the legacy flat format to TMS item shape (`items: [{ id, kind: backlog-item, claim, justifications, status, ... }]`).
-
-      Reference: `docs/architecture-next.md` §Item shape, §Status vocabularies; `crates/knowledge-graph/src/plan_kg.rs` — `BacklogItemKind` and `BacklogStatus` already defined.
-
-      Background: The `knowledge-graph` crate wiring phase (completed) defined `BacklogItemKind` with status vocabulary. The plan files still use the legacy `title:/description:/results:` field schema. The mapping is mostly mechanical:
-      - `title` → `claim`
-      - `description` → rationale justification body
-      - `dependencies` → `blocked-by` extension data (or `serves-intent` justifications for intent-links)
-      - `results` → extension field (carry-over from v1; deprecated in v2 in favour of session-log entries)
-
-      Scope:
-      - Define the TMS-shaped `backlog.yaml` schema: `items: [{ id, kind: backlog-item, claim, justifications: [{ kind, ... }], status, dependencies? }]`.
-      - Rework `state backlog` CRUD verbs in `src/state/backlog/` to read/write the new schema. Preserve current externally-visible behaviour (reorder, set-status, set-title, lint-dependencies, etc.).
-      - Wire `state backlog set-status` to call `Store<BacklogItemKind>::set_status` so transition validation is enforced at the CLI boundary. Currently accepts any string.
-      - Migrate `LLM_STATE/core/backlog.yaml` as the dogfood validation case.
-      - All existing tests pass; round-trip YAML tests for the new schema are added.
-
-      Out of scope: memory.yaml migration (separate task, recommended first); intents.yaml (separate task).
-  status: done
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: Migrate backlog.yaml to TMS item shape (with typed set-status wiring)
   category: architecture-next
-  results: |
-    ## Results
+  status: not_started
+  dependencies: []
+  description: |
+    Migrate `backlog.yaml` schema from the legacy flat format to TMS item shape (`items: [{ id, kind: backlog-item, claim, justifications, status, ... }]`).
 
-    Migrated `backlog.yaml` from the legacy flat task schema to the
-    TMS-shaped item schema (`schema_version: 1`, `items: [{ id, kind:
-    backlog-item, claim, justifications, status, ... }]`), reusing the
-    serde-flatten + `KindMarker<K>` pattern proven on `memory.yaml`.
+    Reference: `docs/architecture-next.md` §Item shape, §Status vocabularies; `crates/knowledge-graph/src/plan_kg.rs` — `BacklogItemKind` and `BacklogStatus` already defined.
 
-    ### What landed
+    Background: The `knowledge-graph` crate wiring phase (completed) defined `BacklogItemKind` with status vocabulary. The plan files still use the legacy `title:/description:/results:` field schema. The mapping is mostly mechanical:
+    - `title` → `claim`
+    - `description` → rationale justification body
+    - `dependencies` → `blocked-by` extension data (or `serves-intent` justifications for intent-links)
+    - `results` → extension field (carry-over from v1; deprecated in v2 in favour of session-log entries)
 
-    - `BacklogEntry` (new) wraps `Item<BacklogItemKind>` via
-      `#[serde(flatten)]` and carries five backlog-specific extension
-      fields: `category`, `dependencies`, `blocked_reason`, `results`,
-      `handoff`. `description` moved into `item.justifications` as a
-      single `Rationale` justification, mirroring the memory schema.
-    - `BacklogFile` now carries `schema_version: u32` (validated on read,
-      rejecting v0/missing) and `items: Vec<BacklogEntry>`. Unknown-keys
-      flatten buffer dropped — typed schema_version is the
-      forward-compat seam.
-    - Status vocabulary changed from `not_started | in_progress | done |
-      blocked` to `BacklogStatus::Active | Done | Blocked | Defeated |
-      Superseded`. The CLI now accepts only the new vocabulary on
-      `--status` / `set-status`. The legacy markdown migrator
-      (`parse_backlog_markdown`) maps `not_started`/`in_progress` →
-      `Active` so old `backlog.md` files still convert cleanly.
-    - `state backlog set-status` now routes through
-      `Store<BacklogItemKind>::set_status`: builds an in-memory store from
-      current items, calls the substrate's typed `set_status` (which
-      validates against `BacklogStatus::transitions()`), copies the
-      mutated `Item` back into the entry. Extension fields stay attached
-      to `BacklogEntry` and never round-trip through the Store. Verified
-      end-to-end against the dogfood plan: `active → done` is accepted,
-      `done → active` is rejected with the typed error message
-      `illegal status mutation for ... (backlog-item): \`done\` →
-      \`active\` is not in the transition table`.
-    - `TaskCounts` rebuilt around the new vocabulary: fields are now
-      `total, active, done, blocked, defeated, superseded`; survey
-      schema and tests follow.
-    - `repair_stale_statuses`: dropped the `in_progress + non-empty
-      results → done` rule (the merge from in_progress + not_started
-      into Active loses the discriminator that distinguished "forgot to
-      flip" from "operator-staged"; flipping silently would corrupt the
-      latter). Kept the `blocked + every dep done → active` rule.
-    - `LLM_STATE/core/backlog.yaml` rewritten in place via a one-shot
-      Rust migrator (later removed) and verified by listing it back via
-      the CLI — all 17 items round-trip, render correctly, and pass the
-      schema_version gate.
+    Scope:
+    - Define the TMS-shaped `backlog.yaml` schema: `items: [{ id, kind: backlog-item, claim, justifications: [{ kind, ... }], status, dependencies? }]`.
+    - Rework `state backlog` CRUD verbs in `src/state/backlog/` to read/write the new schema. Preserve current externally-visible behaviour (reorder, set-status, set-title, lint-dependencies, etc.).
+    - Wire `state backlog set-status` to call `Store<BacklogItemKind>::set_status` so transition validation is enforced at the CLI boundary. Currently accepts any string.
+    - Migrate `LLM_STATE/core/backlog.yaml` as the dogfood validation case.
+    - All existing tests pass; round-trip YAML tests for the new schema are added.
 
-    ### Files touched
-
-    - `src/state/backlog/{schema,yaml_io,verbs,render,parse_md,
-      lint_dependencies,repair_stale_statuses,mod}.rs` — full rewrite
-    - `src/backlog_transitions.rs`, `src/phase_summary.rs`,
-      `src/state/migrate.rs`, `src/survey/{discover,schema,render}.rs`,
-      `src/create.rs`, `src/main.rs` — caller updates
-    - `tests/common/mod.rs`, `tests/state_backlog.rs`,
-      `tests/state_phase_summary.rs` — fixture updates
-    - `LLM_STATE/core/backlog.yaml` — dogfood migrated
-
-    ### Verification
-
-    - `cargo test`: 677 tests pass, 0 failures across all 19 binaries.
-    - `cargo build`: clean.
-    - `ravel-lite state backlog list LLM_STATE/core --format markdown`:
-      emits the canonical 16-row architecture-next + 1-row infra
-      rendering with the new `active`/`blocked`/`done` status vocabulary.
-    - Typed transition validation exercised manually: `set-status … done`
-      followed by `set-status … active` returns the expected illegal-
-      transition error.
-
-    ### What this suggests next
-
-    - The peer architecture-next tasks `Introduce intents.yaml and state
-      intents CRUD verbs` and `Reflect: bounded TMS plus intent-trajectory
-      check` can now apply the same serde-flatten + `KindMarker<K>`
-      pattern; intents.yaml's shape is already documented in
-      `docs/architecture-next.md` §Item shape.
-    - Phase prompts (`defaults/phases/*.md`) and survey templates
-      (`defaults/survey*.md`) still reference the old status vocabulary
-      (`not_started`, `in_progress`). They continue to function (the
-      phase-loop itself doesn't parse them; only the LLM reads them) but
-      are stale prose. A low-priority follow-up could sweep them for the
-      new vocabulary; matches the standing memory note about
-      field-label drift after the memory.yaml migration.
-    - `repair_stale_statuses`' surface shrank from two rules to one. If a
-      future change wants to recover the "forgot to flip" auto-repair,
-      the discriminator would have to come from outside the status field
-      (e.g. inspecting the most recent commit touching the item via
-      `git log -- backlog.yaml` to detect a results-without-status-flip
-      pattern). Out of scope here.
+    Out of scope: memory.yaml migration (separate task, recommended first); intents.yaml (separate task).
 - id: introduce-intents-yaml-and-state-intents-crud-verbs
-  kind: backlog-item
-  claim: Introduce intents.yaml and state intents CRUD verbs
-  justifications:
-  - kind: rationale
-    text: |
-      Introduce `intents.yaml` as the canonical intent source for a plan and add `state intents` CRUD verbs. Make `phase.md` a rendered overview rather than the intent-source document.
-
-      Reference: `docs/architecture-next.md` §Plan as a knowledge graph, §`ravel-lite create <plan>`, §REFLECT, §Phase cycle (restructured); `crates/knowledge-graph/src/plan_kg.rs` — `IntentKind` and `IntentStatus` already defined.
-
-      Background: Currently, `phase.md` is authored by the create session and serves as the canonical statement of intent. Under the architecture-next design, `intents.yaml` holds 1–5 strategic intents as TMS items with explicit justifications (rationale, external links). `phase.md` becomes a rendered summary generated from `intents.yaml` content plus housekeeping info.
-
-      Scope:
-      - Define `intents.yaml` schema: `items: [{ id, kind: intent, claim, justifications: [...], status }]`. Status vocabulary: `active | satisfied | defeated | superseded`.
-      - Add `state intents` verbs: `add`, `list`, `set-status`, `show`. Minimal surface; read/write the same typed substrate as backlog and memory.
-      - Update `state set-phase` (or a new `state intents render-overview` verb) to regenerate `phase.md` from `intents.yaml` content + active task counts + housekeeping metadata on each phase transition.
-      - `run_create` pre-seeds an empty `intents.yaml` alongside the existing plan-state scaffolding.
-      - All existing tests pass; new tests for intent CRUD and phase.md rendering.
-
-      Out of scope: the create session's three-deliverable flow (that is scoped to `ravel-lite create v2`); `ravel-lite finish` completion criteria (that task handles it).
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: Introduce intents.yaml and state intents CRUD verbs
   category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Introduce `intents.yaml` as the canonical intent source for a plan and add `state intents` CRUD verbs. Make `phase.md` a rendered overview rather than the intent-source document.
+
+    Reference: `docs/architecture-next.md` §Plan as a knowledge graph, §`ravel-lite create <plan>`, §REFLECT, §Phase cycle (restructured); `crates/knowledge-graph/src/plan_kg.rs` — `IntentKind` and `IntentStatus` already defined.
+
+    Background: Currently, `phase.md` is authored by the create session and serves as the canonical statement of intent. Under the architecture-next design, `intents.yaml` holds 1–5 strategic intents as TMS items with explicit justifications (rationale, external links). `phase.md` becomes a rendered summary generated from `intents.yaml` content plus housekeeping info.
+
+    Scope:
+    - Define `intents.yaml` schema: `items: [{ id, kind: intent, claim, justifications: [...], status }]`. Status vocabulary: `active | satisfied | defeated | superseded`.
+    - Add `state intents` verbs: `add`, `list`, `set-status`, `show`. Minimal surface; read/write the same typed substrate as backlog and memory.
+    - Update `state set-phase` (or a new `state intents render-overview` verb) to regenerate `phase.md` from `intents.yaml` content + active task counts + housekeeping metadata on each phase transition.
+    - `run_create` pre-seeds an empty `intents.yaml` alongside the existing plan-state scaffolding.
+    - All existing tests pass; new tests for intent CRUD and phase.md rendering.
+
+    Out of scope: the create session's three-deliverable flow (that is scoped to `ravel-lite create v2`); `ravel-lite finish` completion criteria (that task handles it).
 - id: ravel-lite-plan-subcommand-for-kg-inspection
-  kind: backlog-item
-  claim: ravel-lite plan subcommand for KG inspection
-  justifications:
-  - kind: rationale
-    text: |
-      Add `ravel-lite plan <subcommand>` for read-only inspection of a plan's knowledge graph across all four typed stores.
-
-      Reference: `docs/architecture-next.md` §CLI surface for queries; `crates/knowledge-graph/src/plan_kg.rs` — typed stores and vocabulary already defined.
-
-      Background: The `knowledge-graph` crate wiring phase defined `IntentStore`, `BacklogStore`, `MemoryStore`, `FindingStore` and the cross-store `cascade_serves_intent` function. Once the schema migrations (memory.yaml, backlog.yaml, intents.yaml) land, a read-only CLI surface lets the LLM (and the user) query plan state structurally rather than reading raw YAML.
-
-      Scope:
-      - `ravel-lite plan list-items <plan-dir> [--kind intent|backlog-item|memory-entry|finding]` — list items with status.
-      - `ravel-lite plan show-item <plan-dir> <id>` — full item detail including justifications.
-      - `ravel-lite plan query-by-status <plan-dir> --kind <kind> --status <status>` — filter by status.
-      - `ravel-lite plan query-by-justification <plan-dir> --kind <kind> --justification-kind <jkind>` — items with a given justification type.
-      - All verbs are read-only; no mutations.
-      - Wire into `src/main.rs` under the `plan` top-level subcommand.
-      - Dependencies: all three schema migrations must land first (memory.yaml, backlog.yaml, intents.yaml) so the plan files have TMS-shaped data for the stores to load.
-
-      Out of scope: any mutation verbs (those live in `state backlog`, `state memory`, `state intents`); Datalog query evaluation (deferred per memory entry `datalog-evaluator-deferred-imperative-verbs-sufficient`).
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: ravel-lite plan subcommand for KG inspection
   category: architecture-next
+  status: not_started
   dependencies:
   - migrate-backlog-yaml-to-tms-item-shape-with-typed-set-status-wiring
   - introduce-intents-yaml-and-state-intents-crud-verbs
+  description: |
+    Add `ravel-lite plan <subcommand>` for read-only inspection of a plan's knowledge graph across all four typed stores.
+
+    Reference: `docs/architecture-next.md` §CLI surface for queries; `crates/knowledge-graph/src/plan_kg.rs` — typed stores and vocabulary already defined.
+
+    Background: The `knowledge-graph` crate wiring phase defined `IntentStore`, `BacklogStore`, `MemoryStore`, `FindingStore` and the cross-store `cascade_serves_intent` function. Once the schema migrations (memory.yaml, backlog.yaml, intents.yaml) land, a read-only CLI surface lets the LLM (and the user) query plan state structurally rather than reading raw YAML.
+
+    Scope:
+    - `ravel-lite plan list-items <plan-dir> [--kind intent|backlog-item|memory-entry|finding]` — list items with status.
+    - `ravel-lite plan show-item <plan-dir> <id>` — full item detail including justifications.
+    - `ravel-lite plan query-by-status <plan-dir> --kind <kind> --status <status>` — filter by status.
+    - `ravel-lite plan query-by-justification <plan-dir> --kind <kind> --justification-kind <jkind>` — items with a given justification type.
+    - All verbs are read-only; no mutations.
+    - Wire into `src/main.rs` under the `plan` top-level subcommand.
+    - Dependencies: all three schema migrations must land first (memory.yaml, backlog.yaml, intents.yaml) so the plan files have TMS-shaped data for the stores to load.
+
+    Out of scope: any mutation verbs (those live in `state backlog`, `state memory`, `state intents`); Datalog query evaluation (deferred per memory entry `datalog-evaluator-deferred-imperative-verbs-sufficient`).
 - id: graph-rag-ravel-lite-atlas-cli-for-catalog-queries
-  kind: backlog-item
-  claim: 'graph-RAG: ravel-lite atlas CLI for catalog queries'
-  justifications:
-  - kind: rationale
-    text: |
-      Replace catalog-rendered-into-prompts with on-demand graph-RAG via a `ravel-lite atlas` CLI. The agent shells out to query the catalog instead of reading a YAML dump from the prompt.
-
-      Reference: `docs/architecture-next.md` §Catalog as graph (graph-RAG), §CLI surface, §Caching and freshness, §Forward path to Ravel as actor system.
-
-      Scope:
-      - `ravel-lite atlas` subcommands: `list-repos`, `list-components [--repo R] [--kind K]`, `describe <ref>`, `edges <ref> [--in|--out|--both]`, `neighbors <ref> [--depth N]`, `path <from> <to> [--max-hops N]`, `scc`, `roots`, `summary [--repo R]`, `memory <ref> [--search T]`, `freshness [--require-fresh]`, `help`.
-      - Read `.atlas/components.yaml` from each registered repo; union into in-memory graph.
-      - Cross-repo edges via `.atlas/related-components.yaml` with ComponentRefs in `from`/`to`; dedupe and union.
-      - Cache by `(path, mtime)`; near-100% hit rate in steady state.
-      - `freshness` reports last Atlas-run age per repo; `--require-fresh` errors if stale.
-      - Strip catalog rendering from existing prompt files.
-
-      Forward path: when Atlas runs as an actor in Ravel, this CLI becomes a thin client routing to the service — agent's mental model unchanged.
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: 'graph-RAG: ravel-lite atlas CLI for catalog queries'
   category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Replace catalog-rendered-into-prompts with on-demand graph-RAG via a `ravel-lite atlas` CLI. The agent shells out to query the catalog instead of reading a YAML dump from the prompt.
+
+    Reference: `docs/architecture-next.md` §Catalog as graph (graph-RAG), §CLI surface, §Caching and freshness, §Forward path to Ravel as actor system.
+
+    Scope:
+    - `ravel-lite atlas` subcommands: `list-repos`, `list-components [--repo R] [--kind K]`, `describe <ref>`, `edges <ref> [--in|--out|--both]`, `neighbors <ref> [--depth N]`, `path <from> <to> [--max-hops N]`, `scc`, `roots`, `summary [--repo R]`, `memory <ref> [--search T]`, `freshness [--require-fresh]`, `help`.
+    - Read `.atlas/components.yaml` from each registered repo; union into in-memory graph.
+    - Cross-repo edges via `.atlas/related-components.yaml` with ComponentRefs in `from`/`to`; dedupe and union.
+    - Cache by `(path, mtime)`; near-100% hit rate in steady state.
+    - `freshness` reports last Atlas-run age per repo; `--require-fresh` errors if stale.
+    - Strip catalog rendering from existing prompt files.
+
+    Forward path: when Atlas runs as an actor in Ravel, this CLI becomes a thin client routing to the service — agent's mental model unchanged.
 - id: ravel-lite-create-write-plans-into-context-plans-dir
-  kind: backlog-item
-  claim: 'ravel-lite create: write plans into context plans dir'
-  justifications:
-  - kind: rationale
-    text: |
-      Re-shape `ravel-lite create <plan>` so plans live at `<context>/plans/<plan>/` and the create session has the three structured deliverables defined for v2.0.
-
-      Reference: `docs/architecture-next.md` §`ravel-lite create <plan>`, §Plan lifecycle.
-
-      Scope:
-      - Validate `<context>/plans/<plan>/` does not yet exist.
-      - Spawn a headful claude session with the catalog query tools (atlas CLI) available.
-      - Three deliverables in the session:
-        1. Intent articulation — author `intents.yaml` with 1–5 strategic intents, each a TMS item with explicit justifications (rationale linking to the user's stated reasons, external for issue links).
-        2. Target proposal — emit `target-requests.yaml` with components the intents reach; user reviews; runner mounts at next phase boundary.
-        3. Anchor capture — components mentioned but not edited get recorded as anchors in `phase.md` (graph-RAG starting points for triage).
-      - `phase.md` becomes a rendered overview (intent summary + anchors + housekeeping), not the canonical intent source.
-      - No component required at create time; targets land asynchronously via target-requests.
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: 'ravel-lite create: write plans into context plans dir'
   category: architecture-next
+  status: not_started
   dependencies:
   - introduce-intents-yaml-and-state-intents-crud-verbs
   - graph-rag-ravel-lite-atlas-cli-for-catalog-queries
+  description: |
+    Re-shape `ravel-lite create <plan>` so plans live at `<context>/plans/<plan>/` and the create session has the three structured deliverables defined for v2.0.
+
+    Reference: `docs/architecture-next.md` §`ravel-lite create <plan>`, §Plan lifecycle.
+
+    Scope:
+    - Validate `<context>/plans/<plan>/` does not yet exist.
+    - Spawn a headful claude session with the catalog query tools (atlas CLI) available.
+    - Three deliverables in the session:
+      1. Intent articulation — author `intents.yaml` with 1–5 strategic intents, each a TMS item with explicit justifications (rationale linking to the user's stated reasons, external for issue links).
+      2. Target proposal — emit `target-requests.yaml` with components the intents reach; user reviews; runner mounts at next phase boundary.
+      3. Anchor capture — components mentioned but not edited get recorded as anchors in `phase.md` (graph-RAG starting points for triage).
+    - `phase.md` becomes a rendered overview (intent summary + anchors + housekeeping), not the canonical intent source.
+    - No component required at create time; targets land asynchronously via target-requests.
 - id: targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
-  kind: backlog-item
-  claim: 'Targets and worktrees: per-repo plan branches and dynamic mounts'
-  justifications:
-  - kind: rationale
-    text: |
-      Implement the `Target` abstraction, `targets.yaml` runtime state, and per-git-root worktree mounting that gives plan work physical isolation against `main`.
-
-      Reference: `docs/architecture-next.md` §Targets and worktrees, §Mounting, §Dynamic mounting, §Pure isolation against main.
-
-      Scope:
-      - `Target` = `{ component_ref: (repo_slug, component_id), working_root, branch, path_segments }` cached at mount time.
-      - `targets.yaml` runtime state per plan; lists currently mounted targets.
-      - Mount semantics per §Mounting: `working_root = <plan>/.worktrees/<repo_slug>/`, `branch = ravel-lite/<plan>/main`, created via `git worktree add ... -b <branch>` from HEAD-of-default-branch in source repo.
-      - Multi-component-per-worktree: components sharing a git root share one worktree.
-      - `target-requests.yaml` consumed at phase boundaries: attach to existing worktree if same git root, else create new; clear error if component is not in any registered repo's `.atlas/`.
-      - Plan branches do not auto-rebase; merge debt is paid at finish.
-      - Phase prompts expose `<plan>/.worktrees/<repo_slug>/` paths via `--add-dir` for whichever targets are mounted.
-
-      Coordination: `ravel-lite-create` writes initial `target-requests.yaml`; runner drains it on first phase boundary.
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: 'Targets and worktrees: per-repo plan branches and dynamic mounts'
   category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Implement the `Target` abstraction, `targets.yaml` runtime state, and per-git-root worktree mounting that gives plan work physical isolation against `main`.
+
+    Reference: `docs/architecture-next.md` §Targets and worktrees, §Mounting, §Dynamic mounting, §Pure isolation against main.
+
+    Scope:
+    - `Target` = `{ component_ref: (repo_slug, component_id), working_root, branch, path_segments }` cached at mount time.
+    - `targets.yaml` runtime state per plan; lists currently mounted targets.
+    - Mount semantics per §Mounting: `working_root = <plan>/.worktrees/<repo_slug>/`, `branch = ravel-lite/<plan>/main`, created via `git worktree add ... -b <branch>` from HEAD-of-default-branch in source repo.
+    - Multi-component-per-worktree: components sharing a git root share one worktree.
+    - `target-requests.yaml` consumed at phase boundaries: attach to existing worktree if same git root, else create new; clear error if component is not in any registered repo's `.atlas/`.
+    - Plan branches do not auto-rebase; merge debt is paid at finish.
+    - Phase prompts expose `<plan>/.worktrees/<repo_slug>/` paths via `--add-dir` for whichever targets are mounted.
+
+    Coordination: `ravel-lite-create` writes initial `target-requests.yaml`; runner drains it on first phase boundary.
 - id: findings-inbox-context-level-findings-yaml-replaces-subagent-dispatch
-  kind: backlog-item
-  claim: 'Findings inbox: context-level findings.yaml replaces subagent-dispatch'
-  justifications:
-  - kind: rationale
-    text: |
-      Add the context-level findings inbox and remove the v1 cross-plan subagent-dispatch fan-out. Cross-plan effects in v2 are advisory only, mediated by the user processing findings.
-
-      Reference: `docs/architecture-next.md` §Findings inbox, §What this replaces or removes.
-
-      Scope:
-      - `<context>/findings.yaml` schema: list of TMS items, kind=`finding`, statuses `new | promoted | wontfix | superseded`. Optional `component` attribution and `raised_in` plan reference.
-      - Triage and reflect write findings when they observe something out of scope for the current plan.
-      - `survey` surfaces the inbox; user processes findings out of band — promoting `new` into actual plans, filing bugs externally, marking `wontfix`.
-      - Nothing reads findings.yaml during plan execution.
-      - Remove the existing `subagent-dispatch.yaml` mechanism: triage no longer fans out to sibling plans automatically.
-      - Update phase prompts (triage, reflect) to author findings instead of dispatch entries.
-
-      Coordination: relies on `knowledge-graph` substrate for the TMS item shape, and on the context layout for the file location.
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: 'Findings inbox: context-level findings.yaml replaces subagent-dispatch'
   category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Add the context-level findings inbox and remove the v1 cross-plan subagent-dispatch fan-out. Cross-plan effects in v2 are advisory only, mediated by the user processing findings.
+
+    Reference: `docs/architecture-next.md` §Findings inbox, §What this replaces or removes.
+
+    Scope:
+    - `<context>/findings.yaml` schema: list of TMS items, kind=`finding`, statuses `new | promoted | wontfix | superseded`. Optional `component` attribution and `raised_in` plan reference.
+    - Triage and reflect write findings when they observe something out of scope for the current plan.
+    - `survey` surfaces the inbox; user processes findings out of band — promoting `new` into actual plans, filing bugs externally, marking `wontfix`.
+    - Nothing reads findings.yaml during plan execution.
+    - Remove the existing `subagent-dispatch.yaml` mechanism: triage no longer fans out to sibling plans automatically.
+    - Update phase prompts (triage, reflect) to author findings instead of dispatch entries.
+
+    Coordination: relies on `knowledge-graph` substrate for the TMS item shape, and on the context layout for the file location.
 - id: phase-cycle-triage-first-with-focus-objections-and-commits-yaml
-  kind: backlog-item
-  claim: 'Phase cycle: triage-first with focus-objections and commits.yaml'
-  justifications:
-  - kind: rationale
-    text: |
-      Restructure the phase cycle to `triage → work → analyse-work → reflect`, eliminate the in-cycle dream phase, and make commit partitioning + phase boundary mechanics fully runner-driven.
-
-      Reference: `docs/architecture-next.md` §Phase cycle (restructured), §Phase boundaries, §Commits (two streams), §Recovery from interrupted cycles.
-
-      Scope:
-      - Reorder cycle: triage opens (true triage), reflect closes; no dream in cycle.
-      - `this-cycle-focus.yaml` (triage writes) — single target by default, multi-target only when atomic across components in same git root.
-      - `focus-objections.yaml` (work writes; triage consumes next cycle) — kinds: wrong-target, skip-item, premature. A cycle that produces only objections + memory is valid.
-      - `commits.yaml` (analyse-work writes) — partitions edits into ordered commits with `{ target, paths, message }`. Runner applies mechanically: resolves ComponentRef to (working_root, pathspec), runs `git add` + `git commit` in working_root.
-      - Phase boundary: drain target-requests, apply commits, run defeat cascade over plan KG, commit plan-state changes (`run-plan: <phase> (<plan>)`), save per-worktree baselines into `<phase>-baseline.yaml`.
-      - Two-stream commits: target work first, then context records.
-      - Recovery: Ctrl-C lands "between cycles"; next run starts with triage. No resume machinery; interrupted scratch files ignored.
-
-      Update phase prompts for the new cycle shape.
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: 'Phase cycle: triage-first with focus-objections and commits.yaml'
   category: architecture-next
+  status: not_started
   dependencies:
   - migrate-backlog-yaml-to-tms-item-shape-with-typed-set-status-wiring
   - introduce-intents-yaml-and-state-intents-crud-verbs
   - ravel-lite-create-write-plans-into-context-plans-dir
   - targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
+  description: |
+    Restructure the phase cycle to `triage → work → analyse-work → reflect`, eliminate the in-cycle dream phase, and make commit partitioning + phase boundary mechanics fully runner-driven.
+
+    Reference: `docs/architecture-next.md` §Phase cycle (restructured), §Phase boundaries, §Commits (two streams), §Recovery from interrupted cycles.
+
+    Scope:
+    - Reorder cycle: triage opens (true triage), reflect closes; no dream in cycle.
+    - `this-cycle-focus.yaml` (triage writes) — single target by default, multi-target only when atomic across components in same git root.
+    - `focus-objections.yaml` (work writes; triage consumes next cycle) — kinds: wrong-target, skip-item, premature. A cycle that produces only objections + memory is valid.
+    - `commits.yaml` (analyse-work writes) — partitions edits into ordered commits with `{ target, paths, message }`. Runner applies mechanically: resolves ComponentRef to (working_root, pathspec), runs `git add` + `git commit` in working_root.
+    - Phase boundary: drain target-requests, apply commits, run defeat cascade over plan KG, commit plan-state changes (`run-plan: <phase> (<plan>)`), save per-worktree baselines into `<phase>-baseline.yaml`.
+    - Two-stream commits: target work first, then context records.
+    - Recovery: Ctrl-C lands "between cycles"; next run starts with triage. No resume machinery; interrupted scratch files ignored.
+
+    Update phase prompts for the new cycle shape.
 - id: reflect-bounded-tms-plus-intent-trajectory-check
-  kind: backlog-item
-  claim: 'Reflect: bounded TMS plus intent-trajectory check'
-  justifications:
-  - kind: rationale
-    text: |
-      Give the reflect phase its v2 responsibilities: distil session learnings into TMS-shaped memory, run a bounded truth-maintenance pass on recent entries, and check the cycle's work against active intents for drift.
-
-      Reference: `docs/architecture-next.md` §REFLECT, §Reflect's role on memory (bounded TMS).
-
-      Scope:
-      - Distil learnings into new memory entries with structured justifications and component attribution. Process learnings about plan dynamics get `attribution: plan-process` and stay in plan memory only.
-      - Bounded TMS pass: for each entry potentially affected by this cycle's changes, run code-anchor mechanical checks (path exists, SHA matches at line range). Mark suspect entries via Datalog rule.
-      - LLM re-evaluation: for suspect entries and rationale-only justifications, re-read the relevant code and decide still true / refined / defeated.
-      - Authoring discipline: new entries must include explicit justifications; two contradictory active entries is a bug.
-      - Bounded scope: last K cycles or last N entries — cheap by design.
-      - Intent-trajectory check: walk this cycle's commits + session log against active intents; flag drift (work not serving any active intent, or intents not served by recent work). Output is part of reflect's memory, not a hard fail.
-      - Reflect operates on plan memory only; component memory edits happen at plan finish (promotion) or via curate.
-
-      Open question: whether intent-trajectory grows into its own phase between reflect and triage — keep an eye on scope.
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: 'Reflect: bounded TMS plus intent-trajectory check'
   category: architecture-next
+  status: not_started
   dependencies:
   - migrate-backlog-yaml-to-tms-item-shape-with-typed-set-status-wiring
+  description: |
+    Give the reflect phase its v2 responsibilities: distil session learnings into TMS-shaped memory, run a bounded truth-maintenance pass on recent entries, and check the cycle's work against active intents for drift.
+
+    Reference: `docs/architecture-next.md` §REFLECT, §Reflect's role on memory (bounded TMS).
+
+    Scope:
+    - Distil learnings into new memory entries with structured justifications and component attribution. Process learnings about plan dynamics get `attribution: plan-process` and stay in plan memory only.
+    - Bounded TMS pass: for each entry potentially affected by this cycle's changes, run code-anchor mechanical checks (path exists, SHA matches at line range). Mark suspect entries via Datalog rule.
+    - LLM re-evaluation: for suspect entries and rationale-only justifications, re-read the relevant code and decide still true / refined / defeated.
+    - Authoring discipline: new entries must include explicit justifications; two contradictory active entries is a bug.
+    - Bounded scope: last K cycles or last N entries — cheap by design.
+    - Intent-trajectory check: walk this cycle's commits + session log against active intents; flag drift (work not serving any active intent, or intents not served by recent work). Output is part of reflect's memory, not a hard fail.
+    - Reflect operates on plan memory only; component memory edits happen at plan finish (promotion) or via curate.
+
+    Open question: whether intent-trajectory grows into its own phase between reflect and triage — keep an eye on scope.
 - id: plan-finish-pr-merge-with-memory-promotion-and-archive
-  kind: backlog-item
-  claim: 'Plan finish: pr/merge with memory promotion and archive'
-  justifications:
-  - kind: rationale
-    text: |
-      Implement plan completion: promote plan memory into component memory, ship code + memory together via PR or local fast-forward, archive the plan dir.
-
-      Reference: `docs/architecture-next.md` §`ravel-lite finish <plan>`, §Promotion at plan finish, §Archive, §Continuous attribution.
-
-      Scope:
-      - `ravel-lite finish <plan> [--pr | --merge] [--yes]`. Default `--pr`.
-      - Completion criterion: every intent has `status: satisfied | defeated | superseded`. Backlog drainage alone does not qualify.
-      - `promote` headless phase reads plan memory + intents + targets + catalog (via atlas CLI); emits `promotion-spec.yaml` grouping promotions by satisfied/defeated intent: `{ intent_id, entries: [{ entry_id, target_component }] }`.
-      - Runner applies spec mechanically: append entries to `<component-path>/.atlas/memory.yaml`. `cross-root` entries go to `<context>/cross-root-memory.yaml` (or edge-attached when atlas-contracts provides slot — open question).
-      - "Highest-level component within a git root" rule: walk the `parent` chain in `components.yaml`, land at lowest common ancestor for entries spanning multiple components in one repo.
-      - Confirm-before-commit on promotion-spec by default; `--yes` skips for non-interactive workflows.
-      - `--pr`: push each target's plan branch and open a PR per target repo; plan dir stays in `plans/` until all PRs land then moves to `archive/`.
-      - `--merge`: fast-forward each target's main onto plan branch locally, delete plan branches, remove worktrees, archive.
-      - Archive: `<context>/archive/<plan>/` retains `phase.md`, `intents.yaml`, `backlog.yaml`, post-promotion `memory.yaml`. Worktrees are removed.
-
-      Continuous attribution is enforced upstream in reflect (entries carry target component when authored). Promotion at finish only groups; no fresh attribution reasoning.
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: 'Plan finish: pr/merge with memory promotion and archive'
   category: architecture-next
+  status: not_started
   dependencies:
   - ravel-lite-create-write-plans-into-context-plans-dir
   - targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
   - phase-cycle-triage-first-with-focus-objections-and-commits-yaml
+  description: |
+    Implement plan completion: promote plan memory into component memory, ship code + memory together via PR or local fast-forward, archive the plan dir.
+
+    Reference: `docs/architecture-next.md` §`ravel-lite finish <plan>`, §Promotion at plan finish, §Archive, §Continuous attribution.
+
+    Scope:
+    - `ravel-lite finish <plan> [--pr | --merge] [--yes]`. Default `--pr`.
+    - Completion criterion: every intent has `status: satisfied | defeated | superseded`. Backlog drainage alone does not qualify.
+    - `promote` headless phase reads plan memory + intents + targets + catalog (via atlas CLI); emits `promotion-spec.yaml` grouping promotions by satisfied/defeated intent: `{ intent_id, entries: [{ entry_id, target_component }] }`.
+    - Runner applies spec mechanically: append entries to `<component-path>/.atlas/memory.yaml`. `cross-root` entries go to `<context>/cross-root-memory.yaml` (or edge-attached when atlas-contracts provides slot — open question).
+    - "Highest-level component within a git root" rule: walk the `parent` chain in `components.yaml`, land at lowest common ancestor for entries spanning multiple components in one repo.
+    - Confirm-before-commit on promotion-spec by default; `--yes` skips for non-interactive workflows.
+    - `--pr`: push each target's plan branch and open a PR per target repo; plan dir stays in `plans/` until all PRs land then moves to `archive/`.
+    - `--merge`: fast-forward each target's main onto plan branch locally, delete plan branches, remove worktrees, archive.
+    - Archive: `<context>/archive/<plan>/` retains `phase.md`, `intents.yaml`, `backlog.yaml`, post-promotion `memory.yaml`. Worktrees are removed.
+
+    Continuous attribution is enforced upstream in reflect (entries carry target component when authored). Promotion at finish only groups; no fresh attribution reasoning.
 - id: curate-standalone-truth-maintenance-replaces-dream-phase
-  kind: backlog-item
-  claim: 'Curate: standalone truth maintenance, replaces dream phase'
-  justifications:
-  - kind: rationale
-    text: |
-      Add `ravel-lite curate` as a standalone, context-wide truth-maintenance pass over every active plan's memory and every component memory in every registered repo. Replaces the v1 in-cycle dream phase, which is removed entirely.
-
-      Reference: `docs/architecture-next.md` §Curate (unbounded TMS, separate process), §What this replaces or removes.
-
-      Scope:
-      - `ravel-lite curate` is invoked by the user on demand (not in plan cycle). Plan execution never blocks on curate.
-      - Validate every memory entry against current code: code-anchor SHA checks at scale, rationale entries surfaced for LLM re-evaluation, contradiction detection across entries.
-      - Output: `curate-report.yaml` of discrepancies, grouped by component and severity. User reviews and acts (defeat, supersede, edit) — curate proposes, user disposes.
-      - Operates on both plan memory (`<plan>/memory.yaml` for active plans) and component memory (`<repo>/<component>/.atlas/memory.yaml`).
-      - Remove the v1 `dream` phase entirely from the cycle.
-
-      Coordination: relies on plan KG wiring for the structured memory schema and on the knowledge-graph crate for the cascade primitives.
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: 'Curate: standalone truth maintenance, replaces dream phase'
   category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Add `ravel-lite curate` as a standalone, context-wide truth-maintenance pass over every active plan's memory and every component memory in every registered repo. Replaces the v1 in-cycle dream phase, which is removed entirely.
+
+    Reference: `docs/architecture-next.md` §Curate (unbounded TMS, separate process), §What this replaces or removes.
+
+    Scope:
+    - `ravel-lite curate` is invoked by the user on demand (not in plan cycle). Plan execution never blocks on curate.
+    - Validate every memory entry against current code: code-anchor SHA checks at scale, rationale entries surfaced for LLM re-evaluation, contradiction detection across entries.
+    - Output: `curate-report.yaml` of discrepancies, grouped by component and severity. User reviews and acts (defeat, supersede, edit) — curate proposes, user disposes.
+    - Operates on both plan memory (`<plan>/memory.yaml` for active plans) and component memory (`<repo>/<component>/.atlas/memory.yaml`).
+    - Remove the v1 `dream` phase entirely from the cycle.
+
+    Coordination: relies on plan KG wiring for the structured memory schema and on the knowledge-graph crate for the cascade primitives.
 - id: sync-ravel-lite-sync-plan-from-other-plan
-  kind: backlog-item
-  claim: 'Sync: ravel-lite sync plan from other-plan'
-  justifications:
-  - kind: rationale
-    text: |
-      Add explicit cross-plan visibility for solo devs running multiple plans in parallel. Replaces the v1 "direct mode" target types from earlier drafts.
-
-      Reference: `docs/architecture-next.md` §`ravel-lite sync <plan> --from <other-plan>`, §What this replaces or removes.
-
-      Scope:
-      - `ravel-lite sync <plan> --from <other-plan>`.
-      - For each shared target between the two plans: run `git merge <other>'s plan branch` in `<plan>`'s worktree on `<plan>`'s branch.
-      - Targets unique to `<other>` are mounted into `<plan>` first.
-      - Conflicts surface in the worktree for the user to resolve manually.
-      - Worktree isolation is preserved by default; visibility is on-demand and audited via merge commits.
-      - Remove the "direct mode" target types entirely from the v1 codebase.
-
-      Out of scope: any auto-sync or rebase-on-main semantics — plan branches stay isolated against main per design.
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: 'Sync: ravel-lite sync plan from other-plan'
   category: architecture-next
+  status: not_started
   dependencies:
   - targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
+  description: |
+    Add explicit cross-plan visibility for solo devs running multiple plans in parallel. Replaces the v1 "direct mode" target types from earlier drafts.
+
+    Reference: `docs/architecture-next.md` §`ravel-lite sync <plan> --from <other-plan>`, §What this replaces or removes.
+
+    Scope:
+    - `ravel-lite sync <plan> --from <other-plan>`.
+    - For each shared target between the two plans: run `git merge <other>'s plan branch` in `<plan>`'s worktree on `<plan>`'s branch.
+    - Targets unique to `<other>` are mounted into `<plan>` first.
+    - Conflicts surface in the worktree for the user to resolve manually.
+    - Worktree isolation is preserved by default; visibility is on-demand and audited via merge commits.
+    - Remove the "direct mode" target types entirely from the v1 codebase.
+
+    Out of scope: any auto-sync or rebase-on-main semantics — plan branches stay isolated against main per design.
 - id: migrate-ravel-lite-migrate-for-v1-to-v2-cutover
-  kind: backlog-item
-  claim: 'Migrate: ravel-lite migrate for v1 to v2 cutover'
-  justifications:
-  - kind: rationale
-    text: |
-      Implement the `ravel-lite migrate <old-plan-path>` verb that cuts a v1 `<project>/LLM_STATE/<plan>` plan over to v2's `<context>/plans/<plan>` model. Hard cutover: the v2 binary refuses to run on unmigrated v1 plans.
-
-      Reference: `docs/architecture-next.md` §Migration sketch, §Settled decisions (cutover policy + backfill).
-
-      Scope (per the 7-step sketch):
-      1. Register repos: ensure each project hosting an existing plan is in the new context's `repos.yaml` (URL + local_path).
-      2. Run Atlas: index each registered repo so `.atlas/components.yaml` exists. Plans cannot start without this.
-      3. Move plan state: copy `<project>/LLM_STATE/<plan>/` → `<context>/plans/<plan>/`. Rename `memory.md` to `legacy_memory.md`; new `memory.yaml` starts mostly empty.
-      4. Extract intent (one-shot LLM): the migrate-intent headless phase reads `phase.md` + recent backlog and emits `intents.yaml` with best-effort intents; backlog items get `serves-intent` justifications (or `legacy: true` if unattributable).
-      5. Mint targets (one-shot LLM): a headless pass against the project's components.yaml proposes initial `targets.yaml`; user reviews.
-      6. Mount worktrees: initialise worktrees from the project's current main per the new mount mechanics.
-      7. Backfill memory (one-shot LLM): pass over `legacy_memory.md` produces a `memory.yaml` with `status: legacy` entries. User curates in their own time.
-
-      Verification: dogfood by migrating `LLM_STATE/core` (this very plan) as the canonical test case before the v2.0 release.
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: 'Migrate: ravel-lite migrate for v1 to v2 cutover'
   category: architecture-next
+  status: not_started
   dependencies:
   - migrate-backlog-yaml-to-tms-item-shape-with-typed-set-status-wiring
   - introduce-intents-yaml-and-state-intents-crud-verbs
   - ravel-lite-create-write-plans-into-context-plans-dir
   - targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
   - phase-cycle-triage-first-with-focus-objections-and-commits-yaml
+  description: |
+    Implement the `ravel-lite migrate <old-plan-path>` verb that cuts a v1 `<project>/LLM_STATE/<plan>` plan over to v2's `<context>/plans/<plan>` model. Hard cutover: the v2 binary refuses to run on unmigrated v1 plans.
+
+    Reference: `docs/architecture-next.md` §Migration sketch, §Settled decisions (cutover policy + backfill).
+
+    Scope (per the 7-step sketch):
+    1. Register repos: ensure each project hosting an existing plan is in the new context's `repos.yaml` (URL + local_path).
+    2. Run Atlas: index each registered repo so `.atlas/components.yaml` exists. Plans cannot start without this.
+    3. Move plan state: copy `<project>/LLM_STATE/<plan>/` → `<context>/plans/<plan>/`. Rename `memory.md` to `legacy_memory.md`; new `memory.yaml` starts mostly empty.
+    4. Extract intent (one-shot LLM): the migrate-intent headless phase reads `phase.md` + recent backlog and emits `intents.yaml` with best-effort intents; backlog items get `serves-intent` justifications (or `legacy: true` if unattributable).
+    5. Mint targets (one-shot LLM): a headless pass against the project's components.yaml proposes initial `targets.yaml`; user reviews.
+    6. Mount worktrees: initialise worktrees from the project's current main per the new mount mechanics.
+    7. Backfill memory (one-shot LLM): pass over `legacy_memory.md` produces a `memory.yaml` with `status: legacy` entries. User curates in their own time.
+
+    Verification: dogfood by migrating `LLM_STATE/core` (this very plan) as the canonical test case before the v2.0 release.
 - id: update-tutorial-and-reference-docs-for-repos-yaml-cutover
-  kind: backlog-item
-  claim: Update tutorial and reference docs for repos.yaml cutover
-  justifications:
-  - kind: rationale
-    text: |
-      Re-record and update the published tutorial and reference docs to replace retired `state projects` verbs with the new `repo add/list/remove` CLI shape.
-
-      **Problem being solved:** `docs/tutorial/01-install-and-config.adoc`, `docs/tutorial/02-the-project.adoc`, `docs/reference/cli-state.adoc`, `docs/reference/cross-plan-files.adoc`, and capture transcripts under `docs/captures/ravel-lite-tutorial/transcripts/` all reference the retired `state projects` verbs and `projects.yaml`. Anyone following the published tutorial hits the deprecation alias and bounces.
-
-      **Settled decisions from session 89:**
-      - The deprecation alias (`state projects <anything>` → prints migration message, exits non-zero) is intentional and permanent. Don't remove it; just stop documenting the old verbs.
-      - The new CLI shape is `ravel-lite repo {add,list,remove}` (top-level, singular, not `state repos`). Reference: `src/main.rs` — the `Repo` top-level subcommand.
-      - `projects.yaml` is fully retired. The resolver is now `<config-dir>/repos.yaml` managed via `ravel-lite repo`. Reference: `src/repos.rs`.
-      - Capture transcripts at `docs/captures/ravel-lite-tutorial/transcripts/{01-projects-list-empty,02-projects-add,02-projects-list-populated}.txt` must be re-recorded (not hand-edited) to stay coherent with the prose. The re-capture script is `scripts/capture/ravel-lite-tutorial.sh` run against a TestAnyware VM.
-
-      **Dependencies:** Defer until further architecture-next tasks stabilise (especially `targets-and-worktrees` and `ravel-lite create v2`) to avoid double-recapturing the tutorial once more changes land. Only block on this if the tutorial is being actively promoted to new users.
-
-      **Scope:**
-      1. Update prose in `docs/tutorial/` and `docs/reference/` to use `repo add/list/remove` vocabulary.
-      2. Re-run `scripts/capture/ravel-lite-tutorial.sh` against a VM and replace the three stale transcript files.
-      3. Verify no remaining references to `state projects` in docs (grep: `state projects`).
-  status: active
-  authored_at: migrated
-  authored_in: migrate-legacy-backlog-yaml
+  title: Update tutorial and reference docs for repos.yaml cutover
   category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Re-record and update the published tutorial and reference docs to replace retired `state projects` verbs with the new `repo add/list/remove` CLI shape.
+
+    **Problem being solved:** `docs/tutorial/01-install-and-config.adoc`, `docs/tutorial/02-the-project.adoc`, `docs/reference/cli-state.adoc`, `docs/reference/cross-plan-files.adoc`, and capture transcripts under `docs/captures/ravel-lite-tutorial/transcripts/` all reference the retired `state projects` verbs and `projects.yaml`. Anyone following the published tutorial hits the deprecation alias and bounces.
+
+    **Settled decisions from session 89:**
+    - The deprecation alias (`state projects <anything>` → prints migration message, exits non-zero) is intentional and permanent. Don't remove it; just stop documenting the old verbs.
+    - The new CLI shape is `ravel-lite repo {add,list,remove}` (top-level, singular, not `state repos`). Reference: `src/main.rs` — the `Repo` top-level subcommand.
+    - `projects.yaml` is fully retired. The resolver is now `<config-dir>/repos.yaml` managed via `ravel-lite repo`. Reference: `src/repos.rs`.
+    - Capture transcripts at `docs/captures/ravel-lite-tutorial/transcripts/{01-projects-list-empty,02-projects-add,02-projects-list-populated}.txt` must be re-recorded (not hand-edited) to stay coherent with the prose. The re-capture script is `scripts/capture/ravel-lite-tutorial.sh` run against a TestAnyware VM.
+
+    **Dependencies:** Defer until further architecture-next tasks stabilise (especially `targets-and-worktrees` and `ravel-lite create v2`) to avoid double-recapturing the tutorial once more changes land. Only block on this if the tutorial is being actively promoted to new users.
+
+    **Scope:**
+    1. Update prose in `docs/tutorial/` and `docs/reference/` to use `repo add/list/remove` vocabulary.
+    2. Re-run `scripts/capture/ravel-lite-tutorial.sh` against a VM and replace the three stale transcript files.
+    3. Verify no remaining references to `state projects` in docs (grep: `state projects`).
