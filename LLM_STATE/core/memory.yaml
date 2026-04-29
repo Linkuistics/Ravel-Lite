@@ -721,3 +721,15 @@ entries:
   title: repos.yaml requires clone URL; auto-add is retired
   body: |
     `ensure_in_catalog_interactive` and `register_projects_from_plan_dirs` were removed from `main.rs`. Interactive auto-add is not viable for `repos.yaml` because a clone URL is required on entry. Users must invoke `ravel-lite repo add <slug> <url>` explicitly.
+- id: store-k-is-per-kind-cascade-serves-intent-is-the-cross-store-join
+  title: Store<K> is per-kind; cascade_serves_intent is the cross-store join
+  body: |
+    Multi-kind plan KG requires one `Store<K>` per kind, not a heterogeneous store. `cascade_serves_intent::<P, C>(parents, dependents, status)` in `store.rs` is the join point: reads terminal statuses from a parent store, writes defeat markers into a child store. Shape is the same for all cross-kind cascades (intent→backlog, intent→memory, intent→finding).
+- id: itemkind-uses-unit-struct-tags-itemstatus-enums-encode-transitions
+  title: ItemKind uses unit-struct tags; ItemStatus enums encode transitions
+  body: |
+    `ItemKind` is implemented on zero-sized unit structs (`KIND_STR: &'static str`, `type Status: ItemStatus`). Status vocabularies are enums implementing `ItemStatus` with `transitions()`, `is_terminal()`, `as_str()`, and `parse()`. `KindMarker<K>` handles YAML serde: serialises as `K::KIND_STR`, rejects kind mismatches on deserialise. `Store<K>::set_status` enforces `K::Status::transitions()` before committing.
+- id: plan-kg-rs-registers-four-plan-vocabularies-in-knowledge-graph-crate
+  title: plan_kg.rs registers four plan vocabularies in knowledge-graph crate
+  body: |
+    `crates/knowledge-graph/src/plan_kg.rs` defines `IntentKind`, `BacklogItemKind`, `MemoryEntryKind`, and `FindingKind`, each with its own status enum and transition table. Type aliases (`IntentItem`, `BacklogStore`, etc.) and the intent→backlog cross-store cascade live here. See: `Store<K> is per-kind; cascade_serves_intent is the cross-store join`.
