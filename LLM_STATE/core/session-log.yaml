@@ -1461,3 +1461,18 @@ sessions:
     - **Suggests next:** Split the atlas parent into per-cluster tasks during triage:
       `list-components + summary` (catalog loader + caching), `describe + memory`,
       `edge-graph`, `graph-algorithms (path, scc)`. Drop the "strip from prompts" task.
+- id: session-100
+  timestamp: 2026-04-29T23:30:46Z
+  phase: work
+  body: |
+    ### Session 100 (2026-04-29T23:30:46Z) — Add Catalog loader and list-components/summary verbs
+
+    - Implemented the shared `Catalog` in-memory type in `src/atlas.rs`, loading all fresh repos' `.atlas/components.yaml` via a single registry walk per CLI invocation.
+    - Refactored `compute_freshness` → `compute_freshness_full` to thread `Option<LoadedComponents>` alongside each freshness report, eliminating double-parsing when both freshness and component data are needed.
+    - Added `RepoCatalog` (per-repo parsed catalog entry) and `Catalog` (registry-wide union, `IndexMap`-keyed for deterministic output order).
+    - Implemented `Catalog::iter_components()` yielding `(repo_slug, &ComponentEntry)` pairs, filtering out `deleted: true` tombstone components.
+    - Added `run_list_components` and `run_summary` verbs, wired into `src/main.rs` as `atlas list-components` and `atlas summary` subcommands.
+    - `--repo` flag validates against the fresh-repo set and emits a named-repos error message rather than silent empty output.
+    - Added 18 unit tests covering: empty registry, mixed freshness states, registry order preservation, deleted-component filtering, filter combinations, `enforce_repo_filter_known` error cases, `aggregate_summary` grouping, and smoke tests for the two CLI entry points.
+    - All tests pass; no regressions.
+    - What this suggests trying next: implement `atlas describe <ref>` and `atlas memory <ref>` (already in backlog as a not_started task), which resolve single-component refs from the Catalog.

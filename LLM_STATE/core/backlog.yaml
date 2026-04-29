@@ -128,7 +128,7 @@ tasks:
 - id: atlas-cli-catalog-loader-list-components-summary
   title: 'atlas CLI: catalog loader, list-components, summary'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Load `.atlas/components.yaml` from each registered repo into a single in-memory `Catalog` type with `(path, mtime)` cache, then implement `atlas list-components [--repo R] [--kind K]` and `atlas summary [--repo R]`.
@@ -150,6 +150,125 @@ tasks:
     - `compute_freshness` already reads `atlas_index::load_components`; `Catalog::load` must consume the same result (no double parse).
     - Do not add a `chrono` dep for cache timestamps; use `std::time::SystemTime` or stick to `Duration`-based comparison as `compute_freshness` does.
     - Caching is in-process only (per CLI invocation); no on-disk cache needed at this stage.
+  results: |
+    ## Results
+
+    Implemented the shared `Catalog` loader and the `atlas list-components` /
+    `atlas summary` CLI verbs in `src/atlas.rs`. The Catalog is the
+    in-memory union of every fresh repo's `.atlas/components.yaml`, keyed
+    by repo slug, with a single I/O pass per CLI invocation regardless of
+    which downstream verb runs.
+
+    ### What landed
+
+    - `Catalog` and `RepoCatalog` types (public). `Catalog::load(registry,
+      now)` walks the registry once and retains the parsed
+      `ComponentsFile` for every repo whose freshness status is `Fresh`.
+      Non-fresh repos are skipped from `Catalog::repos` but still recorded
+      in `Catalog::freshness` for future verbs that want to surface
+      problem repos.
+    - `Catalog::iter_components()` yields `(repo_slug, &ComponentEntry)`
+      pairs across every fresh repo in registry order then per-repo source
+      order. `deleted: true` components are filtered out — they are
+      rename-match tombstones, not user-facing entries.
+    - `run_list_components(context_root, repo_filter, kind_filter)` —
+      emits `<repo>/<id>  <kind>` per line. `--repo <slug>` rejects
+      unknown slugs with a message naming the available fresh repos
+      (silent empty listings for typos are worse than an explicit error).
+    - `run_summary(context_root, repo_filter)` — per-repo counts grouped
+      by kind. `IndexMap<String, BTreeMap<String, usize>>` gives
+      registry-order across repos and alphabetical-order across kinds, so
+      rendered output is deterministic.
+    - `aggregate_summary(catalog, repo_filter)` factored out as a pure
+      helper, matching the codebase pattern of "compute separately, write
+      separately". Lets unit tests assert on the aggregation map directly
+      without capturing stdout.
+
+    ### Plumbing
+
+    - `compute_one` / `compute_freshness` were refactored to share an
+      internal `compute_one_full` / `compute_freshness_full` that returns
+      `(RepoFreshness, Option<LoadedComponents>)`. The public
+      `compute_freshness` projects out the parsed half (kept for
+      `run_freshness`'s YAML report); `Catalog::load` retains it. One
+      `load_components` call per repo regardless of which verb the user
+      ran — the "no double parse" guarantee from the task spec.
+    - `RepoFreshness` and `FreshnessStatus` had to flip from private to
+      `pub` because `Catalog::freshness` (public field) reaches them. No
+      other API change.
+
+    ### Tests
+
+    15 new tests in `src/atlas.rs::tests`, plus the 8 pre-existing
+    freshness tests still pass. New coverage:
+
+    - empty registry yields empty catalog
+    - non-fresh repos (no_local_path, missing) are excluded from
+      `Catalog::repos` but present in `Catalog::freshness`
+    - registry insertion order preserved through `freshness` and
+      `iter_components`
+    - `deleted: true` components filtered from `iter_components`
+    - `matches_filters` with repo-only / kind-only / both
+    - `enforce_repo_filter_known` accepts known, rejects unknown with
+      available list, reports empty catalog clearly
+    - `aggregate_summary` groups by repo+kind, respects `--repo`,
+      empty-when-no-components
+
+    `cargo test` passes the full suite (658 lib + integration tests, 0
+    failed). End-to-end smoke test in a tempdir against the actual `repo
+    add` + `atlas list-components` + `atlas summary` + `atlas
+    list-components --repo bad-slug` paths produced the expected output
+    shapes.
+
+    ### Schema-vs-spec drift
+
+    The task description called for a third `<display_name>` column on
+    the list-components output. `atlas_index::ComponentEntry` has no
+    `display_name` field — the closest is `role` (optional) or `id`
+    itself. I emitted two columns (`<repo>/<id>  <kind>`) rather than
+    inventing a third. If a future task wants a richer view it can either
+    add a `--long` flag with `role` / `evidence_grade` / `path_segments`
+    columns or cut a separate `atlas describe <ref>` verb (already in the
+    backlog). The minimal output keeps the tabular form unambiguous.
+
+    ### Constraints respected
+
+    Per the in-flight self-dev memory:
+
+    - LLM_STATE wire shape unchanged (this verb reads `.atlas/*.yaml`
+      files in registered repos, not the plan dir).
+    - No new binary install; the CLI was exercised via `cargo run`.
+    - All tests hermetic (TempDir-rooted; no network, no shared state).
+
+    ### What this unblocks
+
+    Three direct dependents:
+
+    - `atlas-cli-describe-and-memory-verbs` — uses
+      `Catalog::iter_components` for ref resolution and
+      `RepoCatalog::local_path` for memory.yaml path resolution.
+    - `atlas-cli-edge-graph-edges-neighbors-roots-verbs` — same Catalog
+      for ref resolution; will add an `EdgeGraph` companion that loads
+      `related-components.yaml` from each repo using the same single-pass
+      pattern.
+    - `ravel-lite-create-write-plans-into-context-plans-dir` — the create
+      session needs to query the catalog to pick targets; both the
+      `list-components` verb and the underlying `Catalog` API are usable.
+
+    ### Suggested follow-ups
+
+    - The `Catalog::freshness` field is public for forward-compat but no
+      current verb consumes it. When `atlas describe` lands it should
+      surface a brief note when the queried ref's repo isn't fresh.
+    - If/when `atlas-index` grows a `display_name` (or `title`) field on
+      `ComponentEntry`, revisit the `list-components` output to add the
+      third column the original task spec described.
+    - The unparseable-repo path is silent in `list-components` /
+      `summary` (a stale repo just contributes nothing). Consider whether
+      these verbs should print a stderr warning naming the unparseable
+      slugs, or stay silent and leave that to `atlas freshness`. Current
+      choice mirrors `atlas freshness` being the dedicated diagnostic
+      verb.
 - id: atlas-cli-describe-and-memory-verbs
   title: 'atlas CLI: describe and memory verbs'
   category: architecture-next

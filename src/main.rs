@@ -302,6 +302,37 @@ enum AtlasCommands {
         #[arg(long)]
         require_fresh: bool,
     },
+    /// List every component in every fresh repo as
+    /// `<repo_slug>/<component_id>  <kind>`, one per line. Use `--repo`
+    /// to restrict to a single repo and/or `--kind` to restrict to a
+    /// single component kind. Non-fresh repos are skipped silently;
+    /// inspect freshness with `atlas freshness` first if needed.
+    ListComponents {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Restrict output to this repo slug. Errors with the available
+        /// fresh repos if the slug is unknown.
+        #[arg(long)]
+        repo: Option<String>,
+        /// Restrict output to components whose `kind` matches exactly.
+        #[arg(long)]
+        kind: Option<String>,
+    },
+    /// Per-repo component counts grouped by kind. Lists each fresh repo
+    /// followed by `<count>  <kind>` rows in alphabetical kind order.
+    /// `--repo` restricts to a single repo.
+    Summary {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Restrict output to this repo slug. Errors with the available
+        /// fresh repos if the slug is unknown.
+        #[arg(long)]
+        repo: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1025,6 +1056,14 @@ fn dispatch_atlas(command: AtlasCommands) -> Result<()> {
         AtlasCommands::Freshness { config, require_fresh } => {
             let context_root = resolve_config_dir(config)?;
             atlas::run_freshness(&context_root, require_fresh)
+        }
+        AtlasCommands::ListComponents { config, repo, kind } => {
+            let context_root = resolve_config_dir(config)?;
+            atlas::run_list_components(&context_root, repo.as_deref(), kind.as_deref())
+        }
+        AtlasCommands::Summary { config, repo } => {
+            let context_root = resolve_config_dir(config)?;
+            atlas::run_summary(&context_root, repo.as_deref())
         }
     }
 }

@@ -1,35 +1,15 @@
-id: session-99
-timestamp: 2026-04-29T23:01:42Z
+id: session-100
+timestamp: 2026-04-29T23:30:46Z
 phase: work
 body: |
-  ### Session 99 (2026-04-29T23:01:42Z) — Add atlas CLI foundation and clippy gate
+  ### Session 100 (2026-04-29T23:30:46Z) — Add Catalog loader and list-components/summary verbs
 
-  - Worked two tasks: `add-clippy-gate-to-prevent-silent-accumulation-on-main` (done) and
-    the foundational slice of `graph-rag-ravel-lite-atlas-cli-for-catalog-queries` (blocked).
-  - **Clippy gate:** Added `scripts/check.sh` running
-    `cargo clippy --all-targets --workspace -- -D warnings`. Script pattern matches
-    existing `release-*.sh` tooling. A one-line pre-push hook recipe is documented in
-    the header but not installed — opt-in by design.
-  - **Clippy fixes discovered:** Two `clippy::field_reassign_with_default` warnings in
-    `crates/knowledge-graph/src/datalog.rs` test scaffolding silently accumulated since
-    session 98, exactly the drift the gate is meant to prevent. Fixed by converting
-    `let mut p = SmokeProgram::default(); p.field = …` to struct-update syntax. All
-    three `datalog::tests` still pass.
-  - **Atlas CLI foundation:** Added `src/atlas.rs`, registered in `src/lib.rs`,
-    added `atlas-index` path dep to `Cargo.toml` (mirrors `component-ontology`
-    convention), added `Commands::Atlas` + `AtlasCommands` (`ListRepos`, `Freshness`)
-    + `dispatch_atlas` in `src/main.rs`. Two verbs delivered: `atlas list-repos`
-    (delegates to `repos::run_list`) and `atlas freshness [--require-fresh]` with
-    four statuses (`fresh`, `missing`, `no_local_path`, `unparseable`).
-  - **Coverage:** 7 unit tests in `src/atlas.rs`; `cargo test --lib` → 642/0.
-    `scripts/check.sh` (clippy `-D warnings` workspace-wide) clean.
-  - **Atlas task blocked:** The parent task lists 12 subcommands; this cycle delivered 2
-    plus scaffolding. The remaining 9 graph-query verbs need catalog-union loading and
-    non-trivial graph algorithms. Task set to `blocked` with split guidance in results.
-  - **Discovery:** The "strip catalog from prompts" scope item is already a no-op —
-    grepping `defaults/phases/*.md` returns zero hits for atlas catalog rendering.
-    `{{CATALOG_PROJECTS}}` in `src/discover/stage1.rs` concerns repos-list discovery,
-    not the atlas component graph. Triage should drop it from follow-up tasks.
-  - **Suggests next:** Split the atlas parent into per-cluster tasks during triage:
-    `list-components + summary` (catalog loader + caching), `describe + memory`,
-    `edge-graph`, `graph-algorithms (path, scc)`. Drop the "strip from prompts" task.
+  - Implemented the shared `Catalog` in-memory type in `src/atlas.rs`, loading all fresh repos' `.atlas/components.yaml` via a single registry walk per CLI invocation.
+  - Refactored `compute_freshness` → `compute_freshness_full` to thread `Option<LoadedComponents>` alongside each freshness report, eliminating double-parsing when both freshness and component data are needed.
+  - Added `RepoCatalog` (per-repo parsed catalog entry) and `Catalog` (registry-wide union, `IndexMap`-keyed for deterministic output order).
+  - Implemented `Catalog::iter_components()` yielding `(repo_slug, &ComponentEntry)` pairs, filtering out `deleted: true` tombstone components.
+  - Added `run_list_components` and `run_summary` verbs, wired into `src/main.rs` as `atlas list-components` and `atlas summary` subcommands.
+  - `--repo` flag validates against the fresh-repo set and emits a named-repos error message rather than silent empty output.
+  - Added 18 unit tests covering: empty registry, mixed freshness states, registry order preservation, deleted-component filtering, filter combinations, `enforce_repo_filter_known` error cases, `aggregate_summary` grouping, and smoke tests for the two CLI entry points.
+  - All tests pass; no regressions.
+  - What this suggests trying next: implement `atlas describe <ref>` and `atlas memory <ref>` (already in backlog as a not_started task), which resolve single-component refs from the Catalog.
