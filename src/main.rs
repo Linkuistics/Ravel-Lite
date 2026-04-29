@@ -10,7 +10,7 @@ use ravel_lite::agent::pi::PiAgent;
 use ravel_lite::agent::Agent;
 use ravel_lite::config::{load_agent_config, load_shared_config, resolve_config_dir};
 use ravel_lite::git::project_root_for_plan;
-use ravel_lite::ontology::cli::{parse_edge_kind, parse_evidence_grade, parse_lifecycle_scope};
+use component_ontology::cli::{parse_edge_kind, parse_evidence_grade, parse_lifecycle_scope};
 use ravel_lite::state::filenames::PHASE_FILENAME;
 use ravel_lite::types::{AgentConfig, LlmPhase, PlanContext};
 use ravel_lite::ui::{run_tui, UI};

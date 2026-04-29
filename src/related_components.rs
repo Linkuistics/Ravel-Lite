@@ -1,15 +1,17 @@
 //! Host adapter for the component-ontology graph at
 //! `<config_root>/related-components.yaml`.
 //!
-//! The on-disk types and validation rules live in `crate::ontology` —
-//! that module is host-agnostic so it can graduate to a workspace crate.
-//! Everything host-specific (the filename, the `<config-root>` join, the
-//! per-user `projects.yaml` resolver, the CLI verbs) lives here.
+//! The on-disk types and validation rules live in the
+//! `component-ontology` crate (atlas-contracts workspace) — that crate
+//! is host-agnostic so it can serve Atlas, Ravel-Lite, or any future
+//! consumer. Everything host-specific (the filename, the
+//! `<config-root>` join, the per-user `projects.yaml` resolver, the CLI
+//! verbs) lives here.
 //!
 //! Schema is v2: every edge carries `(kind, lifecycle, participants,
 //! evidence_grade, evidence_fields, rationale)`. The loader rejects any
 //! file whose `schema_version` is not 2 (enforced in
-//! `crate::ontology::yaml_io::load_or_default`). There is no in-memory
+//! `component_ontology::yaml_io::load_or_default`). There is no in-memory
 //! v1 → v2 upgrader — the file is a generated artifact, so
 //! delete-and-regenerate is the supported upgrade path
 //! (`docs/component-ontology.md` §12).
@@ -18,15 +20,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
-use crate::ontology::{self, Edge, EvidenceGrade, RelatedComponentsFile};
+use component_ontology::{self as ontology, Edge, EvidenceGrade, RelatedComponentsFile};
 use crate::projects::{self, ProjectsCatalog};
 use crate::state::filenames::RELATED_COMPONENTS_FILENAME;
 
 // Re-export the v2 ontology surface that the host needs to construct
 // edges through this adapter — the binary crate (`main.rs`) and tests
 // route through `crate::related_components::*` rather than touching
-// `crate::ontology` directly.
-pub use crate::ontology::{EdgeKind, LifecycleScope};
+// `component_ontology` directly.
+pub use component_ontology::{EdgeKind, LifecycleScope};
 
 /// Filter set for `run_list`. An empty filter emits every edge; each
 /// populated field narrows the match set by AND-composition.
@@ -565,5 +567,50 @@ mod tests {
         let derived = plan_project_path(Path::new("a/b/c")).unwrap();
         let expected = std::path::absolute(cwd.join("a")).unwrap();
         assert_eq!(derived, expected);
+    }
+
+    /// Migration M2 compat guard: a pre-M2 `related-components.yaml`
+    /// (produced when the ontology types lived in `src/ontology/`) must
+    /// parse and round-trip bit-identically through the
+    /// `component-ontology` crate. Drift in the on-disk shape — added
+    /// fields, field reordering, scalar style changes — would fail this
+    /// byte-for-byte equality.
+    #[test]
+    fn pre_m2_related_components_yaml_round_trips_bit_identical() {
+        let pre_m2_yaml = r#"schema_version: 2
+edges:
+- kind: depends-on
+  lifecycle: build
+  participants:
+  - Atlas
+  - Ravel-Lite
+  evidence_grade: strong
+  evidence_fields:
+  - Atlas.surface.produces_files
+  - Ravel-Lite.surface.consumes_files
+  rationale: Ravel-Lite consumes the component-ontology crate produced by Atlas.
+- kind: co-implements
+  lifecycle: design
+  participants:
+  - Atlas
+  - Ravel-Lite
+  evidence_grade: medium
+  evidence_fields:
+  - Atlas.surface.purpose
+  rationale: Shared component-relationship vocabulary.
+"#;
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(RELATED_COMPONENTS_FILENAME);
+        std::fs::write(&path, pre_m2_yaml).unwrap();
+
+        let loaded = load_or_empty(tmp.path()).unwrap();
+        save_atomic(tmp.path(), &loaded).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+
+        assert_eq!(
+            after, pre_m2_yaml,
+            "pre-M2 YAML must round-trip byte-for-byte through the component-ontology crate"
+        );
     }
 }

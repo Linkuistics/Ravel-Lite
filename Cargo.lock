@@ -329,6 +329,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "component-ontology"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_yaml",
+]
+
+[[package]]
 name = "convert_case"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1511,6 +1520,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "clap",
+ "component-ontology",
  "crossterm",
  "dirs",
  "indexmap",

@@ -1265,3 +1265,13 @@ sessions:
     Key learnings:
     - Git subrepository initialisation inside a test's project tree requires an initial commit, not just `git init`, to avoid `does not have a commit checked out` errors from outer `git add`
     - Fallback git identity should use RFC 2606-reserved domains (`.invalid.local`) to prevent accidental attribution on mis-published commits
+- id: session-88
+  timestamp: 2026-04-29T00:01:57Z
+  phase: work
+  body: |
+    ### Session 88 (2026-04-29T00:01:57Z) — Delete src/ontology/, wire component-ontology crate
+
+    - Attempted: migrate Ravel-Lite's in-tree `src/ontology/` module to the `component-ontology` crate from the atlas-contracts workspace (M2), and delete the in-tree `defaults/ontology.yaml` copy (M4).
+    - What worked: Both migrations completed cleanly. All `crate::ontology` import sites across `src/discover/apply.rs`, `src/discover/schema.rs`, `src/discover/stage2.rs`, `src/state/discover_proposals/verbs.rs`, `src/related_components.rs`, `src/projects.rs`, and `src/main.rs` were updated to `component_ontology`. The five files under `src/ontology/` (~1,300 lines) were deleted. `defaults/ontology.yaml` was deleted and its `EMBEDDED_FILES` entry removed from `src/init.rs`; "ontology.yaml" was added to `RETIRED_PATHS` so existing config dirs have the stale copy swept on next `ravel-lite init`. A compatibility guard test (`pre_m2_related_components_yaml_round_trips_bit_identical`) was added to `src/related_components.rs` to verify on-disk YAML shape is unchanged. `docs/component-ontology.md` was heavily trimmed now that the schema source-of-truth lives in the crate. M5 was marked blocked during the session (design constraint on atlas-index consumption).
+    - What this suggests trying next: M5 (consume atlas via atlas-index) is unblocked by the stale-status repair — its dependencies M2 and M4 are now done.
+    - Key learnings: The `component-ontology` crate already exported everything Ravel-Lite needed; the migration was mechanical. The only non-trivial decision was adding "ontology.yaml" to `RETIRED_PATHS` rather than simply dropping the embed entry, which ensures existing config dirs stay clean without manual intervention.

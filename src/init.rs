@@ -83,7 +83,6 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
     EmbeddedFile { path: "create-plan.md", content: include_str!("../defaults/create-plan.md") },
     EmbeddedFile { path: "discover-stage1.md", content: include_str!("../defaults/discover-stage1.md") },
     EmbeddedFile { path: "discover-stage2.md", content: include_str!("../defaults/discover-stage2.md") },
-    EmbeddedFile { path: "ontology.yaml", content: include_str!("../defaults/ontology.yaml") },
 ];
 
 /// Paths that used to ship via `EMBEDDED_FILES` but have been removed
@@ -101,6 +100,12 @@ const RETIRED_PATHS: &[&str] = &[
     // Former location of pi subagent prompts; moved to
     // `agents/pi/subagents/` as part of the drift-guard cleanup.
     "skills",
+    // Ontology YAML now ships from the `component-ontology` crate
+    // (atlas-contracts workspace) via `EMBEDDED_ONTOLOGY_YAML`. The
+    // local copy is the canonical file in that crate, not a Ravel-Lite
+    // artefact, so refresh sweeps remove the stale materialised copy
+    // from existing config dirs.
+    "ontology.yaml",
 ];
 
 /// Filename of the optional starter Lua config stub written into a

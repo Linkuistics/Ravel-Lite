@@ -22,7 +22,7 @@ use anyhow::{bail, Result};
 
 use crate::discover::schema::{ProposalRecord, ProposalsFile, PROPOSALS_SCHEMA_VERSION};
 use crate::discover::{load_proposals, proposals_path, save_proposals_atomic};
-use crate::ontology::{Edge, EdgeKind, EvidenceGrade, LifecycleScope};
+use component_ontology::{Edge, EdgeKind, EvidenceGrade, LifecycleScope};
 use crate::projects::{self, ProjectsCatalog};
 
 pub struct AddProposalRequest<'a> {

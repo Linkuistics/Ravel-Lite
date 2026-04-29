@@ -677,7 +677,7 @@ mod tests {
 
     #[test]
     fn run_rename_cascades_into_symmetric_v2_edges() {
-        use crate::ontology::{Edge, EdgeKind, EvidenceGrade, LifecycleScope};
+        use component_ontology::{Edge, EdgeKind, EvidenceGrade, LifecycleScope};
         use crate::related_components;
         let tmp = TempDir::new().unwrap();
         let cfg = tmp.path().join("cfg");
@@ -688,7 +688,7 @@ mod tests {
         run_add(&cfg, Some("Other"), &b).unwrap();
 
         // Symmetric kind: participants must be sorted on construction.
-        let mut file = crate::ontology::RelatedComponentsFile::default();
+        let mut file = component_ontology::RelatedComponentsFile::default();
         file.add_edge(Edge {
             kind: EdgeKind::CoImplements,
             lifecycle: LifecycleScope::Design,
@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn run_rename_cascade_preserves_directed_kind_order() {
-        use crate::ontology::{Edge, EdgeKind, EvidenceGrade, LifecycleScope};
+        use component_ontology::{Edge, EdgeKind, EvidenceGrade, LifecycleScope};
         use crate::related_components;
         let tmp = TempDir::new().unwrap();
         let cfg = tmp.path().join("cfg");
@@ -726,7 +726,7 @@ mod tests {
         run_add(&cfg, Some("Child"), &child).unwrap();
 
         // Directed kind: order is semantic (Parent first as generator).
-        let mut file = crate::ontology::RelatedComponentsFile::default();
+        let mut file = component_ontology::RelatedComponentsFile::default();
         file.add_edge(Edge {
             kind: EdgeKind::Generates,
             lifecycle: LifecycleScope::Codegen,
@@ -752,7 +752,7 @@ mod tests {
 
     #[test]
     fn run_rename_cascade_leaves_uninvolved_edges_untouched() {
-        use crate::ontology::{Edge, EdgeKind, EvidenceGrade, LifecycleScope};
+        use component_ontology::{Edge, EdgeKind, EvidenceGrade, LifecycleScope};
         use crate::related_components;
         let tmp = TempDir::new().unwrap();
         let cfg = tmp.path().join("cfg");
@@ -764,7 +764,7 @@ mod tests {
         run_add(&cfg, Some("Beta"), &b).unwrap();
         run_add(&cfg, Some("Gamma"), &c).unwrap();
 
-        let mut file = crate::ontology::RelatedComponentsFile::default();
+        let mut file = component_ontology::RelatedComponentsFile::default();
         file.add_edge(Edge {
             kind: EdgeKind::Generates,
             lifecycle: LifecycleScope::Codegen,

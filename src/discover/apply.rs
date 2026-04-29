@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::ontology::{Edge, EdgeKind, RelatedComponentsFile};
+use component_ontology::{Edge, EdgeKind, RelatedComponentsFile};
 use crate::related_components;
 
 use super::load_proposals;
@@ -120,7 +120,7 @@ mod tests {
     use super::super::save_proposals_atomic;
     use super::super::schema::{ProposalRecord, ProposalsFile, PROPOSALS_SCHEMA_VERSION};
     use super::*;
-    use crate::ontology::{EvidenceGrade, LifecycleScope};
+    use component_ontology::{EvidenceGrade, LifecycleScope};
     use crate::projects;
     use tempfile::TempDir;
 

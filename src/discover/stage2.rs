@@ -21,7 +21,7 @@ use super::schema::{ProposalsFile, Stage1Failure, SurfaceFile, PROPOSALS_SCHEMA_
 use super::stage1::current_utc_rfc3339;
 use super::tree_sha::ProjectState;
 use super::{load_proposals, save_proposals_atomic};
-use crate::ontology::render_embedded_kinds_for_prompt;
+use component_ontology::render_embedded_kinds_for_prompt;
 
 pub const DEFAULT_STAGE2_TIMEOUT_SECS: u64 = 300;
 
@@ -224,7 +224,7 @@ mod tests {
         // bullet in the block the prompt expands to. Missing coverage
         // would leave the LLM without a choice for that kind at Stage
         // 2 proposal time.
-        use crate::ontology::EdgeKind;
+        use component_ontology::EdgeKind;
 
         let ontology_block = render_embedded_kinds_for_prompt().unwrap();
         let composed = SHIPPED_STAGE2_PROMPT.replace("{{ONTOLOGY_KINDS}}", &ontology_block);

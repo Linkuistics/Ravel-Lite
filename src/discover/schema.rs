@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::tree_sha::ProjectState;
-use crate::ontology::{EdgeKind, EvidenceGrade, LifecycleScope};
+use component_ontology::{EdgeKind, EvidenceGrade, LifecycleScope};
 
 pub const SURFACE_SCHEMA_VERSION: u32 = 1;
 

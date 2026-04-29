@@ -44,6 +44,11 @@ portable-pty = "0.9"
 # leaking a blocked thread per work-phase invocation. Used only on the
 # Unix PTY path in src/agent/pty_capture.rs.
 libc = "0.2"
+# Component-relationship ontology (kinds, lifecycles, evidence grades,
+# related-components.yaml schema). Sourced from the atlas-contracts
+# workspace as a local path dep during dev to match Atlas's own
+# convention; flip to a git+rev pin at publish time.
+component-ontology = { path = "../atlas-contracts/crates/component-ontology" }
 
 [dev-dependencies]
 tempfile = "3"

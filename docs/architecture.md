@@ -461,11 +461,12 @@ ravel-lite/
     │   ├── invoke.rs           # spawn_claude_and_read helper
     │   ├── render.rs           # YAML → human-readable output
     │   └── schema.rs           # SurveyResponse, PlanRow, task counts
-    ├── ontology/               # component-relationship ontology (schema v2)
-    │   ├── schema.rs           # EdgeKind, LifecycleScope, EvidenceGrade, Edge
-    │   ├── yaml_io.rs          # load / save_atomic for RelatedComponentsFile
-    │   ├── defaults.rs         # embedded defaults/ontology.yaml + renderers
-    │   └── cli.rs              # kebab-case parsers shared by CLI dispatchers
+    ├── # NOTE: component-relationship ontology lives in the
+    │   # `component-ontology` crate (atlas-contracts workspace).
+    │   # `RelatedComponentsFile`, `EdgeKind`, `LifecycleScope`,
+    │   # `EvidenceGrade`, the YAML loaders, and the kebab-case CLI
+    │   # parsers all come from there; the host adapter lives in
+    │   # `src/related_components.rs` below.
     ├── discover/               # two-stage LLM discovery of cross-project edges
     │   ├── stage1.rs           # per-project interaction-surface extraction
     │   ├── stage2.rs           # global edge-proposal fan-in
