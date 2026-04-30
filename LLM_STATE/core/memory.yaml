@@ -768,7 +768,7 @@ entries:
 - id: ravel-lite-plan-provides-four-read-only-cross-kind-query-verbs
   title: ravel-lite plan provides four read-only cross-kind query verbs
   body: |
-    `list-items`, `show-item`, `query-by-status`, and `query-by-justification` live in `src/plan_inspect.rs`. Dispatched from `main.rs` as a top-level subcommand, not via `dispatch_state`. Per-kind mutations remain in `ravel-lite state <kind>`. `PlanItemKind` and `JustificationKindFilter` encode closed vocabularies in the type system.
+    `list-items`, `show-item`, `query-by-status`, and `query-by-justification` live in `src/plan_inspect.rs`. All four verbs cover all four plan kinds: intents, backlog items, memory entries, and findings. Dispatched from `main.rs` as a top-level subcommand, not via `dispatch_state`. Per-kind mutations remain in `ravel-lite state <kind>`. `PlanItemKind` and `JustificationKindFilter` encode closed vocabularies in the type system.
 - id: anyentry-with-serde-untagged-serialises-cross-kind-output
   title: 'AnyEntry with #[serde(untagged)] serialises cross-kind output'
   body: |
