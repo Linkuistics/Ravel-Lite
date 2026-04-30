@@ -821,3 +821,7 @@ entries:
   title: atlas memory reads .atlas/memory.yaml; schema mismatch errors
   body: |
     `atlas memory <ref> [--search <term>]` reads `.atlas/memory.yaml`. `--search` filters `MemoryEntry` items case-insensitively across `claim`, `attribution`, and all string fields in `Justification` variants. `read_component_memory` errors on schema-version mismatch; absent file is a graceful empty. Needle lowercasing occurs at the call site so `entry_matches` / `justification_matches` stay allocation-free inside the filter loop.
+- id: atlas-edges-neighbors-roots-traverse-edgegraph-from-catalog
+  title: atlas edges/neighbors/roots traverse EdgeGraph from catalog
+  body: |
+    `atlas edges` lists all edges (formatted as `A → B (kind:lifecycle)`); `atlas neighbors` does depth-limited BFS with `--in`/`--out`/`--both` direction filtering (mutually exclusive via `conflicts_with_all`); `atlas roots` returns zero-in-degree nodes. All three load via `EdgeGraph::from_catalog`, which unions all known `related-components.yaml` files. `EdgeGraph::adjacency()` is the entry point for BFS `path` and SCC (Kosaraju/Tarjan) when those verbs are added.
