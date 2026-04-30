@@ -194,7 +194,7 @@ entries:
 - id: ravel-lite-survey-emits-structured-yaml
   title: '`ravel-lite survey` emits structured YAML'
   body: |
-    `src/survey/schema.rs` defines the output schema with `Serialize` derives and a `schema_version` marker. `input_hash` is seeded in Rust post-parse. `task_counts` is injected by Rust via `inject_task_counts` / `collect_task_counts`; `unblocked`, `blocked`, and `received` are injected via `inject_plan_row_counts` / `plan_row_counts`. Survey prompts forbid the LLM from emitting any of these injected fields. `survey-format` subcommand renders YAML output to human-readable form. See: `PlanRowCounts injects unblocked/blocked/received into survey`.
+    `src/survey/schema.rs` defines the output schema with `Serialize` derives and a `schema_version` marker. `input_hash` is seeded in Rust post-parse. `task_counts` is injected by Rust via `inject_task_counts` / `collect_task_counts`; `unblocked`, `blocked`, and `received` are injected via `inject_plan_row_counts` / `plan_row_counts`; findings are injected via `inject_findings`. Survey prompts forbid the LLM from emitting any of these injected fields. `survey-format` subcommand renders YAML output to human-readable form. See: `PlanRowCounts injects unblocked/blocked/received into survey`; `survey inject_findings adds Findings section; omitted when empty`.
 - id: survey-compose-wraps-content-in-yaml-fences
   title: Survey compose wraps content in YAML fences
   body: |
@@ -835,3 +835,7 @@ entries:
   title: findings.yaml has list/show/add/set-status verb surface
   body: |
     `src/state/findings/` (schema.rs, yaml_io.rs, verbs.rs, mod.rs) implements the findings TMS module. CLI verbs: `list`, `show`, `add`, `set-status`. `FINDINGS_FILENAME = "findings.yaml"` in `src/state/filenames.rs`; wired in `src/main.rs` as `Commands::Findings`. Status transitions validated via `FindingKind::Status::transitions()` from `plan_kg.rs`. `survey` integration and `plan list-items` kind extension to include findings are unblocked follow-ups. See: `plan_kg.rs registers four plan vocabularies in knowledge-graph crate`.
+- id: survey-inject-findings-adds-findings-section-omitted-when-empty
+  title: survey inject_findings adds Findings section; omitted when empty
+  body: |
+    `inject_findings` in `src/survey/schema.rs` loads `findings.yaml` and injects a `FindingSummary` list into `SurveyResponse`. Rendered as `## Findings` at the end of `ravel-lite survey` output across cold, incremental-merge, and incremental-noop paths. The section is omitted entirely when the inbox is empty — unlike other survey sections which emit "None..." — because the findings inbox is user-mediated. Survey prompts forbid the LLM from emitting findings fields. See: `ravel-lite survey emits structured YAML`.
