@@ -94,6 +94,21 @@ Cross-page links inside a `.adoc` source use sibling-relative form with
 the `.html` extension: `link:state-files.html[State files]`. The website
 pipeline strips the extension and emits a directory URL.
 
+## Developing
+
+There is no CI. `scripts/check.sh` is the single source of truth for
+"what must pass before main" — currently `cargo clippy --all-targets
+--workspace -- -D warnings`. Install the pre-push hook once so the gate
+runs automatically:
+
+```bash
+./scripts/install-hooks.sh
+```
+
+The installer is idempotent (re-running detects an already-installed
+hook) and refuses to overwrite a foreign pre-push hook so local
+customisations are not clobbered.
+
 ## Releasing
 
 Releases are cut by hand from a developer machine — no CI is involved.

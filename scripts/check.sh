@@ -2,10 +2,9 @@
 #
 # Run the local hygiene gate. Currently: clippy with warnings-as-errors
 # across all targets in the workspace. Run before pushing to main, or
-# wire into a pre-push hook with:
+# install the pre-push hook once with:
 #
-#   echo '#!/usr/bin/env bash\nexec scripts/check.sh' > .git/hooks/pre-push
-#   chmod +x .git/hooks/pre-push
+#   ./scripts/install-hooks.sh
 #
 # Designed to grow: add `cargo fmt --check`, `cargo test`, etc. here as
 # the project's gating policy expands. There is no CI — this script is

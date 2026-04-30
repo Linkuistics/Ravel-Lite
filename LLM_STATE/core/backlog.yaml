@@ -128,7 +128,7 @@ tasks:
 - id: wire-scripts-check-sh-into-a-git-pre-push-hook
   title: Wire scripts/check.sh into a git pre-push hook
   category: infra
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Wire `scripts/check.sh` into a git pre-push hook so clippy violations do not accumulate between sessions.
@@ -148,6 +148,63 @@ tasks:
 
     - `cargo clippy --all-targets --workspace -- -D warnings` exits 0 on current tree.
     - `git push` on a tree with an introduced clippy violation is rejected by the hook.
+  results: |
+    ## What was done
+
+    Added `scripts/install-hooks.sh` — an idempotent installer that drops a
+    `pre-push` hook into `.git/hooks/` calling `scripts/check.sh`. Updated
+    the `scripts/check.sh` header to point at the installer instead of an
+    inline `echo`-based recipe, and added a "Developing" section to
+    `README.md` documenting the one-time install step.
+
+    The hook itself is two lines: a `# ravel-lite-hook: pre-push` marker
+    comment plus `exec "$(git rev-parse --show-toplevel)/scripts/check.sh"`.
+    The marker lets the installer distinguish an already-installed hook
+    (no-op re-run) from a foreign user hook (refuse with a clear message,
+    exit 1) — so re-running is safe and clobbering is prevented.
+
+    ## What worked
+
+    - `cargo clippy --all-targets --workspace -- -D warnings` clean both
+      before and after.
+    - Fresh install: installer creates `.git/hooks/pre-push` with the
+      expected marker and executable bit.
+    - Idempotency: second invocation prints "already installed" and exits 0.
+    - Direct invocation of the installed hook (`./.git/hooks/pre-push`) runs
+      `cargo clippy` and exits 0 on the clean tree.
+    - Foreign-hook refusal: when a non-marker hook is in place the installer
+      prints a clear refusal and exits 1 without touching the file. After
+      noticing the `ERR` trap fired noisy "error on line N" output on the
+      intentional refusal, cleared the trap before `exit 1` so the message
+      is clean — but kept the trap live for unexpected failures.
+    - Hook uses `git rev-parse --show-toplevel` so it survives invocation
+      from any subdirectory (relevant since the project is designed to run
+      inside monorepo subtrees).
+
+    ## What didn't work / limitations
+
+    - Did not actually `git push` to demonstrate end-to-end remote rejection,
+      since that would touch `origin`. The hook is wired correctly (direct
+      invocation runs check.sh and propagates its exit code), which is the
+      contract a `git push` enforces.
+    - `shellcheck` is not installed on this workstation, so the new script
+      was not linted through the tool the bash style guide recommends. The
+      script follows the guide manually: `set -euo pipefail`, `IFS=$'\n\t'`,
+      quoted expansions, `[[ ]]`, `local`, exit-code communication, ERR trap.
+
+    ## Suggests next
+
+    - The header of `scripts/check.sh` invites `cargo fmt --check` and
+      `cargo test` to be folded in as the gating policy expands. Worth a
+      separate task once a clear policy is decided — `cargo test` in
+      particular has very different runtime characteristics from clippy and
+      may want to be a separate script.
+    - Adding `shellcheck` itself as a gate (so check.sh can grow safely)
+      could be a future infra task, but it's contingent on shellcheck being
+      a project-wide expected dependency — not yet established.
+    - The README's new "Developing" section is the only contributor-facing
+      doc; if the project grows past one developer, a dedicated
+      `CONTRIBUTING.md` may eventually be warranted.
 - id: atlas-cli-path-and-scc-graph-algorithm-verbs
   title: 'atlas CLI: path and scc graph algorithm verbs'
   category: architecture-next
