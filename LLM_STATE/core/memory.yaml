@@ -773,10 +773,6 @@ entries:
   title: 'AnyEntry with #[serde(untagged)] serialises cross-kind output'
   body: |
     In `src/plan_inspect.rs`, `AnyEntry` is a serde-untagged enum; each variant carries its own kind-marker field, so no wrapper discriminant is emitted. Use this pattern for cross-kind query output that must remain kind-labelled. Contrast with `#[serde(flatten)]`, which is a struct-inlining pattern, not an enum-variant pattern.
-- id: forward-compatible-kind-stubs-error-with-backlog-task-pointer
-  title: Forward-compatible kind stubs error with backlog task pointer
-  body: |
-    `Finding` in `src/plan_inspect.rs` parses and dispatches without requiring the `findings-inbox` file store to exist; it returns a user-facing error pointing to the `findings-inbox` backlog task. Pattern: wire the dispatch path first, implement the file store when the backlog task executes.
 - id: plan-cascade-extension-defeat-supersede-visibility-verb
   title: plan cascade extension — defeat/supersede visibility verb
   body: |
@@ -835,3 +831,7 @@ entries:
     No policy decision was made; both were deferred until "a clear policy is decided." Adding `cargo fmt --check` is a low-effort next step; `cargo test` in the pre-push gate needs a separate discussion (possibly a `scripts/test.sh` guarded by an opt-in env flag so contributors with slow machines can skip it).
 
     `shellcheck` as a gate is also deferred, contingent on it becoming a project-wide expected dependency — not yet established.
+- id: findings-yaml-has-list-show-add-set-status-verb-surface
+  title: findings.yaml has list/show/add/set-status verb surface
+  body: |
+    `src/state/findings/` (schema.rs, yaml_io.rs, verbs.rs, mod.rs) implements the findings TMS module. CLI verbs: `list`, `show`, `add`, `set-status`. `FINDINGS_FILENAME = "findings.yaml"` in `src/state/filenames.rs`; wired in `src/main.rs` as `Commands::Findings`. Status transitions validated via `FindingKind::Status::transitions()` from `plan_kg.rs`. `survey` integration and `plan list-items` kind extension to include findings are unblocked follow-ups. See: `plan_kg.rs registers four plan vocabularies in knowledge-graph crate`.
