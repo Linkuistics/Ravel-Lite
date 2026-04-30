@@ -125,11 +125,73 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
+- id: survey-surface-findings-inbox-in-survey-output
+  title: 'Survey: surface findings inbox in survey output'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Surface `findings.yaml` inbox content in `ravel-lite survey` output.
+
+    Problem: `src/state/findings/` was added in session 104 and the inbox is now writable, but `ravel-lite survey` does not yet read `findings.yaml`. The survey output is the user's primary "what is going on in this context" view; an inbox that doesn't appear there is effectively invisible.
+
+    Decision: emit a `## Findings` section in survey output, after the existing sections, listing each finding in summary form (id, status, claim). Use the same pattern as other survey sections — read via `state::findings::read_findings`, skip the section entirely when the inbox is empty or missing (lazy-create semantics already in yaml_io.rs mean absence == empty).
+
+    Reference examples:
+    - `src/state/findings/yaml_io.rs` — `read_findings(context_root)` already returns an empty default when the file is missing; the survey reader can call it unconditionally.
+    - `src/survey/` — existing section rendering for reference.
+    - `src/state/findings/schema.rs` — `FindingEntry` has `id`, `status`, `component`, `raised_in`; `item.tms.claim` is the one-liner.
+
+    Dependencies: none. `src/state/findings/` is already merged; survey can just call it.
+
+    Estimated scope: ~30 LOC in `src/survey/`.
+- id: list-items-include-finding-kind-in-cross-kind-queries
+  title: 'list-items: include finding kind in cross-kind queries'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Extend `ravel-lite state plan list-items` (and related cross-kind queries) to include `finding` as a queryable kind.
+
+    Problem: `state plan list-items`, `state plan query-by-status`, and similar cross-kind introspection commands enumerate `intent`, `backlog-item`, and `memory-entry`. The `finding` kind introduced in session 104 is not yet included, so cross-kind status queries miss findings.
+
+    Decision: add `finding` to the set of kinds iterated in the cross-kind scan. The scan reads `findings.yaml` via `state::findings::read_findings` and folds its entries into the common output stream alongside the other kinds. Wire-type enforcement is already done at schema level (`FindingEntry` carries `kind: finding`), so no extra validation is needed — just include the file in the enumeration.
+
+    Reference examples:
+    - `src/state/findings/schema.rs` — `FindingEntry` wraps `Item<FindingKind>`; same shape as `MemoryEntry`, `IntentEntry`.
+    - `src/state/findings/yaml_io.rs` — `read_findings` for the read path.
+    - The existing multi-kind enumeration in `src/state/` — follow the same pattern as `memory`/`intents` inclusions.
+
+    Dependencies: none. `src/state/findings/` is already merged.
+
+    Estimated scope: small addition to the cross-kind scan loop, plus tests.
+- id: atlas-cli-edge-graph-loading
+  title: 'atlas CLI: edge-graph loading'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Implement the directed graph loading infrastructure for the atlas CLI. This is the prerequisite for `atlas path` and `atlas scc` (see `atlas-cli-path-and-scc-graph-algorithm-verbs`).
+
+    ## Motivation
+
+    Path finding and SCC algorithms operate on an in-memory directed graph. The graph must be loaded from component and edge data before any algorithm can run. Extracting this as its own task makes graph loading independently testable and avoids bundling I/O concerns with algorithm correctness.
+
+    ## Scope
+
+    - Internal data structures: `NodeId` (component identifier), `DirectedGraph<NodeId>` with `add_edge`, `neighbors`, `reverse_neighbors`, and node enumeration.
+    - `atlas edge-graph` (or internal builder function) that reads `.atlas/components.yaml` and related edge data, constructs the in-memory directed adjacency representation.
+    - Unit tests: load from a fixture set, assert adjacency; assert empty graph when no edges present; assert directed edge directionality is preserved.
+
+    ## Note
+
+    This task was extracted as a blocker from `atlas-cli-path-and-scc-graph-algorithm-verbs`, which names `atlas-cli-edge-graph` as a required dependency in its description prose but had no corresponding backlog task.
 - id: atlas-cli-path-and-scc-graph-algorithm-verbs
   title: 'atlas CLI: path and scc graph algorithm verbs'
   category: architecture-next
   status: not_started
-  dependencies: []
+  dependencies:
+  - atlas-cli-edge-graph-loading
   description: |
     Implement `atlas path <from> <to> [--max-hops N]` (BFS shortest path) and `atlas scc` (strongly connected components via Kosaraju or Tarjan).
 
@@ -185,137 +247,6 @@ tasks:
       3. Anchor capture — components mentioned but not edited get recorded as anchors in `phase.md` (graph-RAG starting points for triage).
     - `phase.md` becomes a rendered overview (intent summary + anchors + housekeeping), not the canonical intent source.
     - No component required at create time; targets land asynchronously via target-requests.
-- id: findings-inbox-context-level-findings-yaml-replaces-subagent-dispatch
-  title: 'Findings inbox: context-level findings.yaml replaces subagent-dispatch'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Add the context-level findings inbox and remove the v1 cross-plan subagent-dispatch fan-out. Cross-plan effects in v2 are advisory only, mediated by the user processing findings.
-
-    Reference: `docs/architecture-next.md` §Findings inbox, §What this replaces or removes.
-
-    Scope:
-    - `<context>/findings.yaml` schema: list of TMS items, kind=`finding`, statuses `new | promoted | wontfix | superseded`. Optional `component` attribution and `raised_in` plan reference.
-    - Triage and reflect write findings when they observe something out of scope for the current plan.
-    - `survey` surfaces the inbox; user processes findings out of band — promoting `new` into actual plans, filing bugs externally, marking `wontfix`.
-    - Nothing reads findings.yaml during plan execution.
-    - Remove the existing `subagent-dispatch.yaml` mechanism: triage no longer fans out to sibling plans automatically.
-    - Update phase prompts (triage, reflect) to author findings instead of dispatch entries.
-
-    Coordination: relies on `knowledge-graph` substrate for the TMS item shape, and on the context layout for the file location.
-  results: |
-    ## What was done
-
-    Added `<context>/findings.yaml` substrate plus CRUD CLI surface; deferred
-    the v2-cutover-coupled pieces (subagent-dispatch removal, phase prompt
-    rewriting) as follow-ups.
-
-    **New module `src/state/findings/`** mirrors `src/state/intents/`
-    file-for-file:
-
-    - `schema.rs` — `FindingEntry` wraps `Item<FindingKind>` via
-      `#[serde(flatten)]`, with two finding-specific extension fields:
-      `component` (optional component-ref attribution string) and
-      `raised_in` (optional plan reference). `FindingsFile` carries
-      `schema_version: 1`. `FindingKind`/`FindingStatus` already existed in
-      `src/plan_kg.rs`, so no substrate changes were needed.
-    - `yaml_io.rs` — `read_findings(context_root)` returns the default
-      empty document when the file is missing (an inbox treats "no inbox"
-      as "empty inbox"); `write_findings` is tmp-file-plus-rename atomic.
-    - `verbs.rs` — `run_add`, `run_list`, `run_show`, `run_set_status`.
-      `run_add` lifts `(claim, body)` into TMS form (rationale
-      justification); `run_set_status` validates against
-      `FindingStatus::transitions()`. Allocates ids via the shared
-      `state::backlog::schema::allocate_id`.
-    - `mod.rs` — re-exports.
-
-    **CLI surface** is top-level `ravel-lite findings {add,list,show,set-status}`,
-    parallel to `ravel-lite repo` (also context-rooted). `--config` selects the
-    context dir with the same precedence as every other context-level verb.
-    Wired into `Commands` enum and the main dispatch in `src/main.rs`. New
-    `FINDINGS_FILENAME = "findings.yaml"` constant in
-    `src/state/filenames.rs`.
-
-    ## What worked
-
-    - **All 23 new unit tests pass** (8 schema, 3 yaml_io, 12 verbs)
-      alongside 726 pre-existing lib tests; full workspace test suite
-      green; `scripts/check.sh` (clippy `--all-targets --workspace -D
-      warnings`) passes clean.
-    - **CLI end-to-end smoke test** confirmed: `add` → `list` → `show` →
-      `set-status` round-trips, multi-line bodies emit as YAML block
-      scalars, `kind: finding` marker is preserved, extension fields
-      (`component`, `raised_in`) emit only when set, error paths produce
-      actionable messages with non-zero exits (illegal transition, unknown
-      id, unknown status string).
-    - **Pattern parity** with intents/backlog/memory: same `Item<K>`
-      flatten wrapper, same `KindMarker` wire-kind enforcement (a YAML
-      labelled `kind: memory-entry` cannot deserialise as
-      `FindingEntry`), same `schema_version` guard, same atomic write,
-      same status-transition validator. Future curate/reflect work can
-      rely on the four kinds being shape-uniform.
-    - **Constraint respected:** purely additive — no v1 wire shape was
-      touched. `findings.yaml` is a new file at the context root; lazy-
-      create on first `add` means an empty context is indistinguishable
-      from no inbox at all.
-
-    ## What didn't / what was deferred
-
-    These were in the original task scope but split out as follow-ups so
-    the work fit one phase and stayed clearly additive:
-
-    1. **Remove `subagent-dispatch.yaml` mechanism.** The task body lists
-       this; doing it removes a v1 wire-shape file, which violates the
-       memory feedback "LLM_STATE shape frozen until v1→v2 migrator
-       exists." Defer to a follow-up that lands together with the v1→v2
-       migrator. `SUBAGENT_DISPATCH_FILENAME` is still in
-       `state/filenames.rs`.
-    2. **Update phase prompts (triage, reflect) to author findings.** The
-       prompts are still oriented around subagent-dispatch. Pair this
-       with the same follow-up as (1) — they belong together because
-       removing dispatch breaks the prompts that author it.
-    3. **Surface findings via `survey`.** `architecture-next.md` says
-       "`survey` surfaces the inbox; user processes findings out of band."
-       `src/survey/` does not yet read findings; this is a small follow-up
-       once the inbox has authors writing to it.
-    4. **`raised_at` field.** The doc example shows both `authored_at`
-       (substrate-required) and `raised_at` (finding-specific). I used
-       only `authored_at` since they would be the same value at write
-       time; if a real distinction emerges (e.g. observed-during-X but
-       recorded-during-Y), add `raised_at` as a third extension field.
-       Worth reconciling against the doc.
-    5. **Cross-finding cascade integration.** `superseded_by`/`defeated_by`
-       work at the substrate level, but no defeat-cascade rule exists for
-       findings yet. Probably fine — findings are advisory, not
-       structural.
-
-    ## What this suggests next
-
-    **Now-unblocked follow-ups** (small, mechanical, can ship without v2
-    migrator):
-
-    - `survey` integration: read `findings.yaml`, emit a section in the
-      rendered survey output. ~30 LOC.
-    - `state plan list-items` / `query-by-status` etc. should learn the
-      `finding` kind for cross-kind queries — currently they enumerate
-      intent/backlog-item/memory-entry. Mechanical extension.
-
-    **Migrator-gated follow-ups** (paired with v1→v2 cutover):
-
-    - Remove `subagent-dispatch.yaml` reader, writer, schema, and
-      `SUBAGENT_DISPATCH_FILENAME` constant.
-    - Rewrite triage and reflect phase prompts to author findings via
-      `ravel-lite findings add` instead of dispatching subagents.
-    - Update `architecture-next.md` Findings inbox example to either drop
-      `raised_at` or document it as an extension; reconcile with
-      `items:` vs `findings:` array key (this implementation uses `items:`
-      for parity with the other TMS files; the doc shows `findings:`).
-
-    **Triage signal.** The task as written conflated the additive work
-    (this PR) with the wire-shape-changing work (subagent-dispatch
-    removal). Worth splitting into two backlog items so the additive piece
-    isn't wedged behind the migrator.
 - id: phase-cycle-triage-first-with-focus-objections-and-commits-yaml
   title: 'Phase cycle: triage-first with focus-objections and commits.yaml'
   category: architecture-next
@@ -490,43 +421,3 @@ tasks:
     4. Tests: rendered output includes intent claims, task counts match backlog, phase transitions leave `phase.md` non-empty and structured.
 
     **Gating constraint:** Must wait until the v1→v2 migrator ships and a new binary deploys — `read_backlog` on `LLM_STATE/core/backlog.yaml` today hits the legacy v1 wire shape and would fail. See `LLM_STATE-shape-frozen` memory entry.
-- id: survey-surface-findings-inbox-in-survey-output
-  title: 'Survey: surface findings inbox in survey output'
-  category: architecture-next
-  status: not_started
-  dependencies: []
-  description: |
-    Surface `findings.yaml` inbox content in `ravel-lite survey` output.
-
-    Problem: `src/state/findings/` was added in session 104 and the inbox is now writable, but `ravel-lite survey` does not yet read `findings.yaml`. The survey output is the user's primary "what is going on in this context" view; an inbox that doesn't appear there is effectively invisible.
-
-    Decision: emit a `## Findings` section in survey output, after the existing sections, listing each finding in summary form (id, status, claim). Use the same pattern as other survey sections — read via `state::findings::read_findings`, skip the section entirely when the inbox is empty or missing (lazy-create semantics already in yaml_io.rs mean absence == empty).
-
-    Reference examples:
-    - `src/state/findings/yaml_io.rs` — `read_findings(context_root)` already returns an empty default when the file is missing; the survey reader can call it unconditionally.
-    - `src/survey/` — existing section rendering for reference.
-    - `src/state/findings/schema.rs` — `FindingEntry` has `id`, `status`, `component`, `raised_in`; `item.tms.claim` is the one-liner.
-
-    Dependencies: none. `src/state/findings/` is already merged; survey can just call it.
-
-    Estimated scope: ~30 LOC in `src/survey/`.
-- id: list-items-include-finding-kind-in-cross-kind-queries
-  title: 'list-items: include finding kind in cross-kind queries'
-  category: architecture-next
-  status: not_started
-  dependencies: []
-  description: |
-    Extend `ravel-lite state plan list-items` (and related cross-kind queries) to include `finding` as a queryable kind.
-
-    Problem: `state plan list-items`, `state plan query-by-status`, and similar cross-kind introspection commands enumerate `intent`, `backlog-item`, and `memory-entry`. The `finding` kind introduced in session 104 is not yet included, so cross-kind status queries miss findings.
-
-    Decision: add `finding` to the set of kinds iterated in the cross-kind scan. The scan reads `findings.yaml` via `state::findings::read_findings` and folds its entries into the common output stream alongside the other kinds. Wire-type enforcement is already done at schema level (`FindingEntry` carries `kind: finding`), so no extra validation is needed — just include the file in the enumeration.
-
-    Reference examples:
-    - `src/state/findings/schema.rs` — `FindingEntry` wraps `Item<FindingKind>`; same shape as `MemoryEntry`, `IntentEntry`.
-    - `src/state/findings/yaml_io.rs` — `read_findings` for the read path.
-    - The existing multi-kind enumeration in `src/state/` — follow the same pattern as `memory`/`intents` inclusions.
-
-    Dependencies: none. `src/state/findings/` is already merged.
-
-    Estimated scope: small addition to the cross-kind scan loop, plus tests.
