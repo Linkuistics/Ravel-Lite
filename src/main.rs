@@ -366,6 +366,62 @@ enum AtlasCommands {
         #[arg(long)]
         search: Option<String>,
     },
+    /// List direct edges touching `<reference>` from the union of every
+    /// fresh repo's `.atlas/related-components.yaml`. Default is
+    /// `--both` (every edge involving the component); `--in` restricts
+    /// to directed edges where the component is the destination,
+    /// `--out` to directed edges where it is the source. Symmetric
+    /// edges always surface regardless of the direction flag.
+    Edges {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Component reference: `<repo_slug>/<component_id>` or bare
+        /// `<component_id>` (must be unambiguous across fresh repos).
+        reference: String,
+        /// Show only directed edges where `<reference>` is the
+        /// destination. Mutually exclusive with `--out` and `--both`.
+        #[arg(long = "in", conflicts_with_all = ["outgoing", "both_dirs"])]
+        incoming: bool,
+        /// Show only directed edges where `<reference>` is the source.
+        /// Mutually exclusive with `--in` and `--both`.
+        #[arg(long = "out", conflicts_with_all = ["incoming", "both_dirs"])]
+        outgoing: bool,
+        /// Show every edge involving `<reference>` (the default when no
+        /// direction flag is given). Mutually exclusive with `--in`
+        /// and `--out`.
+        #[arg(long = "both", conflicts_with_all = ["incoming", "outgoing"])]
+        both_dirs: bool,
+    },
+    /// Bounded-depth BFS from `<reference>` over the undirected edge
+    /// graph (every edge is traversable in either direction). Output
+    /// is one line per reached component as `<hops>  <component>`,
+    /// starting with the reference at hop 0. `--depth` defaults to 1.
+    Neighbors {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Component reference: `<repo_slug>/<component_id>` or bare
+        /// `<component_id>` (must be unambiguous across fresh repos).
+        reference: String,
+        /// Maximum hop count from `<reference>`. Defaults to 1; `0`
+        /// emits only the starting component.
+        #[arg(long, default_value_t = 1)]
+        depth: usize,
+    },
+    /// Components with no incoming directed edges, qualified as
+    /// `<repo_slug>/<component_id>`. Symmetric edges (e.g.
+    /// `co-implements`) do not disqualify either endpoint because peer
+    /// relationships do not establish hierarchy. Isolated components
+    /// (those that appear in no edge at all) also surface.
+    Roots {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1109,6 +1165,38 @@ fn dispatch_atlas(command: AtlasCommands) -> Result<()> {
         } => {
             let context_root = resolve_config_dir(config)?;
             atlas::run_memory(&context_root, &reference, search.as_deref())
+        }
+        AtlasCommands::Edges {
+            config,
+            reference,
+            incoming,
+            outgoing,
+            both_dirs: _,
+        } => {
+            let context_root = resolve_config_dir(config)?;
+            // No flag set → default to Both (the documented behavior).
+            // clap's conflicts_with_all guarantees at most one of the
+            // three is true.
+            let direction = if incoming {
+                atlas::EdgeDirection::In
+            } else if outgoing {
+                atlas::EdgeDirection::Out
+            } else {
+                atlas::EdgeDirection::Both
+            };
+            atlas::run_edges(&context_root, &reference, direction)
+        }
+        AtlasCommands::Neighbors {
+            config,
+            reference,
+            depth,
+        } => {
+            let context_root = resolve_config_dir(config)?;
+            atlas::run_neighbors(&context_root, &reference, depth)
+        }
+        AtlasCommands::Roots { config } => {
+            let context_root = resolve_config_dir(config)?;
+            atlas::run_roots(&context_root)
         }
     }
 }

@@ -18,21 +18,30 @@
 //! - `memory` — per-component `.atlas/memory.yaml`, optionally
 //!   filtered by `--search` against the entry's claim, attribution,
 //!   and any string-bearing justification field.
+//! - `edges` — direct edges touching a component, optionally filtered
+//!   by direction (`--in` / `--out` / `--both`).
+//! - `neighbors` — bounded-depth BFS from a component over the
+//!   undirected edge graph, emitting one line per reached component
+//!   with hop count.
+//! - `roots` — components with no incoming directed edges; symmetric
+//!   edges do not disqualify (peer relationships do not establish
+//!   hierarchy).
 //!
-//! The remaining edge-graph verbs (`edges`, `neighbors`, `path`,
-//! `scc`, `roots`) need the cross-repo `related-components.yaml`
-//! union loader and are tracked as follow-up backlog tasks.
+//! The remaining graph-algorithm verbs (`path`, `scc`) build on the
+//! `EdgeGraph` loaded here and are tracked as a follow-up backlog
+//! task.
 //!
 //! The shared in-memory representation is [`Catalog`]: the union of
 //! every fresh repo's `ComponentsFile`, keyed by repo slug. Subsequent
 //! verbs build on top of this loader instead of re-parsing
 //! `components.yaml` per invocation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use anyhow::{bail, Context, Result};
+use component_ontology::{Edge, EdgeKind, LifecycleScope, RelatedComponentsFile};
 use indexmap::IndexMap;
 use serde::Serialize;
 
@@ -40,6 +49,7 @@ use atlas_index::{load_components, ComponentEntry, ComponentsFile};
 use knowledge_graph::Justification;
 
 use crate::repos::{self, RepoEntry, ReposRegistry};
+use crate::state::filenames::RELATED_COMPONENTS_FILENAME;
 use crate::state::memory::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
 
 const ATLAS_DIR: &str = ".atlas";
@@ -646,6 +656,233 @@ fn justification_matches(j: &Justification, needle_lc: &str) -> bool {
     }
 }
 
+// ---------- Edge graph: cross-repo `related-components.yaml` union ----------
+
+/// Direction filter for `atlas edges <ref>`. `Both` is the default
+/// when no flag is supplied. Symmetric edge kinds (e.g.
+/// `co-implements`, `communicates-with`) match every direction
+/// because the relation has no inherent source/destination — filtering
+/// them by `In` / `Out` would silently hide them, which is more
+/// surprising than the alternative.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeDirection {
+    Both,
+    In,
+    Out,
+}
+
+/// Union of every fresh repo's `.atlas/related-components.yaml`,
+/// deduplicated by `Edge::canonical_key`. Symmetric edges canonicalise
+/// to sorted participants; directed edges keep the order recorded on
+/// disk. The resulting `Vec<Edge>` is ordered by first-seen
+/// (registry-then-file order) so downstream output is stable.
+#[derive(Debug, Clone, Default)]
+pub struct EdgeGraph {
+    pub edges: Vec<Edge>,
+}
+
+impl EdgeGraph {
+    /// Walk every fresh repo in `catalog`, loading
+    /// `<local_path>/.atlas/related-components.yaml` from each one.
+    /// Missing files are treated as empty (a repo that has not yet
+    /// recorded any edges is valid). Schema-version mismatches and
+    /// invalid edges still hard-error via the ontology loader.
+    pub fn from_catalog(catalog: &Catalog) -> Result<EdgeGraph> {
+        let mut seen_keys: HashSet<(EdgeKind, LifecycleScope, Vec<String>)> = HashSet::new();
+        let mut edges: Vec<Edge> = Vec::new();
+        for (slug, rc) in &catalog.repos {
+            let path = rc.local_path.join(ATLAS_DIR).join(RELATED_COMPONENTS_FILENAME);
+            let file: RelatedComponentsFile =
+                component_ontology::load_or_default(&path).with_context(|| {
+                    format!("repo {slug}: failed loading {}", path.display())
+                })?;
+            for edge in file.edges {
+                let key = edge.canonical_key();
+                if seen_keys.insert(key) {
+                    edges.push(edge);
+                }
+            }
+        }
+        Ok(EdgeGraph { edges })
+    }
+
+    /// Edges touching `component`, filtered by `direction`. For
+    /// directed edges: `Out` matches when `component` is the first
+    /// participant, `In` when it is the second; for symmetric edges
+    /// every direction matches.
+    pub fn edges_touching(&self, component: &str, direction: EdgeDirection) -> Vec<&Edge> {
+        self.edges
+            .iter()
+            .filter(|e| edge_matches_direction(e, component, direction))
+            .collect()
+    }
+
+    /// Bounded-depth BFS from `start` over the undirected edge graph
+    /// (every edge is traversable in both directions). Returns
+    /// `(component, hops)` pairs in increasing hop order, BFS order
+    /// within each hop. The starting node is included at hop 0.
+    pub fn neighbors(&self, start: &str, depth: usize) -> Vec<(String, usize)> {
+        let adjacency = self.adjacency();
+        let mut visited: BTreeSet<String> = BTreeSet::new();
+        let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+        let mut order: Vec<(String, usize)> = Vec::new();
+
+        visited.insert(start.to_string());
+        queue.push_back((start.to_string(), 0));
+        order.push((start.to_string(), 0));
+
+        while let Some((node, hops)) = queue.pop_front() {
+            if hops == depth {
+                continue;
+            }
+            if let Some(peers) = adjacency.get(&node) {
+                for peer in peers {
+                    if visited.insert(peer.clone()) {
+                        queue.push_back((peer.clone(), hops + 1));
+                        order.push((peer.clone(), hops + 1));
+                    }
+                }
+            }
+        }
+        order
+    }
+
+    /// Components with no incoming directed edges. `component_universe`
+    /// supplies the candidate set (typically the catalog's component
+    /// IDs) so that isolated components — never mentioned in any edge —
+    /// also surface as roots. Symmetric edges do not disqualify either
+    /// endpoint: peer relationships do not establish hierarchy.
+    pub fn roots<'a, I>(&self, component_universe: I) -> Vec<String>
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        let mut has_incoming: HashSet<&str> = HashSet::new();
+        for edge in &self.edges {
+            if edge.kind.is_directed() {
+                has_incoming.insert(edge.participants[1].as_str());
+            }
+        }
+        let mut roots: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for component in component_universe {
+            if has_incoming.contains(component) {
+                continue;
+            }
+            if seen.insert(component.to_string()) {
+                roots.push(component.to_string());
+            }
+        }
+        roots
+    }
+
+    /// Adjacency map keyed by component, listing each peer reachable
+    /// in one hop. Both endpoints of every edge gain each other as
+    /// peers — direction is irrelevant for neighborhood expansion.
+    /// Peer order matches first-seen edge order; duplicates are
+    /// suppressed.
+    fn adjacency(&self) -> BTreeMap<String, Vec<String>> {
+        let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for edge in &self.edges {
+            let a = &edge.participants[0];
+            let b = &edge.participants[1];
+            push_unique(map.entry(a.clone()).or_default(), b);
+            push_unique(map.entry(b.clone()).or_default(), a);
+        }
+        map
+    }
+}
+
+fn push_unique(target: &mut Vec<String>, value: &str) {
+    if !target.iter().any(|existing| existing == value) {
+        target.push(value.to_string());
+    }
+}
+
+fn edge_matches_direction(edge: &Edge, component: &str, direction: EdgeDirection) -> bool {
+    if !edge.involves(component) {
+        return false;
+    }
+    if !edge.kind.is_directed() {
+        // Symmetric edges have no source/destination; keeping them
+        // visible under In/Out keeps `--in`/`--out` from silently
+        // dropping legitimate peer relationships.
+        return true;
+    }
+    match direction {
+        EdgeDirection::Both => true,
+        EdgeDirection::Out => edge.participants[0] == component,
+        EdgeDirection::In => edge.participants[1] == component,
+    }
+}
+
+// ---------- edges / neighbors / roots verbs ----------
+
+/// `atlas edges <ref> [--in | --out | --both]` — list direct edges
+/// touching `<ref>` as `<from>  --<kind>/<lifecycle>-->  <to>`. The
+/// reference is resolved against the catalog (qualified `<repo>/<id>`
+/// or unique bare `<id>`); only the bare component id participates in
+/// edge matching because that is what `related-components.yaml`
+/// participants record.
+pub fn run_edges(context_root: &Path, ref_str: &str, direction: EdgeDirection) -> Result<()> {
+    let registry = repos::load_or_empty(context_root)?;
+    let catalog = Catalog::load(&registry, SystemTime::now());
+    let resolved = resolve_ref(&catalog, ref_str)?;
+    let graph = EdgeGraph::from_catalog(&catalog)?;
+    for edge in graph.edges_touching(&resolved.component.id, direction) {
+        println!("{}", format_edge_line(edge));
+    }
+    Ok(())
+}
+
+/// `atlas neighbors <ref> [--depth N]` — print every component
+/// reachable from `<ref>` within `N` hops over the undirected edge
+/// graph, one per line as `<hops>  <component>`. The starting
+/// component is always emitted at hop 0; `--depth 0` reduces to that
+/// single line.
+pub fn run_neighbors(context_root: &Path, ref_str: &str, depth: usize) -> Result<()> {
+    let registry = repos::load_or_empty(context_root)?;
+    let catalog = Catalog::load(&registry, SystemTime::now());
+    let resolved = resolve_ref(&catalog, ref_str)?;
+    let graph = EdgeGraph::from_catalog(&catalog)?;
+    for (component, hops) in graph.neighbors(&resolved.component.id, depth) {
+        println!("{hops}  {component}");
+    }
+    Ok(())
+}
+
+/// `atlas roots` — every catalog component with no incoming directed
+/// edge, one per line. Output is qualified `<repo_slug>/<component_id>`
+/// because the same bare id may legally appear in multiple repos
+/// (catalog hygiene is enforced only at lookup time, not on disk).
+pub fn run_roots(context_root: &Path) -> Result<()> {
+    let registry = repos::load_or_empty(context_root)?;
+    let catalog = Catalog::load(&registry, SystemTime::now());
+    let graph = EdgeGraph::from_catalog(&catalog)?;
+    let mut has_incoming: HashSet<&str> = HashSet::new();
+    for edge in &graph.edges {
+        if edge.kind.is_directed() {
+            has_incoming.insert(edge.participants[1].as_str());
+        }
+    }
+    for (slug, component) in catalog.iter_components() {
+        if has_incoming.contains(component.id.as_str()) {
+            continue;
+        }
+        println!("{slug}/{id}", id = component.id);
+    }
+    Ok(())
+}
+
+fn format_edge_line(edge: &Edge) -> String {
+    format!(
+        "{from}  --{kind}/{lifecycle}-->  {to}",
+        from = edge.participants[0],
+        kind = edge.kind.as_str(),
+        lifecycle = edge.lifecycle.as_str(),
+        to = edge.participants[1],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1203,7 +1440,7 @@ mod tests {
         let live_dir = tmp.path().join("live");
         let dead_dir = tmp.path().join("dead");
         std::fs::create_dir_all(&live_dir).unwrap();
-        std::fs::create_dir_all(&dead_dir.join(ATLAS_DIR)).unwrap();
+        std::fs::create_dir_all(dead_dir.join(ATLAS_DIR)).unwrap();
         write_components_yaml(&live_dir, &[("dup", "library")]);
         let dead_yaml = "schema_version: 1\n\
                          root: /tmp\n\
@@ -1496,5 +1733,445 @@ mod tests {
             .collect();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].item.id, "m-1");
+    }
+
+    // ---------- EdgeGraph / edges / neighbors / roots tests ----------
+
+    use component_ontology::EvidenceGrade;
+
+    /// Build an `Edge` with the canonical participant order required
+    /// by `Edge::validate` (sorted for symmetric kinds, caller-supplied
+    /// for directed kinds). Strong evidence so `evidence_fields` need
+    /// not be empty.
+    fn edge(kind: EdgeKind, lifecycle: LifecycleScope, a: &str, b: &str) -> Edge {
+        let participants = if kind.is_directed() {
+            vec![a.to_string(), b.to_string()]
+        } else {
+            let mut p = vec![a.to_string(), b.to_string()];
+            p.sort();
+            p
+        };
+        Edge {
+            kind,
+            lifecycle,
+            participants,
+            evidence_grade: EvidenceGrade::Strong,
+            evidence_fields: vec![format!("{a}.x")],
+            rationale: "test".into(),
+        }
+    }
+
+    /// Save `edges` to `<repo_dir>/.atlas/related-components.yaml`,
+    /// creating the parent directory. The repo dir must already exist.
+    fn write_related_components_yaml(repo_dir: &Path, edges: &[Edge]) {
+        let dir = repo_dir.join(ATLAS_DIR);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut file = RelatedComponentsFile::default();
+        for e in edges {
+            file.add_edge(e.clone()).unwrap();
+        }
+        component_ontology::save_atomic(&dir.join(RELATED_COMPONENTS_FILENAME), &file).unwrap();
+    }
+
+    /// One repo's contribution to the test fixture: slug, the
+    /// `components.yaml` rows it should contain, and the edge list for
+    /// its `related-components.yaml`. Defined as an alias because the
+    /// raw tuple trips clippy's `type_complexity` lint.
+    type RepoSpec<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a [Edge]);
+
+    /// Stand up a registry with `repo_specs.len()` fresh repos. The
+    /// repo's `components.yaml` and `related-components.yaml` are
+    /// written under `<tmp>/<slug>/.atlas/`.
+    fn registry_with_repos(tmp: &TempDir, repo_specs: &[RepoSpec<'_>]) -> ReposRegistry {
+        let mut reg = empty_registry();
+        for (slug, components, edges) in repo_specs {
+            let repo_dir = tmp.path().join(slug);
+            std::fs::create_dir_all(&repo_dir).unwrap();
+            write_components_yaml(&repo_dir, components);
+            write_related_components_yaml(&repo_dir, edges);
+            repos::try_add(&mut reg, slug, "u", Some(&repo_dir)).unwrap();
+        }
+        reg
+    }
+
+    #[test]
+    fn edge_graph_is_empty_when_no_repos_have_related_components_yaml() {
+        let tmp = TempDir::new().unwrap();
+        let reg = registry_with_one_fresh_repo(&tmp, "atlas", &[("a-1", "library")]);
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        assert!(graph.edges.is_empty());
+    }
+
+    #[test]
+    fn edge_graph_loads_edges_from_a_single_repo() {
+        let tmp = TempDir::new().unwrap();
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[("atlas", &[("A", "library"), ("B", "library")], &edges)],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        assert_eq!(graph.edges.len(), 1);
+        assert_eq!(graph.edges[0].participants, vec!["A".to_string(), "B".to_string()]);
+    }
+
+    #[test]
+    fn edge_graph_unions_edges_across_repos() {
+        let tmp = TempDir::new().unwrap();
+        let alpha_edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "Alpha-A", "Alpha-B")];
+        let beta_edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "Beta-A", "Beta-B")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[
+                ("alpha", &[("Alpha-A", "library"), ("Alpha-B", "library")], &alpha_edges),
+                ("beta", &[("Beta-A", "library"), ("Beta-B", "library")], &beta_edges),
+            ],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        assert_eq!(graph.edges.len(), 2, "union retains both repos' edges");
+    }
+
+    #[test]
+    fn edge_graph_dedups_canonical_keys_across_repos() {
+        // Same directed edge recorded in two repos → one survives.
+        let tmp = TempDir::new().unwrap();
+        let shared = [edge(EdgeKind::Generates, LifecycleScope::Codegen, "Gen", "Out")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[
+                ("alpha", &[("Gen", "library"), ("Out", "library")], &shared),
+                ("beta", &[("Gen", "library"), ("Out", "library")], &shared),
+            ],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        assert_eq!(graph.edges.len(), 1, "duplicate canonical key collapses to one edge");
+    }
+
+    #[test]
+    fn edge_graph_keeps_directed_edges_with_swapped_participants_distinct() {
+        // A→B and B→A are two distinct directed edges, not duplicates.
+        let tmp = TempDir::new().unwrap();
+        let edges = [
+            edge(EdgeKind::Generates, LifecycleScope::Codegen, "A", "B"),
+            edge(EdgeKind::Generates, LifecycleScope::Codegen, "B", "A"),
+        ];
+        let reg = registry_with_repos(
+            &tmp,
+            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        assert_eq!(graph.edges.len(), 2);
+    }
+
+    #[test]
+    fn edge_graph_dedups_symmetric_edge_recorded_in_two_repos() {
+        // Symmetric `co-implements` between Alpha and Beta, recorded in
+        // both repos with the same (sorted) participant order.
+        let tmp = TempDir::new().unwrap();
+        let shared =
+            [edge(EdgeKind::CoImplements, LifecycleScope::Design, "Alpha", "Beta")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[
+                ("alpha", &[("Alpha", "library"), ("Beta", "library")], &shared),
+                ("beta", &[("Alpha", "library"), ("Beta", "library")], &shared),
+            ],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        assert_eq!(graph.edges.len(), 1);
+    }
+
+    #[test]
+    fn edges_touching_filters_directed_edges_by_in_out_both() {
+        let tmp = TempDir::new().unwrap();
+        // Directed: A → B (A is source, B is sink).
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+
+        // From A's perspective: --out matches, --in does not.
+        assert_eq!(graph.edges_touching("A", EdgeDirection::Out).len(), 1);
+        assert_eq!(graph.edges_touching("A", EdgeDirection::In).len(), 0);
+        assert_eq!(graph.edges_touching("A", EdgeDirection::Both).len(), 1);
+
+        // From B's perspective: --in matches, --out does not.
+        assert_eq!(graph.edges_touching("B", EdgeDirection::Out).len(), 0);
+        assert_eq!(graph.edges_touching("B", EdgeDirection::In).len(), 1);
+        assert_eq!(graph.edges_touching("B", EdgeDirection::Both).len(), 1);
+    }
+
+    #[test]
+    fn edges_touching_returns_symmetric_edges_in_every_direction() {
+        let tmp = TempDir::new().unwrap();
+        // Symmetric: stored sorted as Alpha, Beta.
+        let edges =
+            [edge(EdgeKind::CoImplements, LifecycleScope::Design, "Alpha", "Beta")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[("alpha", &[("Alpha", "library"), ("Beta", "library")], &edges)],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+
+        for direction in [EdgeDirection::Both, EdgeDirection::In, EdgeDirection::Out] {
+            assert_eq!(
+                graph.edges_touching("Alpha", direction).len(),
+                1,
+                "symmetric edges must surface in {direction:?}"
+            );
+            assert_eq!(graph.edges_touching("Beta", direction).len(), 1);
+        }
+    }
+
+    #[test]
+    fn edges_touching_excludes_edges_not_involving_the_component() {
+        let tmp = TempDir::new().unwrap();
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[("alpha", &[("A", "library"), ("B", "library"), ("C", "library")], &edges)],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        assert!(graph.edges_touching("C", EdgeDirection::Both).is_empty());
+    }
+
+    #[test]
+    fn neighbors_emits_only_self_at_depth_zero() {
+        let tmp = TempDir::new().unwrap();
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        let result = graph.neighbors("A", 0);
+        assert_eq!(result, vec![("A".to_string(), 0)]);
+    }
+
+    #[test]
+    fn neighbors_default_depth_one_visits_direct_peers_in_either_direction() {
+        // Directed A → B; from B's perspective B is the sink, but
+        // neighbors expansion is undirected so A is reachable in 1 hop.
+        let tmp = TempDir::new().unwrap();
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+
+        let from_b = graph.neighbors("B", 1);
+        let names: Vec<&str> = from_b.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"A"), "undirected expansion reaches A from B");
+        assert_eq!(from_b.len(), 2, "self + one peer");
+    }
+
+    #[test]
+    fn neighbors_does_not_exceed_requested_depth() {
+        // Chain A → B → C. depth=1 from A reaches B but not C.
+        let tmp = TempDir::new().unwrap();
+        let edges = [
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "B", "C"),
+        ];
+        let reg = registry_with_repos(
+            &tmp,
+            &[(
+                "alpha",
+                &[("A", "library"), ("B", "library"), ("C", "library")],
+                &edges,
+            )],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+
+        let depth1 = graph.neighbors("A", 1);
+        let names1: BTreeSet<&str> = depth1.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names1, BTreeSet::from(["A", "B"]));
+
+        let depth2 = graph.neighbors("A", 2);
+        let names2: BTreeSet<&str> = depth2.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names2, BTreeSet::from(["A", "B", "C"]));
+    }
+
+    #[test]
+    fn neighbors_terminates_on_cycles_without_revisiting() {
+        // Cycle A → B → C → A. Visit each node once.
+        let tmp = TempDir::new().unwrap();
+        let edges = [
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "B", "C"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "C", "A"),
+        ];
+        let reg = registry_with_repos(
+            &tmp,
+            &[(
+                "alpha",
+                &[("A", "library"), ("B", "library"), ("C", "library")],
+                &edges,
+            )],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        let result = graph.neighbors("A", 10);
+        assert_eq!(result.len(), 3, "each node visited exactly once");
+        let names: BTreeSet<&str> = result.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, BTreeSet::from(["A", "B", "C"]));
+    }
+
+    #[test]
+    fn neighbors_assigns_minimum_hop_count_via_bfs() {
+        // Diamond A→B, A→C, B→D, C→D. From A: B/C at hop 1, D at hop 2.
+        let tmp = TempDir::new().unwrap();
+        let edges = [
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "C"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "B", "D"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "C", "D"),
+        ];
+        let reg = registry_with_repos(
+            &tmp,
+            &[(
+                "alpha",
+                &[
+                    ("A", "library"),
+                    ("B", "library"),
+                    ("C", "library"),
+                    ("D", "library"),
+                ],
+                &edges,
+            )],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        let result = graph.neighbors("A", 5);
+        let by_name: BTreeMap<&str, usize> =
+            result.iter().map(|(n, h)| (n.as_str(), *h)).collect();
+        assert_eq!(by_name.get("A"), Some(&0));
+        assert_eq!(by_name.get("B"), Some(&1));
+        assert_eq!(by_name.get("C"), Some(&1));
+        assert_eq!(by_name.get("D"), Some(&2), "BFS picks the shortest path");
+    }
+
+    #[test]
+    fn roots_includes_components_with_no_incoming_directed_edge() {
+        // A → B. Only A has no incoming edge among {A, B}.
+        let tmp = TempDir::new().unwrap();
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        let universe: Vec<&str> = catalog.iter_components().map(|(_, c)| c.id.as_str()).collect();
+        let roots = graph.roots(universe.iter().copied());
+        assert_eq!(roots, vec!["A".to_string()]);
+    }
+
+    #[test]
+    fn roots_treats_symmetric_edges_as_non_disqualifying() {
+        // A and B share only a `co-implements` (symmetric). Both still
+        // qualify as roots: peer relationships don't establish hierarchy.
+        let tmp = TempDir::new().unwrap();
+        let edges = [edge(EdgeKind::CoImplements, LifecycleScope::Design, "A", "B")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        let universe: Vec<&str> = catalog.iter_components().map(|(_, c)| c.id.as_str()).collect();
+        let roots = graph.roots(universe.iter().copied());
+        let set: BTreeSet<String> = roots.into_iter().collect();
+        assert_eq!(set, BTreeSet::from(["A".to_string(), "B".to_string()]));
+    }
+
+    #[test]
+    fn roots_includes_isolated_components_with_no_edges_at_all() {
+        // C is in the catalog but appears in no edge.
+        let tmp = TempDir::new().unwrap();
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[(
+                "alpha",
+                &[("A", "library"), ("B", "library"), ("C", "library")],
+                &edges,
+            )],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        let universe: Vec<&str> = catalog.iter_components().map(|(_, c)| c.id.as_str()).collect();
+        let roots: BTreeSet<String> = graph.roots(universe.iter().copied()).into_iter().collect();
+        assert!(roots.contains("A"));
+        assert!(roots.contains("C"), "isolated component must surface as root");
+        assert!(!roots.contains("B"));
+    }
+
+    #[test]
+    fn roots_returns_empty_when_every_component_has_an_incoming_directed_edge() {
+        // Cycle A → B → A: each has incoming, so no roots.
+        let tmp = TempDir::new().unwrap();
+        let edges = [
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "B", "A"),
+        ];
+        let reg = registry_with_repos(
+            &tmp,
+            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = EdgeGraph::from_catalog(&catalog).unwrap();
+        let universe: Vec<&str> = catalog.iter_components().map(|(_, c)| c.id.as_str()).collect();
+        let roots = graph.roots(universe.iter().copied());
+        assert!(roots.is_empty(), "cycle leaves no node without an incoming edge");
+    }
+
+    #[test]
+    fn from_catalog_propagates_schema_version_mismatch_with_repo_context() {
+        // Hand-write a v1 file; the loader must reject and the error
+        // chain must mention the offending repo slug for diagnosis.
+        let tmp = TempDir::new().unwrap();
+        let reg = registry_with_one_fresh_repo(&tmp, "alpha", &[("A", "library")]);
+        let path = tmp.path().join("alpha").join(ATLAS_DIR).join(RELATED_COMPONENTS_FILENAME);
+        std::fs::write(&path, "schema_version: 1\nedges: []\n").unwrap();
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let err = EdgeGraph::from_catalog(&catalog).unwrap_err();
+        let chain = format!("{err:#}");
+        assert!(
+            chain.contains("alpha"),
+            "error chain must identify the offending repo: {chain}"
+        );
+        assert!(chain.contains("schema_version"));
+    }
+
+    #[test]
+    fn format_edge_line_renders_directed_edges_with_arrow() {
+        let e = edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B");
+        assert_eq!(format_edge_line(&e), "A  --depends-on/build-->  B");
+    }
+
+    #[test]
+    fn format_edge_line_renders_symmetric_edges_with_sorted_participants() {
+        let e = edge(EdgeKind::CoImplements, LifecycleScope::Design, "Beta", "Alpha");
+        // Symmetric kinds canonicalise to sorted participants.
+        assert_eq!(
+            format_edge_line(&e),
+            "Alpha  --co-implements/design-->  Beta"
+        );
     }
 }
