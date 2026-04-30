@@ -825,3 +825,13 @@ entries:
   title: atlas edges/neighbors/roots traverse EdgeGraph from catalog
   body: |
     `atlas edges` lists all edges (formatted as `A → B (kind:lifecycle)`); `atlas neighbors` does depth-limited BFS with `--in`/`--out`/`--both` direction filtering (mutually exclusive via `conflicts_with_all`); `atlas roots` returns zero-in-degree nodes. All three load via `EdgeGraph::from_catalog`, which unions all known `related-components.yaml` files. `EdgeGraph::adjacency()` is the entry point for BFS `path` and SCC (Kosaraju/Tarjan) when those verbs are added.
+- id: pre-push-gating-policy-fmt-and-test-expansion-pending
+  title: 'Pre-push gating policy: fmt and test expansion pending'
+  body: |
+    The `scripts/check.sh` pre-push gate currently runs only `cargo clippy --all-targets --workspace -- -D warnings`. The task results (install-hooks cycle) noted two expansion candidates:
+    - `cargo fmt --check` — low runtime cost, catches formatting drift between sessions.
+    - `cargo test` — high runtime cost; has "very different runtime characteristics from clippy and may want to be a separate script."
+
+    No policy decision was made; both were deferred until "a clear policy is decided." Adding `cargo fmt --check` is a low-effort next step; `cargo test` in the pre-push gate needs a separate discussion (possibly a `scripts/test.sh` guarded by an opt-in env flag so contributors with slow machines can skip it).
+
+    `shellcheck` as a gate is also deferred, contingent on it becoming a project-wide expected dependency — not yet established.
