@@ -19,6 +19,7 @@
 pub mod backlog;
 pub mod discover_proposals;
 pub mod filenames;
+pub mod findings;
 pub mod intents;
 pub mod memory;
 pub mod migrate;

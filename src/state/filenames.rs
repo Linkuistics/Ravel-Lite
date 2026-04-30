@@ -11,6 +11,7 @@ pub const MEMORY_FILENAME: &str = "memory.yaml";
 pub const SESSION_LOG_FILENAME: &str = "session-log.yaml";
 pub const LATEST_SESSION_FILENAME: &str = "latest-session.yaml";
 pub const SUBAGENT_DISPATCH_FILENAME: &str = "subagent-dispatch.yaml";
+pub const FINDINGS_FILENAME: &str = "findings.yaml";
 pub const COMMITS_FILENAME: &str = "commits.yaml";
 pub const PHASE_FILENAME: &str = "phase.md";
 pub const RELATED_COMPONENTS_FILENAME: &str = "related-components.yaml";

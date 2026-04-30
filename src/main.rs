@@ -221,6 +221,17 @@ enum Commands {
         #[command(subcommand)]
         command: PlanCommands,
     },
+    /// Manage the context-level findings inbox
+    /// (`<context>/findings.yaml`). Findings are TMS items that triage
+    /// or reflect raise when they observe something out of scope for
+    /// the current plan. Nothing reads `findings.yaml` during plan
+    /// execution — it is advisory cross-plan, mediated by the user
+    /// (promote → new plan, file external bug, mark wontfix). See
+    /// `docs/architecture-next.md` §"Findings inbox".
+    Findings {
+        #[command(subcommand)]
+        command: FindingsCommands,
+    },
     /// Read-only graph-RAG queries over the union of registered repos'
     /// `.atlas/components.yaml` (component nodes) and
     /// `.atlas/related-components.yaml` (typed edges). The catalog is
@@ -808,6 +819,64 @@ enum IntentsCommands {
 }
 
 #[derive(Subcommand)]
+enum FindingsCommands {
+    /// Emit every finding as YAML on stdout (an empty inbox is valid output).
+    List {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Emit a single finding by id.
+    Show {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        id: String,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Append a new finding. `--claim` becomes the TMS claim;
+    /// `--body` becomes a single rationale justification. `--component`
+    /// records optional component attribution; `--raised-in` records
+    /// the plan that surfaced the finding.
+    Add {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        claim: String,
+        /// Path to a file containing the markdown body.
+        #[arg(long, conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        /// `-` reads stdin; any other value is taken as the body inline.
+        #[arg(long)]
+        body: Option<String>,
+        /// Optional component attribution (e.g. `atlas:atlas-ontology`).
+        #[arg(long)]
+        component: Option<String>,
+        /// Optional plan reference for the plan that surfaced the finding.
+        #[arg(long)]
+        raised_in: Option<String>,
+        /// Authoring timestamp (RFC-3339). Defaults to current UTC.
+        #[arg(long)]
+        authored_at: Option<String>,
+        /// Phase or process that authored this entry. Defaults to `unspecified`.
+        #[arg(long)]
+        authored_in: Option<String>,
+    },
+    /// Set a finding's status. Validates against the typed transition
+    /// table (`new` → `promoted` | `wontfix` | `superseded`).
+    SetStatus {
+        #[arg(long)]
+        config: Option<PathBuf>,
+        id: String,
+        /// One of `new`, `promoted`, `wontfix`, `superseded`.
+        status: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum PlanCommands {
     /// List items across the plan's typed stores. Without `--kind`,
     /// emits a unified `items:` list spanning intents + backlog +
@@ -1131,6 +1200,7 @@ async fn main() -> Result<()> {
         Commands::State { command } => dispatch_state(command).await,
         Commands::Repo { command } => dispatch_repo(command),
         Commands::Plan { command } => dispatch_plan(command),
+        Commands::Findings { command } => dispatch_findings(command),
         Commands::Atlas { command } => dispatch_atlas(command),
     }
 }
@@ -1663,6 +1733,54 @@ fn dispatch_intents(command: IntentsCommands) -> Result<()> {
         }
         IntentsCommands::SetStatus { plan_dir, id, status } => {
             intents::run_set_status(&plan_dir, &id, &status)
+        }
+    }
+}
+
+fn parse_findings_format(input: &str) -> Result<ravel_lite::state::findings::OutputFormat> {
+    ravel_lite::state::findings::OutputFormat::parse(input)
+        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
+}
+
+fn dispatch_findings(command: FindingsCommands) -> Result<()> {
+    use ravel_lite::state::findings;
+
+    match command {
+        FindingsCommands::List { config, format } => {
+            let context_root = resolve_config_dir(config)?;
+            let fmt = parse_findings_format(&format)?;
+            findings::run_list(&context_root, fmt)
+        }
+        FindingsCommands::Show { config, id, format } => {
+            let context_root = resolve_config_dir(config)?;
+            let fmt = parse_findings_format(&format)?;
+            findings::run_show(&context_root, &id, fmt)
+        }
+        FindingsCommands::Add {
+            config,
+            claim,
+            body_file,
+            body,
+            component,
+            raised_in,
+            authored_at,
+            authored_in,
+        } => {
+            let context_root = resolve_config_dir(config)?;
+            let body = resolve_body(body_file, body)?;
+            let req = findings::AddRequest {
+                claim,
+                body,
+                component,
+                raised_in,
+                authored_at,
+                authored_in,
+            };
+            findings::run_add(&context_root, &req)
+        }
+        FindingsCommands::SetStatus { config, id, status } => {
+            let context_root = resolve_config_dir(config)?;
+            findings::run_set_status(&context_root, &id, &status)
         }
     }
 }

@@ -1,10 +1,11 @@
-id: session-103
-timestamp: 2026-04-30T02:12:08Z
+id: session-104
+timestamp: 2026-04-30T06:47:09Z
 phase: work
 body: |
-  ### Session 103 (2026-04-30T02:12:08Z) — Add install-hooks.sh and wire pre-push gate
+  ### Session 104 (2026-04-30T06:47:09Z) — Add findings inbox module and CLI
 
-  - Attempted: add a `scripts/install-hooks.sh` script to make it easy for developers to install the pre-push hook that runs `scripts/check.sh`.
-  - What worked: `install-hooks.sh` was created with idempotent, safe semantics — detects an already-installed hook, refuses to overwrite a foreign hook to protect local customisations, embeds a marker comment so re-runs are no-ops. `README.md` gained a "Developing" section documenting the hook installation. `scripts/check.sh` had its manual `git hook` instructions updated to reference `install-hooks.sh`.
-  - What didn't: nothing — the scope was narrow and completed cleanly.
-  - What this suggests trying next: the pre-push hook infrastructure is in place; future work could expand `scripts/check.sh` to include `cargo test` or `cargo fmt --check` as the gating policy grows.
+  - Implemented `src/state/findings/` module (schema.rs, yaml_io.rs, verbs.rs, mod.rs) mirroring the intents/backlog/memory TMS pattern
+  - Wired `ravel-lite findings {add,list,show,set-status}` CLI surface into `src/main.rs`; added `FINDINGS_FILENAME = "findings.yaml"` in `src/state/filenames.rs`
+  - All 23 new unit tests pass alongside 726 pre-existing lib tests; clippy clean
+  - Deferred three scope items that require the v1→v2 migrator: subagent-dispatch removal, phase prompt rewrites, docs reconciliation
+  - Two small follow-ups are now unblocked and migrator-independent: `survey` integration to surface findings, and `list-items` kind extension to include `finding`
