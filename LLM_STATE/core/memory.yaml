@@ -798,9 +798,9 @@ entries:
   body: |
     scripts/check.sh runs clippy workspace-wide with -D warnings. Git pre-push hook recipe is documented in the script header but not installed — opt-in by design. CI has no clippy gate; drift between sessions is possible if check.sh is not run manually.
 - id: atlas-cli-routes-via-dispatch-atlas-in-src-atlas-rs
-  title: Atlas CLI routes via dispatch_atlas; four verbs in src/atlas.rs
+  title: Atlas CLI routes via dispatch_atlas; six verbs in src/atlas.rs
   body: |
-    `src/atlas.rs` implements `dispatch_atlas`; `src/main.rs` routes `Commands::Atlas` to it via `AtlasCommands` enum. `atlas-index` is a workspace path dep in `Cargo.toml`. Four verbs: `atlas list-repos` (delegates to `repos::run_list`), `atlas freshness [--require-fresh]` (four status outcomes: `fresh`, `missing`, `no_local_path`, `unparseable`), `atlas list-components [--repo <slug>]`, and `atlas summary [--repo <slug>]` (both load the `Catalog`). `--repo` validates against the fresh-repo set and emits a named-repos error on unknown slug rather than silent empty output.
+    `src/atlas.rs` implements `dispatch_atlas`; `src/main.rs` routes `Commands::Atlas` to it via `AtlasCommands` enum. `atlas-index` is a workspace path dep in `Cargo.toml`. Six verbs: `atlas list-repos` (delegates to `repos::run_list`), `atlas freshness [--require-fresh]` (four status outcomes: `fresh`, `missing`, `no_local_path`, `unparseable`), `atlas list-components [--repo <slug>]`, `atlas summary [--repo <slug>]` (both load the `Catalog`), `atlas describe <ref>` (resolves qualified `<repo>/<id>` or bare `<id>`, emits `ComponentEntry` YAML with `compute_children` list), `atlas memory <ref> [--search <term>]` (reads `.atlas/memory.yaml`, optional case-insensitive substring filter). `--repo` validates against the fresh-repo set and emits a named-repos error on unknown slug rather than silent empty output.
 - id: catalog-projects-token-is-not-in-phase-prompts-strip-task-is-no-op
   title: CATALOG_PROJECTS token is not in phase prompts; strip task is no-op
   body: |
@@ -809,3 +809,15 @@ entries:
   title: Catalog in src/atlas.rs union-loads fresh repos' components
   body: |
     `Catalog` in `src/atlas.rs` loads all fresh repos' `.atlas/components.yaml` via one registry walk per CLI invocation. `RepoCatalog` is the per-repo parsed entry; `Catalog` is the registry-wide `IndexMap`-keyed union (deterministic output order). `iter_components()` yields `(repo_slug, &ComponentEntry)` pairs; `deleted: true` tombstone components are silently filtered. `compute_freshness_full` replaces `compute_freshness` to thread `Option<LoadedComponents>` alongside freshness data, eliminating double-parsing when both freshness and component data are needed. See: `Atlas CLI routes via dispatch_atlas; four verbs in src/atlas.rs`.
+- id: resolves-qualified-or-bare-component-ref
+  title: ' resolves qualified or bare component ref'
+  body: |
+    `atlas describe <ref>` accepts qualified `<repo>/<id>` or bare `<id>`. Bare refs error on ambiguity (multiple repos contain `<id>`) or deletion (`deleted: true`). `compute_children` derives the children list from catalog edges. `ResolvedComponent<'a>` borrows lifetime-parameterised over `Catalog` to avoid cloning per lookup. See: `Atlas CLI routes via dispatch_atlas; six verbs in src/atlas.rs`.
+- id: atlas-describe-resolves-qualified-or-bare-component-ref
+  title: atlas describe resolves qualified or bare component ref
+  body: |
+    `atlas describe <ref>` accepts qualified `<repo>/<id>` or bare `<id>`. Bare refs error on ambiguity (multiple repos contain `<id>`) or deletion (`deleted: true`). `compute_children` derives the children list from catalog edges. `ResolvedComponent<'a>` borrows lifetime-parameterised over `Catalog` to avoid cloning per lookup. See: `Atlas CLI routes via dispatch_atlas; six verbs in src/atlas.rs`.
+- id: atlas-memory-reads-atlas-memory-yaml-schema-mismatch-errors
+  title: atlas memory reads .atlas/memory.yaml; schema mismatch errors
+  body: |
+    `atlas memory <ref> [--search <term>]` reads `.atlas/memory.yaml`. `--search` filters `MemoryEntry` items case-insensitively across `claim`, `attribution`, and all string fields in `Justification` variants. `read_component_memory` errors on schema-version mismatch; absent file is a graceful empty. Needle lowercasing occurs at the call site so `entry_matches` / `justification_matches` stay allocation-free inside the filter loop.
