@@ -125,74 +125,34 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: atlas-cli-edge-graph-edges-neighbors-roots-verbs
-  title: 'atlas CLI: edge graph, edges, neighbors, roots verbs'
-  category: architecture-next
-  status: done
+- id: wire-scripts-check-sh-into-a-git-pre-push-hook
+  title: Wire scripts/check.sh into a git pre-push hook
+  category: infra
+  status: not_started
   dependencies: []
   description: |
-    Load `.atlas/related-components.yaml` from each registered repo, dedupe and union cross-repo edges into a directed in-memory graph, then implement `atlas edges <ref> [--in|--out|--both]`, `atlas neighbors <ref> [--depth N]`, and `atlas roots`.
+    Wire `scripts/check.sh` into a git pre-push hook so clippy violations do not accumulate between sessions.
 
-    ## Motivation
+    ## Context
 
-    The component catalog alone answers "what exists". Edges answer "how things relate". This task builds the directed graph layer on top of the catalog and exposes the three verbs that are most useful for navigating it: direct edges, bounded-depth neighborhood expansion, and source nodes.
+    The `atlas edges/neighbors/roots` cycle fixed a pre-existing `needless_borrows_for_generic_args` clippy lint that had been silently failing on baseline since a clippy version bump. `scripts/check.sh` already documents how to install the pre-push hook, but the hook is not installed by default. Without it, `cargo clippy --all-targets --workspace -- -D warnings` failures accumulate between sessions until someone notices.
 
     ## Scope
 
-    - Load `<repo-path>/.atlas/related-components.yaml` from each registered repo (where `local_path` is set and the file exists). Union into a single directed multigraph; key edges by `(from, to, edge_kind, lifecycle)`.
-    - Dedup rule: symmetric edge kinds use sorted-participants identity (matches existing `related_components.rs` convention); directed edge kinds preserve participant order.
-    - `atlas edges <ref> [--in|--out|--both]` — list direct edges touching `<ref>`. Default: `--both`. Output: `<from>  --<kind>/<lifecycle>-->  <to>`.
-    - `atlas neighbors <ref> [--depth N]` — BFS from `<ref>` up to N hops (default 1). Output: one line per reached component with hop count.
-    - `atlas roots` — components with no incoming edges. Output: one ref per line.
-    - Unit tests: empty graph, single-repo edges, cross-repo union, `--in`/`--out`/`--both` filtering, depth-limited BFS, roots on acyclic and cyclic graphs.
-
-    ## Dependencies
-
-    Requires `atlas-cli-catalog-loader-list-components-and-summary` (ref resolution uses the Catalog).
-  results: |
-    ## What was done
-
-    Added the cross-repo `related-components.yaml` union loader and three CLI verbs (`edges`, `neighbors`, `roots`) on top of the existing Atlas catalog infrastructure.
-
-    ### Loader
-
-    `atlas::EdgeGraph::from_catalog(&Catalog)` walks every fresh repo in the catalog, loads `<local_path>/.atlas/related-components.yaml` via `component_ontology::load_or_default` (treating absence as empty per spec), and unions edges into a single `Vec<Edge>` deduplicated by `Edge::canonical_key()`. The canonical-key path means symmetric kinds (`co-implements`, `communicates-with`) collapse on sorted-participants identity while directed kinds preserve participant order — `A -depends-on→ B` and `B -depends-on→ A` remain two distinct edges. Schema-version mismatches surface with the offending repo slug in the error chain so cross-repo diagnosis is one read away.
-
-    ### Verbs
-
-    - **`atlas edges <ref> [--in | --out | --both]`** — filters direct edges touching `<ref>`. Output: `<from>  --<kind>/<lifecycle>-->  <to>`, one per line. clap-level `conflicts_with_all` enforces the three flags as mutually exclusive; default (no flag) is `Both`. Symmetric edges intentionally match every direction filter — quietly hiding peer relationships under `--in` / `--out` would be more surprising than the alternative.
-    - **`atlas neighbors <ref> [--depth N]`** — bounded-depth BFS over the undirected interpretation of the graph, emitting `<hops>  <component>` ordered by hop. The starting node is always at hop 0; `--depth 0` reduces to that single line. Cycles terminate via a visited set.
-    - **`atlas roots`** — components with no incoming directed edge, qualified as `<repo_slug>/<component_id>`. Symmetric edges do not disqualify (peer relationships don't establish hierarchy), and isolated components — those that never appear in any edge — also surface. The qualifier is preserved because the on-disk model does not enforce globally-unique bare ids; surfacing duplicates as separate qualified entries beats conflating them.
-
-    ### Wire-up
-
-    `AtlasCommands` gained `Edges { reference, incoming, outgoing, both_dirs, config }`, `Neighbors { reference, depth, config }`, `Roots { config }` variants, plus dispatch arms in `dispatch_atlas`. Module docstring updated to advertise the new verbs and pin the remaining follow-up scope to graph algorithms (`path`, `scc`).
+    - Verify `scripts/check.sh` contains the pre-push hook setup instructions and the check commands pass on the current tree.
+    - Add a `scripts/install-hooks.sh` (or inline the instructions in `scripts/check.sh` itself) that installs a `.git/hooks/pre-push` running `scripts/check.sh`. The hook must be idempotent.
+    - Document the hook installation step in `CONTRIBUTING.md` or the existing dev-setup section so new contributors install it automatically.
+    - Verify `cargo clippy --all-targets --workspace -- -D warnings` is clean before closing.
 
     ## Verification
 
-    - 18 new unit tests in `atlas.rs` cover: empty graph, single-repo edges, cross-repo union, dedup of canonical keys (directed and symmetric), distinct directed-with-swapped-participants edges, `--in`/`--out`/`--both` filtering on directed and symmetric edges, neighbors at depth 0/1/N, BFS shortest-path on a diamond, cycle termination, roots with directed-only/symmetric-only/isolated/cyclic graphs, schema-version error contextualisation, and edge-line formatting for both kinds.
-    - `cargo test`: 703 lib tests + every integration suite green.
-    - `cargo clippy --all-targets --workspace -- -D warnings`: clean. Fixed one pre-existing `needless_borrows_for_generic_args` lint at `src/atlas.rs:1443` (drive-by — the gate was already failing on it before this change) and structured the new test fixture's `repo_specs` parameter as a `RepoSpec<'_>` type alias to side-step `clippy::type_complexity`.
-    - `ravel-lite atlas --help` lists the three new commands; `--in --out` together is rejected at the clap layer with a clear message.
-
-    ## What this suggests next
-
-    - **`atlas-cli-path-and-scc-graph-algorithm-verbs`** is now genuinely unblocked: `EdgeGraph` exposes `edges` and an `adjacency()` map, so BFS for `path` and Kosaraju/Tarjan for `scc` can land as additional methods on the same struct without re-loading.
-    - **Output formats stay text** for now. If callers downstream want machine-readable output (e.g. `survey` consuming roots), `--format yaml` could be added uniformly across all five graph verbs in a follow-up — none of the current verbs emit YAML, so no inconsistency yet exists to chase.
-    - **Symmetric-edge semantics for `--in`/`--out`** were settled here as "always match." If a future use case wants strict directional filtering (symmetric edges hidden under both `--in` and `--out`), a fourth flag like `--directed-only` is the natural extension. Document this in `docs/architecture-next.md` if/when that need arises.
-    - **Roots with isolated components** can produce noisy output on a large catalog where many components have no edges yet. A `--non-isolated` flag could trim to "graph entry points" only. Defer until users ask.
-    - **Drive-by drift:** `cargo clippy` was already failing on baseline (`needless_borrows_for_generic_args` lint from a clippy version bump). `scripts/check.sh` should probably be wired into a pre-push hook (it already documents how to do so) so this stops accumulating.
-
-    ## Files touched
-
-    - `src/atlas.rs` — module docstring, imports (`BTreeSet`, `HashSet`, `VecDeque`, `component_ontology::*`, `RELATED_COMPONENTS_FILENAME`), `EdgeDirection` enum, `EdgeGraph` struct + `from_catalog` / `edges_touching` / `neighbors` / `roots` / `adjacency`, `edge_matches_direction`, `format_edge_line`, `run_edges` / `run_neighbors` / `run_roots`, 18 new tests, drive-by fix at line 1443.
-    - `src/main.rs` — three new `AtlasCommands` variants with full clap attrs (including `conflicts_with_all` mutex on direction flags), three new dispatch arms in `dispatch_atlas`.
+    - `cargo clippy --all-targets --workspace -- -D warnings` exits 0 on current tree.
+    - `git push` on a tree with an introduced clippy violation is rejected by the hook.
 - id: atlas-cli-path-and-scc-graph-algorithm-verbs
   title: 'atlas CLI: path and scc graph algorithm verbs'
   category: architecture-next
   status: not_started
-  dependencies:
-  - atlas-cli-edge-graph-edges-neighbors-roots-verbs
+  dependencies: []
   description: |
     Implement `atlas path <from> <to> [--max-hops N]` (BFS shortest path) and `atlas scc` (strongly connected components via Kosaraju or Tarjan).
 
