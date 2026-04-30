@@ -1541,3 +1541,14 @@ sessions:
     - `cargo build --workspace`, `./scripts/check.sh`, and `cargo test --workspace` (736 tests) all pass.
 
     What this suggests trying next: the companion task `list-items-include-finding-kind-in-cross-kind-queries` follows the same data source (`read_findings`) and pattern.
+- id: session-106
+  timestamp: 2026-04-30T13:38:45Z
+  phase: work
+  body: |
+    ### Session 106 (2026-04-30T13:38:45Z) — Wire finding kind into plan_inspect cross-kind queries
+
+    - Attempted: extend `plan_inspect.rs` so that `list-items`, `show-item`, `query-by-status`, and `query-by-justification` all include findings alongside intents, backlog items, and memory entries.
+    - What worked: all four dispatch paths were updated — the per-kind branches that previously `bail!`ed with a "not yet implemented" error now call `read_findings` and apply the same filter/emit pattern used by memory and intents. The cross-kind scan (`collect_all_entries`, `run_query_by_status` None branch, `run_query_by_justification` None branch) was extended with finding folds. `AnyEntry::Finding` variant added. Helper functions `filter_findings_by_status`, `filter_findings_by_justification`, `find_in_findings`, `findings_file_with`, `parse_finding_status`, `finding_status_words` added. The old `finding_not_yet_implemented()` stub was removed entirely.
+    - Test coverage: 8 new tests added — `filter_findings_by_status_picks_only_matching`, `filter_findings_by_justification_serves_intent`, `run_query_by_status_per_kind_finding_with_legal_value`, `run_query_by_status_per_kind_finding_rejects_status_outside_vocab`, `run_query_by_status_cross_kind_finds_finding_only_status`, `run_query_by_justification_per_kind_finding`, plus extended `any_entry_id_and_kind_str` and `run_list_items_all_kinds_succeed`. The test fixture (`write_full_plan`) was updated to write a `FindingsFile` with two entries (`f-1` new, `f-2` promoted).
+    - The stale-status repair ran and found no drift.
+    - What this suggests next: the `findings-inbox` track can now exercise the full `plan list-items` surface for findings; no remaining stubs block cross-kind queries.

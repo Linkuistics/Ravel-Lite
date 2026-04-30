@@ -1,14 +1,11 @@
-id: session-105
-timestamp: 2026-04-30T07:34:04Z
+id: session-106
+timestamp: 2026-04-30T13:38:45Z
 phase: work
 body: |
-  ### Session 105 (2026-04-30T07:34:04Z) — Surface findings inbox in survey output
+  ### Session 106 (2026-04-30T13:38:45Z) — Wire finding kind into plan_inspect cross-kind queries
 
-  - Implemented the `survey-surface-findings-inbox-in-survey-output` task: findings from `findings.yaml` now appear as a `## Findings` section at the end of `ravel-lite survey` output.
-  - Added `FindingSummary` struct and `inject_findings` function in `src/survey/schema.rs`; refactored `compute_survey_response` in `src/survey/invoke.rs` to inject findings uniformly across cold, incremental-merge, and incremental-noop paths; added `render_findings` in `src/survey/render.rs`.
-  - The section is omitted entirely when the inbox is empty (unlike other sections which emit "None...") — this was a deliberate design choice since the inbox is user-mediated.
-  - Rust's exhaustive struct-literal checking caught a third construction site (`multi_plan.rs::make_empty_response`) at compile time, preventing a missed update.
-  - 8 new tests added: inject replaces/clears, emit/parse round-trip, skip-serializing on empty, default on absent field, render formatting, wrap, section position.
-  - `cargo build --workspace`, `./scripts/check.sh`, and `cargo test --workspace` (736 tests) all pass.
-
-  What this suggests trying next: the companion task `list-items-include-finding-kind-in-cross-kind-queries` follows the same data source (`read_findings`) and pattern.
+  - Attempted: extend `plan_inspect.rs` so that `list-items`, `show-item`, `query-by-status`, and `query-by-justification` all include findings alongside intents, backlog items, and memory entries.
+  - What worked: all four dispatch paths were updated — the per-kind branches that previously `bail!`ed with a "not yet implemented" error now call `read_findings` and apply the same filter/emit pattern used by memory and intents. The cross-kind scan (`collect_all_entries`, `run_query_by_status` None branch, `run_query_by_justification` None branch) was extended with finding folds. `AnyEntry::Finding` variant added. Helper functions `filter_findings_by_status`, `filter_findings_by_justification`, `find_in_findings`, `findings_file_with`, `parse_finding_status`, `finding_status_words` added. The old `finding_not_yet_implemented()` stub was removed entirely.
+  - Test coverage: 8 new tests added — `filter_findings_by_status_picks_only_matching`, `filter_findings_by_justification_serves_intent`, `run_query_by_status_per_kind_finding_with_legal_value`, `run_query_by_status_per_kind_finding_rejects_status_outside_vocab`, `run_query_by_status_cross_kind_finds_finding_only_status`, `run_query_by_justification_per_kind_finding`, plus extended `any_entry_id_and_kind_str` and `run_list_items_all_kinds_succeed`. The test fixture (`write_full_plan`) was updated to write a `FindingsFile` with two entries (`f-1` new, `f-2` promoted).
+  - The stale-status repair ran and found no drift.
+  - What this suggests next: the `findings-inbox` track can now exercise the full `plan list-items` surface for findings; no remaining stubs block cross-kind queries.

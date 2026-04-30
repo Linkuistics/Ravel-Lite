@@ -29,9 +29,11 @@ use serde::Serialize;
 
 use knowledge_graph::{ItemStatus, Justification};
 
-use crate::plan_kg::{BacklogStatus, IntentStatus, MemoryStatus};
+use crate::plan_kg::{BacklogStatus, FindingStatus, IntentStatus, MemoryStatus};
 use crate::state::backlog::schema::{BacklogEntry, BacklogFile};
 use crate::state::backlog::yaml_io::read_backlog;
+use crate::state::findings::schema::{FindingEntry, FindingsFile, FINDINGS_SCHEMA_VERSION};
+use crate::state::findings::yaml_io::read_findings;
 use crate::state::intents::schema::{IntentEntry, IntentsFile};
 use crate::state::intents::yaml_io::read_intents;
 use crate::state::memory::schema::{MemoryEntry, MemoryFile};
@@ -40,9 +42,7 @@ use crate::state::memory::yaml_io::read_memory;
 // -- Kind selector -----------------------------------------------------
 
 /// The kinds the plan-inspect verbs know how to query. Mirrors the
-/// `KIND_STR` vocabulary in `plan_kg`; `Finding` is included for
-/// forward-compatibility with the findings-inbox task but errors at
-/// dispatch until that task lands a `findings.yaml` store.
+/// `KIND_STR` vocabulary in `plan_kg`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanItemKind {
     Intent,
@@ -120,6 +120,7 @@ pub enum AnyEntry {
     Intent(IntentEntry),
     Backlog(BacklogEntry),
     Memory(MemoryEntry),
+    Finding(FindingEntry),
 }
 
 impl AnyEntry {
@@ -128,6 +129,7 @@ impl AnyEntry {
             AnyEntry::Intent(e) => &e.item.id,
             AnyEntry::Backlog(e) => &e.item.id,
             AnyEntry::Memory(e) => &e.item.id,
+            AnyEntry::Finding(e) => &e.item.id,
         }
     }
 
@@ -136,6 +138,7 @@ impl AnyEntry {
             AnyEntry::Intent(_) => "intent",
             AnyEntry::Backlog(_) => "backlog-item",
             AnyEntry::Memory(_) => "memory-entry",
+            AnyEntry::Finding(_) => "finding",
         }
     }
 }
@@ -181,7 +184,7 @@ pub fn run_list_items(
         Some(PlanItemKind::Intent) => emit(&read_intents(plan_dir)?, format),
         Some(PlanItemKind::BacklogItem) => emit(&read_backlog(plan_dir)?, format),
         Some(PlanItemKind::MemoryEntry) => emit(&read_memory(plan_dir)?, format),
-        Some(PlanItemKind::Finding) => bail!(finding_not_yet_implemented()),
+        Some(PlanItemKind::Finding) => emit(&read_findings(plan_dir)?, format),
         None => {
             let items = collect_all_entries(plan_dir)?;
             emit(&AnyItemsFile { items }, format)
@@ -202,15 +205,20 @@ pub fn run_show_item(plan_dir: &Path, id: &str, format: OutputFormat) -> Result<
     if let Some(e) = find_in_memory(&read_memory(plan_dir)?, id) {
         hits.push(AnyEntry::Memory(e));
     }
+    if let Some(e) = find_in_findings(&read_findings(plan_dir)?, id) {
+        hits.push(AnyEntry::Finding(e));
+    }
     match hits.len() {
-        0 => bail!("no item with id {id:?} in any of intents.yaml, backlog.yaml, memory.yaml"),
+        0 => bail!(
+            "no item with id {id:?} in any of intents.yaml, backlog.yaml, memory.yaml, findings.yaml"
+        ),
         1 => emit(&hits.into_iter().next().unwrap(), format),
         n => {
             let kinds: Vec<&'static str> = hits.iter().map(|e| e.kind_str()).collect();
             bail!(
                 "id {id:?} is ambiguous: {n} matches across kinds {kinds:?}. \
                  Use the per-kind verb (`state intents show`, `state backlog show`, \
-                 `state memory show`) to disambiguate."
+                 `state memory show`, `state findings show`) to disambiguate."
             )
         }
     }
@@ -243,7 +251,12 @@ pub fn run_query_by_status(
             let filtered = filter_memory_by_status(&file, s);
             emit(&memory_file_with(filtered), format)
         }
-        Some(PlanItemKind::Finding) => bail!(finding_not_yet_implemented()),
+        Some(PlanItemKind::Finding) => {
+            let s = parse_finding_status(status)?;
+            let file = read_findings(plan_dir)?;
+            let filtered = filter_findings_by_status(&file, s);
+            emit(&findings_file_with(filtered), format)
+        }
         None => {
             // Cross-kind: status must match at least one kind's vocabulary.
             // Match against any kind whose status enum accepts the string.
@@ -272,13 +285,22 @@ pub fn run_query_by_status(
                         .map(AnyEntry::Memory),
                 );
             }
+            if let Some(s) = FindingStatus::parse(status) {
+                let file = read_findings(plan_dir)?;
+                hits.extend(
+                    filter_findings_by_status(&file, s)
+                        .into_iter()
+                        .map(AnyEntry::Finding),
+                );
+            }
             if hits.is_empty() && !any_kind_accepts_status(status) {
                 bail!(
                     "status {status:?} is not a member of any kind's vocabulary. \
-                     Intent: {:?}; backlog-item: {:?}; memory-entry: {:?}.",
+                     Intent: {:?}; backlog-item: {:?}; memory-entry: {:?}; finding: {:?}.",
                     intent_status_words(),
                     backlog_status_words(),
                     memory_status_words(),
+                    finding_status_words(),
                 );
             }
             emit(&AnyItemsFile { items: hits }, format)
@@ -310,7 +332,11 @@ pub fn run_query_by_justification(
             let filtered = filter_memory_by_justification(&file, jk);
             emit(&memory_file_with(filtered), format)
         }
-        Some(PlanItemKind::Finding) => bail!(finding_not_yet_implemented()),
+        Some(PlanItemKind::Finding) => {
+            let file = read_findings(plan_dir)?;
+            let filtered = filter_findings_by_justification(&file, jk);
+            emit(&findings_file_with(filtered), format)
+        }
         None => {
             let mut hits: Vec<AnyEntry> = Vec::new();
             let intents = read_intents(plan_dir)?;
@@ -330,6 +356,12 @@ pub fn run_query_by_justification(
                 filter_memory_by_justification(&memory, jk)
                     .into_iter()
                     .map(AnyEntry::Memory),
+            );
+            let findings = read_findings(plan_dir)?;
+            hits.extend(
+                filter_findings_by_justification(&findings, jk)
+                    .into_iter()
+                    .map(AnyEntry::Finding),
             );
             emit(&AnyItemsFile { items: hits }, format)
         }
@@ -395,6 +427,28 @@ pub fn filter_memory_by_justification(
         .collect()
 }
 
+pub fn filter_findings_by_status(
+    file: &FindingsFile,
+    status: FindingStatus,
+) -> Vec<FindingEntry> {
+    file.items
+        .iter()
+        .filter(|e| e.item.status == status)
+        .cloned()
+        .collect()
+}
+
+pub fn filter_findings_by_justification(
+    file: &FindingsFile,
+    jk: JustificationKindFilter,
+) -> Vec<FindingEntry> {
+    file.items
+        .iter()
+        .filter(|e| e.item.justifications.iter().any(|j| jk.matches(j)))
+        .cloned()
+        .collect()
+}
+
 // -- Lookup helpers -----------------------------------------------------
 
 fn find_in_intents(file: &IntentsFile, id: &str) -> Option<IntentEntry> {
@@ -409,16 +463,25 @@ fn find_in_memory(file: &MemoryFile, id: &str) -> Option<MemoryEntry> {
     file.items.iter().find(|e| e.item.id == id).cloned()
 }
 
+fn find_in_findings(file: &FindingsFile, id: &str) -> Option<FindingEntry> {
+    file.items.iter().find(|e| e.item.id == id).cloned()
+}
+
 fn collect_all_entries(plan_dir: &Path) -> Result<Vec<AnyEntry>> {
     let intents = read_intents(plan_dir)?;
     let backlog = read_backlog(plan_dir)?;
     let memory = read_memory(plan_dir)?;
+    let findings = read_findings(plan_dir)?;
     let mut items: Vec<AnyEntry> = Vec::with_capacity(
-        intents.items.len() + backlog.items.len() + memory.items.len(),
+        intents.items.len()
+            + backlog.items.len()
+            + memory.items.len()
+            + findings.items.len(),
     );
     items.extend(intents.items.into_iter().map(AnyEntry::Intent));
     items.extend(backlog.items.into_iter().map(AnyEntry::Backlog));
     items.extend(memory.items.into_iter().map(AnyEntry::Memory));
+    items.extend(findings.items.into_iter().map(AnyEntry::Finding));
     Ok(items)
 }
 
@@ -441,6 +504,13 @@ fn backlog_file_with(items: Vec<BacklogEntry>) -> BacklogFile {
 fn memory_file_with(items: Vec<MemoryEntry>) -> MemoryFile {
     MemoryFile {
         schema_version: crate::state::memory::schema::MEMORY_SCHEMA_VERSION,
+        items,
+    }
+}
+
+fn findings_file_with(items: Vec<FindingEntry>) -> FindingsFile {
+    FindingsFile {
+        schema_version: FINDINGS_SCHEMA_VERSION,
         items,
     }
 }
@@ -474,10 +544,20 @@ fn parse_memory_status(input: &str) -> Result<MemoryStatus> {
     })
 }
 
+fn parse_finding_status(input: &str) -> Result<FindingStatus> {
+    FindingStatus::parse(input).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown finding status {input:?}; expected one of {:?}",
+            finding_status_words(),
+        )
+    })
+}
+
 fn any_kind_accepts_status(input: &str) -> bool {
     IntentStatus::parse(input).is_some()
         || BacklogStatus::parse(input).is_some()
         || MemoryStatus::parse(input).is_some()
+        || FindingStatus::parse(input).is_some()
 }
 
 fn intent_status_words() -> Vec<&'static str> {
@@ -516,6 +596,18 @@ fn memory_status_words() -> Vec<&'static str> {
     .collect()
 }
 
+fn finding_status_words() -> Vec<&'static str> {
+    [
+        FindingStatus::New,
+        FindingStatus::Promoted,
+        FindingStatus::Wontfix,
+        FindingStatus::Superseded,
+    ]
+    .iter()
+    .map(|s| s.as_str())
+    .collect()
+}
+
 // -- Emit ---------------------------------------------------------------
 
 fn emit<T: Serialize>(value: &T, format: OutputFormat) -> Result<()> {
@@ -527,25 +619,20 @@ fn emit<T: Serialize>(value: &T, format: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn finding_not_yet_implemented() -> String {
-    "kind `finding` is defined in the plan-KG substrate but has no \
-     on-disk store yet; see backlog task \
-     `findings-inbox-context-level-findings-yaml-replaces-subagent-dispatch`."
-        .into()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use knowledge_graph::{Item, KindMarker};
     use tempfile::TempDir;
 
+    use crate::plan_kg::FindingStatus;
     use crate::state::backlog::schema::BACKLOG_SCHEMA_VERSION;
     use crate::state::backlog::yaml_io::write_backlog;
+    use crate::state::findings::yaml_io::write_findings;
     use crate::state::intents::yaml_io::write_intents;
+    use crate::state::intents::INTENTS_SCHEMA_VERSION;
     use crate::state::memory::schema::MEMORY_SCHEMA_VERSION;
     use crate::state::memory::yaml_io::write_memory;
-    use crate::state::intents::INTENTS_SCHEMA_VERSION;
 
     // -- Fixture builders ---------------------------------------------
 
@@ -603,6 +690,25 @@ mod tests {
                 authored_in: "test".into(),
             },
             attribution: None,
+        }
+    }
+
+    fn finding(id: &str, status: FindingStatus, justs: Vec<Justification>) -> FindingEntry {
+        FindingEntry {
+            item: Item {
+                id: id.into(),
+                kind: KindMarker::new(),
+                claim: format!("finding {id}"),
+                justifications: justs,
+                status,
+                supersedes: vec![],
+                superseded_by: None,
+                defeated_by: None,
+                authored_at: "2026-04-29T00:00:00Z".into(),
+                authored_in: "test".into(),
+            },
+            component: None,
+            raised_in: None,
         }
     }
 
@@ -666,6 +772,21 @@ mod tests {
                 items: vec![
                     memory("m-x", MemoryStatus::Active, vec![anchor("src/lib.rs")]),
                     memory("m-y", MemoryStatus::Defeated, vec![rationale("note.\n")]),
+                ],
+            },
+        )
+        .unwrap();
+        write_findings(
+            tmp,
+            &FindingsFile {
+                schema_version: FINDINGS_SCHEMA_VERSION,
+                items: vec![
+                    finding("f-1", FindingStatus::New, vec![rationale("observed.\n")]),
+                    finding(
+                        "f-2",
+                        FindingStatus::Promoted,
+                        vec![rationale("observed.\n"), serves("i-a")],
+                    ),
                 ],
             },
         )
@@ -803,6 +924,40 @@ mod tests {
         assert_eq!(hits[0].item.id, "b");
     }
 
+    #[test]
+    fn filter_findings_by_status_picks_only_matching() {
+        let file = FindingsFile {
+            schema_version: FINDINGS_SCHEMA_VERSION,
+            items: vec![
+                finding("a", FindingStatus::New, vec![]),
+                finding("b", FindingStatus::Promoted, vec![]),
+                finding("c", FindingStatus::New, vec![]),
+            ],
+        };
+        let new = filter_findings_by_status(&file, FindingStatus::New);
+        assert_eq!(new.len(), 2);
+        assert_eq!(new[0].item.id, "a");
+        assert_eq!(new[1].item.id, "c");
+    }
+
+    #[test]
+    fn filter_findings_by_justification_serves_intent() {
+        let file = FindingsFile {
+            schema_version: FINDINGS_SCHEMA_VERSION,
+            items: vec![
+                finding("a", FindingStatus::New, vec![rationale("body.\n")]),
+                finding(
+                    "b",
+                    FindingStatus::New,
+                    vec![rationale("body.\n"), serves("i-1")],
+                ),
+            ],
+        };
+        let hits = filter_findings_by_justification(&file, JustificationKindFilter::ServesIntent);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].item.id, "b");
+    }
+
     // -- Parsers --------------------------------------------------------
 
     #[test]
@@ -860,19 +1015,7 @@ mod tests {
         run_list_items(tmp.path(), Some(PlanItemKind::Intent), OutputFormat::Yaml).unwrap();
         run_list_items(tmp.path(), Some(PlanItemKind::BacklogItem), OutputFormat::Yaml).unwrap();
         run_list_items(tmp.path(), Some(PlanItemKind::MemoryEntry), OutputFormat::Yaml).unwrap();
-    }
-
-    #[test]
-    fn run_list_items_finding_kind_errors_with_pointer_to_inbox_task() {
-        let tmp = TempDir::new().unwrap();
-        write_full_plan(tmp.path());
-        let err =
-            run_list_items(tmp.path(), Some(PlanItemKind::Finding), OutputFormat::Yaml).unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("findings-inbox"),
-            "error must point at the unblocking task: {msg}"
-        );
+        run_list_items(tmp.path(), Some(PlanItemKind::Finding), OutputFormat::Yaml).unwrap();
     }
 
     #[test]
@@ -892,6 +1035,8 @@ mod tests {
         run_show_item(tmp.path(), "t-1", OutputFormat::Yaml).unwrap();
         // m-x is a memory entry.
         run_show_item(tmp.path(), "m-x", OutputFormat::Yaml).unwrap();
+        // f-1 is a finding.
+        run_show_item(tmp.path(), "f-1", OutputFormat::Yaml).unwrap();
     }
 
     #[test]
@@ -986,6 +1131,53 @@ mod tests {
             msg.contains("vocabulary"),
             "error must explain it's not in any kind's vocabulary: {msg}"
         );
+        // The error must also enumerate the finding vocabulary so users
+        // can see all four kinds at once. Otherwise `new`/`promoted`/
+        // `wontfix` look like accepted-but-empty queries.
+        assert!(
+            msg.contains("finding"),
+            "error must list finding vocabulary: {msg}"
+        );
+    }
+
+    #[test]
+    fn run_query_by_status_per_kind_finding_with_legal_value() {
+        let tmp = TempDir::new().unwrap();
+        write_full_plan(tmp.path());
+        run_query_by_status(
+            tmp.path(),
+            Some(PlanItemKind::Finding),
+            "new",
+            OutputFormat::Yaml,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn run_query_by_status_per_kind_finding_rejects_status_outside_vocab() {
+        let tmp = TempDir::new().unwrap();
+        write_full_plan(tmp.path());
+        // `blocked` is a backlog status; findings don't have it.
+        let err = run_query_by_status(
+            tmp.path(),
+            Some(PlanItemKind::Finding),
+            "blocked",
+            OutputFormat::Yaml,
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("finding status"), "error must name the kind: {msg}");
+        assert!(msg.contains("blocked"), "error must echo bad input: {msg}");
+    }
+
+    #[test]
+    fn run_query_by_status_cross_kind_finds_finding_only_status() {
+        // `new` is in finding's vocabulary alone — no other kind accepts
+        // it. The cross-kind walk must still resolve it via the finding
+        // store.
+        let tmp = TempDir::new().unwrap();
+        write_full_plan(tmp.path());
+        run_query_by_status(tmp.path(), None, "new", OutputFormat::Yaml).unwrap();
     }
 
     #[test]
@@ -1002,13 +1194,26 @@ mod tests {
     }
 
     #[test]
-    fn run_query_by_justification_cross_kind_walks_all_three_stores() {
+    fn run_query_by_justification_cross_kind_walks_all_stores() {
         let tmp = TempDir::new().unwrap();
         write_full_plan(tmp.path());
         run_query_by_justification(
             tmp.path(),
             None,
             JustificationKindFilter::CodeAnchor,
+            OutputFormat::Yaml,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn run_query_by_justification_per_kind_finding() {
+        let tmp = TempDir::new().unwrap();
+        write_full_plan(tmp.path());
+        run_query_by_justification(
+            tmp.path(),
+            Some(PlanItemKind::Finding),
+            JustificationKindFilter::ServesIntent,
             OutputFormat::Yaml,
         )
         .unwrap();
@@ -1021,12 +1226,15 @@ mod tests {
         let i = AnyEntry::Intent(intent("i-1", IntentStatus::Active, vec![]));
         let b = AnyEntry::Backlog(backlog("t-1", BacklogStatus::Active, vec![]));
         let m = AnyEntry::Memory(memory("m-1", MemoryStatus::Active, vec![]));
+        let f = AnyEntry::Finding(finding("f-1", FindingStatus::New, vec![]));
         assert_eq!(i.id(), "i-1");
         assert_eq!(b.id(), "t-1");
         assert_eq!(m.id(), "m-1");
+        assert_eq!(f.id(), "f-1");
         assert_eq!(i.kind_str(), "intent");
         assert_eq!(b.kind_str(), "backlog-item");
         assert_eq!(m.kind_str(), "memory-entry");
+        assert_eq!(f.kind_str(), "finding");
     }
 
     #[test]
