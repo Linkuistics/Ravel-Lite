@@ -6,7 +6,9 @@
 
 use anyhow::{Context, Result};
 
+use crate::plan_kg::FindingStatus;
 use crate::state::backlog::{PlanRowCounts, TaskCounts};
+use crate::state::findings::FindingEntry;
 
 /// Canonical schema version for emitted and consumed YAML. Bumped only
 /// when a struct-level change would make prior YAML deserialise into a
@@ -45,6 +47,27 @@ pub struct SurveyResponse {
     pub parallel_streams: Vec<ParallelStream>,
     #[serde(default)]
     pub recommended_invocation_order: Vec<Recommendation>,
+    /// Findings inbox snapshot at survey time. Injected from
+    /// `<context>/findings.yaml` after the LLM response is parsed; the
+    /// LLM never emits this field. `#[serde(default)]` lets prior
+    /// surveys without the field round-trip cleanly, and
+    /// `skip_serializing_if = "Vec::is_empty"` keeps the persisted YAML
+    /// quiet when the inbox is empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<FindingSummary>,
+}
+
+/// Compact survey-shaped projection of one finding: the three fields
+/// the user wants to see in survey output. The full `FindingEntry`
+/// carries justifications, supersedes links, defeat info, and provenance
+/// — none of which belong in the at-a-glance survey view. `FindingStatus`
+/// stays typed so serde_yaml emits the kebab-case wire form and any
+/// future code that filters by terminality gets `is_terminal()` for free.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct FindingSummary {
+    pub id: String,
+    pub status: FindingStatus,
+    pub claim: String,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
@@ -240,6 +263,22 @@ pub fn inject_plan_row_counts(
 /// to rows in the LLM's response.
 pub fn plan_key(project: &str, plan: &str) -> String {
     format!("{project}/{plan}")
+}
+
+/// Inject the findings inbox snapshot into the survey response. The
+/// inbox is read fresh on every survey: each call replaces whatever was
+/// previously in `response.findings`. Mirrors `inject_task_counts` in
+/// shape — Rust-computed projection injected after the LLM response is
+/// parsed.
+pub fn inject_findings(response: &mut SurveyResponse, entries: &[FindingEntry]) {
+    response.findings = entries
+        .iter()
+        .map(|e| FindingSummary {
+            id: e.item.id.clone(),
+            status: e.item.status,
+            claim: e.item.claim.clone(),
+        })
+        .collect();
 }
 
 /// Strip a leading ```yaml or ``` fence and matching trailing fence,
@@ -574,6 +613,110 @@ plans:
             emitted.contains(&format!("schema_version: {SCHEMA_VERSION}")),
             "emitted YAML is missing schema_version marker:\n{emitted}"
         );
+    }
+
+    fn sample_finding_entry(id: &str, status: FindingStatus, claim: &str) -> FindingEntry {
+        use knowledge_graph::{Item, Justification, KindMarker};
+        FindingEntry {
+            item: Item {
+                id: id.into(),
+                kind: KindMarker::new(),
+                claim: claim.into(),
+                justifications: vec![Justification::Rationale {
+                    text: "Body.\n".into(),
+                }],
+                status,
+                supersedes: vec![],
+                superseded_by: None,
+                defeated_by: None,
+                authored_at: "2026-04-30T00:00:00Z".into(),
+                authored_in: "test".into(),
+            },
+            component: None,
+            raised_in: None,
+        }
+    }
+
+    #[test]
+    fn inject_findings_replaces_existing_findings_with_summaries() {
+        let mut resp = parse_survey_response(sample_yaml()).unwrap();
+        // Pre-populate with stale data to prove inject replaces, not appends.
+        resp.findings = vec![FindingSummary {
+            id: "stale".into(),
+            status: FindingStatus::Promoted,
+            claim: "Stale".into(),
+        }];
+
+        let entries = vec![
+            sample_finding_entry("a", FindingStatus::New, "Alpha claim"),
+            sample_finding_entry("b", FindingStatus::Wontfix, "Beta claim"),
+        ];
+        inject_findings(&mut resp, &entries);
+
+        assert_eq!(resp.findings.len(), 2);
+        assert_eq!(resp.findings[0].id, "a");
+        assert_eq!(resp.findings[0].status, FindingStatus::New);
+        assert_eq!(resp.findings[0].claim, "Alpha claim");
+        assert_eq!(resp.findings[1].id, "b");
+        assert_eq!(resp.findings[1].status, FindingStatus::Wontfix);
+    }
+
+    #[test]
+    fn inject_findings_with_empty_input_clears_the_field() {
+        let mut resp = parse_survey_response(sample_yaml()).unwrap();
+        resp.findings = vec![FindingSummary {
+            id: "stale".into(),
+            status: FindingStatus::New,
+            claim: "Stale".into(),
+        }];
+        inject_findings(&mut resp, &[]);
+        assert!(resp.findings.is_empty());
+    }
+
+    #[test]
+    fn findings_round_trip_through_emitted_survey_yaml() {
+        let mut resp = parse_survey_response(sample_yaml()).unwrap();
+        inject_findings(
+            &mut resp,
+            &[sample_finding_entry("f1", FindingStatus::New, "Inbox claim")],
+        );
+        let emitted = emit_survey_yaml(&resp).unwrap();
+        assert!(emitted.contains("findings:"), "emitted: {emitted}");
+        assert!(emitted.contains("status: new"), "emitted: {emitted}");
+        let reparsed = parse_survey_response(&emitted).unwrap();
+        assert_eq!(reparsed.findings.len(), 1);
+        assert_eq!(reparsed.findings[0].id, "f1");
+        assert_eq!(reparsed.findings[0].status, FindingStatus::New);
+        assert_eq!(reparsed.findings[0].claim, "Inbox claim");
+    }
+
+    #[test]
+    fn emit_survey_yaml_omits_findings_field_when_empty() {
+        // skip_serializing_if keeps the wire form quiet for the
+        // common-case empty inbox so prior surveys don't sprout an
+        // unused field on round-trip.
+        let resp = parse_survey_response(sample_yaml()).unwrap();
+        assert!(resp.findings.is_empty());
+        let emitted = emit_survey_yaml(&resp).unwrap();
+        assert!(!emitted.contains("findings:"), "emitted: {emitted}");
+    }
+
+    #[test]
+    fn parse_survey_response_defaults_findings_when_field_absent() {
+        // Pre-findings YAML must round-trip cleanly: serde_default
+        // gives an empty Vec.
+        let yaml = r#"
+plans:
+  - project: P
+    plan: x
+    phase: work
+    unblocked: 0
+    blocked: 0
+    done: 0
+    received: 0
+"#;
+        let resp = parse_survey_response(yaml).unwrap();
+        assert!(resp.findings.is_empty());
     }
 
     #[test]

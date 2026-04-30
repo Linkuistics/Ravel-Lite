@@ -154,6 +154,10 @@ pub fn merge_delta(
         cross_plan_blockers: llm_delta.cross_plan_blockers,
         parallel_streams: llm_delta.parallel_streams,
         recommended_invocation_order: llm_delta.recommended_invocation_order,
+        // Findings is injected by `compute_survey_response` after merge,
+        // not derived from the delta — the inbox is read fresh from
+        // disk on every survey rather than carried across cycles.
+        findings: vec![],
     })
 }
 
@@ -197,6 +201,7 @@ mod tests {
             cross_plan_blockers: vec![],
             parallel_streams: vec![],
             recommended_invocation_order: vec![],
+            findings: vec![],
         }
     }
 

@@ -28,10 +28,11 @@ use super::delta::{merge_delta, PlanClassification};
 use super::discover::{load_plan, PlanSnapshot};
 use super::render::render_survey_output;
 use super::schema::{
-    emit_survey_yaml, inject_input_hashes, inject_plan_row_counts, inject_task_counts,
-    parse_survey_response, plan_key, SurveyResponse, SCHEMA_VERSION,
+    emit_survey_yaml, inject_findings, inject_input_hashes, inject_plan_row_counts,
+    inject_task_counts, parse_survey_response, plan_key, SurveyResponse, SCHEMA_VERSION,
 };
 use crate::state::backlog::{PlanRowCounts, TaskCounts};
+use crate::state::findings::read_findings;
 
 /// Fallback model when neither `--model` nor `models.survey` is
 /// configured. A cheap, fast model is appropriate: survey is a
@@ -142,25 +143,26 @@ pub async fn compute_survey_response(
 
     // Incremental-eligible: prior present AND user did not force a
     // full re-analysis.
-    if let Some(prior) = prior.as_ref() {
+    let mut response = if let Some(prior) = prior.as_ref() {
         if !force {
-            return run_incremental_survey(
-                &model,
-                timeout_override_secs,
-                prior,
-                all_plans,
-            )
-            .await;
+            run_incremental_survey(&model, timeout_override_secs, prior, all_plans).await?
+        } else {
+            run_cold_survey(&model, timeout_override_secs, &all_plans).await?
         }
-    }
+    } else {
+        // Cold path: no prior at all.
+        run_cold_survey(&model, timeout_override_secs, &all_plans).await?
+    };
 
-    // Cold path: no prior, OR `--force` overrides the incremental path.
-    run_cold_survey(
-        &model,
-        timeout_override_secs,
-        &all_plans,
-    )
-    .await
+    // Findings inbox is read fresh on every survey: the inbox state at
+    // survey time is what matters, not whatever the prior carried.
+    // Injecting at the end of the pipeline applies uniformly to cold,
+    // incremental-merge, and incremental-noop paths.
+    let findings_file = read_findings(config_root)
+        .with_context(|| format!("Failed to read findings inbox at {}", config_root.display()))?;
+    inject_findings(&mut response, &findings_file.items);
+
+    Ok(response)
 }
 
 async fn run_cold_survey(

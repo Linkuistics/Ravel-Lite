@@ -128,7 +128,7 @@ tasks:
 - id: survey-surface-findings-inbox-in-survey-output
   title: 'Survey: surface findings inbox in survey output'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Surface `findings.yaml` inbox content in `ravel-lite survey` output.
@@ -145,6 +145,105 @@ tasks:
     Dependencies: none. `src/state/findings/` is already merged; survey can just call it.
 
     Estimated scope: ~30 LOC in `src/survey/`.
+  results: |
+    ## Results
+
+    Surfaced the `findings.yaml` inbox in survey output as a new
+    `## Findings` section, rendered after `## Recommended invocation order`
+    and omitted entirely when the inbox is empty.
+
+    ### What was done
+
+    - `src/survey/schema.rs`
+      - Added `FindingSummary { id: String, status: FindingStatus, claim: String }`,
+        a compact projection of `FindingEntry` carrying only the three
+        fields the survey shows. `FindingStatus` is kept typed (not
+        stringified) so the kebab-case wire form is preserved by serde and
+        future code can call `is_terminal()` without a second parse.
+      - Added `findings: Vec<FindingSummary>` to `SurveyResponse` with
+        `#[serde(default, skip_serializing_if = "Vec::is_empty")]`. Default
+        keeps prior surveys (without the field) round-trippable; skip-if-empty
+        keeps the persisted YAML quiet for the no-findings case.
+      - Added `inject_findings(response, &[FindingEntry])` that overwrites
+        `response.findings` with summaries — same shape as the other
+        `inject_*` helpers.
+
+    - `src/survey/render.rs`
+      - Added `render_findings` and an `if !response.findings.is_empty()`
+        branch in `render_survey_output`. Each finding renders as
+        `  - <id> [<status>]: <claim>` with the claim wrapping at
+        `WRAP_WIDTH` under a hanging indent. Blank line between entries.
+      - The section heading is skipped entirely on empty inbox (rather than
+        showing "None ..." like blockers/streams) — the inbox is
+        user-mediated and surfacing a placeholder every cycle would be
+        noise.
+
+    - `src/survey/invoke.rs`
+      - Refactored the early-return cold/incremental dispatch in
+        `compute_survey_response` into a `let mut response = ...; ...; Ok(response)`
+        shape so a single `read_findings(config_root)` + `inject_findings`
+        call applies uniformly to all three paths (cold, incremental-merge,
+        incremental-noop). Findings are read fresh every survey: the inbox
+        state at survey time is what matters, not whatever the prior
+        carried.
+
+    - `src/survey/delta.rs`, `src/multi_plan.rs`
+      - Mechanical updates to existing `SurveyResponse` struct literals to
+        pick up the new `findings` field (Rust's exhaustive struct-literal
+        rule walked the compiler to every site).
+
+    ### What worked
+
+    - TMS migration's per-kind serde-flatten wrapper meant `FindingEntry`
+      was already a typed handle to `(id, claim, status)` — `inject_findings`
+      is six lines because the data was already structured.
+    - `read_findings` lazy-creates an empty document on missing file, so
+      the survey caller needed zero existence checks.
+    - Rust's exhaustive struct-literal checking caught the third
+      construction site (`multi_plan.rs::make_empty_response`) at compile
+      time — no integration test had to fail to surface it.
+
+    ### What didn't / was tricky
+
+    - The early-return pattern in `compute_survey_response` would have made
+      a "find all paths and inject in each" implementation easy to ship
+      with one path missed. Refactoring to a single tail-injection point
+      was a small but worthwhile shape change.
+
+    ### Verification
+
+    - `cargo build --workspace` clean.
+    - `./scripts/check.sh` (clippy gate) clean.
+    - `cargo test --workspace` — all 736 lib tests + integration tests pass.
+    - 8 new tests in `src/survey/schema.rs` and `src/survey/render.rs`:
+      inject_findings replaces, inject_findings clears on empty input,
+      emit/parse round-trip carries findings, emit omits findings on
+      empty, parse defaults findings when field absent (prior-surveys
+      amnesty), render emits id/status/claim, render separates entries,
+      render wraps long claims, render-omit-when-empty,
+      render-emit-after-recommendations.
+    - End-to-end smoke check with `cargo run -- survey-format` on a
+      hand-crafted YAML: long claim wraps cleanly under a hanging indent
+      aligned to the claim column; empty inbox produces no `## Findings`
+      heading.
+
+    ### What this suggests next
+
+    - The companion task `list-items: include finding kind in cross-kind
+      queries` is the natural follow-up — it wires findings into
+      `state plan list-items` / `query-by-status` so the kind appears in
+      cross-kind tooling as well as the survey. Same data source
+      (`read_findings`), same enumeration pattern.
+    - No schema_version bump was needed because `#[serde(default)]` makes
+      the new field absence-tolerant. If a future field can't ship that
+      cleanly, the bump-and-fail-loud pattern in
+      `load_and_validate_prior` is the prepared path.
+    - Rendering decision worth flagging for triage: findings are read
+      fresh on every survey rather than carried forward from the prior in
+      incremental-noop mode. This means an incremental-noop survey can
+      still produce different output if the inbox changed between cycles —
+      intended, but worth confirming when the noop path's "fast" semantics
+      are next reviewed.
 - id: list-items-include-finding-kind-in-cross-kind-queries
   title: 'list-items: include finding kind in cross-kind queries'
   category: architecture-next

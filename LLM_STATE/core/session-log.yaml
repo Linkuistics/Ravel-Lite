@@ -1527,3 +1527,17 @@ sessions:
     - All 23 new unit tests pass alongside 726 pre-existing lib tests; clippy clean
     - Deferred three scope items that require the v1→v2 migrator: subagent-dispatch removal, phase prompt rewrites, docs reconciliation
     - Two small follow-ups are now unblocked and migrator-independent: `survey` integration to surface findings, and `list-items` kind extension to include `finding`
+- id: session-105
+  timestamp: 2026-04-30T07:34:04Z
+  phase: work
+  body: |
+    ### Session 105 (2026-04-30T07:34:04Z) — Surface findings inbox in survey output
+
+    - Implemented the `survey-surface-findings-inbox-in-survey-output` task: findings from `findings.yaml` now appear as a `## Findings` section at the end of `ravel-lite survey` output.
+    - Added `FindingSummary` struct and `inject_findings` function in `src/survey/schema.rs`; refactored `compute_survey_response` in `src/survey/invoke.rs` to inject findings uniformly across cold, incremental-merge, and incremental-noop paths; added `render_findings` in `src/survey/render.rs`.
+    - The section is omitted entirely when the inbox is empty (unlike other sections which emit "None...") — this was a deliberate design choice since the inbox is user-mediated.
+    - Rust's exhaustive struct-literal checking caught a third construction site (`multi_plan.rs::make_empty_response`) at compile time, preventing a missed update.
+    - 8 new tests added: inject replaces/clears, emit/parse round-trip, skip-serializing on empty, default on absent field, render formatting, wrap, section position.
+    - `cargo build --workspace`, `./scripts/check.sh`, and `cargo test --workspace` (736 tests) all pass.
+
+    What this suggests trying next: the companion task `list-items-include-finding-kind-in-cross-kind-queries` follows the same data source (`read_findings`) and pattern.

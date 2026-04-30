@@ -381,6 +381,7 @@ mod tests {
             cross_plan_blockers: vec![],
             parallel_streams: vec![],
             recommended_invocation_order: vec![],
+            findings: vec![],
         }
     }
 

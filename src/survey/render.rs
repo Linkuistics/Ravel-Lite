@@ -4,7 +4,10 @@
 // human-readable survey output. Layout decisions (column widths,
 // wrap points, section headings) live here; no I/O, no network.
 
-use super::schema::{Blocker, ParallelStream, PlanRow, Recommendation, SurveyResponse};
+use super::schema::{
+    Blocker, FindingSummary, ParallelStream, PlanRow, Recommendation, SurveyResponse,
+};
+use knowledge_graph::ItemStatus;
 
 /// Column width target for wrapped prose sections. Chosen to fit a
 /// standard 80-column terminal with a small margin.
@@ -51,6 +54,16 @@ pub fn render_survey_output(response: &SurveyResponse) -> String {
 
     out.push_str("## Recommended invocation order\n\n");
     out.push_str(&render_recommendations(&response.recommended_invocation_order));
+
+    // Findings inbox is omitted entirely when empty — unlike the other
+    // sections, which emit a "None ..." placeholder. The inbox is
+    // user-mediated and absent-by-default; surfacing "None" every time
+    // would be noise.
+    if !response.findings.is_empty() {
+        out.push('\n');
+        out.push_str("## Findings\n\n");
+        out.push_str(&render_findings(&response.findings));
+    }
 
     out
 }
@@ -194,6 +207,23 @@ fn render_recommendations(recs: &[Recommendation]) -> String {
         }
         out.push_str(&format!("  {}. {}\n", r.order, r.plan));
         out.push_str(&render_wrapped_bullet("       ", &r.rationale));
+        out.push('\n');
+    }
+    out
+}
+
+/// Render the findings inbox as one bullet per finding. Each entry is
+/// `  - <id> [<status>]: <claim>`, with the claim wrapping at WRAP_WIDTH
+/// under a hanging indent. Caller decides whether to emit the section
+/// at all — this renderer assumes a non-empty input.
+fn render_findings(findings: &[FindingSummary]) -> String {
+    let mut out = String::new();
+    for (i, f) in findings.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let prefix = format!("  - {} [{}]: ", f.id, f.status.as_str());
+        out.push_str(&render_wrapped_bullet(&prefix, &f.claim));
         out.push('\n');
     }
     out
@@ -555,6 +585,7 @@ mod tests {
                 order: 1,
                 rationale: "do it.".into(),
             }],
+            findings: vec![],
         };
         let out = render_survey_output(&response);
         assert!(out.contains("# Plan Status Survey"));
@@ -575,6 +606,7 @@ mod tests {
             cross_plan_blockers: vec![],
             parallel_streams: vec![],
             recommended_invocation_order: vec![],
+            findings: vec![],
         };
         let out = render_survey_output(&response);
         let summary_idx = out.find("## Per-plan summary").unwrap();
@@ -610,6 +642,91 @@ mod tests {
         let out = render_recommendations(&recs);
         assert!(!out.contains('`'), "unexpected backtick in recommendations: {out}");
         assert!(out.contains("P/alpha"));
+    }
+
+    use crate::plan_kg::FindingStatus;
+
+    fn finding(id: &str, status: FindingStatus, claim: &str) -> FindingSummary {
+        FindingSummary {
+            id: id.into(),
+            status,
+            claim: claim.into(),
+        }
+    }
+
+    #[test]
+    fn render_findings_emits_id_status_and_claim_per_entry() {
+        let findings = vec![
+            finding("f1", FindingStatus::New, "Alpha claim"),
+            finding("f2", FindingStatus::Wontfix, "Beta claim"),
+        ];
+        let out = render_findings(&findings);
+        assert!(out.contains("  - f1 [new]: Alpha claim"));
+        assert!(out.contains("  - f2 [wontfix]: Beta claim"));
+    }
+
+    #[test]
+    fn render_findings_separates_entries_with_blank_lines() {
+        let findings = vec![
+            finding("a", FindingStatus::New, "first."),
+            finding("b", FindingStatus::New, "second."),
+        ];
+        let out = render_findings(&findings);
+        assert!(out.contains("\n\n  - b "), "missing blank line separator: {out}");
+    }
+
+    #[test]
+    fn render_findings_wraps_long_claims_under_hanging_indent() {
+        let findings = vec![finding(
+            "fx",
+            FindingStatus::New,
+            &"word ".repeat(40),
+        )];
+        let out = render_findings(&findings);
+        for line in out.lines() {
+            assert!(
+                line.chars().count() <= WRAP_WIDTH,
+                "line exceeds wrap width: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn render_survey_output_omits_findings_section_when_findings_empty() {
+        let response = SurveyResponse {
+            schema_version: super::super::schema::SCHEMA_VERSION,
+            plans: vec![row("P", "x", "work", 1, 0, 0, 0, "")],
+            cross_plan_blockers: vec![],
+            parallel_streams: vec![],
+            recommended_invocation_order: vec![],
+            findings: vec![],
+        };
+        let out = render_survey_output(&response);
+        assert!(
+            !out.contains("## Findings"),
+            "Findings heading must be absent when inbox empty: {out}"
+        );
+    }
+
+    #[test]
+    fn render_survey_output_emits_findings_section_after_recommended_invocation_order() {
+        let response = SurveyResponse {
+            schema_version: super::super::schema::SCHEMA_VERSION,
+            plans: vec![row("P", "x", "work", 1, 0, 0, 0, "")],
+            cross_plan_blockers: vec![],
+            parallel_streams: vec![],
+            recommended_invocation_order: vec![Recommendation {
+                plan: "P/x".into(),
+                order: 1,
+                rationale: "do it.".into(),
+            }],
+            findings: vec![finding("f1", FindingStatus::New, "Inbox claim")],
+        };
+        let out = render_survey_output(&response);
+        let recommendations = out.find("## Recommended invocation order").unwrap();
+        let findings_heading = out.find("## Findings").unwrap();
+        assert!(recommendations < findings_heading);
+        assert!(out.contains("  - f1 [new]: Inbox claim"));
     }
 
     #[test]
