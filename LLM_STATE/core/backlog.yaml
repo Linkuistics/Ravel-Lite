@@ -128,7 +128,7 @@ tasks:
 - id: atlas-cli-edge-graph-loading
   title: 'atlas CLI: edge-graph loading'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Implement the directed graph loading infrastructure for the atlas CLI. This is the prerequisite for `atlas path` and `atlas scc` (see `atlas-cli-path-and-scc-graph-algorithm-verbs`).
@@ -146,6 +146,79 @@ tasks:
     ## Note
 
     This task was extracted as a blocker from `atlas-cli-path-and-scc-graph-algorithm-verbs`, which names `atlas-cli-edge-graph` as a required dependency in its description prose but had no corresponding backlog task.
+  results: |
+    ## Results
+
+    Implemented the directed adjacency-graph substrate for `atlas path` /
+    `atlas scc`, plus the catalog-to-graph projection.
+
+    ### What landed
+
+    - **New module `src/directed_graph.rs`.** Generic
+      `DirectedGraph<N: Ord + Clone>` adjacency-list. Public API:
+      `new`, `add_node`, `add_edge`, `neighbors`, `reverse_neighbors`,
+      `nodes`, `node_count`, `edge_count`, `contains_node`,
+      `contains_edge`. Storage is two `BTreeMap` adjacency lists plus a
+      `BTreeSet<N>` node universe — `BTree*` containers give
+      deterministic iteration order so test fixtures and downstream
+      algorithm output stay stable. `add_edge` is idempotent (duplicate
+      inserts dropped) so adjacency lists reflect topology, not insertion
+      redundancy. 13 unit tests cover empty graph, idempotent insertion,
+      isolated nodes, sorted enumeration, cycles, opposite-direction
+      edges as distinct, and a generic-bound smoke test (integer nodes).
+
+    - **New function `atlas::build_directed_component_graph`.** Projects a
+      loaded `Catalog` (and the `EdgeGraph` derived from it) into
+      `DirectedGraph<String>` keyed on bare component IDs. Every catalog
+      component participates as a node — even isolated ones — so SCC and
+      path enumeration can reason over the full universe (mirrors the
+      pattern in `EdgeGraph::roots`). 7 integration tests cover the empty
+      case, single directed edge, isolated components, multi-repo edge
+      union, the cycle case (A↔B), and load-failure error-chain context.
+
+    - **Module wiring.** `pub mod directed_graph;` added to `src/lib.rs`.
+
+    ### Key design call: symmetric edges are excluded
+
+    `co-implements` and `communicates-with` carry no inherent
+    source/destination. Two options were on the table when projecting
+    into a directed graph: (a) drop them, or (b) add both directions.
+    Picked (a) because `atlas scc`'s motivating use case in the
+    follow-up task is *circular dependency detection*; option (b) would
+    turn every peer relationship into a 2-node SCC and drown real
+    findings. Peer relationships remain visible via `atlas neighbors`
+    (undirected BFS over the existing `EdgeGraph`). This decision is
+    documented in the docstring on `build_directed_component_graph`.
+
+    ### Verification
+
+    - `cargo test`: 761 lib tests + integration binaries all pass; the
+      20 new tests (13 module-level + 7 integration) included.
+    - `./scripts/check.sh` (clippy `-D warnings`): clean.
+    - No new generated files; `.gitignore` reviewed and unchanged.
+
+    ### Suggests next
+
+    The follow-up task `atlas-cli-path-and-scc-graph-algorithm-verbs` is
+    now unblocked. It can build BFS shortest-path on
+    `DirectedGraph::neighbors`, and Kosaraju on
+    `DirectedGraph::neighbors` + `DirectedGraph::reverse_neighbors` (the
+    two passes Kosaraju needs). `nodes()` provides the iteration
+    universe for SCC enumeration. No further graph-substrate work
+    required.
+
+    ### Out of scope (intentionally)
+
+    - No CLI verb. The task spec offers "`atlas edge-graph` (or internal
+      builder function)"; took the internal route since the next task
+      delivers user-facing graph verbs (`atlas path`, `atlas scc`) that
+      call this function.
+    - The existing `EdgeGraph` (flat `Vec<Edge>`) was not refactored.
+      It still serves the `edges` / `neighbors` / `roots` verbs whose
+      semantics are tied to the on-disk edge representation (canonical
+      keys, lifecycle/evidence fields). Kept the two layers distinct:
+      `EdgeGraph` for "edges as a deduplicated relation table",
+      `DirectedGraph` for "edges as graph topology".
 - id: atlas-cli-path-and-scc-graph-algorithm-verbs
   title: 'atlas CLI: path and scc graph algorithm verbs'
   category: architecture-next

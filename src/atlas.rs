@@ -48,6 +48,7 @@ use serde::Serialize;
 use atlas_index::{load_components, ComponentEntry, ComponentsFile};
 use knowledge_graph::Justification;
 
+use crate::directed_graph::DirectedGraph;
 use crate::repos::{self, RepoEntry, ReposRegistry};
 use crate::state::filenames::RELATED_COMPONENTS_FILENAME;
 use crate::state::memory::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
@@ -790,6 +791,34 @@ impl EdgeGraph {
         }
         map
     }
+}
+
+/// Project a `(Catalog, EdgeGraph)` pair into a directed adjacency
+/// graph keyed on bare component IDs. The substrate for `atlas path`
+/// (BFS) and `atlas scc` (Kosaraju/Tarjan), tracked as a follow-up.
+///
+/// **Symmetric edges (`co-implements`, `communicates-with`) are
+/// excluded.** They have no inherent source/destination, and including
+/// them as bidirectional pairs would surface every peer relationship
+/// as a 2-node SCC — drowning real circular-dependency findings, which
+/// is `atlas scc`'s motivating use case. Peer relationships remain
+/// visible via `atlas neighbors` (undirected BFS over `EdgeGraph`).
+///
+/// Every fresh-repo component participates as a node, even if it
+/// touches no directed edge — mirroring the universe pattern in
+/// [`EdgeGraph::roots`] so isolated components don't silently vanish.
+pub fn build_directed_component_graph(catalog: &Catalog) -> Result<DirectedGraph<String>> {
+    let edges = EdgeGraph::from_catalog(catalog)?;
+    let mut graph = DirectedGraph::new();
+    for (_slug, component) in catalog.iter_components() {
+        graph.add_node(component.id.clone());
+    }
+    for edge in &edges.edges {
+        if edge.kind.is_directed() {
+            graph.add_edge(edge.participants[0].clone(), edge.participants[1].clone());
+        }
+    }
+    Ok(graph)
 }
 
 fn push_unique(target: &mut Vec<String>, value: &str) {
@@ -2173,5 +2202,145 @@ mod tests {
             format_edge_line(&e),
             "Alpha  --co-implements/design-->  Beta"
         );
+    }
+
+    // ---------- build_directed_component_graph tests ----------
+
+    #[test]
+    fn directed_component_graph_is_empty_when_no_edges_present() {
+        let tmp = TempDir::new().unwrap();
+        let reg = registry_with_one_fresh_repo(&tmp, "alpha", &[("A", "library")]);
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = build_directed_component_graph(&catalog).unwrap();
+        // The single catalog component appears as an isolated node
+        // (universe pattern), but no edges exist.
+        assert_eq!(graph.node_count(), 1);
+        assert_eq!(graph.edge_count(), 0);
+        assert!(graph.contains_node(&"A".to_string()));
+        assert!(graph.neighbors(&"A".to_string()).is_empty());
+        assert!(graph.reverse_neighbors(&"A".to_string()).is_empty());
+    }
+
+    #[test]
+    fn directed_component_graph_loads_directed_edge_with_correct_directionality() {
+        let tmp = TempDir::new().unwrap();
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = build_directed_component_graph(&catalog).unwrap();
+        assert_eq!(graph.node_count(), 2);
+        assert_eq!(graph.edge_count(), 1);
+        assert!(graph.contains_edge(&"A".to_string(), &"B".to_string()));
+        assert!(
+            !graph.contains_edge(&"B".to_string(), &"A".to_string()),
+            "directed edge A→B must NOT imply B→A"
+        );
+        assert_eq!(graph.neighbors(&"A".to_string()), ["B".to_string()]);
+        assert_eq!(graph.reverse_neighbors(&"B".to_string()), ["A".to_string()]);
+    }
+
+    #[test]
+    fn directed_component_graph_skips_symmetric_edges() {
+        // Symmetric kinds (co-implements, communicates-with) carry no
+        // direction; including them would inflate `atlas scc` with
+        // peer-relationship 2-cycles.
+        let tmp = TempDir::new().unwrap();
+        let edges = [
+            edge(EdgeKind::CoImplements, LifecycleScope::Design, "A", "B"),
+            edge(EdgeKind::CommunicatesWith, LifecycleScope::Runtime, "A", "C"),
+        ];
+        let reg = registry_with_repos(
+            &tmp,
+            &[(
+                "alpha",
+                &[("A", "library"), ("B", "library"), ("C", "library")],
+                &edges,
+            )],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = build_directed_component_graph(&catalog).unwrap();
+        assert_eq!(graph.node_count(), 3, "all catalog components are nodes");
+        assert_eq!(graph.edge_count(), 0, "symmetric edges contribute no directed edges");
+    }
+
+    #[test]
+    fn directed_component_graph_includes_isolated_catalog_components_as_nodes() {
+        // C has no edges; it must still surface in the node universe
+        // so SCC / path enumeration can reason about it.
+        let tmp = TempDir::new().unwrap();
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[(
+                "alpha",
+                &[("A", "library"), ("B", "library"), ("C", "library")],
+                &edges,
+            )],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = build_directed_component_graph(&catalog).unwrap();
+        assert!(graph.contains_node(&"C".to_string()));
+        assert!(graph.neighbors(&"C".to_string()).is_empty());
+        assert!(graph.reverse_neighbors(&"C".to_string()).is_empty());
+    }
+
+    #[test]
+    fn directed_component_graph_unions_directed_edges_across_repos() {
+        let tmp = TempDir::new().unwrap();
+        let alpha_edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "Alpha-A", "Alpha-B")];
+        let beta_edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "Beta-A", "Beta-B")];
+        let reg = registry_with_repos(
+            &tmp,
+            &[
+                ("alpha", &[("Alpha-A", "library"), ("Alpha-B", "library")], &alpha_edges),
+                ("beta", &[("Beta-A", "library"), ("Beta-B", "library")], &beta_edges),
+            ],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = build_directed_component_graph(&catalog).unwrap();
+        assert_eq!(graph.edge_count(), 2);
+        assert!(graph.contains_edge(&"Alpha-A".to_string(), &"Alpha-B".to_string()));
+        assert!(graph.contains_edge(&"Beta-A".to_string(), &"Beta-B".to_string()));
+    }
+
+    #[test]
+    fn directed_component_graph_preserves_cycle_through_reverse_neighbors() {
+        // A → B → A: every node has both an out and an in. SCC will
+        // care about exactly this kind of structure.
+        let tmp = TempDir::new().unwrap();
+        let edges = [
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "B", "A"),
+        ];
+        let reg = registry_with_repos(
+            &tmp,
+            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+        );
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let graph = build_directed_component_graph(&catalog).unwrap();
+        assert_eq!(graph.edge_count(), 2);
+        assert_eq!(graph.neighbors(&"A".to_string()), ["B".to_string()]);
+        assert_eq!(graph.neighbors(&"B".to_string()), ["A".to_string()]);
+        assert_eq!(graph.reverse_neighbors(&"A".to_string()), ["B".to_string()]);
+        assert_eq!(graph.reverse_neighbors(&"B".to_string()), ["A".to_string()]);
+    }
+
+    #[test]
+    fn directed_component_graph_propagates_load_failure_with_repo_context() {
+        // Schema-version mismatch in one repo's related-components.yaml
+        // bubbles up through `EdgeGraph::from_catalog` with the offending
+        // repo identified — same diagnosis story as the EdgeGraph layer.
+        let tmp = TempDir::new().unwrap();
+        let reg = registry_with_one_fresh_repo(&tmp, "alpha", &[("A", "library")]);
+        let path = tmp.path().join("alpha").join(ATLAS_DIR).join(RELATED_COMPONENTS_FILENAME);
+        std::fs::write(&path, "schema_version: 1\nedges: []\n").unwrap();
+        let catalog = Catalog::load(&reg, SystemTime::now());
+        let err = build_directed_component_graph(&catalog).unwrap_err();
+        let chain = format!("{err:#}");
+        assert!(chain.contains("alpha"));
+        assert!(chain.contains("schema_version"));
     }
 }

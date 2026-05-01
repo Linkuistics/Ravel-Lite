@@ -1,11 +1,11 @@
-id: session-106
-timestamp: 2026-04-30T13:38:45Z
+id: session-107
+timestamp: 2026-05-01T01:54:43Z
 phase: work
 body: |
-  ### Session 106 (2026-04-30T13:38:45Z) — Wire finding kind into plan_inspect cross-kind queries
+  ### Session 107 (2026-05-01T01:54:43Z) — Add directed graph substrate for atlas path/scc
 
-  - Attempted: extend `plan_inspect.rs` so that `list-items`, `show-item`, `query-by-status`, and `query-by-justification` all include findings alongside intents, backlog items, and memory entries.
-  - What worked: all four dispatch paths were updated — the per-kind branches that previously `bail!`ed with a "not yet implemented" error now call `read_findings` and apply the same filter/emit pattern used by memory and intents. The cross-kind scan (`collect_all_entries`, `run_query_by_status` None branch, `run_query_by_justification` None branch) was extended with finding folds. `AnyEntry::Finding` variant added. Helper functions `filter_findings_by_status`, `filter_findings_by_justification`, `find_in_findings`, `findings_file_with`, `parse_finding_status`, `finding_status_words` added. The old `finding_not_yet_implemented()` stub was removed entirely.
-  - Test coverage: 8 new tests added — `filter_findings_by_status_picks_only_matching`, `filter_findings_by_justification_serves_intent`, `run_query_by_status_per_kind_finding_with_legal_value`, `run_query_by_status_per_kind_finding_rejects_status_outside_vocab`, `run_query_by_status_cross_kind_finds_finding_only_status`, `run_query_by_justification_per_kind_finding`, plus extended `any_entry_id_and_kind_str` and `run_list_items_all_kinds_succeed`. The test fixture (`write_full_plan`) was updated to write a `FindingsFile` with two entries (`f-1` new, `f-2` promoted).
-  - The stale-status repair ran and found no drift.
-  - What this suggests next: the `findings-inbox` track can now exercise the full `plan list-items` surface for findings; no remaining stubs block cross-kind queries.
+  - Implemented `src/directed_graph.rs`: generic `DirectedGraph<N: Ord + Clone>` with dual adjacency lists (`BTreeMap` out-edges + in-edges) and a `BTreeSet<N>` node universe. 13 unit tests cover empty graph, idempotent `add_edge`, isolated nodes via `add_node`, sorted `nodes()` iteration, cycles, opposite-direction edges as distinct edges, and a generic integer-node smoke test.
+  - Added `atlas::build_directed_component_graph` in `src/atlas.rs`: projects a loaded `Catalog` through `EdgeGraph` into `DirectedGraph<String>` keyed on bare component IDs. Symmetric edge kinds (`co-implements`, `communicates-with`) are intentionally excluded — including them bidirectionally would make every peer relationship appear as a 2-node SCC, drowning real circular-dependency findings. All catalog components participate as nodes even without incident edges (mirrors `EdgeGraph::roots` universe pattern). 7 integration tests cover the empty case, single directed edge directionality, symmetric-edge exclusion, isolated-component node inclusion, multi-repo edge union, the A↔B cycle, and load-failure error-chain context.
+  - `src/lib.rs`: registered the new `directed_graph` module.
+  - Task `atlas-cli-edge-graph-loading` flipped `not_started → done`. No stale-status repairs needed.
+  - What this suggests next: `atlas-cli-path-and-scc-graph-algorithm-verbs` is now unblocked — BFS (`atlas path`) and Kosaraju/Tarjan (`atlas scc`) can be layered directly on top of `build_directed_component_graph`.
