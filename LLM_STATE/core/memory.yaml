@@ -498,7 +498,7 @@ entries:
 - id: run-create-pre-seeds-plan-dir-in-rust-before-llm-spawn
   title: run_create pre-seeds plan dir in Rust before LLM spawn
   body: |
-    `src/create.rs` scaffolds the plan directory — creating `backlog.yaml`, `memory.yaml`, `intents.yaml`, and related plan-state files — via CLI calls before the create-plan LLM spawn. Eliminates format drift between LLM-authored YAML and CLI-serialised YAML; `defaults/create-plan.md` carries no scaffolding instructions. See: `Pre-initialise output file before CLI-driven spawn`.
+    `run_create` takes `plan_name: &str`; `validate_plan_name` replaces `validate_target`; `resolve_plan_dir` enforces `<context_root>/plans/<name>/` placement. Callers must pass a bare plan name, not a path. `src/create.rs` scaffolds the plan directory — `backlog.yaml`, `memory.yaml`, `intents.yaml`, and related plan-state files — via CLI calls before the create-plan LLM spawn. Eliminates format drift; `defaults/create-plan.md` carries no scaffolding instructions. See: `Pre-initialise output file before CLI-driven spawn`.
 - id: headless-output-filters-hr-lines-in-rust
   title: Headless output filters `---` HR lines in Rust
   body: |
@@ -841,3 +841,7 @@ entries:
   title: atlas path (BFS) and scc (Tarjan) verbs in src/atlas.rs
   body: |
     `atlas path <from> <to> [--max-hops N]` — BFS shortest path; `--max-hops` bounds search depth; returns `None` when no path exists or hop limit exceeded. `atlas scc [--all]` — Tarjan SCC; by default only non-singleton SCCs are shown; `--all` includes singletons. Both implemented as `run_path`/`run_scc` in `src/atlas.rs`; resolve component refs via `resolve_ref` and delegate to `build_directed_component_graph`. Algorithms live on `DirectedGraph<N>` as `shortest_path` (BFS, parent-map reconstruction) and `strongly_connected_components` (recursive Tarjan, sorted within-SCC and across SCCs for determinism). See: `build_directed_component_graph projects Catalog into DirectedGraph<String>`.
+- id: create-post-hoc-verification-checks-intents-yaml-emptiness
+  title: create post-hoc verification checks intents.yaml emptiness
+  body: |
+    `create` post-hoc verification in `src/create.rs` asserts `intents.yaml` is non-empty after the create-plan LLM spawn. An empty `intents.yaml` signals the session failed to anchor a plan intent. Backlog-emptiness was the v1 signal; `intents.yaml`-emptiness is correct under the v2 intent-anchored model.
