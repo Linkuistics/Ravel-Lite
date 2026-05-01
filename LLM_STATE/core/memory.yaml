@@ -845,3 +845,11 @@ entries:
   title: create post-hoc verification checks intents.yaml emptiness
   body: |
     `create` post-hoc verification in `src/create.rs` asserts `intents.yaml` is non-empty after the create-plan LLM spawn. An empty `intents.yaml` signals the session failed to anchor a plan intent. Backlog-emptiness was the v1 signal; `intents.yaml`-emptiness is correct under the v2 intent-anchored model.
+- id: plancontext-project-dir-is-a-v1-coloured-fudge-in-v2-create
+  title: PlanContext.project_dir is a v1-coloured fudge in v2 create
+  body: |
+    `compose_create_prompt` populates both `project_dir` and `config_root` as `context_root` because v2 plans have no per-project root. The current `PlanContext` shape is v1-coloured: `project_dir` is a required field that has no clean meaning in a v2 create context.
+
+    **Why:** v2 `ravel-lite create` operates on `<context>/plans/<plan>/` with no per-project dir; forcing a value into `project_dir` is a fudge to satisfy the struct.
+
+    **How to apply:** When the v2 phase cycle lands, revisit `PlanContext` in `src/prompt.rs` — either split into `CreateContext` + `CycleContext`, or make `project_dir: Option<String>`. Do not propagate the fudge into new v2 code paths.
