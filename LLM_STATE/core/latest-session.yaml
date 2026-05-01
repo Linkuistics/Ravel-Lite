@@ -1,14 +1,13 @@
-id: session-110
-timestamp: 2026-05-01T05:16:40Z
+id: session-111
+timestamp: 2026-05-01T06:10:41Z
 phase: work
 body: |
-  ### Session 110 (2026-05-01T05:16:40Z) — Add targets.yaml data layer and CRUD verbs
+  ### Session 111 (2026-05-01T06:10:41Z) — Implement git worktree mount for targets
 
-  - Implemented the `targets.yaml` runtime-state module as the data layer for architecture-next's per-repo plan branches and dynamic worktree mounts.
-  - New `src/state/targets/` module (4-file pattern: `schema.rs`, `yaml_io.rs`, `verbs.rs`, `mod.rs`) matching the established pattern from `intents`, `backlog`, and `memory`. `Target` schema captures `repo_slug`, `component_id`, `working_root`, `branch`, and `path_segments`. `TargetsFile` wraps with `schema_version = 1`.
-  - `yaml_io.rs` uses the "missing = empty" policy (same as `findings`) rather than "missing = error" (like `intents`) because `targets.yaml` is born at first worktree mount, not at plan creation.
-  - `verbs.rs` implements `run_list`, `run_show`, `run_add`, `run_remove`; identity is the `(repo_slug, component_id)` pair addressed via `<repo>:<component>` notation. `run_add` rejects duplicates and empty required fields; `run_remove` errors on absent targets.
-  - CLI wired in `src/main.rs`: `StateCommands::Targets` + `TargetsCommands` enum + `dispatch_targets` + `parse_targets_format`. `TARGETS_FILENAME` constant added to `src/state/filenames.rs`.
-  - 21 new tests covering schema round-trip, yaml_io missing-file policy, atomic rename, reference parsing, and all verb error paths. 808 total tests pass; clippy clean.
-  - Task marked blocked (not done): the data layer landed; worktree mounting (`git worktree add`, branch creation, default-branch detection) and `target-requests.yaml` consumption remain open and should be split into focused follow-up tasks in the next triage.
-  - No accidental edits found; all changed files are intentional.
+  - Implemented `ravel-lite targets mount <plan-dir> <repo>:<component>` end-to-end.
+  - Created `src/state/targets/mount.rs` (~250 lines) with the `mount_target` function: resolves the repo slug against `repos.yaml`, detects the default branch starting point via `git symbolic-ref --short refs/remotes/origin/HEAD` (falls back to `HEAD` for fixture repos without a remote), creates the worktree via `git worktree add -b ravel-lite/<plan>/main`, reads component `path_segments` from `.atlas/components.yaml`, and persists a `Target` row to `targets.yaml`.
+  - Idempotency: a second mount with the same `(repo, component)` pair returns the existing row unchanged; a second component in the same repo reuses the worktree without calling `git worktree add` again.
+  - Wired the subcommand into `src/main.rs`: `TargetsCommands::Mount` dispatches to `mount_target`; extracted `parse_target_reference` helper to split the `<repo>:<component>` format with both-parts-non-empty validation.
+  - Added `.gitignore` scaffolding to `src/create.rs`: `scaffold_plan_dir` now writes a `.gitignore` that excludes `.worktrees/` so worktree directories are never accidentally committed.
+  - Tests cover: unknown repo slug, no `local_path`, two components sharing one worktree, idempotent remount, and the full happy path (worktree on correct branch + `targets.yaml` row persisted).
+  - What this suggests next: `drain-target-requests-yaml-at-phase-boundaries` is now unblocked (it depends on this task); `wire-mounted-worktrees-into-claude-pi-add-dir` is also unblocked.

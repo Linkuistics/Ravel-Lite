@@ -142,12 +142,13 @@ pub fn scaffold_plan_dir(abs_plan_dir: &Path) -> Result<()> {
         )
     })?;
 
-    let writes: [(&str, &[u8]); 5] = [
+    let writes: [(&str, &[u8]); 6] = [
         (PHASE_FILENAME, b"work\n"),
         (BACKLOG_FILENAME, b"schema_version: 1\nitems: []\n"),
         (INTENTS_FILENAME, b"schema_version: 1\nitems: []\n"),
         (MEMORY_FILENAME, b"schema_version: 1\nitems: []\n"),
         (DREAM_WORD_COUNT_FILENAME, b"0"),
+        (".gitignore", b".worktrees/\n"),
     ];
     for (name, bytes) in writes {
         let path = abs_plan_dir.join(name);
@@ -300,6 +301,22 @@ mod tests {
             "schema_version: 1\nitems: []\n"
         );
         assert_eq!(fs::read_to_string(plan.join(DREAM_WORD_COUNT_FILENAME)).unwrap(), "0");
+    }
+
+    #[test]
+    fn scaffold_plan_dir_writes_gitignore_excluding_worktrees() {
+        // architecture-next §Layout calls for `.worktrees/` to be
+        // gitignored within the plan directory so per-cycle worktree
+        // mounts never get accidentally committed.
+        let tmp = TempDir::new().unwrap();
+        let plan = tmp.path().join("plan-name");
+        scaffold_plan_dir(&plan).unwrap();
+
+        let gitignore = fs::read_to_string(plan.join(".gitignore")).unwrap();
+        assert!(
+            gitignore.lines().any(|line| line.trim() == ".worktrees/"),
+            ".gitignore must list .worktrees/ as a directory pattern; got:\n{gitignore}"
+        );
     }
 
     #[test]

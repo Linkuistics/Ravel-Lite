@@ -127,7 +127,7 @@ tasks:
 - id: mount-targets-via-git-worktree-add
   title: Mount targets via git worktree add
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Implement the `mount-targets` operation that takes a `Target` request (repo_slug + component_id) and produces a mounted git worktree.
@@ -154,6 +154,105 @@ tasks:
     - `(repo_slug, component_id)` is the mount identity; the `ravel-lite/<plan>/main` branch name is deterministic from plan name.
     - The "Missing = empty" read policy for `targets.yaml` means a pre-mount `run_list` is safe without an existence check.
     - Resolving multi-component-per-worktree: two components sharing a git root share one worktree; `run_add` already accepts two entries with the same `repo_slug`.
+  results: |+
+    ## What landed
+
+    Added `state::targets::mount::mount_target` (`src/state/targets/mount.rs`),
+    the git-side counterpart to the data-layer CRUD verbs that landed in the
+    prior cycle. Wired it as `ravel-lite state targets mount <plan_dir>
+    <repo>:<component> [--config <ctx>]` in `src/main.rs` and re-exported from
+    `src/state/targets/mod.rs`. Also extended `create::scaffold_plan_dir` to
+    write `<plan>/.gitignore` containing `.worktrees/` so the materialised
+    worktrees never get accidentally committed (architecture-next §Layout).
+
+    ## How it works
+
+    The function:
+
+    1. Resolves `repo_slug` against `<context>/repos.yaml` via
+       `repos::load_for_lookup`. Errors with a migration-style message
+       if the slug is unregistered or has no `local_path` (clone-on-demand
+       is deferred — see §Followups).
+    2. Derives the plan-namespaced branch `ravel-lite/<plan-name>/main`
+       from `plan_dir.file_name()`.
+    3. If `<plan>/.worktrees/<repo_slug>/` already exists, verifies its
+       HEAD branch matches; otherwise shells out
+       `git worktree add -b <branch> <path> <starting-point>`. Starting
+       point is `origin/HEAD` when set, else `HEAD` — the fallback makes
+       fresh `git init` test fixtures work without remote setup.
+    4. Reads the source repo's `.atlas/components.yaml` via
+       `atlas_index::load_or_default_components`, looks up the component,
+       and converts its `Vec<PathSegment>` into `Target.path_segments:
+       Vec<String>` by `to_string_lossy()` per segment.
+    5. Persists the row via `write_targets` after a `find_target`
+       short-circuit so a repeat mount with the same `(repo, component)`
+       pair is a no-op.
+
+    ## Why shell-out, not git2
+
+    The codebase already uses `std::process::Command` for every git
+    operation (see `src/git.rs::apply_commits_spec` etc.). Following
+    precedent keeps the binary lean, matches the rest of the style, and
+    sidesteps git2's libgit2 link footprint. The task description flagged
+    this trade-off explicitly; the answer was settled by existing code.
+
+    ## Tests
+
+    Five hermetic tests in `mount.rs`, plus one for the gitignore
+    extension in `create.rs`:
+
+    - `mount_target_creates_worktree_and_writes_targets_yaml_row` — happy
+      path with a real `tempfile::TempDir` + `git init` fixture.
+    - `mount_target_is_idempotent_on_repeat_with_same_args` — the second
+      call returns the existing row, exactly one `targets.yaml` row.
+    - `mount_target_attaches_second_component_to_existing_worktree` —
+      multi-component-per-repo: shared worktree, one row per component.
+    - `mount_target_errors_when_repo_slug_unknown` — actionable error
+      citing the slug and showing the `repo add` migration command.
+    - `mount_target_errors_when_repo_has_no_local_path` — actionable
+      error mentioning `local_path`.
+    - `scaffold_plan_dir_writes_gitignore_excluding_worktrees` — verifies
+      the new scaffolded `.gitignore` contains `.worktrees/`.
+
+    Each test was verified against an intentional code break to confirm
+    it actually exercises the path it claims to test.
+
+    Full suite: 814 lib tests + integration tests pass; `cargo clippy
+    --all-targets --workspace -- -D warnings` clean. End-to-end CLI smoke
+    test confirms the `state targets mount` verb composes correctly with
+    `repo add`, materialises a real worktree, and is idempotent on repeat.
+
+    ## What this unblocks
+
+    This is the gate for six downstream `architecture-next` tasks:
+
+    - `drain-target-requests-yaml-at-phase-boundaries` — needs the
+      `mount_target` primitive to actually mount what gets drained.
+    - `wire-mounted-worktrees-into-claude-pi-add-dir` — needs the
+      worktree paths written into `targets.yaml` to compose `--add-dir`.
+    - `sync-ravel-lite-sync-plan-from-other-plan` — depends on mounting
+      semantics.
+    - `phase-cycle-triage-first-with-focus-objections-and-commits-yaml`
+      (transitively).
+    - `plan-finish-pr-merge-with-memory-promotion-and-archive`
+      (transitively).
+    - `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` (transitively).
+
+    ## Followups
+
+    - **Clone-on-demand**: when `local_path` is absent, the design calls
+      for cloning into `<context>/.cache/repos/<slug>/`. Mount currently
+      errors clearly. A small follow-up task should land this once a real
+      use case lands.
+    - **Worktree branch-mismatch recovery**: if `<plan>/.worktrees/<repo>/`
+      exists on a different branch than expected, mount errors and asks
+      the user to remove it manually. A future ergonomic improvement
+      could detect a clean tree and offer to re-create.
+    - **Atlas freshness coupling**: mount reads `.atlas/components.yaml`
+      unconditionally. A stale catalog produces stale `path_segments`.
+      Worth considering whether mount should call `atlas freshness` and
+      warn when the catalog is older than some threshold.
+
 - id: drain-target-requests-yaml-at-phase-boundaries
   title: Drain target-requests.yaml at phase boundaries
   category: architecture-next

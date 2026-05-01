@@ -910,6 +910,20 @@ enum TargetsCommands {
         /// `<repo_slug>:<component_id>` reference.
         reference: String,
     },
+    /// Mount a target as a git worktree under `<plan>/.worktrees/`.
+    /// Resolves `<repo>` against the context's `repos.yaml`, creates
+    /// the worktree on the plan-namespaced branch
+    /// `ravel-lite/<plan>/main`, and writes the resulting Target row
+    /// into `<plan>/targets.yaml`. Idempotent.
+    Mount {
+        plan_dir: PathBuf,
+        /// `<repo_slug>:<component_id>` reference.
+        reference: String,
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1882,6 +1896,35 @@ fn dispatch_targets(command: TargetsCommands) -> Result<()> {
         TargetsCommands::Remove { plan_dir, reference } => {
             targets::run_remove(&plan_dir, &reference)
         }
+        TargetsCommands::Mount {
+            plan_dir,
+            reference,
+            config,
+        } => {
+            let context_root = resolve_config_dir(config)?;
+            let (repo_slug, component_id) = parse_target_reference(&reference)?;
+            let mounted = targets::mount_target(&plan_dir, &context_root, &repo_slug, &component_id)?;
+            println!(
+                "mounted {}:{} at {}/{} on {}",
+                mounted.repo_slug,
+                mounted.component_id,
+                plan_dir.display(),
+                mounted.working_root,
+                mounted.branch
+            );
+            Ok(())
+        }
+    }
+}
+
+fn parse_target_reference(reference: &str) -> Result<(String, String)> {
+    match reference.split_once(':') {
+        Some((repo, component)) if !repo.is_empty() && !component.is_empty() => {
+            Ok((repo.to_string(), component.to_string()))
+        }
+        _ => anyhow::bail!(
+            "target reference {reference:?} must be `<repo_slug>:<component_id>` with both parts non-empty"
+        ),
     }
 }
 
