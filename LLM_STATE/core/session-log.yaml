@@ -1627,3 +1627,17 @@ sessions:
     - 27 new unit tests pass; `cargo test` green at 841 total; clippy `-D warnings` clean.
     - Constraint compliance confirmed: no LLM_STATE wire shape changes, no binary install, all tests hermetic.
     - What this suggests next: `ravel-lite-create-seeds-target-requests-yaml` can now wire `--target` flags directly to `target_requests::write_target_requests`; the schema and I/O layer are stable.
+- id: session-113
+  timestamp: 2026-05-01T08:34:45Z
+  phase: work
+  body: |
+    ### Session 113 (2026-05-01T08:34:45Z) — Wire mounted worktrees into claude agent --add-dir
+
+    - Implemented `mounted_worktree_add_dirs(plan_dir, cwd) -> Result<Vec<String>>` in `src/state/targets/yaml_io.rs`. Reads `targets.yaml`, resolves each `working_root` against `plan_dir` to an absolute path, and filters out paths that are already descendants of `cwd` to avoid redundant flags and a claude trust-grant modal regression.
+    - Re-exported the helper from `src/state/targets/mod.rs`.
+    - Updated `build_headless_args` in `src/agent/claude_code.rs` to accept `&PlanContext` (instead of `plan_dir: &str`) and return `Result<Vec<String>>`, then injects `--add-dir <path>` for each path returned by the helper.
+    - Updated `invoke_interactive` in `src/agent/claude_code.rs` similarly.
+    - Added 4 unit tests in `yaml_io.rs` (missing targets.yaml, cwd-descendant skip, out-of-cwd emission, one path per target) and 3 argv-level tests in `claude_code.rs`.
+    - Pi was deliberately not touched: `pi` has no `--add-dir` flag and no filesystem permission model, so worktree paths are already reachable without a grant.
+    - All 848 lib tests pass; clippy clean.
+    - The cwd-descendant filter makes the implementation forward-compatible: v1 layout (plan_dir under project_dir) emits no extra flags; v2 layout (plan_dir outside project_dir) emits real grants — no flag-day cutover required.

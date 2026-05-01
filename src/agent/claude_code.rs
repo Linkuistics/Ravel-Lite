@@ -38,7 +38,12 @@ impl ClaudeCodeAgent {
             == Some(true)
     }
 
-    fn build_headless_args(&self, prompt: &str, phase: LlmPhase, plan_dir: &str) -> Vec<String> {
+    fn build_headless_args(
+        &self,
+        prompt: &str,
+        phase: LlmPhase,
+        ctx: &PlanContext,
+    ) -> Result<Vec<String>> {
         let mut args = vec![
             "--strict-mcp-config".to_string(),
             "-p".to_string(),
@@ -47,8 +52,16 @@ impl ClaudeCodeAgent {
             "--output-format".to_string(),
             "stream-json".to_string(),
             "--add-dir".to_string(),
-            plan_dir.to_string(),
+            ctx.plan_dir.clone(),
         ];
+
+        for path in crate::state::targets::mounted_worktree_add_dirs(
+            Path::new(&ctx.plan_dir),
+            Path::new(&ctx.project_dir),
+        )? {
+            args.push("--add-dir".to_string());
+            args.push(path);
+        }
 
         if let Some(model) = self.config.models.get(phase.as_str()) {
             if !model.is_empty() {
@@ -67,7 +80,7 @@ impl ClaudeCodeAgent {
             ]);
         }
 
-        args
+        Ok(args)
     }
 }
 
@@ -178,7 +191,18 @@ impl Agent for ClaudeCodeAgent {
         // Claude already trusts its launch cwd, so the flag adds no
         // permission and on a fresh machine it can trigger an unseen
         // trust-grant modal that hangs the work phase after the banner.
+        // The same rule guards `mounted_worktree_add_dirs`: it filters
+        // out worktree paths that are descendants of cwd, emitting only
+        // those that genuinely need the grant.
         let mut args: Vec<String> = Vec::new();
+
+        for path in crate::state::targets::mounted_worktree_add_dirs(
+            Path::new(&ctx.plan_dir),
+            Path::new(&ctx.project_dir),
+        )? {
+            args.push("--add-dir".to_string());
+            args.push(path);
+        }
 
         if let Some(model) = self.config.models.get("work") {
             if !model.is_empty() {
@@ -236,7 +260,7 @@ impl Agent for ClaudeCodeAgent {
         agent_id: &str,
         tx: UISender,
     ) -> Result<()> {
-        let args = self.build_headless_args(prompt, phase, &ctx.plan_dir);
+        let args = self.build_headless_args(prompt, phase, ctx)?;
 
         if debug_log::is_enabled() {
             debug_log::log(
@@ -409,5 +433,138 @@ mod tests {
             panic!("expected Malformed");
         };
         assert_eq!(snippet, "this is not json");
+    }
+
+    use crate::state::targets::{
+        write_targets, Target, TargetsFile, TARGETS_SCHEMA_VERSION,
+    };
+    use tempfile::TempDir;
+
+    fn agent_for_test() -> ClaudeCodeAgent {
+        ClaudeCodeAgent::new(
+            AgentConfig {
+                models: HashMap::new(),
+                thinking: HashMap::new(),
+                params: HashMap::new(),
+                provider: None,
+            },
+            "/unused".to_string(),
+        )
+    }
+
+    fn ctx_for(plan_dir: &Path, project_dir: &Path) -> PlanContext {
+        PlanContext {
+            plan_dir: plan_dir.to_string_lossy().to_string(),
+            project_dir: project_dir.to_string_lossy().to_string(),
+            dev_root: "/unused".to_string(),
+            related_plans: String::new(),
+            config_root: "/unused".to_string(),
+        }
+    }
+
+    fn write_one_target(plan_dir: &Path, working_root: &str) {
+        let targets = TargetsFile {
+            schema_version: TARGETS_SCHEMA_VERSION,
+            targets: vec![Target {
+                repo_slug: "atlas".into(),
+                component_id: "atlas-ontology".into(),
+                working_root: working_root.into(),
+                branch: "ravel-lite/sample/main".into(),
+                path_segments: vec!["crates".into(), "atlas-ontology".into()],
+            }],
+        };
+        write_targets(plan_dir, &targets).unwrap();
+    }
+
+    /// V1 layout: plan_dir is under project_dir; worktrees under plan_dir
+    /// are reachable from cwd, so no extra `--add-dir` should appear.
+    #[test]
+    fn build_headless_args_skips_worktrees_inside_cwd() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path();
+        let plan = project.join("LLM_STATE/sample");
+        std::fs::create_dir_all(&plan).unwrap();
+        write_one_target(&plan, ".worktrees/atlas");
+
+        let agent = agent_for_test();
+        let ctx = ctx_for(&plan, project);
+        let args = agent.build_headless_args("p", LlmPhase::Work, &ctx).unwrap();
+
+        let add_dir_count = args.iter().filter(|a| *a == "--add-dir").count();
+        assert_eq!(
+            add_dir_count, 1,
+            "only the plan-dir --add-dir should be present; got: {args:?}"
+        );
+    }
+
+    /// V2 layout: plan_dir lives outside project_dir; worktrees need
+    /// explicit `--add-dir` to be reachable.
+    #[test]
+    fn build_headless_args_adds_worktrees_outside_cwd() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path().join("project");
+        let plan = tmp.path().join("context/plans/sample");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&plan).unwrap();
+        write_one_target(&plan, ".worktrees/atlas");
+
+        let agent = agent_for_test();
+        let ctx = ctx_for(&plan, &project);
+        let args = agent.build_headless_args("p", LlmPhase::Work, &ctx).unwrap();
+
+        let mounted_path = plan.join(".worktrees/atlas").to_string_lossy().to_string();
+        let mut iter = args.iter();
+        let mut found_mounted = false;
+        while let Some(a) = iter.next() {
+            if a == "--add-dir" {
+                if let Some(next) = iter.clone().next() {
+                    if next == &mounted_path {
+                        found_mounted = true;
+                        break;
+                    }
+                }
+            }
+        }
+        assert!(
+            found_mounted,
+            "expected `--add-dir {mounted_path}` in argv: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_headless_args_emits_add_dir_per_target() {
+        let tmp = TempDir::new().unwrap();
+        let project = tmp.path().join("project");
+        let plan = tmp.path().join("plan");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&plan).unwrap();
+
+        let targets = TargetsFile {
+            schema_version: TARGETS_SCHEMA_VERSION,
+            targets: vec![
+                Target {
+                    repo_slug: "atlas".into(),
+                    component_id: "a".into(),
+                    working_root: ".worktrees/atlas".into(),
+                    branch: "ravel-lite/p/main".into(),
+                    path_segments: vec![],
+                },
+                Target {
+                    repo_slug: "ravel".into(),
+                    component_id: "b".into(),
+                    working_root: ".worktrees/ravel".into(),
+                    branch: "ravel-lite/p/main".into(),
+                    path_segments: vec![],
+                },
+            ],
+        };
+        write_targets(&plan, &targets).unwrap();
+
+        let agent = agent_for_test();
+        let ctx = ctx_for(&plan, &project);
+        let args = agent.build_headless_args("p", LlmPhase::Work, &ctx).unwrap();
+        // One --add-dir for plan_dir + two for mounted worktrees.
+        let add_dir_count = args.iter().filter(|a| *a == "--add-dir").count();
+        assert_eq!(add_dir_count, 3, "argv: {args:?}");
     }
 }

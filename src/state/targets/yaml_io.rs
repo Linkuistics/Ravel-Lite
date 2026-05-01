@@ -48,6 +48,31 @@ pub fn write_targets(plan_dir: &Path, targets: &TargetsFile) -> Result<()> {
     atomic_write(&path, yaml.as_bytes())
 }
 
+/// Absolute filesystem paths of every mounted target's `working_root`
+/// that is NOT already a descendant of `cwd`. Intended to feed
+/// `--add-dir <path>` arguments to claude-code agent spawns.
+///
+/// The cwd-descendant filter avoids redundant flags: claude already
+/// trusts its launch cwd, so emitting `--add-dir` for a path inside cwd
+/// adds no permission and may trigger an unseen trust-grant modal that
+/// hangs the spawn (see the comment in
+/// `agent::claude_code::invoke_interactive`).
+pub fn mounted_worktree_add_dirs(plan_dir: &Path, cwd: &Path) -> Result<Vec<String>> {
+    let targets = read_targets(plan_dir)?;
+    let mut out = Vec::new();
+    for t in &targets.targets {
+        let abs = plan_dir.join(&t.working_root);
+        if abs.starts_with(cwd) {
+            continue;
+        }
+        let s = abs.to_str().with_context(|| {
+            format!("working_root path is not valid UTF-8: {}", abs.display())
+        })?;
+        out.push(s.to_string());
+    }
+    Ok(out)
+}
+
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
@@ -124,5 +149,80 @@ mod tests {
         assert!(final_path.exists(), "final file must be present after write");
         let tmp_path = tmp.path().join(format!(".{TARGETS_FILENAME}.tmp"));
         assert!(!tmp_path.exists(), "temp file must be renamed away after write");
+    }
+
+    #[test]
+    fn mounted_worktree_add_dirs_returns_empty_when_targets_yaml_absent() {
+        let tmp = TempDir::new().unwrap();
+        let cwd = tmp.path();
+        let dirs = mounted_worktree_add_dirs(tmp.path(), cwd).unwrap();
+        assert!(dirs.is_empty());
+    }
+
+    #[test]
+    fn mounted_worktree_add_dirs_skips_paths_inside_cwd() {
+        // V1 layout: plan_dir is a descendant of cwd (project_dir),
+        // worktrees live under plan_dir, so they are already reachable
+        // from cwd and emitting --add-dir for them would be redundant
+        // and could trigger an unseen claude trust-grant modal.
+        let tmp = TempDir::new().unwrap();
+        let cwd = tmp.path();
+        let plan_dir = cwd.join("LLM_STATE/sample-plan");
+        std::fs::create_dir_all(&plan_dir).unwrap();
+        let targets = TargetsFile {
+            schema_version: TARGETS_SCHEMA_VERSION,
+            targets: vec![sample_target()],
+        };
+        write_targets(&plan_dir, &targets).unwrap();
+
+        let dirs = mounted_worktree_add_dirs(&plan_dir, cwd).unwrap();
+        assert!(
+            dirs.is_empty(),
+            "worktrees under cwd must be filtered out; got {dirs:?}"
+        );
+    }
+
+    #[test]
+    fn mounted_worktree_add_dirs_returns_paths_outside_cwd() {
+        // V2 layout: plan_dir lives outside the agent's cwd, so worktree
+        // paths under plan_dir are not reachable without --add-dir.
+        let tmp = TempDir::new().unwrap();
+        let cwd = tmp.path().join("project");
+        let plan_dir = tmp.path().join("context/plans/sample-plan");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::create_dir_all(&plan_dir).unwrap();
+        let targets = TargetsFile {
+            schema_version: TARGETS_SCHEMA_VERSION,
+            targets: vec![sample_target()],
+        };
+        write_targets(&plan_dir, &targets).unwrap();
+
+        let dirs = mounted_worktree_add_dirs(&plan_dir, &cwd).unwrap();
+        let expected = plan_dir.join(".worktrees/atlas").to_string_lossy().to_string();
+        assert_eq!(dirs, vec![expected]);
+    }
+
+    #[test]
+    fn mounted_worktree_add_dirs_emits_one_path_per_target() {
+        let tmp = TempDir::new().unwrap();
+        let cwd = tmp.path().join("project");
+        let plan_dir = tmp.path().join("plan");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::create_dir_all(&plan_dir).unwrap();
+
+        let mut t2 = sample_target();
+        t2.repo_slug = "ravel".into();
+        t2.component_id = "ravel-core".into();
+        t2.working_root = ".worktrees/ravel".into();
+        let targets = TargetsFile {
+            schema_version: TARGETS_SCHEMA_VERSION,
+            targets: vec![sample_target(), t2],
+        };
+        write_targets(&plan_dir, &targets).unwrap();
+
+        let dirs = mounted_worktree_add_dirs(&plan_dir, &cwd).unwrap();
+        assert_eq!(dirs.len(), 2);
+        assert!(dirs[0].ends_with(".worktrees/atlas"));
+        assert!(dirs[1].ends_with(".worktrees/ravel"));
     }
 }
