@@ -85,16 +85,21 @@ rules from `fixed-memory/memory-style.md` exactly: assertion register
 (not narrative), one fact per entry, cross-reference over re-explanation,
 short subject-predicate headings, no session numbers or dates.
 
-**Authoring discipline (looking ahead).** New entries should ideally
-carry structured justifications when the claim is grounded in specific
-code: a `code-anchor` justification names the file path and the blob
-SHA at the moment the assertion was made, so the bounded check (step 1)
-can mechanically detect drift in future cycles. The current
-`state memory add` verb only accepts a body (a single rationale
-justification); structured-justification authoring is a follow-up
-backlog item. Until that lands, prefer rationale bodies that *name*
-the file path inline so a future curate pass can promote the entry to
-a code-anchored shape.
+**Authoring discipline.** When a claim is grounded in specific code,
+attach one or more `code-anchor` justifications so the bounded check
+(step 1) can mechanically detect drift in future cycles. Pass them via
+the repeatable `--code-anchor` flag on `state memory add`:
+
+```
+ravel-lite state memory add {{PLAN}} \
+  --title "..." --body-file <path> \
+  --code-anchor "component=<ref>,path=<rel-path>,sha=<blob-sha>[,lines=<a>-<b>]"
+```
+
+`sha` is the git blob SHA of `path` at the moment of authoring — compute
+it with `git hash-object <path>` before invoking the verb. `component`
+is a `ComponentRef` (`<repo>:<component-path>`); `lines` is optional.
+The flag is repeatable for entries grounded in multiple files.
 
 Prune aggressively. Memory should contain only what is currently true
 and useful, not a historical record. The session log is the safety

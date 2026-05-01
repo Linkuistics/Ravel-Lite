@@ -79,19 +79,25 @@ pub struct AddRequest {
     pub authored_at: Option<String>,
     pub authored_in: Option<String>,
     pub attribution: Option<String>,
+    /// Pre-parsed and validated `Justification::CodeAnchor` slots to attach
+    /// to the entry alongside the rationale body. Order is preserved.
+    pub code_anchors: Vec<Justification>,
 }
 
 pub fn run_add(plan_dir: &Path, req: &AddRequest) -> Result<()> {
     let mut memory = read_memory(plan_dir)?;
     let id = allocate_id(&req.title, memory.items.iter().map(|e| e.item.id.as_str()));
+    let mut justifications = Vec::with_capacity(1 + req.code_anchors.len());
+    justifications.push(Justification::Rationale {
+        text: ensure_trailing_newline(&req.body),
+    });
+    justifications.extend(req.code_anchors.iter().cloned());
     let entry = MemoryEntry {
         item: Item {
             id,
             kind: KindMarker::new(),
             claim: req.title.clone(),
-            justifications: vec![Justification::Rationale {
-                text: ensure_trailing_newline(&req.body),
-            }],
+            justifications,
             status: MemoryStatus::Active,
             supersedes: vec![],
             superseded_by: None,
@@ -103,6 +109,62 @@ pub fn run_add(plan_dir: &Path, req: &AddRequest) -> Result<()> {
     };
     memory.items.push(entry);
     write_memory(plan_dir, &memory)
+}
+
+/// Parse a `--code-anchor` flag value into a `Justification::CodeAnchor`.
+///
+/// Micro-syntax: `key=value` pairs separated by `,`. Required keys:
+/// `component`, `path`, `sha`. Optional key: `lines` (e.g. `10-25`).
+/// Field values cannot contain `=` or `,`.
+pub fn parse_code_anchor(input: &str) -> Result<Justification> {
+    let mut component: Option<String> = None;
+    let mut path: Option<String> = None;
+    let mut sha: Option<String> = None;
+    let mut lines: Option<String> = None;
+    for part in input.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let (key, value) = part
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!(
+                "invalid --code-anchor segment {part:?}: expected `key=value` (keys: component, path, lines, sha)"
+            ))?;
+        let key = key.trim();
+        let value = value.trim();
+        match key {
+            "component" => assign_anchor_field(&mut component, key, value)?,
+            "path" => assign_anchor_field(&mut path, key, value)?,
+            "sha" => assign_anchor_field(&mut sha, key, value)?,
+            "lines" => assign_anchor_field(&mut lines, key, value)?,
+            other => bail!(
+                "unknown --code-anchor key {other:?}; expected one of `component`, `path`, `lines`, `sha`"
+            ),
+        }
+    }
+    let component = component
+        .ok_or_else(|| anyhow::anyhow!("--code-anchor missing required `component=` field"))?;
+    let path = path.ok_or_else(|| anyhow::anyhow!("--code-anchor missing required `path=` field"))?;
+    let sha_at_assertion =
+        sha.ok_or_else(|| anyhow::anyhow!("--code-anchor missing required `sha=` field"))?;
+    Ok(Justification::CodeAnchor {
+        component,
+        path,
+        lines,
+        sha_at_assertion,
+    })
+}
+
+fn assign_anchor_field(slot: &mut Option<String>, key: &str, value: &str) -> Result<()> {
+    if value.is_empty() {
+        bail!("--code-anchor `{key}=` has an empty value");
+    }
+    if slot.is_some() {
+        bail!("--code-anchor key `{key}` appears more than once in the same flag");
+    }
+    *slot = Some(value.to_string());
+    Ok(())
 }
 
 pub fn run_init(plan_dir: &Path, seed: &MemoryFile) -> Result<()> {
@@ -305,6 +367,7 @@ mod tests {
             authored_at: Some("2026-04-29T00:00:00Z".into()),
             authored_in: Some("test".into()),
             attribution: None,
+            code_anchors: Vec::new(),
         }
     }
 
@@ -350,6 +413,130 @@ mod tests {
             Justification::Rationale { text } => assert_eq!(text, "Rationale text.\n"),
             other => panic!("expected Rationale justification, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_code_anchor_accepts_all_fields() {
+        let j = parse_code_anchor(
+            "component=atlas:atlas-core,path=src/lib.rs,lines=10-25,sha=abc123",
+        )
+        .unwrap();
+        match j {
+            Justification::CodeAnchor {
+                component,
+                path,
+                lines,
+                sha_at_assertion,
+            } => {
+                assert_eq!(component, "atlas:atlas-core");
+                assert_eq!(path, "src/lib.rs");
+                assert_eq!(lines.as_deref(), Some("10-25"));
+                assert_eq!(sha_at_assertion, "abc123");
+            }
+            other => panic!("expected CodeAnchor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_code_anchor_omits_optional_lines() {
+        let j = parse_code_anchor("component=foo:bar,path=x.rs,sha=deadbeef").unwrap();
+        match j {
+            Justification::CodeAnchor { lines, .. } => assert!(lines.is_none()),
+            other => panic!("expected CodeAnchor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_code_anchor_rejects_missing_required_field() {
+        let err = parse_code_anchor("component=foo:bar,path=x.rs").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("sha"), "error must cite the missing field: {msg}");
+    }
+
+    #[test]
+    fn parse_code_anchor_rejects_unknown_key() {
+        let err =
+            parse_code_anchor("component=foo:bar,path=x.rs,sha=abc,wat=nope").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("wat"), "error must cite the unknown key: {msg}");
+    }
+
+    #[test]
+    fn parse_code_anchor_rejects_segment_without_equals() {
+        let err = parse_code_anchor("component=foo:bar,bogus,sha=abc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("bogus"), "error must echo the bad segment: {msg}");
+    }
+
+    #[test]
+    fn parse_code_anchor_rejects_duplicate_key() {
+        let err = parse_code_anchor(
+            "component=a:b,component=c:d,path=x.rs,sha=abc",
+        )
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("more than once"), "error must explain duplicate: {msg}");
+    }
+
+    #[test]
+    fn parse_code_anchor_rejects_empty_value() {
+        let err = parse_code_anchor("component=,path=x.rs,sha=abc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("empty"), "error must cite empty value: {msg}");
+    }
+
+    #[test]
+    fn run_add_appends_single_code_anchor_after_rationale() {
+        let tmp = TempDir::new().unwrap();
+        write_memory(tmp.path(), &MemoryFile::default()).unwrap();
+
+        let mut req = add_request("Title", "Body.\n");
+        req.code_anchors = vec![parse_code_anchor(
+            "component=atlas:atlas-core,path=src/lib.rs,lines=1-10,sha=abc123",
+        )
+        .unwrap()];
+        run_add(tmp.path(), &req).unwrap();
+
+        let updated = read_memory(tmp.path()).unwrap();
+        let entry = updated.items.last().unwrap();
+        assert_eq!(entry.item.justifications.len(), 2);
+        assert!(matches!(entry.item.justifications[0], Justification::Rationale { .. }));
+        match &entry.item.justifications[1] {
+            Justification::CodeAnchor { component, path, lines, sha_at_assertion } => {
+                assert_eq!(component, "atlas:atlas-core");
+                assert_eq!(path, "src/lib.rs");
+                assert_eq!(lines.as_deref(), Some("1-10"));
+                assert_eq!(sha_at_assertion, "abc123");
+            }
+            other => panic!("expected CodeAnchor at slot 1, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_add_preserves_order_of_multiple_anchors() {
+        let tmp = TempDir::new().unwrap();
+        write_memory(tmp.path(), &MemoryFile::default()).unwrap();
+
+        let mut req = add_request("Title", "Body.\n");
+        req.code_anchors = vec![
+            parse_code_anchor("component=a:x,path=p1.rs,sha=sha1").unwrap(),
+            parse_code_anchor("component=a:x,path=p2.rs,sha=sha2").unwrap(),
+        ];
+        run_add(tmp.path(), &req).unwrap();
+
+        let updated = read_memory(tmp.path()).unwrap();
+        let entry = updated.items.last().unwrap();
+        assert_eq!(entry.item.justifications.len(), 3);
+        let paths: Vec<&str> = entry
+            .item
+            .justifications
+            .iter()
+            .filter_map(|j| match j {
+                Justification::CodeAnchor { path, .. } => Some(path.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paths, vec!["p1.rs", "p2.rs"]);
     }
 
     #[test]

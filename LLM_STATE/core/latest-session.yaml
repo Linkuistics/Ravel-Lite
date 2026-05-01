@@ -1,15 +1,14 @@
-id: session-114
-timestamp: 2026-05-01T08:59:06Z
+id: session-115
+timestamp: 2026-05-01T10:29:33Z
 phase: work
 body: |
-  ### Session 114 (2026-05-01T00:00:00Z) — Add state memory check-anchors and rewrite reflect prompt for v2
+  ### Session 115 (2026-05-01T10:29:33Z) — Add --code-anchor flag to state memory add
 
-  - Implemented `state memory check-anchors <plan> [--project-root <path>]` in `src/state/memory/check_anchors.rs` (~300 lines, 8 unit tests). The verb walks every active memory entry's `CodeAnchor` justifications and emits a typed `SuspectReport` YAML with `path-missing | sha-mismatch` reasons per failing anchor. Defeated/superseded entries are skipped; multi-anchor entries get each anchor checked independently.
-  - Wired the new verb into `src/main.rs` (`MemoryCommands::CheckAnchors`) and re-exported its public types from `src/state/memory/mod.rs`.
-  - Rewrote `defaults/phases/reflect.md` to give the reflect phase its v2 responsibilities: (1) bounded TMS check via `check-anchors` with explicit `still-true | refined | defeated` decision protocol; (2) distil session learnings with a TMS-correct contradiction rule (defeat before replacing); (3) intent-trajectory check against active intents surfaced via `state intents list`; (4) unchanged hand-off mechanics.
-  - All 8 unit tests pass; clippy clean; end-to-end smoke against a synthetic plan correctly identifies a sha-mismatch suspect.
-  - Structured-justification authoring (`state memory add --code-anchor`) was intentionally deferred — the current verb only accepts a rationale body. The prompt steers LLM authors to name file paths inline so a future curate pass can promote entries to code-anchored shape.
-  - Bounded-K entry limit for `check-anchors` deferred; at LLM_STATE/core's scale the full active-entry walk is microseconds.
-  - Intent-trajectory analyser as Rust deferred; one or two real `[TRAJECTORY]` entries in anger are needed before the heuristics warrant a mechanical pre-pass.
-  - The new verb cannot run against `LLM_STATE/core/memory.yaml` until the v1→v2 migrator ships (v1 schema, no `schema_version` field) — expected per the `LLM_STATE-shape-frozen` constraint.
-  - What this suggests trying next: add `--code-anchor` support to `state memory add` so reflect can author structured justifications directly; then retroactively annotate high-value memory entries that name specific files/structs.
+  - Implemented the repeatable `--code-anchor` flag on `state memory add`, landing the CLI surface that the reflect prompt's structured-justification workaround was waiting on.
+  - Added `parse_code_anchor` parser in `src/state/memory/verbs.rs` handling the `key=value` micro-syntax (`component`, `path`, `sha`, `lines`), with typed errors citing the exact failure (missing required field, unknown key, duplicate key, empty value, segment without `=`).
+  - Extended `AddRequest` with `code_anchors: Vec<Justification>` — pre-parsed typed values at the CLI boundary, not raw strings. Rationale slot remains first for back-compat; code anchors appended in flag order.
+  - Re-exported `parse_code_anchor` from `src/state/memory/mod.rs` for future reuse (e.g. `state intents add`).
+  - Updated `defaults/phases/reflect.md` to replace the "name paths inline" workaround paragraph with a concrete `--code-anchor` invocation example.
+  - 9 new unit tests (parser happy paths, all error paths, `run_add` ordering). All 865 workspace tests pass; clippy clean.
+  - The wire shape is unchanged — `Justification::CodeAnchor` was already in the schema. No migrator needed.
+  - Next: the next reflect cycle that authors code-grounded claims should use `--code-anchor` directly to validate the ergonomics. `state memory set-body` does not yet support adding/replacing anchors on an existing entry — defer until workflow demands it.

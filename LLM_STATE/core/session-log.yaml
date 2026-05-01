@@ -1656,3 +1656,17 @@ sessions:
     - Intent-trajectory analyser as Rust deferred; one or two real `[TRAJECTORY]` entries in anger are needed before the heuristics warrant a mechanical pre-pass.
     - The new verb cannot run against `LLM_STATE/core/memory.yaml` until the v1→v2 migrator ships (v1 schema, no `schema_version` field) — expected per the `LLM_STATE-shape-frozen` constraint.
     - What this suggests trying next: add `--code-anchor` support to `state memory add` so reflect can author structured justifications directly; then retroactively annotate high-value memory entries that name specific files/structs.
+- id: session-115
+  timestamp: 2026-05-01T10:29:33Z
+  phase: work
+  body: |
+    ### Session 115 (2026-05-01T10:29:33Z) — Add --code-anchor flag to state memory add
+
+    - Implemented the repeatable `--code-anchor` flag on `state memory add`, landing the CLI surface that the reflect prompt's structured-justification workaround was waiting on.
+    - Added `parse_code_anchor` parser in `src/state/memory/verbs.rs` handling the `key=value` micro-syntax (`component`, `path`, `sha`, `lines`), with typed errors citing the exact failure (missing required field, unknown key, duplicate key, empty value, segment without `=`).
+    - Extended `AddRequest` with `code_anchors: Vec<Justification>` — pre-parsed typed values at the CLI boundary, not raw strings. Rationale slot remains first for back-compat; code anchors appended in flag order.
+    - Re-exported `parse_code_anchor` from `src/state/memory/mod.rs` for future reuse (e.g. `state intents add`).
+    - Updated `defaults/phases/reflect.md` to replace the "name paths inline" workaround paragraph with a concrete `--code-anchor` invocation example.
+    - 9 new unit tests (parser happy paths, all error paths, `run_add` ordering). All 865 workspace tests pass; clippy clean.
+    - The wire shape is unchanged — `Justification::CodeAnchor` was already in the schema. No migrator needed.
+    - Next: the next reflect cycle that authors code-grounded claims should use `--code-anchor` directly to validate the ergonomics. `state memory set-body` does not yet support adding/replacing anchors on an existing entry — defer until workflow demands it.

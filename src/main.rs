@@ -787,6 +787,11 @@ enum MemoryCommands {
         /// Component this entry should attach to at plan-finish promotion (`<repo_slug>:<component_id>`).
         #[arg(long)]
         attribution: Option<String>,
+        /// Attach a `code-anchor` justification (repeatable). Format:
+        /// `component=<ref>,path=<rel-path>,sha=<blob-sha>[,lines=<start>-<end>]`.
+        /// `sha` is the git blob SHA at assertion time (`git hash-object <path>`).
+        #[arg(long = "code-anchor")]
+        code_anchor: Vec<String>,
     },
     /// One-shot bulk initialisation for create-plan. Refuses a non-empty memory.
     Init {
@@ -1849,14 +1854,20 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
             authored_at,
             authored_in,
             attribution,
+            code_anchor,
         } => {
             let body = resolve_body(body_file, body)?;
+            let code_anchors = code_anchor
+                .iter()
+                .map(|raw| memory::parse_code_anchor(raw))
+                .collect::<Result<Vec<_>>>()?;
             let req = memory::AddRequest {
                 title,
                 body,
                 authored_at,
                 authored_in,
                 attribution,
+                code_anchors,
             };
             memory::run_add(&plan_dir, &req)
         }
