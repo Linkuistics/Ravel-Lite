@@ -898,9 +898,9 @@ entries:
   body: |
     `defaults/phases/reflect.md` v2 adds two steps before distilling session learnings: (1) bounded TMS check via `state memory check-anchors` with `still-true | refined | defeated` decision protocol; (2) intent-trajectory check via `state intents list`. Hand-off mechanics unchanged. The check-anchors step is a no-op against LLM_STATE/core until v1→v2 migrator ships. See: `check-anchors walks CodeAnchor justifications; emits SuspectReport YAML`.
 - id: state-memory-add-code-anchor-not-yet-implemented
-  title: state memory add --code-anchor not yet implemented
+  title: state memory add --code-anchor implemented; set-body anchor editing deferred
   body: |
-    `state memory add` accepts only `--body`/`--body-file` for rationale; `--code-anchor` authoring is not yet implemented. Phase prompts steer LLM authors to name file paths inline so a future curate pass can promote entries to code-anchored shape.
+    `state memory add` accepts `--code-anchor key=value` (repeatable). Keys: `component`, `path`, `sha`, `lines`; all fields required except `lines`. `AddRequest.code_anchors: Vec<Justification>` carries pre-parsed typed values; `parse_code_anchor` lives in `src/state/memory/verbs.rs`, re-exported from `src/state/memory/mod.rs` for future reuse (e.g. `state intents add`). `defaults/phases/reflect.md` updated to use `--code-anchor` directly — the "name paths inline" workaround paragraph is removed. `state memory set-body` does not support anchor add/replace; defer until a real edit workflow demands it.
 - id: check-anchors-bounded-scoping-defer-limit-k-touched-since-until-entry-count-warrants-it
   title: 'check-anchors bounded scoping: defer --limit-k / --touched-since until entry count warrants it'
   body: |
