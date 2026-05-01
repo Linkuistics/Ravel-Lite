@@ -847,3 +847,11 @@ entries:
   title: build_directed_component_graph projects Catalog into DirectedGraph<String>
   body: |
     `build_directed_component_graph` in `src/atlas.rs` projects a loaded `Catalog` through `EdgeGraph` into `DirectedGraph<String>` keyed on bare component IDs. Symmetric edge kinds (`co-implements`, `communicates-with`) are intentionally excluded: bidirectional projection of symmetric edges makes every peer-pair a 2-node SCC, drowning real circular-dependency findings. All catalog components are added as nodes even without incident edges — mirrors the `EdgeGraph::roots` universe pattern.
+- id: build-directed-component-graph-excludes-symmetric-edges-by-design
+  title: build_directed_component_graph excludes symmetric edges by design
+  body: |
+    `build_directed_component_graph` excludes symmetric edge kinds (`co-implements`, `communicates-with`) from the directed graph projection. Only asymmetric edges (e.g. `depends-on`, `implements`) are projected as directed edges.
+
+    Rationale: `atlas scc`'s motivating use case is circular dependency detection. Projecting symmetric edges as both directions would turn every peer relationship into a 2-node SCC, drowning real circular-dependency findings. Peer relationships remain accessible via `atlas neighbors` (undirected BFS over the existing flat `EdgeGraph`).
+
+    Decision documented in the `build_directed_component_graph` docstring in `src/atlas/mod.rs` (or equivalent). Applies to any future graph algorithm verb that builds on `DirectedGraph<String>`.
