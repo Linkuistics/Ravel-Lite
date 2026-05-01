@@ -602,9 +602,9 @@ entries:
   body: |
     `src/config.rs::select_config_dir` normalises all candidate paths with `candidate.components().collect::<PathBuf>()` before any downstream use. This is the single normalisation point; trailing slashes on user-supplied config dirs do not propagate. Regression test: `trailing_slash_in_candidate_is_normalised_away`.
 - id: interactive-work-phase-spawn-omits-add-dir-for-plan-dir
-  title: Interactive work-phase spawn omits --add-dir for plan dir
+  title: Claude spawns inject --add-dir for mounted worktrees outside cwd
   body: |
-    `invoke_interactive` in `src/agent/claude_code.rs` does not pass `--add-dir <plan_dir>`. The plan dir is always a descendant of the cwd claude launches in; the flag is redundant and on a fresh machine triggers a trust-grant modal that hangs the work phase. See: `Discover stage spawns need --allowed-tools and --add-dir` for stage spawns, which do require `--add-dir`.
+    `invoke_interactive` and `build_headless_args` in `src/agent/claude_code.rs` inject `--add-dir <path>` for each mounted worktree path not already under `cwd`, via `mounted_worktree_add_dirs(plan_dir, cwd)` in `src/state/targets/yaml_io.rs`. Plan dir itself is never emitted: in v1 layout it is always a descendant of cwd. The cwd-descendant filter makes v1/v2 layout transparent with no flag-day cutover: v1 emits no extra flags; v2 (plan dir outside project dir) emits real grants. An unnecessary `--add-dir` on a fresh machine triggers a trust-grant modal that hangs the spawn. Pi has no `--add-dir` equivalent and no filesystem permission model; worktree paths are reachable without grants. See: `Discover stage spawns need --allowed-tools and --add-dir` for headless stage spawns.
 - id: v1-v2-config-migration-wired-into-config-lua-resolve
   title: v1→v2 config migration wired into config_lua::resolve
   body: |
