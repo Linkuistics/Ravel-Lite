@@ -554,6 +554,15 @@ enum StateCommands {
         #[command(subcommand)]
         command: FocusObjectionsCommands,
     },
+    /// commits.yaml read-only verbs. The file is the one-shot
+    /// work-commit spec authored by analyse-work and consumed by
+    /// `git-commit-work`; these verbs let an operator inspect it
+    /// before or after the consume cycle. No `set` / `add` / `remove`
+    /// because the LLM phase is the sole writer.
+    Commits {
+        #[command(subcommand)]
+        command: CommitsCommands,
+    },
     /// Single-plan conversion of legacy .md files into typed .yaml
     /// siblings. Covers backlog.md, memory.md, session-log.md and
     /// latest-session.md (each written when present).
@@ -1010,6 +1019,27 @@ enum TargetRequestsCommands {
         /// the default location at <dirs::config_dir()>/ravel-lite/.
         #[arg(long)]
         config: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum CommitsCommands {
+    /// Emit the whole commits.yaml. Missing file renders as an empty
+    /// list at the current schema version.
+    List {
+        plan_dir: PathBuf,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Emit a single commit entry by 1-based position. Positional
+    /// addressing is used because commit specs have no stable identity
+    /// field — the message is free-form prose, not a key.
+    Show {
+        plan_dir: PathBuf,
+        /// 1-based index into the `commits` list.
+        index: usize,
+        #[arg(long, default_value = "yaml")]
+        format: String,
     },
 }
 
@@ -1627,6 +1657,7 @@ async fn dispatch_state(command: StateCommands) -> Result<()> {
         StateCommands::TargetRequests { command } => dispatch_target_requests(command),
         StateCommands::ThisCycleFocus { command } => dispatch_this_cycle_focus(command),
         StateCommands::FocusObjections { command } => dispatch_focus_objections(command),
+        StateCommands::Commits { command } => dispatch_commits(command),
         StateCommands::Migrate {
             plan_dir,
             dry_run,
@@ -2132,6 +2163,28 @@ fn dispatch_target_requests(command: TargetRequestsCommands) -> Result<()> {
             let mounted = target_requests::drain_target_requests(&plan_dir, &context_root)?;
             println!("drained {mounted} request(s) from {}/target-requests.yaml", plan_dir.display());
             Ok(())
+        }
+    }
+}
+
+fn parse_commits_format(
+    input: &str,
+) -> Result<ravel_lite::state::commits::OutputFormat> {
+    ravel_lite::state::commits::OutputFormat::parse(input)
+        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
+}
+
+fn dispatch_commits(command: CommitsCommands) -> Result<()> {
+    use ravel_lite::state::commits;
+
+    match command {
+        CommitsCommands::List { plan_dir, format } => {
+            let fmt = parse_commits_format(&format)?;
+            commits::run_list(&plan_dir, fmt)
+        }
+        CommitsCommands::Show { plan_dir, index, format } => {
+            let fmt = parse_commits_format(&format)?;
+            commits::run_show(&plan_dir, index, fmt)
         }
     }
 }

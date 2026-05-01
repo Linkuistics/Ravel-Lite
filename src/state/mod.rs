@@ -3,6 +3,9 @@
 //! Submodules:
 //! - `phase` — `set-phase` (existing)
 //! - `backlog` — typed backlog.yaml + CRUD verbs (R1)
+//! - `commits` — typed commits.yaml scratch spec used by
+//!   `git-commit-work`; read-only CLI verbs plus the data primitives
+//!   `apply_commits_spec` consumes
 //! - `intents` — typed intents.yaml + minimal CRUD verbs; canonical
 //!   intent source under the architecture-next plan KG
 //! - `memory` — typed memory.yaml + per-entry CRUD verbs (R2)
@@ -23,6 +26,7 @@
 //!   (backlog + memory + session-log/latest-session)
 
 pub mod backlog;
+pub mod commits;
 pub mod discover_proposals;
 pub mod filenames;
 pub mod findings;

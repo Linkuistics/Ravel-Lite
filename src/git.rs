@@ -4,33 +4,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
 
 #[cfg(test)]
 use crate::state::filenames::BACKLOG_FILENAME;
+#[cfg(test)]
 use crate::state::filenames::COMMITS_FILENAME;
+use crate::state::commits::{delete_commits, read_commits, schema::CommitsSpec};
 
 pub struct CommitResult {
     pub committed: bool,
     pub message: String,
-}
-
-/// One entry in `commits.yaml`: a pathspec list and the commit message that
-/// should be applied to those paths. Pathspec strings are passed verbatim to
-/// `git add`, so standard git pathspec features (globs like `src/**`,
-/// exclusions like `:!src/generated/`) all work.
-#[derive(Debug, Deserialize)]
-pub struct CommitSpec {
-    pub paths: Vec<String>,
-    pub message: String,
-}
-
-/// Shape of `commits.yaml` — an ordered list of `CommitSpec` entries that
-/// together partition the work-tree diff into logical commits. Analyse-work
-/// authors this file; `git-commit-work` applies it and removes it.
-#[derive(Debug, Deserialize)]
-pub struct CommitsSpec {
-    pub commits: Vec<CommitSpec>,
 }
 
 /// Stage the plan directory and commit it with the default message
@@ -92,37 +75,40 @@ pub fn git_commit_plan(plan_dir: &Path, plan_name: &str, phase_name: &str) -> Re
 /// message `run-plan: {phase_name} ({plan_name})`. This preserves
 /// backwards-compat with the single-commit-per-phase behaviour.
 ///
-/// Side effect: the spec file is removed after a successful apply so
-/// subsequent phases aren't re-reading stale instructions. The file is
-/// intentionally one-shot scratch.
+/// Side effect: the spec file is removed before git operations so a
+/// catch-all pathspec like `"."` can't sweep the spec into its own
+/// commit. The file is intentionally one-shot scratch.
+///
+/// The optional `target: ComponentRef` field on each `CommitSpec` is
+/// reserved for the two-stream-commits routing layer; this implementation
+/// ignores it and applies every entry to `project_dir`. Once the
+/// two-stream applier ships (architecture-next §Commits) it will route
+/// each entry by `target` and unrouted entries will keep falling back
+/// here.
 pub fn apply_commits_spec(
     project_dir: &Path,
     plan_dir: &Path,
     plan_name: &str,
     phase_name: &str,
 ) -> Result<Vec<CommitResult>> {
-    let spec_path = plan_dir.join(COMMITS_FILENAME);
     let default_message = format!("run-plan: {phase_name} ({plan_name})");
 
-    // Read and delete the spec BEFORE any git operations. If we left
-    // the file on disk, the catch-all pathspec `"."` in an entry would
-    // sweep it into the commit; subsequently removing it would leave a
-    // dirty "deleted" entry in the tree. Consuming the file up front
-    // sidesteps that ordering hazard and keeps the spec behaviour
-    // "one-shot" even on parse failure.
-    let spec: Option<CommitsSpec> = match fs::read_to_string(&spec_path) {
-        Ok(raw) => {
-            fs::remove_file(&spec_path).ok();
-            match serde_yaml::from_str::<CommitsSpec>(&raw) {
-                Ok(parsed) if !parsed.commits.is_empty() => Some(parsed),
-                _ => None,
-            }
-        }
-        Err(_) => None,
+    // Consume the spec BEFORE any git operations. If we left the file
+    // on disk, the catch-all pathspec `"."` in an entry would sweep it
+    // into the commit; subsequently removing it would leave a dirty
+    // "deleted" entry in the tree. Consuming up front sidesteps that
+    // ordering hazard and keeps the spec behaviour "one-shot" even on
+    // parse failure. Parse failures fall through to the catch-all
+    // commit rather than wedging the work-commit phase — see
+    // state::commits::yaml_io for the loud-failure CLI variant.
+    let parsed: Option<CommitsSpec> = match read_commits(plan_dir) {
+        Ok(spec) if !spec.commits.is_empty() => Some(spec),
+        _ => None,
     };
+    delete_commits(plan_dir).ok();
 
-    let results = match spec {
-        Some(parsed) => apply_parsed_spec(project_dir, &parsed)?,
+    let results = match parsed {
+        Some(spec) => apply_parsed_spec(project_dir, &spec)?,
         None => vec![commit_whole_subtree(project_dir, &default_message)?],
     };
 

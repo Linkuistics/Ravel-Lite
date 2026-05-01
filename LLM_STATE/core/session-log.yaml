@@ -1680,3 +1680,13 @@ sessions:
     - **What worked:** All three layers shipped for both modules. `this-cycle-focus` is a single-document surface (`set` / `show` / `clear`); `focus-objections` is a queue surface (`add-wrong-target` / `add-skip-item` / `add-premature` / `list` / `clear`). The kind vocabulary is closed via a tagged enum — a hallucinated `kind:` value fails at parse rather than landing on disk. 44 new unit tests; workspace suite (1028 total) passes; clippy clean.
     - **What this suggests next:** The remaining sub-bullets of the parent task are separable: cycle reorder, phase boundary mechanics, two-stream commits, recovery, phase-prompt updates, and the `commits.yaml` v2 shape. Triage should open these as discrete backlog entries and sequence them.
     - **Key learnings / discoveries:** The per-kind `add-*` verb pattern (from `state discover-proposals add-proposal`) is the right primitive for closed-vocabulary queues — clap rejects bad shapes before any YAML is written, enforcing the type constraint at the system boundary rather than inside the module.
+- id: session-117
+  timestamp: 2026-05-01T12:51:13Z
+  phase: work
+  body: |
+    ### Session 117 (2026-05-01T12:51:13Z) — Move commits.yaml schema to state module with optional ComponentRef target
+
+    - Implemented `src/state/commits/` module with the established `schema.rs` / `yaml_io.rs` / `verbs.rs` split, adding an optional typed `target: ComponentRef` field to `CommitSpec`. Moved inline struct definitions out of `src/git.rs` into the new module. Wired read-only `list` and `show` CLI verbs in `src/main.rs`.
+    - All 1048 workspace tests passed after the refactor; 20 new unit tests cover round-tripping, v1 wire-shape parsing, permissive schema_version handling, atomic write, idempotent delete, and CLI bounds checking.
+    - The `target` field is reserved for the two-stream-commits routing layer — `apply_commits_spec` currently ignores it. The `phase-boundary-mechanics-...` task is now unblocked on its `commits-yaml-v2` dependency. The `phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream` task (no-deps) is the other unblocked frontier item.
+    - Key pattern confirmed: `ComponentRef` already implements `Serialize`/`Deserialize` against its stringified form, so `Option<ComponentRef>` slots into the wire shape with no runtime `validate_*` helper — the typed-API memory principle validated in practice.
