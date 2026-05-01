@@ -535,6 +535,25 @@ enum StateCommands {
         #[command(subcommand)]
         command: TargetRequestsCommands,
     },
+    /// this-cycle-focus.yaml CRUD verbs. The focus record is the
+    /// triage→work hand-off naming the target component, the backlog
+    /// items to attempt, and any cycle-specific notes. Single-document
+    /// surface (`set` / `show` / `clear`) — there is at most one focus
+    /// at a time. See `docs/architecture-next.md` §TRIAGE step 6.
+    ThisCycleFocus {
+        #[command(subcommand)]
+        command: ThisCycleFocusCommands,
+    },
+    /// focus-objections.yaml CRUD verbs. The work phase appends
+    /// objections here when triage's focus is wrong; the next triage
+    /// drains the file. Per-kind add verbs (`add-wrong-target`,
+    /// `add-skip-item`, `add-premature`) keep the objection vocabulary
+    /// closed so a hallucinated kind fails at the CLI boundary rather
+    /// than landing on disk. See `docs/architecture-next.md` §WORK.
+    FocusObjections {
+        #[command(subcommand)]
+        command: FocusObjectionsCommands,
+    },
     /// Single-plan conversion of legacy .md files into typed .yaml
     /// siblings. Covers backlog.md, memory.md, session-log.md and
     /// latest-session.md (each written when present).
@@ -992,6 +1011,73 @@ enum TargetRequestsCommands {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+}
+
+#[derive(Subcommand)]
+enum ThisCycleFocusCommands {
+    /// Emit the current focus record, or error when no focus is set.
+    Show {
+        plan_dir: PathBuf,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Write the focus record, replacing any prior content. `--target`
+    /// is a `<repo_slug>:<component_id>` ComponentRef. `--item` is a
+    /// backlog item id; pass it once per item to attempt this cycle.
+    /// `--notes` is free-form prose surfaced in the work-phase prompt.
+    Set {
+        plan_dir: PathBuf,
+        /// `<repo_slug>:<component_id>` reference for the focus target.
+        #[arg(long)]
+        target: String,
+        /// Backlog item id. Repeat to add more (`--item t-001 --item t-005`).
+        #[arg(long = "item")]
+        items: Vec<String>,
+        /// Free-form notes surfaced verbatim into the work-phase prompt.
+        #[arg(long)]
+        notes: Option<String>,
+    },
+    /// Remove the focus file. Idempotent.
+    Clear { plan_dir: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum FocusObjectionsCommands {
+    /// Emit the queue of objections (empty queue is valid output).
+    List {
+        plan_dir: PathBuf,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Append a `wrong-target` objection.
+    AddWrongTarget {
+        plan_dir: PathBuf,
+        /// `<repo_slug>:<component_id>` reference proposing a replacement target.
+        #[arg(long)]
+        suggested_target: String,
+        /// Free-form explanation surfaced verbatim into the next triage prompt.
+        #[arg(long)]
+        reasoning: String,
+    },
+    /// Append a `skip-item` objection.
+    AddSkipItem {
+        plan_dir: PathBuf,
+        /// Backlog item id that should be skipped this cycle.
+        #[arg(long)]
+        item_id: String,
+        /// Free-form explanation surfaced verbatim into the next triage prompt.
+        #[arg(long)]
+        reasoning: String,
+    },
+    /// Append a `premature` objection (the whole focus is premature).
+    AddPremature {
+        plan_dir: PathBuf,
+        /// Free-form explanation surfaced verbatim into the next triage prompt.
+        #[arg(long)]
+        reasoning: String,
+    },
+    /// Drain the queue (delete the file). Idempotent.
+    Clear { plan_dir: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -1539,6 +1625,8 @@ async fn dispatch_state(command: StateCommands) -> Result<()> {
         StateCommands::SessionLog { command } => dispatch_session_log(command),
         StateCommands::Targets { command } => dispatch_targets(command),
         StateCommands::TargetRequests { command } => dispatch_target_requests(command),
+        StateCommands::ThisCycleFocus { command } => dispatch_this_cycle_focus(command),
+        StateCommands::FocusObjections { command } => dispatch_focus_objections(command),
         StateCommands::Migrate {
             plan_dir,
             dry_run,
@@ -2045,6 +2133,63 @@ fn dispatch_target_requests(command: TargetRequestsCommands) -> Result<()> {
             println!("drained {mounted} request(s) from {}/target-requests.yaml", plan_dir.display());
             Ok(())
         }
+    }
+}
+
+fn parse_this_cycle_focus_format(
+    input: &str,
+) -> Result<ravel_lite::state::this_cycle_focus::OutputFormat> {
+    ravel_lite::state::this_cycle_focus::OutputFormat::parse(input)
+        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
+}
+
+fn dispatch_this_cycle_focus(command: ThisCycleFocusCommands) -> Result<()> {
+    use ravel_lite::state::this_cycle_focus;
+
+    match command {
+        ThisCycleFocusCommands::Show { plan_dir, format } => {
+            let fmt = parse_this_cycle_focus_format(&format)?;
+            this_cycle_focus::run_show(&plan_dir, fmt)
+        }
+        ThisCycleFocusCommands::Set {
+            plan_dir,
+            target,
+            items,
+            notes,
+        } => this_cycle_focus::run_set(&plan_dir, &target, &items, notes.as_deref()),
+        ThisCycleFocusCommands::Clear { plan_dir } => this_cycle_focus::run_clear(&plan_dir),
+    }
+}
+
+fn parse_focus_objections_format(
+    input: &str,
+) -> Result<ravel_lite::state::focus_objections::OutputFormat> {
+    ravel_lite::state::focus_objections::OutputFormat::parse(input)
+        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
+}
+
+fn dispatch_focus_objections(command: FocusObjectionsCommands) -> Result<()> {
+    use ravel_lite::state::focus_objections;
+
+    match command {
+        FocusObjectionsCommands::List { plan_dir, format } => {
+            let fmt = parse_focus_objections_format(&format)?;
+            focus_objections::run_list(&plan_dir, fmt)
+        }
+        FocusObjectionsCommands::AddWrongTarget {
+            plan_dir,
+            suggested_target,
+            reasoning,
+        } => focus_objections::run_add_wrong_target(&plan_dir, &suggested_target, &reasoning),
+        FocusObjectionsCommands::AddSkipItem {
+            plan_dir,
+            item_id,
+            reasoning,
+        } => focus_objections::run_add_skip_item(&plan_dir, &item_id, &reasoning),
+        FocusObjectionsCommands::AddPremature { plan_dir, reasoning } => {
+            focus_objections::run_add_premature(&plan_dir, &reasoning)
+        }
+        FocusObjectionsCommands::Clear { plan_dir } => focus_objections::run_clear(&plan_dir),
     }
 }
 

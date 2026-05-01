@@ -127,7 +127,7 @@ tasks:
 - id: phase-cycle-triage-first-with-focus-objections-and-commits-yaml
   title: 'Phase cycle: triage-first with focus-objections and commits.yaml'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Restructure the phase cycle to `triage → work → analyse-work → reflect`, eliminate the in-cycle dream phase, and make commit partitioning + phase boundary mechanics fully runner-driven.
@@ -144,6 +144,176 @@ tasks:
     - Recovery: Ctrl-C lands "between cycles"; next run starts with triage. No resume machinery; interrupted scratch files ignored.
 
     Update phase prompts for the new cycle shape.
+  results: |
+    ## Results
+
+    **Delivered: schema + CRUD slice for two of the three new scratch files
+    named in the task title.** The phase cycle's data layer now has typed,
+    hermetic-tested Rust modules for `this-cycle-focus.yaml` (triage→work
+    hand-off) and `focus-objections.yaml` (work→triage escalation), plus
+    `state` CLI verbs that mirror the established `state target-requests` /
+    `state intents` pattern. The remaining sub-bullets of the task (cycle
+    reorder, boundary mechanics, two-stream commits, recovery, prompt
+    updates, `commits.yaml` v2 shape) are coherent stand-alone follow-on
+    items and should be opened by the next triage as separate backlog
+    entries.
+
+    ### What landed
+
+    #### `src/state/this_cycle_focus/`
+
+    - `schema.rs` — `ThisCycleFocus { schema_version, target,
+      backlog_items, notes }`, single-document shape (one focus or none).
+      `target` is a ComponentRef in `<repo>:<component>` notation.
+      `backlog_items` defaults to empty; `notes` is `Option<String>` with
+      `skip_serializing_if = "Option::is_none"` so absence emits cleaner
+      YAML than `notes: null`. Strict `schema_version` (no default) —
+      missing version fails to parse.
+    - `yaml_io.rs` — `read_this_cycle_focus → Result<Option<ThisCycleFocus>>`
+      (absent file is the "between cycles" signal, not an error). Atomic
+      write via `.tmp` + rename. `delete_this_cycle_focus` is idempotent.
+    - `verbs.rs` — `run_set` / `run_show` / `run_clear`. Single-document
+      surface, no list/add/remove (mirroring its single-doc nature).
+      `--target` validated as `<repo>:<component>` at the CLI boundary.
+    - 20 unit tests covering serde round-trips, schema-version
+      enforcement, missing-field errors, atomic-rename behaviour, and
+      reference validation.
+
+    #### `src/state/focus_objections/`
+
+    - `schema.rs` — `FocusObjectionsFile { schema_version, objections }`
+      plus a tagged-enum `Objection { WrongTarget, SkipItem, Premature }`
+      with `#[serde(tag = "kind", rename_all = "kebab-case")]`. The kind
+      vocabulary is closed: `kind: invented-kind` fails to parse rather
+      than coercing into a default. Each variant carries a free-form
+      `reasoning` field; `wrong-target` adds a typed `suggested_target`
+      ComponentRef and `skip-item` adds a typed `item_id`.
+    - `yaml_io.rs` — read returns the empty default for an absent file
+      (consume-and-remove queue semantics). Atomic write + idempotent
+      delete.
+    - `verbs.rs` — per-kind add verbs (`run_add_wrong_target`,
+      `run_add_skip_item`, `run_add_premature`) following the typed-CLI
+      precedent set by `state discover-proposals add-proposal`. `run_list`
+      / `run_clear` round out the surface. No `remove`: objections are
+      per-cycle and dropped wholesale at the next-triage drain.
+    - 24 unit tests covering enum kebab-case discriminator, missing
+      required fields per kind, accumulation across calls, idempotent
+      clear, and rejection of malformed references / empty inputs.
+
+    #### CLI surface in `src/main.rs`
+
+    - `state this-cycle-focus {set | show | clear}`
+    - `state focus-objections {list | add-wrong-target | add-skip-item |
+      add-premature | clear}`
+    - `set` takes `--target <ref> --item <id> [--item <id> ...] --notes "..."`.
+    - Each `add-*` verb takes the typed flags its variant requires; clap
+      rejects bad shapes before any YAML lands on disk.
+    - Smoke-tested end-to-end against a temp plan dir: round-trip set/show,
+      add three objection kinds, malformed reference rejected with the
+      expected error, clear is idempotent.
+
+    #### Filename constants
+
+    - `THIS_CYCLE_FOCUS_FILENAME` and `FOCUS_OBJECTIONS_FILENAME` added to
+      `src/state/filenames.rs`. Centralisation matches the existing
+      pattern.
+
+    ### Verification
+
+    - 1028 workspace tests pass (44 new).
+    - `./scripts/check.sh` (clippy `-D warnings`) clean. One redundant-
+      closure lint caught and fixed during the loop — the pre-push hook
+      did its job.
+    - Smoke test on the release binary: every verb emits the documented
+      YAML shape and rejects the expected error cases.
+
+    ### What did NOT land (follow-on backlog items for triage)
+
+    The task title names "phase cycle: triage-first with focus-objections
+    and commits.yaml" — that is genuinely a multi-task migration. The
+    remaining sub-pieces below are coherent stand-alone slices each sized
+    for one work phase:
+
+    1. **Cycle reorder.** Move triage from end-of-cycle to start-of-cycle
+       in the runner: `triage → work → analyse-work → reflect → boundary
+       → triage`. Eliminate the dream phase from the in-cycle path.
+       Touches `src/phase_loop.rs`, `src/types.rs::LlmPhase` ordering, and
+       any phase-summary code that assumes the current order.
+
+    2. **Phase boundary mechanics.** At each phase boundary the runner
+       should: drain `target-requests.yaml`, apply `commits.yaml`, run
+       the defeat cascade over plan KG when status changed, save
+       per-worktree baselines into `<phase>-baseline.yaml` (a map, not a
+       single SHA — see arch doc §Phase boundaries). Triage in particular
+       must consume `focus-objections.yaml` (call `delete_focus_objections`)
+       after acting on its contents. Touches the phase-loop dispatcher
+       and the existing `git_save_baseline` (it currently writes one SHA;
+       v2 wants a per-worktree map, but that lives behind the multi-target
+       work).
+
+    3. **Two-stream commits.** The architecture splits commits into
+       plan-state commits (in the ravel context, message `run-plan: <phase>
+       (<plan>)`) and work commits (in each mounted target's worktree,
+       on `ravel-lite/<plan>/main`). Targets first, context last so a
+       target failure doesn't leave the context recording false-positive
+       progress. Touches `src/git.rs::apply_commits_spec`, `git_commit_plan`,
+       and the surrounding orchestration in `phase_loop`.
+
+    4. **`commits.yaml` v2 shape.** Add an optional `target:
+       ComponentRef` field to `CommitSpec` so analyse-work can route
+       commits to the correct worktree. Move the schema out of
+       `src/git.rs` into a proper `src/state/commits/` module with the
+       established schema/yaml_io/verbs split, but keep the field
+       optional and `schema_version` defaulted so existing v1 prompts
+       continue to write parseable files. Currently the schema is
+       inlined in `git.rs` at lines 22–34; the migration is mechanical.
+
+    5. **Recovery semantics.** "Restart the cycle, don't resume" — see
+       arch doc §Recovery from interrupted cycles. The runner should
+       ignore partly-written scratch files (`commits.yaml`,
+       `target-requests.yaml`, `focus-objections.yaml`) on a fresh `ravel-lite
+       run`. Mostly already true, but worth an explicit pass + tests
+       that simulate Ctrl-C mid-cycle.
+
+    6. **Phase prompt updates.** `defaults/phases/triage.md`,
+       `defaults/phases/work.md`, `defaults/phases/analyse-work.md`, and
+       `defaults/phases/reflect.md` need updates for the new cycle shape:
+       triage writes `this-cycle-focus.yaml`; work consumes it and may
+       write `focus-objections.yaml`; analyse-work writes `commits.yaml`
+       with the optional `target:` field; reflect closes the cycle.
+       `defaults/phases/dream.md` becomes unreferenced once the cycle
+       reorders (the standalone `ravel-lite curate` task picks up its
+       functionality).
+
+    ### Suggestions for triage
+
+    - These are six small-to-medium tasks, not one 8-bullet monolith. The
+      precedent set by `introduce-intents-yaml-and-state-intents-crud-verbs`
+      (a previously-done task) suggests this is the right granularity.
+    - Item 4 (`commits.yaml` v2 shape) has no dependencies and can land
+      immediately; the others form a partial DAG (1 enables 2, 2 enables
+      3, 3 enables 6).
+    - The architecture-next migrator task is still gated on item 1 (cycle
+      reorder) — once that lands, the migrator can encode the new layout
+      knowledge and the `LLM_STATE-shape-frozen` constraint can relax.
+
+    ### Surprises / things to know
+
+    - `commits.yaml` already had a working v1 implementation inside
+      `src/git.rs` (the `CommitSpec`/`CommitsSpec` types and the
+      `apply_commits_spec` function). It is *not* TMS-shaped and has no
+      `schema_version` — adding the version field is a v2-prompt
+      coupling that has to be done together with prompt updates, which
+      is why I left it out of this slice.
+    - The `LLM_STATE` wire-shape constraint is honoured: no existing file
+      schemas changed; both new files are forward-only (read returns
+      empty default or `None` when absent, so an old binary running
+      against a plan that has these files would simply ignore them, and
+      this binary running against a plan without them works fine).
+    - `Objection::kind_str()` returns the same kebab-case strings the
+      serde tag uses. Future code that needs to reason mechanically about
+      which kind of objection to handle should use that method rather
+      than duplicating the literal strings.
 - id: ravel-lite-create-seeds-target-requests-yaml
   title: ravel-lite create seeds target-requests.yaml
   category: architecture-next

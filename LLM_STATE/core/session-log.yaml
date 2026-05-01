@@ -1670,3 +1670,13 @@ sessions:
     - 9 new unit tests (parser happy paths, all error paths, `run_add` ordering). All 865 workspace tests pass; clippy clean.
     - The wire shape is unchanged — `Justification::CodeAnchor` was already in the schema. No migrator needed.
     - Next: the next reflect cycle that authors code-grounded claims should use `--code-anchor` directly to validate the ergonomics. `state memory set-body` does not yet support adding/replacing anchors on an existing entry — defer until workflow demands it.
+- id: session-116
+  timestamp: 2026-05-01T11:08:04Z
+  phase: work
+  body: |
+    ### Session 116 (2026-05-01T11:08:04Z) — this-cycle-focus and focus-objections state modules
+
+    - **What was attempted:** Delivered the data layer for `this-cycle-focus.yaml` and `focus-objections.yaml` — the two scratch files the new triage-first phase cycle requires. Both are typed Rust modules following the established `state target-requests` / `state intents` pattern: schema, YAML I/O, verb layer, and CLI surface in `src/main.rs`.
+    - **What worked:** All three layers shipped for both modules. `this-cycle-focus` is a single-document surface (`set` / `show` / `clear`); `focus-objections` is a queue surface (`add-wrong-target` / `add-skip-item` / `add-premature` / `list` / `clear`). The kind vocabulary is closed via a tagged enum — a hallucinated `kind:` value fails at parse rather than landing on disk. 44 new unit tests; workspace suite (1028 total) passes; clippy clean.
+    - **What this suggests next:** The remaining sub-bullets of the parent task are separable: cycle reorder, phase boundary mechanics, two-stream commits, recovery, phase-prompt updates, and the `commits.yaml` v2 shape. Triage should open these as discrete backlog entries and sequence them.
+    - **Key learnings / discoveries:** The per-kind `add-*` verb pattern (from `state discover-proposals add-proposal`) is the right primitive for closed-vocabulary queues — clap rejects bad shapes before any YAML is written, enforcing the type constraint at the system boundary rather than inside the module.

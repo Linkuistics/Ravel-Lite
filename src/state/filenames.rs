@@ -17,4 +17,6 @@ pub const PHASE_FILENAME: &str = "phase.md";
 pub const RELATED_COMPONENTS_FILENAME: &str = "related-components.yaml";
 pub const TARGETS_FILENAME: &str = "targets.yaml";
 pub const TARGET_REQUESTS_FILENAME: &str = "target-requests.yaml";
+pub const THIS_CYCLE_FOCUS_FILENAME: &str = "this-cycle-focus.yaml";
+pub const FOCUS_OBJECTIONS_FILENAME: &str = "focus-objections.yaml";
 pub const DREAM_WORD_COUNT_FILENAME: &str = "dream-word-count";

@@ -26,6 +26,7 @@ pub mod backlog;
 pub mod discover_proposals;
 pub mod filenames;
 pub mod findings;
+pub mod focus_objections;
 pub mod intents;
 pub mod memory;
 pub mod migrate;
@@ -33,5 +34,6 @@ pub mod phase;
 pub mod session_log;
 pub mod target_requests;
 pub mod targets;
+pub mod this_cycle_focus;
 
 pub use phase::run_set_phase;
