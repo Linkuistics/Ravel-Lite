@@ -861,3 +861,15 @@ entries:
   title: Target struct is not a TMS item — runtime cache table, not knowledge-graph node
   body: |
     `Target` in `src/state/targets/schema.rs` is deliberately NOT a TMS item (`Item<K>` + `Justification` + `KindMarker`). Using `serde-flatten Item<K>` would force-fit empty `claim`/`status`/`justifications` fields onto what is a runtime cache table — targets are mutable operational state (mount path, branch ref), not knowledge-graph nodes where provenance and supersession matter. The `serde-flatten` pattern applies only to intents, backlog, memory, and findings; runtime config files like `targets.yaml` and `repos.yaml` use plain structs.
+- id: targets-mount-persists-target-row-to-targets-yaml
+  title: targets mount persists Target row to targets.yaml
+  body: |
+    `targets mount` creates `.worktrees/<repo>/` and persists a `Target` row to `targets.yaml`. Worktree branch is `ravel-lite/<plan>/main`, rooted at the default-branch starting point. Component `path_segments` sourced from `.atlas/components.yaml`. `.worktrees/` is gitignored via `scaffold_plan_dir` in `src/create.rs`.
+- id: targets-mount-falls-back-to-head-for-repos-without-a-remote
+  title: targets mount falls back to HEAD for repos without a remote
+  body: |
+    `mount_target` in `src/state/targets/mount.rs` detects the starting-point branch via `git symbolic-ref --short refs/remotes/origin/HEAD`. Falls back to `HEAD` when no remote exists (fixture repos in tests have no remote).
+- id: targets-mount-is-two-level-idempotent
+  title: targets mount is two-level idempotent
+  body: |
+    `targets mount` is two-level idempotent: same `(repo, component)` pair returns the existing `Target` row unchanged; a second component in the same repo reuses the existing worktree (skips `git worktree add`) and appends a new `Target` row.
