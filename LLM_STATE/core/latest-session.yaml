@@ -1,14 +1,15 @@
-id: session-113
-timestamp: 2026-05-01T08:34:45Z
+id: session-114
+timestamp: 2026-05-01T08:59:06Z
 phase: work
 body: |
-  ### Session 113 (2026-05-01T08:34:45Z) — Wire mounted worktrees into claude agent --add-dir
+  ### Session 114 (2026-05-01T00:00:00Z) — Add state memory check-anchors and rewrite reflect prompt for v2
 
-  - Implemented `mounted_worktree_add_dirs(plan_dir, cwd) -> Result<Vec<String>>` in `src/state/targets/yaml_io.rs`. Reads `targets.yaml`, resolves each `working_root` against `plan_dir` to an absolute path, and filters out paths that are already descendants of `cwd` to avoid redundant flags and a claude trust-grant modal regression.
-  - Re-exported the helper from `src/state/targets/mod.rs`.
-  - Updated `build_headless_args` in `src/agent/claude_code.rs` to accept `&PlanContext` (instead of `plan_dir: &str`) and return `Result<Vec<String>>`, then injects `--add-dir <path>` for each path returned by the helper.
-  - Updated `invoke_interactive` in `src/agent/claude_code.rs` similarly.
-  - Added 4 unit tests in `yaml_io.rs` (missing targets.yaml, cwd-descendant skip, out-of-cwd emission, one path per target) and 3 argv-level tests in `claude_code.rs`.
-  - Pi was deliberately not touched: `pi` has no `--add-dir` flag and no filesystem permission model, so worktree paths are already reachable without a grant.
-  - All 848 lib tests pass; clippy clean.
-  - The cwd-descendant filter makes the implementation forward-compatible: v1 layout (plan_dir under project_dir) emits no extra flags; v2 layout (plan_dir outside project_dir) emits real grants — no flag-day cutover required.
+  - Implemented `state memory check-anchors <plan> [--project-root <path>]` in `src/state/memory/check_anchors.rs` (~300 lines, 8 unit tests). The verb walks every active memory entry's `CodeAnchor` justifications and emits a typed `SuspectReport` YAML with `path-missing | sha-mismatch` reasons per failing anchor. Defeated/superseded entries are skipped; multi-anchor entries get each anchor checked independently.
+  - Wired the new verb into `src/main.rs` (`MemoryCommands::CheckAnchors`) and re-exported its public types from `src/state/memory/mod.rs`.
+  - Rewrote `defaults/phases/reflect.md` to give the reflect phase its v2 responsibilities: (1) bounded TMS check via `check-anchors` with explicit `still-true | refined | defeated` decision protocol; (2) distil session learnings with a TMS-correct contradiction rule (defeat before replacing); (3) intent-trajectory check against active intents surfaced via `state intents list`; (4) unchanged hand-off mechanics.
+  - All 8 unit tests pass; clippy clean; end-to-end smoke against a synthetic plan correctly identifies a sha-mismatch suspect.
+  - Structured-justification authoring (`state memory add --code-anchor`) was intentionally deferred — the current verb only accepts a rationale body. The prompt steers LLM authors to name file paths inline so a future curate pass can promote entries to code-anchored shape.
+  - Bounded-K entry limit for `check-anchors` deferred; at LLM_STATE/core's scale the full active-entry walk is microseconds.
+  - Intent-trajectory analyser as Rust deferred; one or two real `[TRAJECTORY]` entries in anger are needed before the heuristics warrant a mechanical pre-pass.
+  - The new verb cannot run against `LLM_STATE/core/memory.yaml` until the v1→v2 migrator ships (v1 schema, no `schema_version` field) — expected per the `LLM_STATE-shape-frozen` constraint.
+  - What this suggests trying next: add `--code-anchor` support to `state memory add` so reflect can author structured justifications directly; then retroactively annotate high-value memory entries that name specific files/structs.

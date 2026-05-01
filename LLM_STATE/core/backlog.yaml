@@ -170,7 +170,7 @@ tasks:
 - id: reflect-bounded-tms-plus-intent-trajectory-check
   title: 'Reflect: bounded TMS plus intent-trajectory check'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Give the reflect phase its v2 responsibilities: distil session learnings into TMS-shaped memory, run a bounded truth-maintenance pass on recent entries, and check the cycle's work against active intents for drift.
@@ -187,6 +187,122 @@ tasks:
     - Reflect operates on plan memory only; component memory edits happen at plan finish (promotion) or via curate.
 
     Open question: whether intent-trajectory grows into its own phase between reflect and triage — keep an eye on scope.
+  results: |
+    ## Results
+
+    Delivered the substantive surface for v2 reflect, scoped to what
+    compiles and tests cleanly today without changing the deployed
+    LLM_STATE wire shape (per the `LLM_STATE-shape-frozen` constraint).
+
+    ### What landed
+
+    - **`state memory check-anchors <plan> [--project-root <path>]`** — new
+      Rust verb in `src/state/memory/check_anchors.rs`. Walks every
+      *active* memory entry's `Justification::CodeAnchor` slots, asks two
+      mechanical questions per anchor (does the path exist; does
+      `git hash-object` on the file match `sha_at_assertion`), and emits a
+      typed `SuspectReport` YAML with `path-missing | sha-mismatch` reasons.
+      - Defeated/superseded entries are skipped — the bounded check is for
+        currently-asserted truth.
+      - One entry with multiple anchors gets each anchor checked
+        independently (one `Suspect` per failing anchor).
+      - 8 unit tests cover empty memory, rationale-only entries, matching
+        SHAs, missing files, mismatched SHAs, defeated-entry skip,
+        multi-anchor independence, and YAML round-trip of the report
+        schema.
+      - End-to-end smoke-tested against a synthetic v2-shape plan dir and
+        real on-disk file: report correctly identifies a sha-mismatch
+        suspect with the actual blob SHA.
+
+    - **`defaults/phases/reflect.md` rewrite** — the v1 reflect prompt
+      (distil + prune + render) is replaced by a four-section v2 prompt:
+      1. *Bounded TMS check* — invokes `state memory check-anchors`,
+         re-evaluates each suspect against current code, decides
+         `still-true | refined | defeated`. Rationale-only justifications
+         get the same re-evaluation discipline even though they don't
+         surface in the report.
+      2. *Distil session learnings* — same as v1 with one tightening: a
+         contradicting entry must be defeated before its successor is
+         authored (two contradictory active entries is a TMS bug).
+         Includes an authoring-discipline note steering future entries
+         toward code-anchored claims, with a frank acknowledgement that
+         the `state memory add` verb doesn't yet accept structured
+         justifications.
+      3. *Intent-trajectory check* — reads `state intents list`, walks
+         this cycle's session activity against active intents, surfaces
+         under-served intents and off-trajectory work as a single
+         advisory memory entry titled `Intent-trajectory: …`. Designed to
+         fire only when concrete drift is observed, not every cycle.
+      4. *Hand off* — unchanged from v1.
+      Three new preamble label kinds: `[SUSPECT]`, `[TRAJECTORY]`, plus
+      the existing `[IMPRECISE]`.
+
+    ### What didn't land (recorded for next triage)
+
+    - **Structured-justification authoring** — `state memory add` still
+      only accepts a body (single `Rationale`). Extending it to accept
+      `--code-anchor component=…,path=…,lines=…,sha=…` (repeatable) is a
+      natural follow-up; the prompt currently asks the LLM to mention
+      paths inline so a future `curate` pass can promote rationale-only
+      entries to code-anchored shape. **Suggested next backlog item:**
+      *`state memory add` accepts repeatable `--code-anchor` for
+      structured TMS justifications.*
+
+    - **Bounded "last K cycles or N entries" scope** — the doc spec calls
+      for cheap-by-design bounding. The current `check-anchors` walks
+      every active entry; at LLM_STATE/core's scale (low tens of entries)
+      this is microseconds, so the bound was deferred. Add a `--limit-k`
+      or `--touched-since <baseline>` arg if/when the entry count grows
+      large enough to make the full pass painful.
+
+    - **Intent-trajectory analyser as Rust** — the trajectory check is
+      currently fully prompt-driven. A mechanical pre-pass (compare
+      active intents to session-log entries by id-coverage) could surface
+      candidate drift before the LLM looks. Open question per
+      `architecture-next.md`: whether trajectory grows into its own phase.
+      Defer until at least one cycle has produced a `[TRAJECTORY]` entry
+      in anger.
+
+    - **Removal of the v1 dream phase** — the architecture-next track
+      routes truth-maintenance into `reflect` (bounded) and
+      `ravel-lite curate` (unbounded, separate process). Dream-phase
+      removal is the *Curate* task's responsibility, not this one.
+
+    ### What this suggests next
+
+    - The new verb is exercised against synthetic v2-shape memory in
+      tests but cannot run against `LLM_STATE/core/memory.yaml` until the
+      v1→v2 migrator ships and a new binary deploys (`schema_version`
+      field absent on disk; `entries:`/`title:` instead of
+      `items:`/`claim:`). This is expected per
+      `LLM_STATE-shape-frozen`. The check-anchors verb is ready to
+      exercise on the migrated plan immediately after migrate lands.
+
+    - Once `state memory add --code-anchor` lands, retroactively annotate
+      high-value memory entries with code-anchors so the bounded check
+      has something to check. Target candidates: entries that name
+      specific files, structs, or modules — the ones most prone to
+      silent drift.
+
+    - The intent-trajectory section in the prompt should be revisited
+      after one or two real reflect runs produce trajectory entries —
+      the heuristics for "substantial activity" and "drift worth
+      flagging" are LLM-judgement-bearing right now and may need
+      examples added.
+
+    ### Files changed
+
+    - `src/state/memory/check_anchors.rs` *(new, ~300 lines, 8 tests)*
+    - `src/state/memory/mod.rs` *(re-export the new module)*
+    - `src/main.rs` *(new `MemoryCommands::CheckAnchors` variant + dispatcher branch)*
+    - `defaults/phases/reflect.md` *(full rewrite for v2 reflect)*
+
+    ### Verification
+
+    - `cargo clippy --all-targets --workspace -- -D warnings` clean
+    - `cargo test --workspace` clean (856 unit + ~80 integration)
+    - End-to-end smoke against synthetic plan: suspect report correctly
+      produced for a sha-mismatched code-anchored entry
 - id: plan-finish-pr-merge-with-memory-promotion-and-archive
   title: 'Plan finish: pr/merge with memory promotion and archive'
   category: architecture-next
@@ -314,3 +430,33 @@ tasks:
     4. Tests: rendered output includes intent claims, task counts match backlog, phase transitions leave `phase.md` non-empty and structured.
 
     **Gating constraint:** Must wait until the v1→v2 migrator ships and a new binary deploys — `read_backlog` on `LLM_STATE/core/backlog.yaml` today hits the legacy v1 wire shape and would fail. See `LLM_STATE-shape-frozen` memory entry.
+- id: state-memory-add-accept-repeatable-code-anchor-for-structured-tms-justifications
+  title: 'state memory add: accept repeatable --code-anchor for structured TMS justifications'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Add `--code-anchor` support to `state memory add` so the reflect phase can author structured TMS justifications directly rather than embedding file paths in prose.
+
+    **Problem being solved:** `state memory add` currently only accepts a body string (a single `Rationale` justification variant). Reflect's v2 prompt instructs the LLM to name file paths inline in the body so a future curate pass can promote entries to code-anchored shape — but that round-trip degrades the quality of anchors. The bounded check (`state memory check-anchors`) can only mechanically verify entries with `CodeAnchor` justifications; rationale-only entries require full LLM re-evaluation every reflect cycle.
+
+    **Settled design (from session 114 reflect task results):**
+    - Add `--code-anchor component=<ref>,path=<rel-path>,lines=<start>-<end>,sha=<blob-sha>` (repeatable) to `state memory add`.
+    - The flag appends a `Justification::CodeAnchor { component, path, line_range, sha_at_assertion }` slot alongside the rationale body. An entry can carry both a rationale body and one or more code anchors.
+    - `component` is a `ComponentRef` string (`<repo>:<component-path>`) matching the `targets.yaml` schema. Use `"."` or leave absent to mean "the plan's primary target" (to be resolved at assertion time).
+    - `sha` is the git blob SHA of `path` at the moment the assertion is made (`git hash-object <path>`). Reflect must compute this before authoring.
+    - The `check-anchors` verb already consumes `CodeAnchor` justifications; no changes needed there.
+
+    **Reference examples:**
+    - `src/state/memory/schema.rs` — `Justification` enum; `CodeAnchor` variant already defined.
+    - `src/state/memory/verbs.rs` — `run_add` is where the new flag lands.
+    - `src/main.rs` — `MemoryCommands::Add` clap struct; add `--code-anchor` as `Vec<String>` there.
+    - `defaults/phases/reflect.md` (step 2 authoring-discipline note) — describes the interim workaround; update to use the new flag once it exists.
+
+    **Dependencies:** None. Self-contained.
+
+    **Suggested scope for the implementing session:**
+    1. Parse `--code-anchor` strings in `run_add` (split on `,` into key=value pairs; validate required fields).
+    2. Append a `CodeAnchor` justification for each parsed anchor to the `MemoryEntry`.
+    3. Update `defaults/phases/reflect.md` step 2 to drop the "name paths inline" workaround and use `--code-anchor` directly.
+    4. Tests: `run_add` with one anchor, with two anchors, with rationale+anchor combined, with missing required field (error).

@@ -824,6 +824,17 @@ enum MemoryCommands {
         plan_dir: PathBuf,
         id: String,
     },
+    /// Bounded-TMS check: walk every active memory entry's `code-anchor`
+    /// justifications and report those whose path is missing or whose
+    /// blob SHA no longer matches `sha_at_assertion`. Output is a YAML
+    /// `SuspectReport` for the reflect phase to act on.
+    CheckAnchors {
+        plan_dir: PathBuf,
+        /// Project root the anchor `path` fields resolve against. Defaults
+        /// to the `<subtree>/<state-dir>/<plan>` derivation from `plan_dir`.
+        #[arg(long)]
+        project_root: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1868,6 +1879,17 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
         }
         MemoryCommands::Delete { plan_dir, id } => {
             memory::run_delete(&plan_dir, &id)
+        }
+        MemoryCommands::CheckAnchors { plan_dir, project_root } => {
+            let root = match project_root {
+                Some(p) => p,
+                None => memory::default_project_root(&plan_dir)?,
+            };
+            let report = memory::check_anchors_from_disk(&plan_dir, &root)?;
+            let yaml = serde_yaml::to_string(&report)
+                .context("failed to serialise SuspectReport as YAML")?;
+            print!("{yaml}");
+            Ok(())
         }
     }
 }

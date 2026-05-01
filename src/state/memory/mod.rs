@@ -1,10 +1,15 @@
 //! Typed memory.yaml surface and CRUD CLI verbs.
 
+pub mod check_anchors;
 pub mod parse_md;
 pub mod schema;
 pub mod verbs;
 pub mod yaml_io;
 
+pub use check_anchors::{
+    check_anchors, check_anchors_from_disk, default_project_root, Suspect, SuspectReason,
+    SuspectReport, REPORT_SCHEMA_VERSION,
+};
 pub use parse_md::parse_memory_markdown;
 pub use schema::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
 pub use verbs::{
