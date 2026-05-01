@@ -794,9 +794,9 @@ entries:
   body: |
     scripts/check.sh runs clippy workspace-wide with -D warnings. Git pre-push hook recipe is documented in the script header but not installed — opt-in by design. CI has no clippy gate; drift between sessions is possible if check.sh is not run manually.
 - id: atlas-cli-routes-via-dispatch-atlas-in-src-atlas-rs
-  title: Atlas CLI routes via dispatch_atlas; six verbs in src/atlas.rs
+  title: Atlas CLI routes via dispatch_atlas in src/atlas.rs
   body: |
-    `src/atlas.rs` implements `dispatch_atlas`; `src/main.rs` routes `Commands::Atlas` to it via `AtlasCommands` enum. `atlas-index` is a workspace path dep in `Cargo.toml`. Six verbs: `atlas list-repos` (delegates to `repos::run_list`), `atlas freshness [--require-fresh]` (four status outcomes: `fresh`, `missing`, `no_local_path`, `unparseable`), `atlas list-components [--repo <slug>]`, `atlas summary [--repo <slug>]` (both load the `Catalog`), `atlas describe <ref>` (resolves qualified `<repo>/<id>` or bare `<id>`, emits `ComponentEntry` YAML with `compute_children` list), `atlas memory <ref> [--search <term>]` (reads `.atlas/memory.yaml`, optional case-insensitive substring filter). `--repo` validates against the fresh-repo set and emits a named-repos error on unknown slug rather than silent empty output.
+    `src/atlas.rs` implements `dispatch_atlas`; `src/main.rs` routes `Commands::Atlas` to it via `AtlasCommands` enum. `atlas-index` is a workspace path dep in `Cargo.toml`. Core verbs: `atlas list-repos` (delegates to `repos::run_list`), `atlas freshness [--require-fresh]` (four status outcomes: `fresh`, `missing`, `no_local_path`, `unparseable`), `atlas list-components [--repo <slug>]`, `atlas summary [--repo <slug>]` (both load the `Catalog`), `atlas describe <ref>` (resolves qualified `<repo>/<id>` or bare `<id>`, emits `ComponentEntry` YAML with `compute_children` list), `atlas memory <ref> [--search <term>]` (reads `.atlas/memory.yaml`, optional case-insensitive substring filter). `--repo` validates against the fresh-repo set and emits a named-repos error on unknown slug rather than silent empty output. Additional verbs: `atlas edges`, `atlas neighbors`, `atlas roots` (EdgeGraph traversal); `atlas path`, `atlas scc` (DirectedGraph algorithms). See: `atlas edges/neighbors/roots traverse EdgeGraph from catalog`; `atlas path (BFS) and scc (Tarjan) verbs in src/atlas.rs`.
 - id: catalog-projects-token-is-not-in-phase-prompts-strip-task-is-no-op
   title: CATALOG_PROJECTS token is not in phase prompts; strip task is no-op
   body: |
@@ -805,10 +805,6 @@ entries:
   title: Catalog in src/atlas.rs union-loads fresh repos' components
   body: |
     `Catalog` in `src/atlas.rs` loads all fresh repos' `.atlas/components.yaml` via one registry walk per CLI invocation. `RepoCatalog` is the per-repo parsed entry; `Catalog` is the registry-wide `IndexMap`-keyed union (deterministic output order). `iter_components()` yields `(repo_slug, &ComponentEntry)` pairs; `deleted: true` tombstone components are silently filtered. `compute_freshness_full` replaces `compute_freshness` to thread `Option<LoadedComponents>` alongside freshness data, eliminating double-parsing when both freshness and component data are needed. See: `Atlas CLI routes via dispatch_atlas; four verbs in src/atlas.rs`.
-- id: resolves-qualified-or-bare-component-ref
-  title: ' resolves qualified or bare component ref'
-  body: |
-    `atlas describe <ref>` accepts qualified `<repo>/<id>` or bare `<id>`. Bare refs error on ambiguity (multiple repos contain `<id>`) or deletion (`deleted: true`). `compute_children` derives the children list from catalog edges. `ResolvedComponent<'a>` borrows lifetime-parameterised over `Catalog` to avoid cloning per lookup. See: `Atlas CLI routes via dispatch_atlas; six verbs in src/atlas.rs`.
 - id: atlas-describe-resolves-qualified-or-bare-component-ref
   title: atlas describe resolves qualified or bare component ref
   body: |
@@ -842,7 +838,7 @@ entries:
 - id: directedgraph-n-uses-dual-btreemap-adjacency-lists
   title: DirectedGraph<N> uses dual BTreeMap adjacency lists
   body: |
-    `src/directed_graph.rs`: generic `DirectedGraph<N: Ord + Clone>` maintains dual adjacency lists (`BTreeMap` out-edges + in-edges) and a `BTreeSet<N>` node universe. `add_edge` is idempotent; isolated nodes require `add_node`. `N: Ord` enforces deterministic iteration order. Used as the substrate for `atlas path` (BFS) and `atlas scc` (Kosaraju/Tarjan). See: `build_directed_component_graph projects Catalog into DirectedGraph<String>`.
+    `src/directed_graph.rs`: generic `DirectedGraph<N: Ord + Clone>` maintains dual adjacency lists (`BTreeMap` out-edges + in-edges) and a `BTreeSet<N>` node universe. `add_edge` is idempotent; isolated nodes require `add_node`. `N: Ord` enforces deterministic iteration order. Used as the substrate for `atlas path` (BFS shortest path via `shortest_path`) and `atlas scc` (Tarjan SCC via `strongly_connected_components`). See: `build_directed_component_graph projects Catalog into DirectedGraph<String>`.
 - id: build-directed-component-graph-projects-catalog-into-directedgraph-string
   title: build_directed_component_graph projects Catalog into DirectedGraph<String>
   body: |
@@ -855,3 +851,7 @@ entries:
     Rationale: `atlas scc`'s motivating use case is circular dependency detection. Projecting symmetric edges as both directions would turn every peer relationship into a 2-node SCC, drowning real circular-dependency findings. Peer relationships remain accessible via `atlas neighbors` (undirected BFS over the existing flat `EdgeGraph`).
 
     Decision documented in the `build_directed_component_graph` docstring in `src/atlas/mod.rs` (or equivalent). Applies to any future graph algorithm verb that builds on `DirectedGraph<String>`.
+- id: atlas-path-bfs-and-scc-tarjan-verbs-in-src-atlas-rs
+  title: atlas path (BFS) and scc (Tarjan) verbs in src/atlas.rs
+  body: |
+    `atlas path <from> <to> [--max-hops N]` — BFS shortest path; `--max-hops` bounds search depth; returns `None` when no path exists or hop limit exceeded. `atlas scc [--all]` — Tarjan SCC; by default only non-singleton SCCs are shown; `--all` includes singletons. Both implemented as `run_path`/`run_scc` in `src/atlas.rs`; resolve component refs via `resolve_ref` and delegate to `build_directed_component_graph`. Algorithms live on `DirectedGraph<N>` as `shortest_path` (BFS, parent-map reconstruction) and `strongly_connected_components` (recursive Tarjan, sorted within-SCC and across SCCs for determinism). See: `build_directed_component_graph projects Catalog into DirectedGraph<String>`.
