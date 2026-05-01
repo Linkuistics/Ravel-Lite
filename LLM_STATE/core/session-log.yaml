@@ -1563,3 +1563,16 @@ sessions:
     - `src/lib.rs`: registered the new `directed_graph` module.
     - Task `atlas-cli-edge-graph-loading` flipped `not_started → done`. No stale-status repairs needed.
     - What this suggests next: `atlas-cli-path-and-scc-graph-algorithm-verbs` is now unblocked — BFS (`atlas path`) and Kosaraju/Tarjan (`atlas scc`) can be layered directly on top of `build_directed_component_graph`.
+- id: session-108
+  timestamp: 2026-05-01T02:41:53Z
+  phase: work
+  body: |
+    ### Session 108 (2026-05-01T02:41:53Z) — Add atlas path and scc graph algorithm verbs
+
+    - Implemented `atlas path <from> <to> [--max-hops N]` (BFS shortest path) and `atlas scc [--all]` (Tarjan strongly connected components) over the directed component graph.
+    - Both algorithms added as methods on `DirectedGraph<N>` in `src/directed_graph.rs`: `shortest_path` (BFS with parent-map reconstruction, returns `Option<Vec<N>>`) and `strongly_connected_components` (recursive Tarjan, sorted within-SCC and across SCCs for deterministic output).
+    - CLI runners `run_path` and `run_scc` added to `src/atlas.rs`; both resolve component references via the existing `resolve_ref` helper and delegate to `build_directed_component_graph`.
+    - `AtlasCommands::Path` and `AtlasCommands::Scc` subcommands wired in `src/main.rs` with dispatch arms.
+    - 18 unit tests added (9 for `shortest_path`, 9 for SCC): cover linear path, diamond shortest selection, self-target, unreachable endpoints, hop-limit boundary, directed-edge respect, cycle termination, empty graph, DAG singletons, disjoint cycles, partition invariant, isolated nodes, self-loops, insertion-order determinism.
+    - All 779 lib tests pass; clippy clean.
+    - No accidental edits found; all changed files are intentional.

@@ -879,6 +879,61 @@ pub fn run_neighbors(context_root: &Path, ref_str: &str, depth: usize) -> Result
     Ok(())
 }
 
+/// `atlas path <from> <to> [--max-hops N]` — BFS shortest path over
+/// the directed component graph (symmetric edges excluded; see
+/// [`build_directed_component_graph`]). Endpoints are resolved against
+/// the catalog (qualified `<repo>/<id>` or unique bare `<id>`); the
+/// path is printed as one bare component id per line in traversal
+/// order. If no path exists within `max_hops`, the function returns
+/// an error so the caller exits non-zero with a clear "no path found"
+/// diagnostic.
+pub fn run_path(context_root: &Path, from: &str, to: &str, max_hops: usize) -> Result<()> {
+    let registry = repos::load_or_empty(context_root)?;
+    let catalog = Catalog::load(&registry, SystemTime::now());
+    let from_resolved = resolve_ref(&catalog, from)?;
+    let to_resolved = resolve_ref(&catalog, to)?;
+    let graph = build_directed_component_graph(&catalog)?;
+    match graph.shortest_path(
+        &from_resolved.component.id,
+        &to_resolved.component.id,
+        max_hops,
+    ) {
+        Some(path) => {
+            for node in path {
+                println!("{node}");
+            }
+            Ok(())
+        }
+        None => bail!(
+            "no path found from {} to {} within {} hops",
+            from_resolved.component.id,
+            to_resolved.component.id,
+            max_hops,
+        ),
+    }
+}
+
+/// `atlas scc [--all]` — strongly connected components of the
+/// directed component graph via Tarjan's algorithm. Each SCC is
+/// printed on its own line as a comma-separated list of bare
+/// component ids. By default only non-trivial SCCs (size > 1) appear,
+/// because singleton SCCs are the common case and the motivating use
+/// case is detecting circular dependencies; `--all` includes
+/// singletons for full coverage.
+pub fn run_scc(context_root: &Path, include_singletons: bool) -> Result<()> {
+    let registry = repos::load_or_empty(context_root)?;
+    let catalog = Catalog::load(&registry, SystemTime::now());
+    let graph = build_directed_component_graph(&catalog)?;
+    let sccs = graph.strongly_connected_components();
+    for component in sccs {
+        if !include_singletons && component.len() < 2 {
+            continue;
+        }
+        println!("{}", component.join(", "));
+    }
+    Ok(())
+}
+
 /// `atlas roots` — every catalog component with no incoming directed
 /// edge, one per line. Output is qualified `<repo_slug>/<component_id>`
 /// because the same bare id may legally appear in multiple repos

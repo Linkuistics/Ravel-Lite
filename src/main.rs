@@ -433,6 +433,40 @@ enum AtlasCommands {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// BFS shortest path from `<from>` to `<to>` over the directed
+    /// component graph. Symmetric edges (`co-implements`,
+    /// `communicates-with`) are excluded; only directed edge kinds
+    /// (`depends-on`, `generates`, etc.) participate. Output is one
+    /// bare component id per line in traversal order. Exits non-zero
+    /// with "no path found" if no path within `--max-hops` exists.
+    Path {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Source component reference: `<repo_slug>/<component_id>` or
+        /// bare `<component_id>` (must be unambiguous across fresh repos).
+        from: String,
+        /// Destination component reference: same resolution rules as `<from>`.
+        to: String,
+        /// Maximum edge count of any returned path. Defaults to 10.
+        #[arg(long = "max-hops", default_value_t = 10)]
+        max_hops: usize,
+    },
+    /// Strongly connected components of the directed component graph
+    /// via Tarjan's algorithm. Each SCC is printed on its own line as
+    /// a comma-separated list of bare component ids. By default only
+    /// non-trivial SCCs (size > 1) surface — useful for detecting
+    /// circular dependencies — pass `--all` to include singletons.
+    Scc {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Include trivial single-node SCCs in the output.
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1267,6 +1301,19 @@ fn dispatch_atlas(command: AtlasCommands) -> Result<()> {
         AtlasCommands::Roots { config } => {
             let context_root = resolve_config_dir(config)?;
             atlas::run_roots(&context_root)
+        }
+        AtlasCommands::Path {
+            config,
+            from,
+            to,
+            max_hops,
+        } => {
+            let context_root = resolve_config_dir(config)?;
+            atlas::run_path(&context_root, &from, &to, max_hops)
+        }
+        AtlasCommands::Scc { config, all } => {
+            let context_root = resolve_config_dir(config)?;
+            atlas::run_scc(&context_root, all)
         }
     }
 }
