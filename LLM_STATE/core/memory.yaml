@@ -270,7 +270,7 @@ entries:
 - id: src-state-module-structure
   title: '`src/state/` uses module-per-area layout'
   body: |
-    `src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, parse_md, verbs, mod), `memory/` (schema, yaml_io, parse_md, verbs, mod), `session_log/` (schema, yaml_io, parse_md, verbs, mod), `intents/` (schema, yaml_io, verbs, mod), `findings/` (schema, yaml_io, verbs, mod), `targets/` (schema, yaml_io, verbs, mount, mod), `target_requests/` (schema, yaml_io, verbs, drain, mod), and `migrate.rs`. New state areas follow this layout.
+    `src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, parse_md, verbs, mod), `memory/` (schema, yaml_io, parse_md, verbs, mod), `session_log/` (schema, yaml_io, parse_md, verbs, mod), `intents/` (schema, yaml_io, verbs, mod), `findings/` (schema, yaml_io, verbs, mod), `targets/` (schema, yaml_io, verbs, mount, mod), `target_requests/` (schema, yaml_io, verbs, drain, mod), `this_cycle_focus/` (schema, yaml_io, verbs, mod), `focus_objections/` (schema, yaml_io, verbs, mod), and `migrate.rs`. New state areas follow this layout.
 - id: find-task-centralises-backlog-id-lookup
   title: '`find_task` centralises backlog id-lookup'
   body: |
@@ -290,7 +290,7 @@ entries:
 - id: dispatch-state-routes-state-subcommands
   title: '`dispatch_state` routes state subcommands'
   body: |
-    `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, `dispatch_intents`, `dispatch_related_components`, `dispatch_findings`, `dispatch_targets`, or `dispatch_target_requests`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
+    `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, `dispatch_intents`, `dispatch_related_components`, `dispatch_findings`, `dispatch_targets`, `dispatch_target_requests`, `dispatch_this_cycle_focus`, or `dispatch_focus_objections`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
 - id: r7-design-llm-driven-related-projects-discovery
   title: '`discover` runs two-stage fan-out pipeline to `discover-proposals.yaml`'
   body: |
@@ -909,3 +909,15 @@ entries:
   title: 'Intent-trajectory Rust pre-pass: defer until a real [TRAJECTORY] entry is produced'
   body: |
     The intent-trajectory check in the v2 reflect prompt is fully prompt-driven. A mechanical pre-pass (compare active intents to session-log entries by id-coverage) could surface candidate drift before the LLM looks — at lower cost than a full LLM re-evaluation. Open question per `docs/architecture-next.md`: whether trajectory grows into its own phase. Defer until at least one real reflect cycle produces a `[TRAJECTORY]` entry in anger; the heuristics for "substantial activity" and "drift worth flagging" are LLM-judgement-bearing right now and may need examples added before a Rust pre-pass is worth building.
+- id: per-kind-add-verbs-are-the-pattern-for-closed-vocabulary-queues
+  title: Per-kind add-* verbs are the pattern for closed-vocabulary queues
+  body: |
+    One verb per kind (`add-wrong-target`, `add-skip-item`, `add-premature`), with clap enum parsing at the dispatch boundary. Invalid kind values fail at clap before any YAML is written, enforcing the type constraint at the system boundary rather than inside the module. First established in `state discover-proposals add-proposal`; now the standard for any queue state area with a closed kind vocabulary. Contrast with a single `add --kind <value>` verb, which defers validation to runtime YAML parsing.
+- id: this-cycle-focus-yaml-has-set-show-clear-verb-surface
+  title: this-cycle-focus.yaml has set/show/clear verb surface
+  body: |
+    `src/state/this_cycle_focus/` (schema.rs, yaml_io.rs, verbs.rs, mod.rs) is a single-document singleton state area for the triage-first phase cycle's declared focus. CLI verbs: `set`, `show`, `clear`. Follows the `state target-requests` / `state intents` module layout. See: `src/state/ uses module-per-area layout`.
+- id: focus-objections-yaml-has-per-kind-add-verb-surface
+  title: focus-objections.yaml has per-kind add verb surface
+  body: |
+    `src/state/focus_objections/` (schema.rs, yaml_io.rs, verbs.rs, mod.rs) is a closed-vocabulary queue for the triage-first phase cycle. CLI verbs: `add-wrong-target`, `add-skip-item`, `add-premature`, `list`, `clear`. Kind vocabulary encoded as a tagged enum; clap rejects invalid kind values before any YAML is written. See: `Per-kind add-* verbs are the pattern for closed-vocabulary queues`; `src/state/ uses module-per-area layout`.
