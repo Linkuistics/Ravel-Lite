@@ -124,202 +124,167 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: phase-cycle-triage-first-with-focus-objections-and-commits-yaml
-  title: 'Phase cycle: triage-first with focus-objections and commits.yaml'
+- id: commits-yaml-v2-move-to-state-module-with-optional-target-componentref
+  title: 'commits.yaml v2: move to state module with optional target ComponentRef'
   category: architecture-next
-  status: done
+  status: not_started
   dependencies: []
   description: |
-    Restructure the phase cycle to `triage → work → analyse-work → reflect`, eliminate the in-cycle dream phase, and make commit partitioning + phase boundary mechanics fully runner-driven.
+    Add an optional `target: ComponentRef` field to `CommitSpec` so analyse-work can route commits to the correct worktree. Move the schema out of `src/git.rs` into a proper `src/state/commits/` module with the established schema/yaml_io/verbs split, but keep the field optional and `schema_version` defaulted for backward compat so existing v1 prompts continue to write parseable files.
 
-    Reference: `docs/architecture-next.md` §Phase cycle (restructured), §Phase boundaries, §Commits (two streams), §Recovery from interrupted cycles.
+    ## Why
 
-    Scope:
-    - Reorder cycle: triage opens (true triage), reflect closes; no dream in cycle.
-    - `this-cycle-focus.yaml` (triage writes) — single target by default, multi-target only when atomic across components in same git root.
-    - `focus-objections.yaml` (work writes; triage consumes next cycle) — kinds: wrong-target, skip-item, premature. A cycle that produces only objections + memory is valid.
-    - `commits.yaml` (analyse-work writes) — partitions edits into ordered commits with `{ target, paths, message }`. Runner applies mechanically: resolves ComponentRef to (working_root, pathspec), runs `git add` + `git commit` in working_root.
-    - Phase boundary: drain target-requests, apply commits, run defeat cascade over plan KG, commit plan-state changes (`run-plan: <phase> (<plan>)`), save per-worktree baselines into `<phase>-baseline.yaml`.
-    - Two-stream commits: target work first, then context records.
-    - Recovery: Ctrl-C lands "between cycles"; next run starts with triage. No resume machinery; interrupted scratch files ignored.
+    Currently the `CommitSpec`/`CommitsSpec` types and `apply_commits_spec` function are inlined in `src/git.rs` at lines 22–34. This is not TMS-shaped and has no `schema_version`. Without an optional `target: ComponentRef` field, analyse-work cannot route commits to specific target worktrees — all commits land in the plan's git root.
 
-    Update phase prompts for the new cycle shape.
-  results: |
-    ## Results
+    ## Scope
 
-    **Delivered: schema + CRUD slice for two of the three new scratch files
-    named in the task title.** The phase cycle's data layer now has typed,
-    hermetic-tested Rust modules for `this-cycle-focus.yaml` (triage→work
-    hand-off) and `focus-objections.yaml` (work→triage escalation), plus
-    `state` CLI verbs that mirror the established `state target-requests` /
-    `state intents` pattern. The remaining sub-bullets of the task (cycle
-    reorder, boundary mechanics, two-stream commits, recovery, prompt
-    updates, `commits.yaml` v2 shape) are coherent stand-alone follow-on
-    items and should be opened by the next triage as separate backlog
-    entries.
+    - Create `src/state/commits/` module with `schema.rs`, `yaml_io.rs`, `verbs.rs`, following the established module-per-area layout.
+    - `CommitSpec`: add optional `target: ComponentRef` field (`#[serde(default, skip_serializing_if = "Option::is_none")]`).
+    - `CommitsSpec`: add `schema_version` field with a sensible default so v1 files (no version) still parse.
+    - Move `apply_commits_spec` from `src/git.rs` into the new module (or keep in `git.rs` but delegate schema types from `state/commits/`).
+    - Wire `state commits {list | show}` verbs into `dispatch_state` for completeness.
+    - Keep `schema_version` defaulted (not required) so the v1 wire shape continues to work — this is a schema extension, not a cutover.
 
-    ### What landed
+    ## Note
 
-    #### `src/state/this_cycle_focus/`
+    This is the only task in the triage-first follow-on DAG with no dependencies; land it before the cycle-reorder work begins. The `target:` field becomes meaningful once phase-boundary-mechanics routes commits to worktrees.
+- id: phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream
+  title: 'Phase cycle: reorder to triage-first, eliminate in-cycle dream'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Move triage from end-of-cycle to start-of-cycle in the runner: `triage → work → analyse-work → reflect → (boundary) → triage`. Eliminate the dream phase from the in-cycle execution path (it moves to the standalone `ravel-lite curate` command).
 
-    - `schema.rs` — `ThisCycleFocus { schema_version, target,
-      backlog_items, notes }`, single-document shape (one focus or none).
-      `target` is a ComponentRef in `<repo>:<component>` notation.
-      `backlog_items` defaults to empty; `notes` is `Option<String>` with
-      `skip_serializing_if = "Option::is_none"` so absence emits cleaner
-      YAML than `notes: null`. Strict `schema_version` (no default) —
-      missing version fails to parse.
-    - `yaml_io.rs` — `read_this_cycle_focus → Result<Option<ThisCycleFocus>>`
-      (absent file is the "between cycles" signal, not an error). Atomic
-      write via `.tmp` + rename. `delete_this_cycle_focus` is idempotent.
-    - `verbs.rs` — `run_set` / `run_show` / `run_clear`. Single-document
-      surface, no list/add/remove (mirroring its single-doc nature).
-      `--target` validated as `<repo>:<component>` at the CLI boundary.
-    - 20 unit tests covering serde round-trips, schema-version
-      enforcement, missing-field errors, atomic-rename behaviour, and
-      reference validation.
+    ## Why
 
-    #### `src/state/focus_objections/`
+    The current cycle ends with triage; the architecture-next design opens each cycle with triage so the LLM can orient on the backlog *before* doing work, rather than retrospectively. This is the structural prerequisite for the rest of the triage-first follow-on DAG: phase-boundary-mechanics, two-stream-commits, and phase-prompt-updates all assume this ordering.
 
-    - `schema.rs` — `FocusObjectionsFile { schema_version, objections }`
-      plus a tagged-enum `Objection { WrongTarget, SkipItem, Premature }`
-      with `#[serde(tag = "kind", rename_all = "kebab-case")]`. The kind
-      vocabulary is closed: `kind: invented-kind` fails to parse rather
-      than coercing into a default. Each variant carries a free-form
-      `reasoning` field; `wrong-target` adds a typed `suggested_target`
-      ComponentRef and `skip-item` adds a typed `item_id`.
-    - `yaml_io.rs` — read returns the empty default for an absent file
-      (consume-and-remove queue semantics). Atomic write + idempotent
-      delete.
-    - `verbs.rs` — per-kind add verbs (`run_add_wrong_target`,
-      `run_add_skip_item`, `run_add_premature`) following the typed-CLI
-      precedent set by `state discover-proposals add-proposal`. `run_list`
-      / `run_clear` round out the surface. No `remove`: objections are
-      per-cycle and dropped wholesale at the next-triage drain.
-    - 24 unit tests covering enum kebab-case discriminator, missing
-      required fields per kind, accumulation across calls, idempotent
-      clear, and rejection of malformed references / empty inputs.
+    ## Scope
 
-    #### CLI surface in `src/main.rs`
+    - Reorder `LlmPhase` enum variants and update any match arms that assume the current order in `src/phase_loop.rs`.
+    - Update `src/types.rs::LlmPhase` ordering if the variant order encodes cycle position.
+    - Remove the in-cycle dream dispatch path; dream is now only invoked by `ravel-lite curate` (standalone, out-of-cycle).
+    - Update any phase-summary code or baseline-wiring code that assumes the current cycle order.
+    - Update `ScriptPhase::GitCommit*` handlers: new baseline wiring is `GitCommitTriage` → `work-baseline`; `GitCommitWork` → `analyse-work-baseline`; `GitCommitAnalyseWork` → `reflect-baseline`; `GitCommitReflect` → `triage-baseline`.
+    - `cargo test` must pass; the phase-contract integration test and `pi_phase_cycle` test will need updating for the new order.
 
-    - `state this-cycle-focus {set | show | clear}`
-    - `state focus-objections {list | add-wrong-target | add-skip-item |
-      add-premature | clear}`
-    - `set` takes `--target <ref> --item <id> [--item <id> ...] --notes "..."`.
-    - Each `add-*` verb takes the typed flags its variant requires; clap
-      rejects bad shapes before any YAML lands on disk.
-    - Smoke-tested end-to-end against a temp plan dir: round-trip set/show,
-      add three objection kinds, malformed reference rejected with the
-      expected error, clear is idempotent.
+    ## References
 
-    #### Filename constants
+    - `docs/architecture-next.md` §Phase cycle (restructured), §What this replaces or removes
+    - `src/phase_loop.rs` — main cycle dispatcher
+    - `src/types.rs` — `LlmPhase` enum
 
-    - `THIS_CYCLE_FOCUS_FILENAME` and `FOCUS_OBJECTIONS_FILENAME` added to
-      `src/state/filenames.rs`. Centralisation matches the existing
-      pattern.
+    ## Note
 
-    ### Verification
+    This task enables: phase-boundary-mechanics, migrate-ravel-lite-migrate-for-v1-to-v2-cutover, plan-finish-pr-merge-with-memory-promotion-and-archive.
+- id: phase-boundary-mechanics-drain-focus-objections-target-requests-apply-commits-defeat-cascade
+  title: 'Phase boundary mechanics: drain focus-objections/target-requests, apply commits, defeat cascade'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream
+  - commits-yaml-v2-move-to-state-module-with-optional-target-componentref
+  description: |
+    Implement the runner-side phase boundary mechanics: drain `target-requests.yaml` and `focus-objections.yaml` at triage entry, apply `commits.yaml` at analyse-work exit, run the defeat cascade over plan KG when status changes, and save per-phase baselines.
 
-    - 1028 workspace tests pass (44 new).
-    - `./scripts/check.sh` (clippy `-D warnings`) clean. One redundant-
-      closure lint caught and fixed during the loop — the pre-push hook
-      did its job.
-    - Smoke test on the release binary: every verb emits the documented
-      YAML shape and rejects the expected error cases.
+    ## Why
 
-    ### What did NOT land (follow-on backlog items for triage)
+    The triage-first cycle requires mechanical work at phase boundaries that is currently absent or incomplete:
 
-    The task title names "phase cycle: triage-first with focus-objections
-    and commits.yaml" — that is genuinely a multi-task migration. The
-    remaining sub-pieces below are coherent stand-alone slices each sized
-    for one work phase:
+    1. **Triage entry**: drain `focus-objections.yaml` (call `delete_focus_objections` after triage reads it) and drain `target-requests.yaml` (mount new target worktrees).
+    2. **Analyse-work exit / GitCommitWork**: apply `commits.yaml` spec to the correct worktrees (currently always the plan root).
+    3. **Defeat cascade**: when a task status changes to `done`/`defeated`, run the plan KG defeat-cascade so dependent tasks whose only blocker is now resolved flip to unblocked.
+    4. **Baselines**: save per-phase baselines atomically in each `GitCommit*` handler.
 
-    1. **Cycle reorder.** Move triage from end-of-cycle to start-of-cycle
-       in the runner: `triage → work → analyse-work → reflect → boundary
-       → triage`. Eliminate the dream phase from the in-cycle path.
-       Touches `src/phase_loop.rs`, `src/types.rs::LlmPhase` ordering, and
-       any phase-summary code that assumes the current order.
+    ## Scope
 
-    2. **Phase boundary mechanics.** At each phase boundary the runner
-       should: drain `target-requests.yaml`, apply `commits.yaml`, run
-       the defeat cascade over plan KG when status changed, save
-       per-worktree baselines into `<phase>-baseline.yaml` (a map, not a
-       single SHA — see arch doc §Phase boundaries). Triage in particular
-       must consume `focus-objections.yaml` (call `delete_focus_objections`)
-       after acting on its contents. Touches the phase-loop dispatcher
-       and the existing `git_save_baseline` (it currently writes one SHA;
-       v2 wants a per-worktree map, but that lives behind the multi-target
-       work).
+    - At `GitCommitTriage` / triage entry: after the triage LLM exits, call `delete_focus_objections(plan_dir)` and `drain_target_requests(plan_dir)` (mount worktrees for any new requests, write to `targets.yaml`).
+    - At `GitCommitAnalyseWork` (was `GitCommitWork`): route `apply_commits_spec` using the optional `target:` field from `CommitSpec` (introduced in commits-yaml-v2 task) to apply each commit in the correct worktree.
+    - Defeat cascade: after each backlog status flip, call `plan_kg::run_defeat_cascade(plan_dir)` or equivalent.
+    - Baseline writes: update baseline filenames to match the new cycle order.
+    - Integration test: simulate a cycle with `focus-objections.yaml` present; assert it is consumed at triage entry.
 
-    3. **Two-stream commits.** The architecture splits commits into
-       plan-state commits (in the ravel context, message `run-plan: <phase>
-       (<plan>)`) and work commits (in each mounted target's worktree,
-       on `ravel-lite/<plan>/main`). Targets first, context last so a
-       target failure doesn't leave the context recording false-positive
-       progress. Touches `src/git.rs::apply_commits_spec`, `git_commit_plan`,
-       and the surrounding orchestration in `phase_loop`.
+    ## Dependencies
 
-    4. **`commits.yaml` v2 shape.** Add an optional `target:
-       ComponentRef` field to `CommitSpec` so analyse-work can route
-       commits to the correct worktree. Move the schema out of
-       `src/git.rs` into a proper `src/state/commits/` module with the
-       established schema/yaml_io/verbs split, but keep the field
-       optional and `schema_version` defaulted so existing v1 prompts
-       continue to write parseable files. Currently the schema is
-       inlined in `git.rs` at lines 22–34; the migration is mechanical.
+    Depends on the cycle-reorder task (new phase order) and on the commits-yaml-v2 task (optional `target:` field on `CommitSpec`).
 
-    5. **Recovery semantics.** "Restart the cycle, don't resume" — see
-       arch doc §Recovery from interrupted cycles. The runner should
-       ignore partly-written scratch files (`commits.yaml`,
-       `target-requests.yaml`, `focus-objections.yaml`) on a fresh `ravel-lite
-       run`. Mostly already true, but worth an explicit pass + tests
-       that simulate Ctrl-C mid-cycle.
+    ## References
 
-    6. **Phase prompt updates.** `defaults/phases/triage.md`,
-       `defaults/phases/work.md`, `defaults/phases/analyse-work.md`, and
-       `defaults/phases/reflect.md` need updates for the new cycle shape:
-       triage writes `this-cycle-focus.yaml`; work consumes it and may
-       write `focus-objections.yaml`; analyse-work writes `commits.yaml`
-       with the optional `target:` field; reflect closes the cycle.
-       `defaults/phases/dream.md` becomes unreferenced once the cycle
-       reorders (the standalone `ravel-lite curate` task picks up its
-       functionality).
+    - `docs/architecture-next.md` §Phase boundaries, §Recovery from interrupted cycles
+    - `src/phase_loop.rs` — `ScriptPhase::GitCommit*` handlers
+    - `src/state/focus_objections/` — `delete_focus_objections`
+    - `src/state/target_requests/` — drain mechanics
+- id: two-stream-commits-target-worktrees-first-context-record-last
+  title: 'Two-stream commits: target worktrees first, context record last'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - phase-boundary-mechanics-drain-focus-objections-target-requests-apply-commits-defeat-cascade
+  description: |
+    Implement the two-stream commit ordering: apply target-worktree commits first, then commit plan-state (context) changes. A target failure must not leave the context recording false-positive progress.
 
-    ### Suggestions for triage
+    ## Why
 
-    - These are six small-to-medium tasks, not one 8-bullet monolith. The
-      precedent set by `introduce-intents-yaml-and-state-intents-crud-verbs`
-      (a previously-done task) suggests this is the right granularity.
-    - Item 4 (`commits.yaml` v2 shape) has no dependencies and can land
-      immediately; the others form a partial DAG (1 enables 2, 2 enables
-      3, 3 enables 6).
-    - The architecture-next migrator task is still gated on item 1 (cycle
-      reorder) — once that lands, the migrator can encode the new layout
-      knowledge and the `LLM_STATE-shape-frozen` constraint can relax.
+    Currently `GitCommitWork` applies `commits.yaml` and then commits the plan dir in a single sequence without worktree separation. The architecture-next design separates:
 
-    ### Surprises / things to know
+    1. **Work commits**: applied in each mounted target's worktree on `ravel-lite/<plan>/main`.
+    2. **Context commit**: the plan-state commit (`run-plan: <phase> (<plan>)`) in the ravel context repo.
 
-    - `commits.yaml` already had a working v1 implementation inside
-      `src/git.rs` (the `CommitSpec`/`CommitsSpec` types and the
-      `apply_commits_spec` function). It is *not* TMS-shaped and has no
-      `schema_version` — adding the version field is a v2-prompt
-      coupling that has to be done together with prompt updates, which
-      is why I left it out of this slice.
-    - The `LLM_STATE` wire-shape constraint is honoured: no existing file
-      schemas changed; both new files are forward-only (read returns
-      empty default or `None` when absent, so an old binary running
-      against a plan that has these files would simply ignore them, and
-      this binary running against a plan without them works fine).
-    - `Objection::kind_str()` returns the same kebab-case strings the
-      serde tag uses. Future code that needs to reason mechanically about
-      which kind of objection to handle should use that method rather
-      than duplicating the literal strings.
+    Targets first so a target commit failure stops before the context record claims the work landed. Without this ordering, a partial failure produces a context record that overstates progress.
+
+    ## Scope
+
+    - In `apply_commits_spec` (currently `src/git.rs` or new `src/state/commits/`): group commits by their `target: ComponentRef`; apply each group in the target's worktree (resolved via `targets.yaml` + mounted worktrees). Unrouted commits (no `target:` field) fall back to the plan root, preserving v1 behaviour.
+    - After all target commits land, run the context-record commit (`git_commit_plan`).
+    - Propagate failure: if any target commit fails, abort before the context commit and surface the error.
+    - Update `GitCommitWork` handler to delegate to the new two-stream apply path.
+    - Tests: commit with two targets asserts target commits precede context commit; failure in second target leaves first committed but context unchanged.
+
+    ## Dependencies
+
+    Depends on phase-boundary-mechanics (which wires the new commit-apply path into the phase loop).
+
+    ## References
+
+    - `docs/architecture-next.md` §Commits (two streams)
+    - `src/git.rs::apply_commits_spec` — current implementation
+    - `src/phase_loop.rs` — `ScriptPhase::GitCommitWork` handler
+- id: recovery-semantics-verify-and-test-restart-not-resume-for-interrupted-cycles
+  title: 'Recovery semantics: verify and test restart-not-resume for interrupted cycles'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream
+  description: |
+    Verify and test that the runner correctly ignores partly-written scratch files on a fresh `ravel-lite run` ("restart the cycle, don't resume").
+
+    ## Why
+
+    The architecture-next design says: "Ctrl-C lands between cycles; next run starts with triage. No resume machinery; interrupted scratch files ignored." Most of this is already true (absent files read as empty defaults), but there is no explicit test that a cycle that was interrupted mid-write produces a clean restart.
+
+    ## Scope
+
+    - Audit `commits.yaml`, `target-requests.yaml`, `focus-objections.yaml`, and `this-cycle-focus.yaml` read paths: confirm each returns a safe empty/default value when the file is absent or partially written.
+    - Add integration tests that simulate Ctrl-C mid-cycle by writing a partial/malformed scratch file to the plan dir, then starting a fresh phase_loop cycle and asserting: (a) the partial file does not cause a panic or error, and (b) the cycle proceeds normally from triage.
+    - Document the restart-not-resume contract in the relevant read functions.
+
+    ## Dependencies
+
+    Depends on cycle-reorder (triage is the restart entry point; test must assume the new cycle order).
+
+    ## References
+
+    - `docs/architecture-next.md` §Recovery from interrupted cycles
+    - `src/state/commits/yaml_io.rs` — read path for commits.yaml
+    - `src/state/focus_objections/yaml_io.rs` — read path for focus-objections.yaml
+    - `src/state/this_cycle_focus/yaml_io.rs` — read path for this-cycle-focus.yaml
 - id: ravel-lite-create-seeds-target-requests-yaml
   title: ravel-lite create seeds target-requests.yaml
   category: architecture-next
   status: not_started
   dependencies:
-  - phase-cycle-triage-first-with-focus-objections-and-commits-yaml
+  - phase-boundary-mechanics-drain-focus-objections-target-requests-apply-commits-defeat-cascade
   description: |
     Make `ravel-lite create` write an initial `target-requests.yaml` from user-supplied component references at plan creation time.
 
@@ -337,12 +302,33 @@ tasks:
     ## Dependencies
 
     Depends on `drain-target-requests-at-phase-boundaries` for the `target-requests.yaml` schema and write layer.
+- id: migrate-ravel-lite-migrate-for-v1-to-v2-cutover
+  title: 'Migrate: ravel-lite migrate for v1 to v2 cutover'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream
+  description: |
+    Implement the `ravel-lite migrate <old-plan-path>` verb that cuts a v1 `<project>/LLM_STATE/<plan>` plan over to v2's `<context>/plans/<plan>` model. Hard cutover: the v2 binary refuses to run on unmigrated v1 plans.
+
+    Reference: `docs/architecture-next.md` §Migration sketch, §Settled decisions (cutover policy + backfill).
+
+    Scope (per the 7-step sketch):
+    1. Register repos: ensure each project hosting an existing plan is in the new context's `repos.yaml` (URL + local_path).
+    2. Run Atlas: index each registered repo so `.atlas/components.yaml` exists. Plans cannot start without this.
+    3. Move plan state: copy `<project>/LLM_STATE/<plan>/` → `<context>/plans/<plan>/`. Rename `memory.md` to `legacy_memory.md`; new `memory.yaml` starts mostly empty.
+    4. Extract intent (one-shot LLM): the migrate-intent headless phase reads `phase.md` + recent backlog and emits `intents.yaml` with best-effort intents; backlog items get `serves-intent` justifications (or `legacy: true` if unattributable).
+    5. Mint targets (one-shot LLM): a headless pass against the project's components.yaml proposes initial `targets.yaml`; user reviews.
+    6. Mount worktrees: initialise worktrees from the project's current main per the new mount mechanics.
+    7. Backfill memory (one-shot LLM): pass over `legacy_memory.md` produces a `memory.yaml` with `status: legacy` entries. User curates in their own time.
+
+    Verification: dogfood by migrating `LLM_STATE/core` (this very plan) as the canonical test case before the v2.0 release.
 - id: plan-finish-pr-merge-with-memory-promotion-and-archive
   title: 'Plan finish: pr/merge with memory promotion and archive'
   category: architecture-next
   status: not_started
   dependencies:
-  - phase-cycle-triage-first-with-focus-objections-and-commits-yaml
+  - phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream
   description: |
     Implement plan completion: promote plan memory into component memory, ship code + memory together via PR or local fast-forward, archive the plan dir.
 
@@ -397,27 +383,6 @@ tasks:
     - Remove the "direct mode" target types entirely from the v1 codebase.
 
     Out of scope: any auto-sync or rebase-on-main semantics — plan branches stay isolated against main per design.
-- id: migrate-ravel-lite-migrate-for-v1-to-v2-cutover
-  title: 'Migrate: ravel-lite migrate for v1 to v2 cutover'
-  category: architecture-next
-  status: not_started
-  dependencies:
-  - phase-cycle-triage-first-with-focus-objections-and-commits-yaml
-  description: |
-    Implement the `ravel-lite migrate <old-plan-path>` verb that cuts a v1 `<project>/LLM_STATE/<plan>` plan over to v2's `<context>/plans/<plan>` model. Hard cutover: the v2 binary refuses to run on unmigrated v1 plans.
-
-    Reference: `docs/architecture-next.md` §Migration sketch, §Settled decisions (cutover policy + backfill).
-
-    Scope (per the 7-step sketch):
-    1. Register repos: ensure each project hosting an existing plan is in the new context's `repos.yaml` (URL + local_path).
-    2. Run Atlas: index each registered repo so `.atlas/components.yaml` exists. Plans cannot start without this.
-    3. Move plan state: copy `<project>/LLM_STATE/<plan>/` → `<context>/plans/<plan>/`. Rename `memory.md` to `legacy_memory.md`; new `memory.yaml` starts mostly empty.
-    4. Extract intent (one-shot LLM): the migrate-intent headless phase reads `phase.md` + recent backlog and emits `intents.yaml` with best-effort intents; backlog items get `serves-intent` justifications (or `legacy: true` if unattributable).
-    5. Mint targets (one-shot LLM): a headless pass against the project's components.yaml proposes initial `targets.yaml`; user reviews.
-    6. Mount worktrees: initialise worktrees from the project's current main per the new mount mechanics.
-    7. Backfill memory (one-shot LLM): pass over `legacy_memory.md` produces a `memory.yaml` with `status: legacy` entries. User curates in their own time.
-
-    Verification: dogfood by migrating `LLM_STATE/core` (this very plan) as the canonical test case before the v2.0 release.
 - id: update-tutorial-and-reference-docs-for-repos-yaml-cutover
   title: Update tutorial and reference docs for repos.yaml cutover
   category: architecture-next
@@ -464,3 +429,41 @@ tasks:
     4. Tests: rendered output includes intent claims, task counts match backlog, phase transitions leave `phase.md` non-empty and structured.
 
     **Gating constraint:** Must wait until the v1→v2 migrator ships and a new binary deploys — `read_backlog` on `LLM_STATE/core/backlog.yaml` today hits the legacy v1 wire shape and would fail. See `LLM_STATE-shape-frozen` memory entry.
+- id: phase-prompt-updates-for-triage-first-cycle-shape
+  title: Phase prompt updates for triage-first cycle shape
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - two-stream-commits-target-worktrees-first-context-record-last
+  description: |
+    Update all four phase prompts for the triage-first cycle shape: triage writes `this-cycle-focus.yaml`, work consumes it, analyse-work writes `commits.yaml` with optional `target:` field, reflect closes the cycle. Remove `dream.md` from the in-cycle path.
+
+    ## Why
+
+    The phase prompts (`defaults/phases/triage.md`, `work.md`, `analyse-work.md`, `reflect.md`) were written for the old end-of-cycle-triage shape. After the cycle-reorder, two-stream-commits, and phase-boundary-mechanics tasks land, the prompts need to instruct the LLM to use the new mechanics:
+
+    - **triage.md**: write `this-cycle-focus.yaml` (via `state this-cycle-focus set`); read and drain `focus-objections.yaml` from the prior cycle; new baseline file names.
+    - **work.md**: read `this-cycle-focus.yaml` at entry; may write `focus-objections.yaml` (via `state focus-objections add-*` verbs) when a target is wrong, skippable, or premature.
+    - **analyse-work.md**: write `commits.yaml` with optional `target: ComponentRef` per commit.
+    - **reflect.md**: close the cycle; no longer triggers dream.
+    - **dream.md**: update to reflect that it is now only invoked by `ravel-lite curate`, not the plan cycle.
+
+    ## Scope
+
+    1. Update `defaults/phases/triage.md` §Output format with new cycle order and `this-cycle-focus` / `focus-objections` verb examples.
+    2. Update `defaults/phases/work.md` to read `this-cycle-focus.yaml` on entry and document `focus-objections` write path.
+    3. Update `defaults/phases/analyse-work.md` step 9: `commits.yaml` now supports optional `target:` field.
+    4. Update `defaults/phases/reflect.md` to reflect no post-reflect dream in the cycle.
+    5. Update `defaults/phases/dream.md` to note standalone-only invocation.
+    6. Run drift-guard test (`every_file_under_defaults_is_registered_in_embedded_files`) to confirm no stale embed registrations.
+    7. `shipped_pi_prompts_have_no_dangling_tokens` must pass.
+
+    ## Dependencies
+
+    Depends on two-stream-commits (the full new mechanics must be in place before the prompts describe them as active). Also depends on cycle-reorder and phase-boundary-mechanics transitively via two-stream-commits.
+
+    ## References
+
+    - `defaults/phases/` — phase prompt files
+    - `src/init.rs` — drift sentinel for `state phase-summary render` substring
+    - `src/prompt.rs` — `substitute_tokens` path all prompts go through
