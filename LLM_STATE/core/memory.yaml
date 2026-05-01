@@ -873,3 +873,15 @@ entries:
   title: targets mount is two-level idempotent
   body: |
     `targets mount` is two-level idempotent: same `(repo, component)` pair returns the existing `Target` row unchanged; a second component in the same repo reuses the existing worktree (skips `git worktree add`) and appends a new `Target` row.
+- id: clone-on-demand-for-mount-target-is-deferred-until-real-use-case
+  title: Clone-on-demand for mount_target is deferred until real use case
+  body: |
+    When `local_path` is absent for a `repo_slug` in `repos.yaml`, `mount_target` (in `src/state/targets/mount.rs`) currently errors with an actionable message citing the slug and showing the `repo add` migration command. The settled design for clone-on-demand is: clone into `<context>/.cache/repos/<slug>/` when `local_path` is absent. This is deferred until a real use case lands — the error path is clear and intentional for now. Implement as a small follow-up task once a concrete need arises.
+- id: worktree-branch-mismatch-recovery-in-mount-target-is-a-deferred-ergonomic-improvement
+  title: Worktree branch-mismatch recovery in mount_target is a deferred ergonomic improvement
+  body: |
+    If `<plan>/.worktrees/<repo>/` already exists on a different branch than the expected `ravel-lite/<plan-name>/main`, `mount_target` currently errors and asks the user to remove the directory manually. A future ergonomic improvement could detect a clean worktree and offer to re-create it automatically. Deferred until the manual removal UX becomes a recurring pain point.
+- id: atlas-freshness-coupling-in-mount-target-is-an-open-design-question
+  title: Atlas freshness coupling in mount_target is an open design question
+  body: |
+    `mount_target` in `src/state/targets/mount.rs` reads `.atlas/components.yaml` unconditionally to resolve component `path_segments`. A stale Atlas catalog produces stale `path_segments` in `targets.yaml`. Open design question: whether mount should call `atlas freshness` and warn when the catalog is older than some threshold. Deferred — the freshness coupling is acknowledged but the right threshold and remediation UX are not yet settled. Consider when Atlas freshness tooling matures.
