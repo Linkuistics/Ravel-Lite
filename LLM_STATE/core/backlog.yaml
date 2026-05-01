@@ -2,8 +2,7 @@ tasks:
 - id: add-ravel-lite-show-verb-for-embedded-fixed-memory-content
   title: Add ravel-lite show verb for embedded fixed-memory content
   category: architecture-next
-  status: blocked
-  blocked_reason: 'Blocked on settling fixed-memory/ extensibility model: where user-owned fixed-memory lives under <context>/ v2 and the lookup order (disk-overlay then embed). Decision belongs to ravel-lite-create-write-plans-into-context-plans-dir scope.'
+  status: not_started
   dependencies:
   - ravel-lite-create-write-plans-into-context-plans-dir
   description: |
@@ -148,7 +147,7 @@ tasks:
 - id: ravel-lite-create-write-plans-into-context-plans-dir
   title: 'ravel-lite create: write plans into context plans dir'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Re-shape `ravel-lite create <plan>` so plans live at `<context>/plans/<plan>/` and the create session has the three structured deliverables defined for v2.0.
@@ -164,6 +163,118 @@ tasks:
       3. Anchor capture — components mentioned but not edited get recorded as anchors in `phase.md` (graph-RAG starting points for triage).
     - `phase.md` becomes a rendered overview (intent summary + anchors + housekeeping), not the canonical intent source.
     - No component required at create time; targets land asynchronously via target-requests.
+  results: |
+    ## Results
+
+    Slice B of the v2 `ravel-lite create` reshape landed. Path resolution moved
+    from a full plan path to a v2-shaped name resolved under `<context>/plans/<plan>/`,
+    the spawn argv gained an `--allowed-tools` allowlist plus a `RAVEL_LITE_CONFIG`
+    env var, the prompt template was rewritten end-to-end for the three v2
+    deliverables (intents, target-requests, anchors), and `compose_create_prompt`
+    switched from ad-hoc `format!` to the canonical `substitute_tokens` path that
+    hard-errors on unresolved `{{NAME}}` placeholders.
+
+    The full design is captured at
+    `docs/superpowers/specs/2026-05-01-ravel-lite-create-v2-design.md`; the
+    seven-task implementation plan is at
+    `docs/superpowers/plans/2026-05-01-ravel-lite-create-v2.md`.
+
+    ### What worked
+
+    - **TDD on the pure helpers.** `validate_plan_name` (9 tests) and
+      `resolve_plan_dir` (4 tests) are the unit-tested layer; the rest of the
+      diff is build-tested only (signature changes, prompt rewrite, spawn argv
+      edits — all hard to unit-test without claude). The pure helpers caught
+      one bug during implementation (initial `validate_plan_name` had to
+      carve out an explicit `name == "."` check before the `..` substring
+      check, otherwise `.` slipped through the substring guard).
+    - **Atlas exposure was already plumbed.** `ravel-lite atlas` has the full
+      query surface (list-repos, list-components, summary, describe,
+      neighbors, edges, roots, path, scc, freshness) and `ravel-lite repo`
+      exposes the registry. The prompt only needed to enumerate the verbs the
+      LLM should call; no atlas implementation work was needed.
+    - **`init` already scaffolds `<context>/plans/`** (per `init.rs` LAYOUT_DIRS),
+      so v2 plan creation drops directly into a directory that v2 init already
+      expects. `run_create` keeps a defensive `create_dir_all` for the parent
+      in case `plans/` was removed, but the happy path is a no-op.
+    - **The `substitute_tokens` switch caught a latent footgun.** The v1
+      `create-plan.md` referenced `{{PLAN}}`, `{{ORCHESTRATOR}}`, `{{DEV_ROOT}}`
+      in prose, but the v1 `compose_create_prompt` didn't substitute them —
+      the LLM saw literal `{{PLAN}}` text and inferred the path from a separate
+      appended instruction block. The v2 path errors loudly on any unresolved
+      token, and the new prompt restricts itself to `{{PLAN}}` only (verified
+      via `grep -oE '\{\{[A-Z_]+\}\}' defaults/create-plan.md`).
+    - **Clippy and full workspace tests pass clean.** `scripts/check.sh`
+      (currently `cargo clippy --all-targets --workspace -- -D warnings`)
+      passes; `cargo test --workspace` reports 787 lib tests + multiple
+      integration suites all green.
+
+    ### What was deliberately deferred
+
+    Documented as out-of-scope in the design doc:
+
+    - **`target-requests.yaml` runner-side consumption.** The LLM emits the
+      file as part of session output but no runner code reads it yet. That
+      belongs to the `targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts`
+      backlog task.
+    - **Backlog generation from intents at first-cycle triage.** v2 plans
+      are designed to start with empty backlog — triage fills it. That's
+      the `phase-cycle-triage-first-with-focus-objections-and-commits-yaml`
+      task.
+    - **`phase.md` role-flip from phase tracker to rendered overview.** That's
+      the `state-intents-render-overview` task, which is itself gated on the
+      v1→v2 migrator.
+    - **External-link justifications via CLI flag.** `state intents add` only
+      takes a claim plus a single rationale body today; issue-tracker URLs
+      go inline in the rationale per the prompt instructions. CLI extension
+      is a future task if friction surfaces.
+
+    ### What this suggests next
+
+    - **Hard cutover footprint.** v2 plans created by this code are inert
+      under the running v1 binary — empty backlog after `create` will trip
+      v1's phase loop. This is the architecture-next "hard cutover" decision,
+      but it does mean nobody can usefully invoke the new `create` until the
+      v2 binary ships (which is gated on the migrator + targets-and-worktrees +
+      phase-cycle-triage-first all landing). The next high-value unblock is
+      `targets-and-worktrees` because it activates `target-requests.yaml`
+      consumption.
+    - **Spawn argv pattern divergence.** The v2 `create` uses a tightly-scoped
+      `Bash(ravel-lite ...)` allowlist where `discover` uses unrestricted
+      `Bash`. If the v2 create dialogue surfaces friction (LLM wanting to
+      `cat` a file or `git status`), expanding the allowlist is one line.
+      Worth watching once the binary actually ships.
+    - **`PlanContext` for create is a fudge.** `compose_create_prompt`
+      populates `project_dir` and `config_root` both as `context_root` because
+      v2 plans have no per-project root. The current `PlanContext` shape is
+      v1-coloured. When the v2 phase cycle lands, consider splitting
+      `PlanContext` into `CreateContext` and `CycleContext`, or making
+      `project_dir` an `Option<String>`.
+    - **Test coverage gap on `run_create` itself.** The function's path
+      resolution + scaffold + spawn + verify pipeline is integration-level
+      and not unit-tested (would need a fake `claude` binary like
+      `pi_phase_cycle` uses). Acceptable for now — the unit-tested helpers
+      cover the failure-prone logic. Worth adding an integration test using
+      `CARGO_BIN_EXE_ravel-lite` if the failure-mode surfaces in real use.
+
+    ### Files touched
+
+    - `src/create.rs` — added `validate_plan_name`, `resolve_plan_dir`,
+      `CREATE_ALLOWED_TOOLS`; rewrote `compose_create_prompt` to use
+      `substitute_tokens`; updated `run_create` (signature change, spawn
+      argv, env, post-spawn verification); removed `validate_target` and
+      five legacy tests; added 13 new unit tests.
+    - `src/main.rs` — `Create` enum field rename (`plan_dir: PathBuf` →
+      `plan: String`); dispatch update.
+    - `defaults/create-plan.md` — full rewrite to v2 three-deliverable
+      structure (only `{{PLAN}}` token used).
+    - `docs/superpowers/specs/2026-05-01-ravel-lite-create-v2-design.md`
+      (new) — the design spec.
+    - `docs/superpowers/plans/2026-05-01-ravel-lite-create-v2.md` (new) —
+      the seven-task implementation plan, with a note about
+      work-phase commit deferral.
+
+    No `Cargo.toml` changes; no new dependencies.
 - id: phase-cycle-triage-first-with-focus-objections-and-commits-yaml
   title: 'Phase cycle: triage-first with focus-objections and commits.yaml'
   category: architecture-next

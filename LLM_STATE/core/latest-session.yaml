@@ -1,13 +1,11 @@
-id: session-108
-timestamp: 2026-05-01T02:41:53Z
+id: session-109
+timestamp: 2026-05-01T04:02:52Z
 phase: work
 body: |
-  ### Session 108 (2026-05-01T02:41:53Z) — Add atlas path and scc graph algorithm verbs
+  ### Session 109 (2026-05-01T04:02:52Z) — Rewrite `ravel-lite create` for v2 plan model
 
-  - Implemented `atlas path <from> <to> [--max-hops N]` (BFS shortest path) and `atlas scc [--all]` (Tarjan strongly connected components) over the directed component graph.
-  - Both algorithms added as methods on `DirectedGraph<N>` in `src/directed_graph.rs`: `shortest_path` (BFS with parent-map reconstruction, returns `Option<Vec<N>>`) and `strongly_connected_components` (recursive Tarjan, sorted within-SCC and across SCCs for deterministic output).
-  - CLI runners `run_path` and `run_scc` added to `src/atlas.rs`; both resolve component references via the existing `resolve_ref` helper and delegate to `build_directed_component_graph`.
-  - `AtlasCommands::Path` and `AtlasCommands::Scc` subcommands wired in `src/main.rs` with dispatch arms.
-  - 18 unit tests added (9 for `shortest_path`, 9 for SCC): cover linear path, diamond shortest selection, self-target, unreachable endpoints, hop-limit boundary, directed-edge respect, cycle termination, empty graph, DAG singletons, disjoint cycles, partition invariant, isolated nodes, self-loops, insertion-order determinism.
-  - All 779 lib tests pass; clippy clean.
-  - No accidental edits found; all changed files are intentional.
+  - Attempted: migrate `ravel-lite create` from old free-path plan creation to v2 intent-anchored model where plans live under `<context_root>/plans/<name>/`
+  - What worked: full rewrite of `src/create.rs` — `validate_target`/free-path model replaced by `validate_plan_name` + `resolve_plan_dir` that enforces `<context_root>/plans/<name>/` placement; `compose_create_prompt` now uses `substitute_tokens` instead of string concatenation (hard-errors on unresolved `{{NAME}}` placeholders); `run_create` signature changed from `plan_dir: PathBuf` to `plan_name: &str`; `src/main.rs` updated to match; `defaults/create-plan.md` rewritten around §0–§4 intent/target-request/anchor dialogue; `CREATE_ALLOWED_TOOLS` constant added to restrict Bash surface in create sessions; post-hoc verification now checks `intents.yaml` emptiness instead of backlog emptiness; tests replaced with suite covering `validate_plan_name`, `resolve_plan_dir`, and updated `compose_create_prompt` (including a regression test that composes against the real shipped template)
+  - What didn't: no failures observed; the `add-ravel-lite-show-verb-for-embedded-fixed-memory-content` task was unblocked by `repair-stale-statuses` because its dependency is now `done`
+  - What this suggests next: the unblocked `show` verb task is ready for a work cycle; also worth checking whether any live plans under `LLM_STATE/` need migration to the new `plans/<name>/` layout
+  - Key learnings: the shift from free-path to `plans/<name>/` placement is a meaningful interface change — callers invoking `ravel-lite create <path>` must now pass a bare name instead

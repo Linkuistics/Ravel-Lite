@@ -139,9 +139,9 @@ enum Commands {
         /// default location at <dirs::config_dir()>/ravel-lite/.
         #[arg(long)]
         config: Option<PathBuf>,
-        /// Path to the new plan directory. Must not already exist; its
-        /// parent directory must exist.
-        plan_dir: PathBuf,
+        /// Plan name. Resolved to <context_root>/plans/<plan>/.
+        /// See `create::validate_plan_name` for accepted characters.
+        plan: String,
     },
     /// Produce an LLM-driven plan status overview for one or more plan
     /// directories. Reads each plan's phase/backlog/memory into a single
@@ -1208,9 +1208,9 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Create { config, plan_dir } => {
+        Commands::Create { config, plan } => {
             let config_root = resolve_config_dir(config)?;
-            create::run_create(&config_root, plan_dir).await
+            create::run_create(&config_root, &plan).await
         }
         Commands::Survey { config, plan_dirs, model, timeout_secs, prior, force } => {
             let config_root = resolve_config_dir(config)?;

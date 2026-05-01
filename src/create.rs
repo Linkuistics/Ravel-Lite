@@ -11,6 +11,7 @@
 // composition, subprocess spawn with inherited stdio, post-hoc
 // verification.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -20,70 +21,99 @@ use tokio::process::Command as TokioCommand;
 
 use crate::config::{load_agent_config, load_shared_config};
 use crate::init::require_embedded;
+use crate::prompt::substitute_tokens;
 use crate::state::filenames::{
     BACKLOG_FILENAME, DREAM_WORD_COUNT_FILENAME, INTENTS_FILENAME, MEMORY_FILENAME, PHASE_FILENAME,
 };
+use crate::types::PlanContext;
 
 /// Relative path to the create-plan prompt template inside a config dir.
 pub const CREATE_PLAN_PROMPT_PATH: &str = "create-plan.md";
 
-/// Compose the full prompt given the template and target plan path.
-/// Pure function — broken out so tests cover the composition
-/// deterministically without spawning claude.
-pub fn compose_create_prompt(template: &str, abs_plan_dir: &Path) -> String {
-    format!(
-        "{template}\n\n---\n\n\
-         Create a new plan at this absolute path:\n\n  {target}\n\n\
-         The directory does not exist yet. Create it, then create the \
-         plan files inside it according to the conventions above. \
-         When the plan is ready, confirm with the user by listing what \
-         you created.\n\n\
-         INVARIANT: Your ONLY output from this session is a plan \
-         directory at {target}. If the user's description sounds like \
-         a single concrete task (a bug report, a feature request, a \
-         specific question), that is the plan's initial task — \
-         capture it in the backlog and scaffold the plan around it. A \
-         single-task plan is a valid plan. Do not attempt to do the \
-         work the user described; your job is to write plan files, \
-         not to solve the problem they described.\n",
-        target = abs_plan_dir.display()
-    )
+/// Tools pre-approved for the create session. Restricting Bash to
+/// specific ravel-lite invocations prevents accidental shell-out during
+/// the dialogue while keeping the catalog and state CLIs friction-free.
+const CREATE_ALLOWED_TOOLS: &str = "Bash(ravel-lite atlas:*),\
+Bash(ravel-lite repo:*),\
+Bash(ravel-lite state intents:*),\
+Bash(ravel-lite state backlog:*),\
+Bash(ravel-lite state memory:*),\
+Read,Write,Glob,Grep";
+
+/// Compose the v2 create prompt. Substitutes `{{PLAN}}` (the absolute
+/// plan-dir path) via the canonical `substitute_tokens` path, which
+/// hard-errors on any leftover `{{NAME}}` placeholders. Other tokens
+/// (`{{PROJECT}}`, `{{ORCHESTRATOR}}`) substitute to `context_root`
+/// because v2 plans have no per-project root — the context is the
+/// closest analogue. `{{DEV_ROOT}}` and `{{RELATED_PLANS}}` substitute
+/// to empty strings; the v2 template should not reference them.
+pub fn compose_create_prompt(
+    template: &str,
+    abs_plan_dir: &Path,
+    context_root: &Path,
+) -> Result<String> {
+    let ctx = PlanContext {
+        dev_root: String::new(),
+        project_dir: context_root.display().to_string(),
+        plan_dir: abs_plan_dir.display().to_string(),
+        config_root: context_root.display().to_string(),
+        related_plans: String::new(),
+    };
+    let tokens: HashMap<String, String> = HashMap::new();
+    substitute_tokens(template, &ctx, &tokens)
 }
 
-/// Validate and prepare the target path. Returns the absolute path to the
-/// plan directory on success. Hard errors only if the target already exists
-/// or its parent path resolves to an existing file (not a directory).
-///
-/// Missing parent directories are created automatically — the user's intent
-/// is clear, and the parent must exist on disk at spawn time because
-/// `claude --add-dir <parent>` resolves the path eagerly.
-pub fn validate_target(plan_dir: &Path) -> Result<PathBuf> {
-    let abs = std::path::absolute(plan_dir)
-        .with_context(|| format!("Failed to resolve absolute path for {}", plan_dir.display()))?;
+/// Validate a v2 plan name. Plan names appear in git ref components
+/// (`ravel-lite/<plan>/main`), commit messages, survey output, and
+/// `targets.yaml`, so the rules match git ref-component validity plus
+/// extra footgun-avoidance.
+pub fn validate_plan_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("Plan name cannot be empty.");
+    }
+    if name == "." || name == ".." {
+        anyhow::bail!("Plan name cannot be `.` or `..`.");
+    }
+    if name.contains("..") {
+        anyhow::bail!("Plan name {name:?} contains `..`.");
+    }
+    if name.starts_with('.') {
+        anyhow::bail!("Plan name {name:?} cannot start with `.`.");
+    }
+    if name.starts_with('-') {
+        anyhow::bail!("Plan name {name:?} cannot start with `-`.");
+    }
+    if name.ends_with(".lock") {
+        anyhow::bail!("Plan name {name:?} cannot end with `.lock`.");
+    }
+    for c in name.chars() {
+        if c.is_whitespace() {
+            anyhow::bail!("Plan name {name:?} contains whitespace.");
+        }
+        if c.is_control() {
+            anyhow::bail!("Plan name {name:?} contains control characters.");
+        }
+        if matches!(c, '/' | '\\' | '~' | '^' | ':' | '?' | '*' | '[') {
+            anyhow::bail!("Plan name {name:?} contains invalid character {c:?}.");
+        }
+    }
+    Ok(())
+}
 
-    if abs.exists() {
+/// Resolve a v2 plan name to an absolute directory under
+/// `<context_root>/plans/<plan_name>/`. Validates the name first and
+/// errors if the resolved path already exists. Does not create
+/// directories — caller is `scaffold_plan_dir`.
+pub fn resolve_plan_dir(context_root: &Path, plan_name: &str) -> Result<PathBuf> {
+    validate_plan_name(plan_name)?;
+    let plan_dir = context_root.join("plans").join(plan_name);
+    if plan_dir.exists() {
         anyhow::bail!(
             "Plan directory {} already exists. create will not overwrite an existing plan.",
-            abs.display()
+            plan_dir.display()
         );
     }
-
-    let parent = abs
-        .parent()
-        .with_context(|| format!("Plan path {} has no parent directory", abs.display()))?;
-    if parent.exists() && !parent.is_dir() {
-        anyhow::bail!(
-            "Parent path {} exists but is not a directory.",
-            parent.display()
-        );
-    }
-    if !parent.exists() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!("Failed to create parent directory {}", parent.display())
-        })?;
-    }
-
-    Ok(abs)
+    Ok(plan_dir)
 }
 
 /// Scaffold the minimum set of files a plan directory must contain
@@ -127,7 +157,7 @@ pub fn scaffold_plan_dir(abs_plan_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_create(config_root: &Path, plan_dir: PathBuf) -> Result<()> {
+pub async fn run_create(config_root: &Path, plan_name: &str) -> Result<()> {
     let shared = load_shared_config(config_root)?;
     if shared.agent != "claude-code" {
         anyhow::bail!(
@@ -136,21 +166,22 @@ pub async fn run_create(config_root: &Path, plan_dir: PathBuf) -> Result<()> {
         );
     }
 
-    let abs_plan_dir = validate_target(&plan_dir)?;
-    let parent = abs_plan_dir
-        .parent()
-        .expect("validated parent exists")
-        .to_path_buf();
+    let abs_plan_dir = resolve_plan_dir(config_root, plan_name)?;
+    let plans_dir = config_root.join("plans");
+    if !plans_dir.exists() {
+        fs::create_dir_all(&plans_dir)
+            .with_context(|| format!("Failed to create {}", plans_dir.display()))?;
+    }
 
     // Runner-owned scaffolding runs BEFORE the claude spawn so the LLM
     // never has to create mechanical files (phase.md, empty YAML shells,
     // dream-word-count). The create-plan prompt directs it to populate
-    // backlog/memory exclusively through `state backlog add` /
-    // `state memory add` — no raw writes, no `state backlog init`.
+    // intents/backlog/memory exclusively through `state intents add` etc.
+    // — no raw writes.
     scaffold_plan_dir(&abs_plan_dir)?;
 
     let template = require_embedded(CREATE_PLAN_PROMPT_PATH)?;
-    let prompt = compose_create_prompt(template, &abs_plan_dir);
+    let prompt = compose_create_prompt(template, &abs_plan_dir, config_root)?;
 
     let agent_config = load_agent_config(config_root, &shared.agent)?;
     // Plan creation is work-phase-like reasoning; reuse the configured
@@ -170,7 +201,10 @@ pub async fn run_create(config_root: &Path, plan_dir: PathBuf) -> Result<()> {
         .arg("--model")
         .arg(&model)
         .arg("--add-dir")
-        .arg(&parent)
+        .arg(config_root)
+        .arg("--allowed-tools")
+        .arg(CREATE_ALLOWED_TOOLS)
+        .env("RAVEL_LITE_CONFIG", config_root)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -182,15 +216,16 @@ pub async fn run_create(config_root: &Path, plan_dir: PathBuf) -> Result<()> {
         anyhow::bail!("claude exited with status {status}");
     }
 
-    // Post-hoc verification: scaffolding guarantees phase.md exists
-    // from the pre-spawn write, so a still-empty backlog signals that
-    // the LLM session exited before populating any tasks. Anything
-    // stricter (e.g. requiring N tasks) would fight single-task plans.
-    let backlog = crate::state::backlog::read_backlog(&abs_plan_dir)
-        .context("Failed to read scaffolded backlog.yaml after claude session")?;
-    if backlog.items.is_empty() {
+    // Post-hoc verification: scaffolding guarantees the YAML shells
+    // exist; a still-empty intents.yaml signals that the LLM session
+    // exited before drafting any intents. Backlog stays empty after
+    // create — the first triage cycle generates backlog items from
+    // intents (per architecture-next §`ravel-lite run <plan>`).
+    let intents = crate::state::intents::read_intents(&abs_plan_dir)
+        .context("Failed to read scaffolded intents.yaml after claude session")?;
+    if intents.items.is_empty() {
         eprintln!(
-            "\nwarning: {} still has no tasks — the session may have exited before the plan was populated.",
+            "\nwarning: {} has no intents — the session may have exited before the plan was populated.",
             abs_plan_dir.display()
         );
     } else {
@@ -206,84 +241,43 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn compose_prompt_appends_target_path_section() {
-        let out = compose_create_prompt("TEMPLATE", Path::new("/abs/plan"));
-        assert!(out.starts_with("TEMPLATE"));
-        assert!(out.contains("Create a new plan at this absolute path"));
-        assert!(out.contains("/abs/plan"));
+    fn compose_prompt_substitutes_plan_token() {
+        let template = "Plan path: {{PLAN}}";
+        let out = compose_create_prompt(
+            template,
+            Path::new("/abs/plans/myplan"),
+            Path::new("/abs/context"),
+        )
+        .unwrap();
+        assert_eq!(out, "Plan path: /abs/plans/myplan");
     }
 
     #[test]
-    fn compose_prompt_separates_template_from_instructions_with_hr() {
-        let out = compose_create_prompt("TEMPLATE", Path::new("/x"));
-        assert!(out.contains("\n\n---\n\n"));
+    fn compose_prompt_errors_on_unresolved_token() {
+        let template = "Bogus: {{NOT_A_TOKEN}}";
+        let err = compose_create_prompt(
+            template,
+            Path::new("/abs/plans/myplan"),
+            Path::new("/abs/context"),
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("unresolved token"));
     }
 
     #[test]
-    fn compose_prompt_asserts_plan_only_output_invariant() {
-        let out = compose_create_prompt("TEMPLATE", Path::new("/abs/plan"));
-        assert!(
-            out.contains("ONLY output from this session is a plan directory"),
-            "composed prompt must bind the agent against pivoting away \
-             from plan creation when the user pastes a concrete problem; \
-             got:\n{out}"
-        );
-        assert!(
-            out.contains("single-task plan is a valid plan"),
-            "composed prompt must tell the agent that a concrete one-task \
-             description is acceptable plan scope, not a pivot signal"
-        );
-    }
-
-    #[test]
-    fn validate_target_rejects_existing_directory() {
-        let tmp = TempDir::new().unwrap();
-        let err = validate_target(tmp.path()).unwrap_err();
-        assert!(format!("{err:#}").contains("already exists"));
-    }
-
-    #[test]
-    fn validate_target_rejects_existing_file() {
-        let tmp = TempDir::new().unwrap();
-        let file_path = tmp.path().join("a-file");
-        fs::write(&file_path, "").unwrap();
-        let err = validate_target(&file_path).unwrap_err();
-        assert!(format!("{err:#}").contains("already exists"));
-    }
-
-    #[test]
-    fn validate_target_creates_missing_parent_directories() {
-        let tmp = TempDir::new().unwrap();
-        let nested = tmp.path().join("a").join("b").join("c").join("plan-name");
-        let resolved = validate_target(&nested).unwrap();
-        assert!(resolved.is_absolute());
-        assert!(
-            nested.parent().unwrap().is_dir(),
-            "validate_target should have created the missing parent chain"
-        );
-        assert!(
-            !nested.exists(),
-            "validate_target must NOT create the plan directory itself"
-        );
-    }
-
-    #[test]
-    fn validate_target_rejects_when_parent_is_a_file() {
-        let tmp = TempDir::new().unwrap();
-        let file_as_parent = tmp.path().join("not-a-dir");
-        fs::write(&file_as_parent, "").unwrap();
-        let target = file_as_parent.join("plan-name");
-        let err = validate_target(&target).unwrap_err();
-        assert!(format!("{err:#}").contains("not a directory"));
-    }
-
-    #[test]
-    fn validate_target_accepts_new_path_under_existing_parent() {
-        let tmp = TempDir::new().unwrap();
-        let target = tmp.path().join("new-plan");
-        let resolved = validate_target(&target).unwrap();
-        assert!(resolved.is_absolute(), "validate_target must return an absolute path");
-        assert_eq!(resolved.file_name().unwrap(), "new-plan");
+    fn compose_prompt_against_real_template_passes_substitution() {
+        // The shipped create-plan.md must compose without unresolved tokens.
+        let template = crate::init::require_embedded(CREATE_PLAN_PROMPT_PATH).unwrap();
+        let out = compose_create_prompt(
+            template,
+            Path::new("/abs/plans/myplan"),
+            Path::new("/abs/context"),
+        )
+        .unwrap();
+        assert!(out.contains("Intent articulation"), "missing §1 marker");
+        assert!(out.contains("Target proposal"), "missing §2 marker");
+        assert!(out.contains("Anchor capture"), "missing §3 marker");
+        assert!(out.contains("/abs/plans/myplan"), "{{PLAN}} did not substitute");
     }
 
     #[test]
@@ -336,5 +330,90 @@ mod tests {
             format!("{err:#}").contains("create plan directory"),
             "scaffold_plan_dir must error when the plan dir already exists; got: {err:#}"
         );
+    }
+
+    #[test]
+    fn validate_plan_name_accepts_simple_alphanumeric() {
+        assert!(validate_plan_name("foo").is_ok());
+        assert!(validate_plan_name("foo-bar").is_ok());
+        assert!(validate_plan_name("foo_bar.v2").is_ok());
+        assert!(validate_plan_name("plan123").is_ok());
+    }
+
+    #[test]
+    fn validate_plan_name_rejects_empty() {
+        assert!(validate_plan_name("").is_err());
+    }
+
+    #[test]
+    fn validate_plan_name_rejects_path_separators() {
+        assert!(validate_plan_name("foo/bar").is_err());
+        assert!(validate_plan_name("foo\\bar").is_err());
+    }
+
+    #[test]
+    fn validate_plan_name_rejects_dot_prefix() {
+        assert!(validate_plan_name(".foo").is_err());
+        assert!(validate_plan_name(".").is_err());
+    }
+
+    #[test]
+    fn validate_plan_name_rejects_dash_prefix() {
+        assert!(validate_plan_name("-foo").is_err());
+    }
+
+    #[test]
+    fn validate_plan_name_rejects_dot_dot() {
+        assert!(validate_plan_name("..").is_err());
+        assert!(validate_plan_name("foo..bar").is_err());
+    }
+
+    #[test]
+    fn validate_plan_name_rejects_whitespace() {
+        assert!(validate_plan_name("foo bar").is_err());
+        assert!(validate_plan_name("foo\tbar").is_err());
+    }
+
+    #[test]
+    fn validate_plan_name_rejects_invalid_git_ref_chars() {
+        for name in ["foo:bar", "foo*bar", "foo?bar", "foo[bar", "foo~bar", "foo^bar"] {
+            assert!(validate_plan_name(name).is_err(), "expected reject: {name}");
+        }
+    }
+
+    #[test]
+    fn validate_plan_name_rejects_lock_suffix() {
+        assert!(validate_plan_name("foo.lock").is_err());
+    }
+
+    #[test]
+    fn resolve_plan_dir_joins_under_plans_subdir() {
+        let tmp = TempDir::new().unwrap();
+        let resolved = resolve_plan_dir(tmp.path(), "foo").unwrap();
+        assert_eq!(resolved, tmp.path().join("plans").join("foo"));
+    }
+
+    #[test]
+    fn resolve_plan_dir_rejects_existing_path() {
+        let tmp = TempDir::new().unwrap();
+        let plans = tmp.path().join("plans");
+        fs::create_dir_all(plans.join("foo")).unwrap();
+        let err = resolve_plan_dir(tmp.path(), "foo").unwrap_err();
+        assert!(format!("{err:#}").contains("already exists"));
+    }
+
+    #[test]
+    fn resolve_plan_dir_rejects_invalid_name() {
+        let tmp = TempDir::new().unwrap();
+        let err = resolve_plan_dir(tmp.path(), ".foo").unwrap_err();
+        assert!(format!("{err:#}").contains("cannot start with"));
+    }
+
+    #[test]
+    fn resolve_plan_dir_does_not_create_directories() {
+        let tmp = TempDir::new().unwrap();
+        let resolved = resolve_plan_dir(tmp.path(), "foo").unwrap();
+        assert!(!resolved.exists(), "resolve_plan_dir must not create the plan dir");
+        assert!(!resolved.parent().unwrap().exists(), "must not create plans/ either");
     }
 }
