@@ -820,7 +820,7 @@ entries:
 - id: atlas-edges-neighbors-roots-traverse-edgegraph-from-catalog
   title: atlas edges/neighbors/roots traverse EdgeGraph from catalog
   body: |
-    `atlas edges` lists all edges (formatted as `A → B (kind:lifecycle)`); `atlas neighbors` does depth-limited BFS with `--in`/`--out`/`--both` direction filtering (mutually exclusive via `conflicts_with_all`); `atlas roots` returns zero-in-degree nodes. All three load via `EdgeGraph::from_catalog`, which unions all known `related-components.yaml` files. `EdgeGraph::adjacency()` is the entry point for BFS `path` and SCC (Kosaraju/Tarjan) when those verbs are added.
+    `atlas edges` lists all edges (formatted as `A → B (kind:lifecycle)`); `atlas neighbors` does depth-limited BFS with `--in`/`--out`/`--both` direction filtering (mutually exclusive via `conflicts_with_all`); `atlas roots` returns zero-in-degree nodes. All three load via `EdgeGraph::from_catalog`, which unions all known `related-components.yaml` files. `atlas path` and `atlas scc` route through `build_directed_component_graph` (in `src/atlas.rs`), which projects the catalog into `DirectedGraph<String>` — not via `EdgeGraph::adjacency()` directly. See: `build_directed_component_graph projects Catalog into DirectedGraph<String>`.
 - id: pre-push-gating-policy-fmt-and-test-expansion-pending
   title: 'Pre-push gating policy: fmt and test expansion pending'
   body: |
@@ -839,3 +839,11 @@ entries:
   title: survey inject_findings adds Findings section; omitted when empty
   body: |
     `inject_findings` in `src/survey/schema.rs` loads `findings.yaml` and injects a `FindingSummary` list into `SurveyResponse`. Rendered as `## Findings` at the end of `ravel-lite survey` output across cold, incremental-merge, and incremental-noop paths. The section is omitted entirely when the inbox is empty — unlike other survey sections which emit "None..." — because the findings inbox is user-mediated. Survey prompts forbid the LLM from emitting findings fields. See: `ravel-lite survey emits structured YAML`.
+- id: directedgraph-n-uses-dual-btreemap-adjacency-lists
+  title: DirectedGraph<N> uses dual BTreeMap adjacency lists
+  body: |
+    `src/directed_graph.rs`: generic `DirectedGraph<N: Ord + Clone>` maintains dual adjacency lists (`BTreeMap` out-edges + in-edges) and a `BTreeSet<N>` node universe. `add_edge` is idempotent; isolated nodes require `add_node`. `N: Ord` enforces deterministic iteration order. Used as the substrate for `atlas path` (BFS) and `atlas scc` (Kosaraju/Tarjan). See: `build_directed_component_graph projects Catalog into DirectedGraph<String>`.
+- id: build-directed-component-graph-projects-catalog-into-directedgraph-string
+  title: build_directed_component_graph projects Catalog into DirectedGraph<String>
+  body: |
+    `build_directed_component_graph` in `src/atlas.rs` projects a loaded `Catalog` through `EdgeGraph` into `DirectedGraph<String>` keyed on bare component IDs. Symmetric edge kinds (`co-implements`, `communicates-with`) are intentionally excluded: bidirectional projection of symmetric edges makes every peer-pair a 2-node SCC, drowning real circular-dependency findings. All catalog components are added as nodes even without incident edges — mirrors the `EdgeGraph::roots` universe pattern.
