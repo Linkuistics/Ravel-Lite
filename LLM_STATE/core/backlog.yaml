@@ -124,128 +124,6 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: drain-target-requests-yaml-at-phase-boundaries
-  title: Drain target-requests.yaml at phase boundaries
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Implement the `target-requests.yaml` schema, read/write layer, and "consume and remove" drain semantic at phase boundaries.
-
-    ## Why
-
-    `ravel-lite create` and the architecture doc (§Dynamic mounting) define `target-requests.yaml` as the request queue that the runner drains at phase boundaries, mounting any newly requested targets. This is the contract between plan creation and the worktree mount operation (`mount-targets-via-git-worktree-add`).
-
-    ## Scope
-
-    - `src/state/target_requests/{schema, yaml_io, verbs}.rs` mirroring the targets module shape.
-    - Schema: `requests: [{ component: <repo>:<component>, reason: <text> }]`.
-    - "Consume and remove" semantic at phase boundaries: read on entry, call mount-targets for each request, delete the file when done.
-    - Verify each requested component resolves to a registered repo via Atlas lookup; clear error for "not registered" per `docs/architecture-next.md` §Dynamic mounting.
-    - Hook into `phase_loop` between phases.
-
-    ## Dependencies
-
-    Depends on `mount-targets-via-git-worktree-add` for the actual worktree creation.
-  results: |
-    ## Results
-
-    Implemented the `target-requests.yaml` schema, read/write/delete layer,
-    CRUD verbs, "consume and remove" drain, and the runner hook at every
-    phase boundary.
-
-    ### What landed
-
-    - `src/state/target_requests/{mod,schema,yaml_io,verbs,drain}.rs` — new
-      module mirroring the `state/targets/` shape (schema, atomic
-      yaml_io with schema_version guard, verbs, plus the new `drain`
-      module).
-    - `src/state/filenames.rs` — `TARGET_REQUESTS_FILENAME` constant.
-    - `src/state/mod.rs` — module registered in the doc index and
-      `pub mod` list.
-    - `src/main.rs` — `state target-requests {list,show,add,remove,drain}`
-      CLI verbs wired through to the new module.
-    - `src/phase_loop.rs` — `drain_target_requests(plan_dir, config_root)`
-      invoked at the top of each `phase_loop` iteration before
-      `read_phase`. A drained-count log line surfaces non-zero mounts to
-      the UI.
-    - 27 new unit tests covering schema round-trip, schema_version
-      guards, atomic write, idempotent delete, all four CRUD verbs,
-      drain success, drain idempotency, drain on empty queue, drain on
-      bad component reference, and drain on unregistered component.
-
-    ### Schema
-
-    Matches the task description and `docs/architecture-next.md`
-    §Dynamic mounting:
-
-    ```yaml
-    schema_version: 1
-    requests:
-    - component: <repo_slug>:<component_id>
-      reason: <free-form text>
-    ```
-
-    `schema_version: 1` is required (missing or mismatched fails loudly,
-    mirroring `targets.yaml`). The `requests:` key defaults to empty so
-    `schema_version: 1` alone is a valid empty queue.
-
-    ### Drain semantics
-
-    `drain_target_requests(plan_dir, context_root)` is a sync function
-    returning `Result<usize>` (count of requests mounted):
-
-    1. Missing/empty file → no-op, returns 0 (and tidies up an
-       empty-but-present file so the next call has a clean
-       precondition).
-    2. Each request → `mount_target(plan_dir, context_root, repo_slug,
-       component_id)`. `mount_target` already validates
-       repos.yaml/Atlas/components.yaml and is idempotent.
-    3. After every request mounts → delete `target-requests.yaml`.
-    4. Any error → propagate, leaving the file on disk for inspection.
-
-    ### Runner hook
-
-    Placed at the top of `phase_loop`'s iteration, before `read_phase`.
-    That fires "between every phase" — exactly per
-    `docs/architecture-next.md` §Phase boundaries — without entangling
-    the v1 `GitCommit*` script-phase handlers. When the v2 cycle
-    restructure lands (`phase-cycle-triage-first-...`), the call site
-    will move but the helper itself is stable.
-
-    ### Verification
-
-    - `cargo test`: 841 unit + integration tests pass (27 new ones in
-      `state::target_requests::*`); 0 failures.
-    - `./scripts/check.sh`: clippy `-D warnings` clean.
-    - Manual CLI smoke: `state target-requests {list,add,show,remove}`
-      round-trip a request through `target-requests.yaml` correctly.
-
-    ### Constraint compliance
-
-    - LLM_STATE wire shape unchanged: `target-requests.yaml` is a new
-      optional file; no existing schemas modified.
-    - No new binary installed: `cargo install` / homebrew bottle bump
-      deferred per the v1→v2 migrator gate. Source landed only.
-    - Tests hermetic: drain tests build their own context fixture
-      (TempDir + isolated git repo + handcrafted `.atlas/components.yaml`)
-      — no reliance on `~/.config/ravel-lite/` or the working repo.
-
-    ### What this suggests next
-
-    - `ravel-lite create seeds target-requests.yaml` (the next
-      architecture-next chain task) can now wire `--target` flags through
-      to `target_requests::write_target_requests` directly. The schema
-      and IO layer are stable; the work for that task is parsing the
-      flags and seeding the file at scaffolding time.
-    - The drain-failure UX could be extended with a partial-progress
-      report (e.g. "mounted 2/3 before erroring on bad-ref"), but the
-      current "leave file on disk for inspection" semantic is sufficient
-      for v2.0; revisit if drain failures show up as a real UX problem.
-    - The runner-side code path is exercised by the deployed binary only
-      after the next install. Until the v1→v2 migrator ships the next
-      binary, this code lives in source but the running ravel-lite never
-      enters the new branch — by design, per the LLM_STATE freeze.
 - id: wire-mounted-worktrees-into-claude-pi-add-dir
   title: Wire mounted worktrees into claude/pi --add-dir
   category: architecture-next
@@ -271,8 +149,7 @@ tasks:
   title: ravel-lite create seeds target-requests.yaml
   category: architecture-next
   status: not_started
-  dependencies:
-  - drain-target-requests-yaml-at-phase-boundaries
+  dependencies: []
   description: |
     Make `ravel-lite create` write an initial `target-requests.yaml` from user-supplied component references at plan creation time.
 
@@ -295,7 +172,6 @@ tasks:
   category: architecture-next
   status: not_started
   dependencies:
-  - drain-target-requests-yaml-at-phase-boundaries
   - wire-mounted-worktrees-into-claude-pi-add-dir
   description: |
     Restructure the phase cycle to `triage → work → analyse-work → reflect`, eliminate the in-cycle dream phase, and make commit partitioning + phase boundary mechanics fully runner-driven.
