@@ -901,3 +901,11 @@ entries:
   title: state memory add --code-anchor not yet implemented
   body: |
     `state memory add` accepts only `--body`/`--body-file` for rationale; `--code-anchor` authoring is not yet implemented. Phase prompts steer LLM authors to name file paths inline so a future curate pass can promote entries to code-anchored shape.
+- id: check-anchors-bounded-scoping-defer-limit-k-touched-since-until-entry-count-warrants-it
+  title: 'check-anchors bounded scoping: defer --limit-k / --touched-since until entry count warrants it'
+  body: |
+    `state memory check-anchors` currently walks every active entry. At LLM_STATE/core's entry count (low tens), this is microseconds so the bound was deferred. If entry count grows to where the full pass is painful, add `--limit-k <int>` (check only the K most recently modified entries) or `--touched-since <baseline-sha>` (check only entries whose code-anchored paths appear in the diff since that baseline). The doc spec called for "last K cycles or N entries" bounding; the current unbounded implementation is correct for now.
+- id: intent-trajectory-rust-pre-pass-defer-until-a-real-trajectory-entry-is-produced
+  title: 'Intent-trajectory Rust pre-pass: defer until a real [TRAJECTORY] entry is produced'
+  body: |
+    The intent-trajectory check in the v2 reflect prompt is fully prompt-driven. A mechanical pre-pass (compare active intents to session-log entries by id-coverage) could surface candidate drift before the LLM looks — at lower cost than a full LLM re-evaluation. Open question per `docs/architecture-next.md`: whether trajectory grows into its own phase. Defer until at least one real reflect cycle produces a `[TRAJECTORY]` entry in anger; the heuristics for "substantial activity" and "drift worth flagging" are LLM-judgement-bearing right now and may need examples added before a Rust pre-pass is worth building.
