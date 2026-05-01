@@ -15,4 +15,5 @@ pub const FINDINGS_FILENAME: &str = "findings.yaml";
 pub const COMMITS_FILENAME: &str = "commits.yaml";
 pub const PHASE_FILENAME: &str = "phase.md";
 pub const RELATED_COMPONENTS_FILENAME: &str = "related-components.yaml";
+pub const TARGETS_FILENAME: &str = "targets.yaml";
 pub const DREAM_WORD_COUNT_FILENAME: &str = "dream-word-count";

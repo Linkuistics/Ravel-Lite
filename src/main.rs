@@ -517,6 +517,15 @@ enum StateCommands {
         #[command(subcommand)]
         command: SessionLogCommands,
     },
+    /// Targets CRUD verbs. `targets.yaml` is the runtime mount record
+    /// of which Atlas components are projected into the plan as
+    /// per-repo worktrees on plan-namespaced branches. Worktree
+    /// mounting (the side that actually invokes `git worktree add`)
+    /// is a separate task; these verbs operate on the data layer.
+    Targets {
+        #[command(subcommand)]
+        command: TargetsCommands,
+    },
     /// Single-plan conversion of legacy .md files into typed .yaml
     /// siblings. Covers backlog.md, memory.md, session-log.md and
     /// latest-session.md (each written when present).
@@ -849,6 +858,57 @@ enum IntentsCommands {
         id: String,
         /// One of `active`, `satisfied`, `defeated`, `superseded`.
         status: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TargetsCommands {
+    /// Emit every mounted target.
+    List {
+        plan_dir: PathBuf,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Emit a single target by `<repo_slug>:<component_id>`.
+    Show {
+        plan_dir: PathBuf,
+        /// `<repo_slug>:<component_id>` reference.
+        reference: String,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Append a new mounted-target record. The git-side worktree
+    /// creation is the worktree-mounting task's job; this verb only
+    /// writes the cache row.
+    Add {
+        plan_dir: PathBuf,
+        /// Repo slug, matching a `repos.yaml` registry entry.
+        #[arg(long)]
+        repo: String,
+        /// Atlas component id, unique within the repo.
+        #[arg(long)]
+        component: String,
+        /// Worktree mount path, relative to the plan directory.
+        /// Conventionally `.worktrees/<repo_slug>`.
+        #[arg(long)]
+        working_root: String,
+        /// Plan-namespaced branch, conventionally
+        /// `ravel-lite/<plan>/main`.
+        #[arg(long)]
+        branch: String,
+        /// One path segment locating the component within its
+        /// worktree. Repeat the flag for nested paths
+        /// (e.g. `--path-segment crates --path-segment atlas-ontology`).
+        #[arg(long = "path-segment")]
+        path_segments: Vec<String>,
+    },
+    /// Drop a mounted-target record by `<repo_slug>:<component_id>`.
+    /// Worktree teardown (`git worktree remove`) is the
+    /// worktree-mounting task's job.
+    Remove {
+        plan_dir: PathBuf,
+        /// `<repo_slug>:<component_id>` reference.
+        reference: String,
     },
 }
 
@@ -1395,6 +1455,7 @@ async fn dispatch_state(command: StateCommands) -> Result<()> {
         StateCommands::Intents { command } => dispatch_intents(command),
         StateCommands::Memory { command } => dispatch_memory(command),
         StateCommands::SessionLog { command } => dispatch_session_log(command),
+        StateCommands::Targets { command } => dispatch_targets(command),
         StateCommands::Migrate {
             plan_dir,
             dry_run,
@@ -1780,6 +1841,46 @@ fn dispatch_intents(command: IntentsCommands) -> Result<()> {
         }
         IntentsCommands::SetStatus { plan_dir, id, status } => {
             intents::run_set_status(&plan_dir, &id, &status)
+        }
+    }
+}
+
+fn parse_targets_format(input: &str) -> Result<ravel_lite::state::targets::OutputFormat> {
+    ravel_lite::state::targets::OutputFormat::parse(input)
+        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
+}
+
+fn dispatch_targets(command: TargetsCommands) -> Result<()> {
+    use ravel_lite::state::targets;
+
+    match command {
+        TargetsCommands::List { plan_dir, format } => {
+            let fmt = parse_targets_format(&format)?;
+            targets::run_list(&plan_dir, fmt)
+        }
+        TargetsCommands::Show { plan_dir, reference, format } => {
+            let fmt = parse_targets_format(&format)?;
+            targets::run_show(&plan_dir, &reference, fmt)
+        }
+        TargetsCommands::Add {
+            plan_dir,
+            repo,
+            component,
+            working_root,
+            branch,
+            path_segments,
+        } => {
+            let req = targets::AddRequest {
+                repo_slug: repo,
+                component_id: component,
+                working_root,
+                branch,
+                path_segments,
+            };
+            targets::run_add(&plan_dir, &req)
+        }
+        TargetsCommands::Remove { plan_dir, reference } => {
+            targets::run_remove(&plan_dir, &reference)
         }
     }
 }

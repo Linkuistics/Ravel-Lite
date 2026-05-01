@@ -9,6 +9,9 @@
 //! - `session_log` — typed session-log.yaml + latest-session.yaml
 //!   verbs, plus the programmatic append used by
 //!   `phase_loop::GitCommitWork` (R3)
+//! - `targets` — typed targets.yaml runtime mount records and CRUD
+//!   verbs; the data layer for architecture-next's per-repo plan
+//!   branches and dynamic worktree mounts
 //! - `discover_proposals` — typed-CLI façade for `discover-proposals.yaml`
 //!   so Stage 2's LLM emits each proposal via `add-proposal` rather than
 //!   writing YAML, letting clap reject a hallucinated `--kind` on the
@@ -25,5 +28,6 @@ pub mod memory;
 pub mod migrate;
 pub mod phase;
 pub mod session_log;
+pub mod targets;
 
 pub use phase::run_set_phase;
