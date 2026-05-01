@@ -853,3 +853,7 @@ entries:
     **Why:** v2 `ravel-lite create` operates on `<context>/plans/<plan>/` with no per-project dir; forcing a value into `project_dir` is a fudge to satisfy the struct.
 
     **How to apply:** When the v2 phase cycle lands, revisit `PlanContext` in `src/prompt.rs` — either split into `CreateContext` + `CycleContext`, or make `project_dir: Option<String>`. Do not propagate the fudge into new v2 code paths.
+- id: targets-yaml-uses-missing-equals-empty-not-missing-equals-error
+  title: targets.yaml uses missing-equals-empty not missing-equals-error
+  body: |
+    `targets.yaml` is created at first worktree mount, not at plan-creation time. `yaml_io.rs` returns an empty `TargetsFile` when the path is absent (`missing = empty` policy), unlike `intents.yaml` which errors on missing (`missing = error`). Rule: apply `missing = empty` for state files born lazily at runtime; `missing = error` for files seeded at `create`.
