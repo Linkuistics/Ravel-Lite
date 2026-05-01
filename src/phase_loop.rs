@@ -15,6 +15,7 @@ use crate::git::{
 };
 use crate::prompt::compose_prompt;
 use crate::state::filenames::PHASE_FILENAME;
+use crate::state::target_requests::drain_target_requests;
 use crate::subagent::dispatch_subagents;
 use crate::types::*;
 use crate::ui::UI;
@@ -364,6 +365,19 @@ pub async fn phase_loop(
     }
 
     loop {
+        // Phase-boundary mechanics, per `docs/architecture-next.md`
+        // §Phase boundaries: drain `target-requests.yaml` before
+        // reading the next phase, so any newly requested mounts are
+        // visible to the next prompt. Empty/absent queue is the common
+        // case and the drain is a no-op then.
+        let mounted = drain_target_requests(plan_dir, config_root)?;
+        if mounted > 0 {
+            ui.log(&format!(
+                "\n  ⚙  MOUNT  ·  {}  ·  drained {mounted} request(s) from target-requests.yaml",
+                header_scope(&project, &name)
+            ));
+        }
+
         let phase = read_phase(plan_dir)?;
 
         match phase {

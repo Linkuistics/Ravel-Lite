@@ -1614,3 +1614,16 @@ sessions:
     - Added `.gitignore` scaffolding to `src/create.rs`: `scaffold_plan_dir` now writes a `.gitignore` that excludes `.worktrees/` so worktree directories are never accidentally committed.
     - Tests cover: unknown repo slug, no `local_path`, two components sharing one worktree, idempotent remount, and the full happy path (worktree on correct branch + `targets.yaml` row persisted).
     - What this suggests next: `drain-target-requests-yaml-at-phase-boundaries` is now unblocked (it depends on this task); `wire-mounted-worktrees-into-claude-pi-add-dir` is also unblocked.
+- id: session-112
+  timestamp: 2026-05-01T07:12:58Z
+  phase: work
+  body: |
+    ### Session 112 (2026-05-01T07:12:58Z) — Implement target-requests.yaml drain module and phase-boundary hook
+
+    - Implemented the full `target-requests.yaml` pipeline: schema, atomic YAML I/O with schema_version guard, CRUD verbs, "consume and remove" drain, CLI subcommands, and the runner hook.
+    - New module `src/state/target_requests/` (5 files: mod, schema, yaml_io, verbs, drain) mirrors the existing `state/targets/` shape; drain returns `Result<usize>` (count mounted).
+    - `phase_loop` now calls `drain_target_requests(plan_dir, config_root)` at the top of each iteration before `read_phase`, surfacing non-zero drains to the UI.
+    - CLI wired: `state target-requests {list,show,add,remove,drain}` in `src/main.rs`.
+    - 27 new unit tests pass; `cargo test` green at 841 total; clippy `-D warnings` clean.
+    - Constraint compliance confirmed: no LLM_STATE wire shape changes, no binary install, all tests hermetic.
+    - What this suggests next: `ravel-lite-create-seeds-target-requests-yaml` can now wire `--target` flags directly to `target_requests::write_target_requests`; the schema and I/O layer are stable.

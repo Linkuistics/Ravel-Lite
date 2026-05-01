@@ -526,6 +526,15 @@ enum StateCommands {
         #[command(subcommand)]
         command: TargetsCommands,
     },
+    /// target-requests.yaml CRUD verbs and the manual `drain` trigger.
+    /// `target-requests.yaml` is the scratch queue between request
+    /// (work-phase LLM, or `ravel-lite create` seeding the initial
+    /// targets) and mount; the runner drains it at every phase
+    /// boundary. See `docs/architecture-next.md` §Dynamic mounting.
+    TargetRequests {
+        #[command(subcommand)]
+        command: TargetRequestsCommands,
+    },
     /// Single-plan conversion of legacy .md files into typed .yaml
     /// siblings. Covers backlog.md, memory.md, session-log.md and
     /// latest-session.md (each written when present).
@@ -919,6 +928,49 @@ enum TargetsCommands {
         plan_dir: PathBuf,
         /// `<repo_slug>:<component_id>` reference.
         reference: String,
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum TargetRequestsCommands {
+    /// Emit every queued request.
+    List {
+        plan_dir: PathBuf,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Emit a single request by `<repo_slug>:<component_id>`.
+    Show {
+        plan_dir: PathBuf,
+        reference: String,
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Append a new mount request. The runner drains the queue at the
+    /// next phase boundary; until then the request is visible to
+    /// `list`/`show` but no worktree exists yet.
+    Add {
+        plan_dir: PathBuf,
+        /// `<repo_slug>:<component_id>` reference.
+        reference: String,
+        /// Free-form explanation surfaced to a human inspecting the queue.
+        #[arg(long)]
+        reason: String,
+    },
+    /// Drop a queued request before the next drain.
+    Remove {
+        plan_dir: PathBuf,
+        reference: String,
+    },
+    /// Drain the queue now: mount each request via `mount_target` and
+    /// delete the file. The runner calls this between phases; this
+    /// verb exists so an operator can drain manually too.
+    Drain {
+        plan_dir: PathBuf,
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
         #[arg(long)]
@@ -1470,6 +1522,7 @@ async fn dispatch_state(command: StateCommands) -> Result<()> {
         StateCommands::Memory { command } => dispatch_memory(command),
         StateCommands::SessionLog { command } => dispatch_session_log(command),
         StateCommands::Targets { command } => dispatch_targets(command),
+        StateCommands::TargetRequests { command } => dispatch_target_requests(command),
         StateCommands::Migrate {
             plan_dir,
             dry_run,
@@ -1925,6 +1978,40 @@ fn parse_target_reference(reference: &str) -> Result<(String, String)> {
         _ => anyhow::bail!(
             "target reference {reference:?} must be `<repo_slug>:<component_id>` with both parts non-empty"
         ),
+    }
+}
+
+fn parse_target_requests_format(
+    input: &str,
+) -> Result<ravel_lite::state::target_requests::OutputFormat> {
+    ravel_lite::state::target_requests::OutputFormat::parse(input)
+        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
+}
+
+fn dispatch_target_requests(command: TargetRequestsCommands) -> Result<()> {
+    use ravel_lite::state::target_requests;
+
+    match command {
+        TargetRequestsCommands::List { plan_dir, format } => {
+            let fmt = parse_target_requests_format(&format)?;
+            target_requests::run_list(&plan_dir, fmt)
+        }
+        TargetRequestsCommands::Show { plan_dir, reference, format } => {
+            let fmt = parse_target_requests_format(&format)?;
+            target_requests::run_show(&plan_dir, &reference, fmt)
+        }
+        TargetRequestsCommands::Add { plan_dir, reference, reason } => {
+            target_requests::run_add(&plan_dir, &reference, &reason)
+        }
+        TargetRequestsCommands::Remove { plan_dir, reference } => {
+            target_requests::run_remove(&plan_dir, &reference)
+        }
+        TargetRequestsCommands::Drain { plan_dir, config } => {
+            let context_root = resolve_config_dir(config)?;
+            let mounted = target_requests::drain_target_requests(&plan_dir, &context_root)?;
+            println!("drained {mounted} request(s) from {}/target-requests.yaml", plan_dir.display());
+            Ok(())
+        }
     }
 }
 
