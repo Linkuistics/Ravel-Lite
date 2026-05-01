@@ -124,162 +124,6 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: commits-yaml-v2-move-to-state-module-with-optional-target-componentref
-  title: 'commits.yaml v2: move to state module with optional target ComponentRef'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Add an optional `target: ComponentRef` field to `CommitSpec` so analyse-work can route commits to the correct worktree. Move the schema out of `src/git.rs` into a proper `src/state/commits/` module with the established schema/yaml_io/verbs split, but keep the field optional and `schema_version` defaulted for backward compat so existing v1 prompts continue to write parseable files.
-
-    ## Why
-
-    Currently the `CommitSpec`/`CommitsSpec` types and `apply_commits_spec` function are inlined in `src/git.rs` at lines 22–34. This is not TMS-shaped and has no `schema_version`. Without an optional `target: ComponentRef` field, analyse-work cannot route commits to specific target worktrees — all commits land in the plan's git root.
-
-    ## Scope
-
-    - Create `src/state/commits/` module with `schema.rs`, `yaml_io.rs`, `verbs.rs`, following the established module-per-area layout.
-    - `CommitSpec`: add optional `target: ComponentRef` field (`#[serde(default, skip_serializing_if = "Option::is_none")]`).
-    - `CommitsSpec`: add `schema_version` field with a sensible default so v1 files (no version) still parse.
-    - Move `apply_commits_spec` from `src/git.rs` into the new module (or keep in `git.rs` but delegate schema types from `state/commits/`).
-    - Wire `state commits {list | show}` verbs into `dispatch_state` for completeness.
-    - Keep `schema_version` defaulted (not required) so the v1 wire shape continues to work — this is a schema extension, not a cutover.
-
-    ## Note
-
-    This is the only task in the triage-first follow-on DAG with no dependencies; land it before the cycle-reorder work begins. The `target:` field becomes meaningful once phase-boundary-mechanics routes commits to worktrees.
-  results: |
-    ## Results
-
-    Landed the `src/state/commits/` module with the established `schema.rs` /
-    `yaml_io.rs` / `verbs.rs` split, extended `CommitSpec` with an optional
-    typed `target: ComponentRef` field, and rewired `apply_commits_spec` to
-    read through the new data layer. v1 wire-shape files (no
-    `schema_version`, no `target`) parse unchanged.
-
-    ### What was done
-
-    - `src/state/commits/schema.rs` — `CommitSpec { paths, message, target:
-      Option<ComponentRef> }` with `#[serde(default,
-      skip_serializing_if)]` on `target`. `CommitsSpec { schema_version,
-      commits }` with `#[serde(default = "default_schema_version")]` on the
-      version. Constant `COMMITS_SCHEMA_VERSION = 1` (kept at 1 because
-      adding optional fields is forward- and backward-compatible — no real
-      shape break to bump).
-    - `src/state/commits/yaml_io.rs` — `read_commits` (missing → empty
-      default; bails on parse error so CLI verbs surface malformed YAML),
-      `write_commits` (atomic via `.tmp` + rename, mirroring the other
-      state modules), `delete_commits` (idempotent). The reader is
-      intentionally **permissive** about `schema_version` — unlike
-      `memory`/`backlog`/`this_cycle_focus` it does not bail on mismatch,
-      matching the task's "schema_version defaulted, not required"
-      contract.
-    - `src/state/commits/verbs.rs` — read-only `list` and `show <index>` (1-based)
-      with yaml/json output. No `set`/`add`/`remove`: the analyse-work LLM
-      phase is the sole writer, so a CLI mutation surface would be a way
-      to corrupt state without earning anything.
-    - `src/state/commits/mod.rs` — re-exports.
-    - `src/state/mod.rs` — added `pub mod commits;` and the module docstring
-      entry.
-    - `src/git.rs` — removed the inline `CommitSpec`/`CommitsSpec`
-      definitions, imported the new schema types, and refactored
-      `apply_commits_spec` to call `state::commits::yaml_io::read_commits`
-      + `delete_commits`. The consume-before-apply ordering is preserved as
-      a property of the call site (parse, then `delete_commits` before any
-      git invocation) so a `paths: ["."]` catch-all entry still cannot
-      sweep the spec into its own commit. Parse failures still fall through
-      to the catch-all commit rather than wedging the work-commit phase.
-    - `src/main.rs` — new `Commits { command }` arm on `StateCommands`,
-      `CommitsCommands::List` / `Show` enum, `dispatch_commits` and
-      `parse_commits_format` helpers.
-
-    ### What worked
-
-    - The `target_requests` and `this_cycle_focus` modules served as a
-      near-perfect template — same atomic-write pattern, same OutputFormat
-      enum, same dispatch-helper shape.
-    - `ComponentRef` already implements `Serialize`/`Deserialize` against
-      its stringified form, so `Option<ComponentRef>` slots into the wire
-      shape with no runtime `validate_*` helper. This is the typed-API
-      pattern the memory file calls for; `target_requests`'
-      `component: String` + runtime `validate_reference` is a smell that
-      will be worth lifting once unrelated work touches that module.
-    - All 1048 workspace tests pass after the refactor; the 9
-      `apply_commits_spec_*` integration tests in `git.rs` (which exercise
-      end-to-end git behaviour) verified that the schema-type relocation
-      is behaviour-preserving.
-    - 20 new unit tests cover round-tripping, v1-wire-shape parsing,
-      permissive `schema_version` handling, atomic write, idempotent
-      delete, and CLI bounds checking.
-
-    ### What didn't work / required rework
-
-    - First pass imported `CommitSpec` into `git.rs` because the type name
-      appears in `apply_parsed_spec` — but the function only accesses
-      fields on `&CommitsSpec.commits[i]` and never names `CommitSpec`
-      explicitly, so clippy's `unused-imports` rejected it. Dropped to
-      `schema::CommitsSpec` only.
-    - Considered moving `apply_commits_spec` itself into the new module,
-      but it is overwhelmingly git plumbing (a `Command::new("git")` chain
-      per entry) rather than data-layer logic. The task description
-      explicitly authorises the lighter "delegate schema types" option, so
-      it stays in `git.rs` where the rest of the git-process orchestration
-      lives.
-
-    ### Wire shape verified end-to-end
-
-    Smoke-tested with the built binary against a hand-authored
-    `commits.yaml`:
-
-    - v2 shape (with `schema_version: 1` and a `target:`) round-trips
-      through `state commits list` and `state commits show 1`/`2` in both
-      yaml and json.
-    - v1 shape (no `schema_version`, no `target`) parses cleanly; the
-      output gets the defaulted `schema_version: 1` injected and `target:`
-      is omitted (because `skip_serializing_if = "Option::is_none"`).
-    - `state commits list` on a fresh plan dir with no `commits.yaml`
-      emits the empty default (`commits: []`), matching the
-      `target_requests::run_list` shape — no error.
-    - `state commits show 0` errors with "must be 1-based"; out-of-range
-      index errors with the actual file size.
-
-    ### What this suggests next
-
-    - The `target` field is reserved for the two-stream-commits routing
-      layer — `apply_commits_spec` currently ignores it. The
-      `phase-boundary-mechanics-...` task (now unblocked on its
-      `commits-yaml-v2` dependency) should lift the routing into a new
-      applier that groups by `target` and dispatches to mounted
-      worktrees, with unrouted entries falling back to the plan root.
-    - The next task (`phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream`)
-      is also no-deps; landing it next opens up four more downstream
-      tasks. Both that one and `phase-boundary-mechanics` are now on the
-      unblocked frontier.
-    - `target_requests` and `this_cycle_focus` still use
-      `component: String` + runtime `validate_reference`. They predate
-      the explicit `ComponentRef` typed-API rule and are now an obvious
-      outlier — a future cleanup task could lift them too. Not bundled
-      here to keep the diff scoped.
-    - The reader's permissive `schema_version` policy is a deliberate
-      divergence from the other `read_*` modules. If a future commits-v2
-      ever introduces a real wire-shape break (rather than an additive
-      field), the reader will need a stricter version check at that
-      point — flagged here so it isn't overlooked.
-
-    ### Files inspected (no edits)
-
-    - `src/state/target_requests/{mod,schema,yaml_io,verbs}.rs` — primary
-      template for the list-shaped state module.
-    - `src/state/this_cycle_focus/{mod,schema,yaml_io,verbs}.rs` —
-      alternate template (single-document state module).
-    - `src/component_ref.rs` — confirmed the typed-API shape and serde
-      hook.
-    - `src/phase_loop.rs` (lines 200–250) — confirmed
-      `apply_commits_spec` is called from a single site
-      (`ScriptPhase::GitCommitWork`), so the refactor is safe.
-    - `defaults/fixed-memory/coding-style.md`,
-      `defaults/fixed-memory/coding-style-rust.md` — read at the moment
-      of writing Rust per the work-phase prompt's instruction.
 - id: phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream
   title: 'Phase cycle: reorder to triage-first, eliminate in-cycle dream'
   category: architecture-next
@@ -316,7 +160,6 @@ tasks:
   status: not_started
   dependencies:
   - phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream
-  - commits-yaml-v2-move-to-state-module-with-optional-target-componentref
   description: |
     Implement the runner-side phase boundary mechanics: drain `target-requests.yaml` and `focus-objections.yaml` at triage entry, apply `commits.yaml` at analyse-work exit, run the defeat cascade over plan KG when status changes, and save per-phase baselines.
 
@@ -599,3 +442,30 @@ tasks:
     - `defaults/phases/` — phase prompt files
     - `src/init.rs` — drift sentinel for `state phase-summary render` substring
     - `src/prompt.rs` — `substitute_tokens` path all prompts go through
+- id: lift-target-requests-and-this-cycle-focus-onto-typed-componentref
+  title: Lift target_requests and this_cycle_focus onto typed ComponentRef
+  category: infra
+  status: not_started
+  dependencies: []
+  description: |
+    Lift `target_requests` and `this_cycle_focus` off `component: String` + runtime `validate_reference` onto the typed `ComponentRef` wire shape.
+
+    ## Why
+
+    `commits.yaml v2` landed `ComponentRef` as the typed form for `target:` fields. `target_requests.yaml` and `this_cycle_focus.yaml` predate that rule and still carry `component: String` + a runtime `validate_reference` call. They are now an explicit outlier against the typed-APIs principle (see memory: "Prefer typed APIs over stringly-typed").
+
+    The correct shape uses `Option<ComponentRef>` (or `ComponentRef`) with serde's `Deserialize`/`Serialize` derivation instead of a `String` + validator pair, giving compile-time wire-kind verification.
+
+    ## Scope
+
+    - `src/state/target_requests/schema.rs`: change `component: String` to `component: ComponentRef`; remove the `validate_reference` call at all read/write sites.
+    - `src/state/this_cycle_focus/schema.rs`: same transformation for any component-reference field present.
+    - Update any `verbs.rs` or caller site that was calling `validate_reference` explicitly.
+    - All existing tests must pass; no wire-shape break (the string-serialised form of `ComponentRef` is identical to the raw string).
+
+    ## References
+
+    - `src/state/target_requests/{schema,yaml_io,verbs}.rs`
+    - `src/state/this_cycle_focus/{schema,yaml_io,verbs}.rs`
+    - `src/component_ref.rs` — the typed form and its serde hook
+    - `src/state/commits/schema.rs` — the reference implementation using `Option<ComponentRef>`
