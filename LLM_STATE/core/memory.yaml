@@ -270,7 +270,7 @@ entries:
 - id: src-state-module-structure
   title: '`src/state/` uses module-per-area layout'
   body: |
-    `src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, parse_md, verbs, mod), `memory/` (schema, yaml_io, parse_md, verbs, mod), `session_log/` (schema, yaml_io, parse_md, verbs, mod), `intents/` (schema, yaml_io, verbs, mod), and `migrate.rs`. New state areas follow this layout.
+    `src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, parse_md, verbs, mod), `memory/` (schema, yaml_io, parse_md, verbs, mod), `session_log/` (schema, yaml_io, parse_md, verbs, mod), `intents/` (schema, yaml_io, verbs, mod), `findings/` (schema, yaml_io, verbs, mod), `targets/` (schema, yaml_io, verbs, mount, mod), `target_requests/` (schema, yaml_io, verbs, drain, mod), and `migrate.rs`. New state areas follow this layout.
 - id: find-task-centralises-backlog-id-lookup
   title: '`find_task` centralises backlog id-lookup'
   body: |
@@ -290,7 +290,7 @@ entries:
 - id: dispatch-state-routes-state-subcommands
   title: '`dispatch_state` routes state subcommands'
   body: |
-    `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, `dispatch_intents`, or `dispatch_related_components`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
+    `main.rs` routes `ravel-lite state` via `dispatch_state`, which delegates to `dispatch_backlog`, `dispatch_memory`, `dispatch_session_log`, `dispatch_intents`, `dispatch_related_components`, `dispatch_findings`, `dispatch_targets`, or `dispatch_target_requests`. New state areas extend `dispatch_state`; new area verbs extend their own dispatcher.
 - id: r7-design-llm-driven-related-projects-discovery
   title: '`discover` runs two-stage fan-out pipeline to `discover-proposals.yaml`'
   body: |
@@ -885,3 +885,7 @@ entries:
   title: Atlas freshness coupling in mount_target is an open design question
   body: |
     `mount_target` in `src/state/targets/mount.rs` reads `.atlas/components.yaml` unconditionally to resolve component `path_segments`. A stale Atlas catalog produces stale `path_segments` in `targets.yaml`. Open design question: whether mount should call `atlas freshness` and warn when the catalog is older than some threshold. Deferred — the freshness coupling is acknowledged but the right threshold and remediation UX are not yet settled. Consider when Atlas freshness tooling matures.
+- id: target-requests-yaml-is-a-drain-queue-phase-loop-empties-per-cycle
+  title: target_requests.yaml is a drain queue; phase_loop empties per-cycle
+  body: |
+    `src/state/target_requests/` (schema, yaml_io, verbs, drain, mod) implements a write-queue pattern: external callers (e.g. `ravel-lite-create`) append mount requests to `target_requests.yaml`; `phase_loop` calls `drain_target_requests(plan_dir, config_root)` at the top of each iteration before `read_phase`, atomically consumes all entries (returns `Result<usize>` count mounted), and surfaces non-zero drains to the UI. CLI: `state target-requests {list,show,add,remove,drain}`. Missing file = empty queue (matches `targets.yaml` policy). See: `targets.yaml uses missing-equals-empty not missing-equals-error`.
