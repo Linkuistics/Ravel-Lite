@@ -857,3 +857,7 @@ entries:
   title: targets.yaml uses missing-equals-empty not missing-equals-error
   body: |
     `targets.yaml` is created at first worktree mount, not at plan-creation time. `yaml_io.rs` returns an empty `TargetsFile` when the path is absent (`missing = empty` policy), unlike `intents.yaml` which errors on missing (`missing = error`). Rule: apply `missing = empty` for state files born lazily at runtime; `missing = error` for files seeded at `create`.
+- id: target-struct-is-not-a-tms-item-runtime-cache-table-not-knowledge-graph-node
+  title: Target struct is not a TMS item — runtime cache table, not knowledge-graph node
+  body: |
+    `Target` in `src/state/targets/schema.rs` is deliberately NOT a TMS item (`Item<K>` + `Justification` + `KindMarker`). Using `serde-flatten Item<K>` would force-fit empty `claim`/`status`/`justifications` fields onto what is a runtime cache table — targets are mutable operational state (mount path, branch ref), not knowledge-graph nodes where provenance and supersession matter. The `serde-flatten` pattern applies only to intents, backlog, memory, and findings; runtime config files like `targets.yaml` and `repos.yaml` use plain structs.

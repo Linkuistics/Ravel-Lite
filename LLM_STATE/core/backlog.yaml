@@ -124,252 +124,113 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
-  title: 'Targets and worktrees: per-repo plan branches and dynamic mounts'
+- id: mount-targets-via-git-worktree-add
+  title: Mount targets via git worktree add
   category: architecture-next
-  status: blocked
-  blocked_reason: Data-layer slice landed (Target schema, targets.yaml read/write, CRUD verbs). Worktree mounting (git worktree add, branch creation, default-branch detection) and target-requests.yaml consumption are operational work; triage to split into focused follow-up tasks per the Results breakdown.
+  status: not_started
   dependencies: []
   description: |
-    Implement the `Target` abstraction, `targets.yaml` runtime state, and per-git-root worktree mounting that gives plan work physical isolation against `main`.
+    Implement the `mount-targets` operation that takes a `Target` request (repo_slug + component_id) and produces a mounted git worktree.
 
-    Reference: `docs/architecture-next.md` §Targets and worktrees, §Mounting, §Dynamic mounting, §Pure isolation against main.
+    ## Why
 
-    Scope:
-    - `Target` = `{ component_ref: (repo_slug, component_id), working_root, branch, path_segments }` cached at mount time.
-    - `targets.yaml` runtime state per plan; lists currently mounted targets.
-    - Mount semantics per §Mounting: `working_root = <plan>/.worktrees/<repo_slug>/`, `branch = ravel-lite/<plan>/main`, created via `git worktree add ... -b <branch>` from HEAD-of-default-branch in source repo.
-    - Multi-component-per-worktree: components sharing a git root share one worktree.
-    - `target-requests.yaml` consumed at phase boundaries: attach to existing worktree if same git root, else create new; clear error if component is not in any registered repo's `.atlas/`.
-    - Plan branches do not auto-rebase; merge debt is paid at finish.
-    - Phase prompts expose `<plan>/.worktrees/<repo_slug>/` paths via `--add-dir` for whichever targets are mounted.
+    The data layer (`targets.yaml`, CRUD verbs) landed in the previous cycle. The next operational slice is the git-side mounting: given a component reference, create (or verify) the worktree that plan work phases will operate in.
 
-    Coordination: `ravel-lite-create` writes initial `target-requests.yaml`; runner drains it on first phase boundary.
-  results: |
-    ## Results
+    ## Scope
 
-    ### Delivered: data layer for `targets.yaml`
+    - Resolve `repo_slug` against `repos.yaml` to find the source repo's `local_path`.
+    - Detect the source repo's default branch (shell-out to `git symbolic-ref refs/remotes/origin/HEAD` or similar; weigh `git2` crate trade-offs vs shell-out).
+    - Create `<plan>/.worktrees/<repo_slug>/` via `git worktree add <path> -b ravel-lite/<plan>/main <default-branch>`.
+    - Idempotent: if a worktree at that path already exists on the expected branch, leave it alone.
+    - Write the resulting `Target` into `targets.yaml` via `state::targets::run_add`.
+    - Add `<plan>/.worktrees/` to `.gitignore` at scaffolding time (the `Layout` section of `architecture-next.md` calls this out — currently omitted from `create.rs`).
 
-    Landed the first slice of "Targets and worktrees" — the typed
-    runtime-state file that worktree mounting (and everything downstream)
-    will read from and write to. No git operations, no `git worktree add`,
-    no `target-requests.yaml` handling — those stay open per the
-    breakdown below.
+    ## Tests
 
-    #### New module: `src/state/targets/`
+    Hermetic using `tempfile` + a real `git init` of a tiny fixture repo. Cover: successful mount writes to targets.yaml, idempotent second mount is a no-op, invalid repo_slug errors clearly.
 
-    Mirrors the established 4-file pattern (`mod.rs`, `schema.rs`,
-    `yaml_io.rs`, `verbs.rs`) used by `intents`, `backlog`, and `memory`,
-    adapted for runtime config rather than TMS items:
+    ## Design guidance from data-layer task
 
-    - **`schema.rs`** — `Target` struct with `repo_slug`, `component_id`,
-      `working_root` (relative to plan dir, e.g. `.worktrees/atlas`),
-      `branch` (e.g. `ravel-lite/<plan>/main`), and `path_segments`
-      (component path within its worktree, cached at mount time per
-      `docs/architecture-next.md` §Mounting). Wrapped by
-      `TargetsFile { schema_version, targets }` with
-      `TARGETS_SCHEMA_VERSION = 1`. Deliberately NOT TMS-shaped — see
-      design notes below.
-    - **`yaml_io.rs`** — `read_targets`/`write_targets` with atomic
-      rename via `.<filename>.tmp` (matches the pattern in `intents` and
-      `findings`). Uses the `findings::yaml_io` "missing = empty" policy
-      rather than `intents`'s "missing = error" because `targets.yaml` is
-      born when the runner mounts the first worktree, not at plan
-      creation; callers should be able to ask "what is mounted?" against
-      a fresh plan without a separate existence check.
-    - **`verbs.rs`** — `run_list`, `run_show`, `run_add`, `run_remove`.
-      Identity is the `(repo_slug, component_id)` pair, addressed via a
-      single positional `<repo>:<component>` (matching the
-      `target-requests.yaml` notation in
-      `docs/architecture-next.md` §Dynamic mounting,
-      e.g. `atlas:atlas-ontology`). `run_add` rejects duplicates and
-      empty required fields; `run_remove` errors if the target was not
-      mounted.
-    - **`mod.rs`** — re-exports the public surface.
+    - `(repo_slug, component_id)` is the mount identity; the `ravel-lite/<plan>/main` branch name is deterministic from plan name.
+    - The "Missing = empty" read policy for `targets.yaml` means a pre-mount `run_list` is safe without an existence check.
+    - Resolving multi-component-per-worktree: two components sharing a git root share one worktree; `run_add` already accepts two entries with the same `repo_slug`.
+- id: drain-target-requests-yaml-at-phase-boundaries
+  title: Drain target-requests.yaml at phase boundaries
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - mount-targets-via-git-worktree-add
+  description: |
+    Implement the `target-requests.yaml` schema, read/write layer, and "consume and remove" drain semantic at phase boundaries.
 
-    #### CLI wiring
+    ## Why
 
-    - `TARGETS_FILENAME` constant in `src/state/filenames.rs`.
-    - `pub mod targets` in `src/state/mod.rs`, with the existing
-      module-level docs extended.
-    - `StateCommands::Targets` variant + `TargetsCommands` enum
-      (`List`/`Show`/`Add`/`Remove`) + `dispatch_targets` +
-      `parse_targets_format` in `src/main.rs`.
+    `ravel-lite create` and the architecture doc (§Dynamic mounting) define `target-requests.yaml` as the request queue that the runner drains at phase boundaries, mounting any newly requested targets. This is the contract between plan creation and the worktree mount operation (`mount-targets-via-git-worktree-add`).
 
-    The CLI surface ships as:
+    ## Scope
 
-        ravel-lite state targets list <plan> [--format yaml|json]
-        ravel-lite state targets show <plan> <repo>:<component> [--format ...]
-        ravel-lite state targets add  <plan> --repo <slug> --component <id> \
-                                      --working-root <path> --branch <ref> \
-                                      [--path-segment seg ...]
-        ravel-lite state targets remove <plan> <repo>:<component>
-
-    #### Tests (21 new, all passing)
-
-    - `schema.rs`: round-trip; default schema_version; missing
-      `schema_version` rejected; missing `targets:` key accepted (empty
-      document); empty `path_segments` round-trip.
-    - `yaml_io.rs`: missing file returns empty default; round-trip; schema
-      version mismatch error; atomic rename leaves no `.tmp` residue.
-    - `verbs.rs`: reference parser splits/rejects malformed; `run_add`
-      appends, rejects duplicates, accepts two components in same repo
-      (multi-component-per-worktree per arch doc), rejects empty required
-      fields; `run_remove` removes only the named target, errors when
-      absent.
-
-    Full project gate (`./scripts/check.sh` = `cargo clippy --all-targets
-    --workspace -- -D warnings`) passes. Full test suite (`cargo test`)
-    shows **808 unit + integration tests passing, zero failures, zero
-    regressions**. End-to-end smoke against the built binary verified add,
-    list, show, remove, duplicate rejection, and bad-reference error
-    paths.
-
-    ### Why this is `blocked` rather than `done`
-
-    The task title is "Targets and worktrees: per-repo plan branches and
-    dynamic mounts" — the data layer (Target abstraction +
-    `targets.yaml` runtime state) is one of three operational pieces. The
-    git-side mounting and `target-requests.yaml` handling are deliberately
-    *not* in this slice, because:
-
-    1. **Worktree mounting is operationally complex.** It needs:
-       default-branch detection in arbitrary registered repos
-       (`repos.yaml`), `git worktree add <path> -b <branch>` with the
-       correct base ref, error handling for already-existing
-       branches/worktrees, and teardown semantics. This is best done as
-       a focused task rather than tail-end of a data-layer task.
-    2. **`target-requests.yaml` handling has its own shape.** It requires
-       a `requests.yaml` schema, a "consume and remove" semantic at phase
-       boundaries, an Atlas-lookup integration to verify that a requested
-       component exists in some registered repo's `.atlas/`, and a clear
-       error for "component not registered." This is a separate
-       contract.
-    3. **Phase-prompt `--add-dir` integration** needs the runner to read
-       `targets.yaml` and pass each `working_root` to the agent spawn —
-       prompt-loop change, not a data-layer change.
-
-    Splitting at this seam keeps each follow-up task bounded enough for
-    one work phase and lets the data layer be reviewed/used independently
-    (the migrate task and survey can already read the schema).
-
-    ### Suggested split for triage (proposed follow-up tasks)
-
-    **A. Worktree mounting** (`mount-targets-via-git-worktree-add`)
-
-    - New module/code path that takes a `Target` request (repo_slug +
-      component_id) and produces the mounted worktree.
-    - Resolves `repo_slug` against `repos.yaml` to find the source repo's
-      `local_path`.
-    - Detects the source repo's default branch (likely shell-out to
-      `git symbolic-ref refs/remotes/origin/HEAD` or similar; consider
-      `git2` crate trade-offs).
-    - Creates `<plan>/.worktrees/<repo_slug>/` via
-      `git worktree add <path> -b ravel-lite/<plan>/main <default-branch>`.
-    - Idempotent: if a worktree at that path already exists on the
-      expected branch, leaves it alone.
-    - Writes the resulting `Target` into `targets.yaml` via
-      `state::targets::run_add`.
-    - Add `<plan>/.worktrees/` to .gitignore at scaffolding time (the
-      `Layout` section of `architecture-next.md` calls this out).
-    - Tests: hermetic (use `tempfile` + a real `git init` of a tiny
-      fixture repo).
-
-    **B. `target-requests.yaml` schema + drain** (`drain-target-requests-at-phase-boundaries`)
-
-    - `src/state/target_requests/{schema, yaml_io, verbs}.rs` mirroring
-      the targets module shape. Schema:
-      `requests: [{ component: <repo>:<component>, reason: <text> }]`.
-    - "Consume and remove" semantic at phase boundaries: read on entry,
-      call mount-targets for each request, delete the file when done.
-    - Verify each requested component resolves to a registered repo via
-      Atlas; clear error for "not registered" per
-      `docs/architecture-next.md` §Dynamic mounting.
+    - `src/state/target_requests/{schema, yaml_io, verbs}.rs` mirroring the targets module shape.
+    - Schema: `requests: [{ component: <repo>:<component>, reason: <text> }]`.
+    - "Consume and remove" semantic at phase boundaries: read on entry, call mount-targets for each request, delete the file when done.
+    - Verify each requested component resolves to a registered repo via Atlas lookup; clear error for "not registered" per `docs/architecture-next.md` §Dynamic mounting.
     - Hook into `phase_loop` between phases.
 
-    **C. Phase-prompt `--add-dir` wiring**
-    (`wire-mounted-worktrees-into-claude-add-dir`)
+    ## Dependencies
 
-    - Read `targets.yaml` at agent spawn time; pass each
-      `working_root` as `--add-dir <path>` to the claude/pi
-      subprocess.
-    - Test against `claude_code.rs`/`pi.rs` invocation argv.
+    Depends on `mount-targets-via-git-worktree-add` for the actual worktree creation.
+- id: wire-mounted-worktrees-into-claude-pi-add-dir
+  title: Wire mounted worktrees into claude/pi --add-dir
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - mount-targets-via-git-worktree-add
+  description: |
+    Wire mounted worktrees into claude/pi agent spawns via `--add-dir` arguments.
 
-    **D. `ravel-lite create` writes initial `target-requests.yaml`**
-    (`create-seeds-target-requests`)
+    ## Why
 
-    - The task description says "`ravel-lite-create` writes initial
-      `target-requests.yaml`". Currently `create.rs` only mentions
-      `targets.yaml` in a comment.
-    - Likely depends on B; bundle accordingly.
+    Once targets are mounted, the agent spawn needs to know about them so the LLM can access worktree files. This is the prompt-loop change that makes mounted targets visible to work phases.
 
-    **E. `state targets` CLI verbs in phase prompts**
+    ## Scope
 
-    - Probably none until the runner uses targets — but `survey` may
-      want to read `targets.yaml` and report mount status. Consider
-      during reflect/triage phase prompt updates that follow B.
+    - Read `targets.yaml` at agent spawn time in `claude_code.rs` and `pi.rs`.
+    - Pass each `working_root` as `--add-dir <path>` to the claude/pi subprocess.
+    - Test against `claude_code.rs`/`pi.rs` invocation argv construction — assert `--add-dir` flags appear for each mounted target's `working_root`.
 
-    ### Design notes worth keeping in memory
+    ## Dependencies
 
-    1. **`Target` is intentionally NOT a TMS item.** The
-       `Item<K>` + `Justification` + `KindMarker` pattern is for
-       knowledge-graph nodes (intents/backlog/memory/findings) where
-       provenance and supersession matter. Targets are a runtime cache
-       table — adding a `claim`/`status`/`justifications` would
-       force-fit empty fields. `serde-flatten Item<K>` does not apply.
-    2. **`(repo_slug, component_id)` is the identity.** No separate `id`
-       field. The reference syntax `atlas:atlas-ontology` matches the
-       `target-requests.yaml` example notation in
-       `architecture-next.md` §Dynamic mounting; keeping both files'
-       identity shape consistent means prompts can use one notation, not
-       two.
-    3. **"Missing = empty" read policy.** Matches `findings`, not
-       `intents`/`backlog`/`memory`. Right for runtime state files born
-       mid-cycle; wrong for TMS files that should always exist for an
-       active plan.
-    4. **`#[serde(default)]` on `targets:` field and `path_segments`.**
-       Lets a freshly-init'd `targets.yaml` containing only
-       `schema_version: 1` parse, and lets a target at the repo root
-       serialise without an explicit empty list.
-    5. **No commits made by this work phase** per the work-phase
-       contract; analyse-work will commit src/ + scripts/check.sh
-       passing diff.
+    Depends on `mount-targets-via-git-worktree-add` for the `working_root` values to be present in `targets.yaml`.
+- id: ravel-lite-create-seeds-target-requests-yaml
+  title: ravel-lite create seeds target-requests.yaml
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - drain-target-requests-yaml-at-phase-boundaries
+  description: |
+    Make `ravel-lite create` write an initial `target-requests.yaml` from user-supplied component references at plan creation time.
 
-    ### What this suggests next
+    ## Why
 
-    - Pick task A above first — once a single target can be mounted,
-      the runner's phase-loop has a meaningful unit to operate on, and
-      test fixtures for B/C become trivial.
-    - Tasks B and C are roughly equal-sized and parallel-able after A.
-    - Task D is small and bundles cleanly with B.
-    - The `migrate` task (already in backlog, depends on this one) can
-      start using `state::targets::write_targets` once A lands; until
-      then, migrate can produce target *records* in memory but not
-      *mount* them.
+    The architecture doc says "`ravel-lite-create` writes initial `target-requests.yaml`". Currently `create.rs` only mentions `targets.yaml` in a comment. Without this, there is no way for a newly created plan to specify its initial target components — the runner drains `target-requests.yaml` at phase boundaries but there is nothing to drain unless the user manually writes the file.
 
-    ### Files touched
+    ## Scope
 
-    Created:
-    - `src/state/targets/mod.rs`
-    - `src/state/targets/schema.rs`
-    - `src/state/targets/yaml_io.rs`
-    - `src/state/targets/verbs.rs`
+    - Add a `--target <repo>:<component>` flag to `ravel-lite create` (repeatable).
+    - If any targets are specified, write `target-requests.yaml` with the supplied references after scaffolding.
+    - Validate each reference format (`repo:component`) at parse time.
+    - Small task; bundles cleanly with `drain-target-requests-at-phase-boundaries`.
 
-    Modified (plumbing only):
-    - `src/state/filenames.rs` — added `TARGETS_FILENAME`.
-    - `src/state/mod.rs` — added `pub mod targets`; extended module-level docs.
-    - `src/main.rs` — added `StateCommands::Targets` variant,
-      `TargetsCommands` enum, `dispatch_targets`, `parse_targets_format`.
+    ## Dependencies
 
-    `.gitignore` is unchanged: this slice creates no generated files;
-    `<plan>/.worktrees/` will become gitignored as part of task A
-    (when worktrees actually start being created).
+    Depends on `drain-target-requests-at-phase-boundaries` for the `target-requests.yaml` schema and write layer.
 - id: phase-cycle-triage-first-with-focus-objections-and-commits-yaml
   title: 'Phase cycle: triage-first with focus-objections and commits.yaml'
   category: architecture-next
   status: not_started
   dependencies:
-  - targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
+  - mount-targets-via-git-worktree-add
+  - drain-target-requests-yaml-at-phase-boundaries
+  - wire-mounted-worktrees-into-claude-pi-add-dir
   description: |
     Restructure the phase cycle to `triage → work → analyse-work → reflect`, eliminate the in-cycle dream phase, and make commit partitioning + phase boundary mechanics fully runner-driven.
 
@@ -410,7 +271,7 @@ tasks:
   category: architecture-next
   status: not_started
   dependencies:
-  - targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
+  - mount-targets-via-git-worktree-add
   - phase-cycle-triage-first-with-focus-objections-and-commits-yaml
   description: |
     Implement plan completion: promote plan memory into component memory, ship code + memory together via PR or local fast-forward, archive the plan dir.
@@ -452,7 +313,7 @@ tasks:
   category: architecture-next
   status: not_started
   dependencies:
-  - targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
+  - mount-targets-via-git-worktree-add
   description: |
     Add explicit cross-plan visibility for solo devs running multiple plans in parallel. Replaces the v1 "direct mode" target types from earlier drafts.
 
@@ -472,7 +333,7 @@ tasks:
   category: architecture-next
   status: not_started
   dependencies:
-  - targets-and-worktrees-per-repo-plan-branches-and-dynamic-mounts
+  - mount-targets-via-git-worktree-add
   - phase-cycle-triage-first-with-focus-objections-and-commits-yaml
   description: |
     Implement the `ravel-lite migrate <old-plan-path>` verb that cuts a v1 `<project>/LLM_STATE/<plan>` plan over to v2's `<context>/plans/<plan>` model. Hard cutover: the v2 binary refuses to run on unmigrated v1 plans.
