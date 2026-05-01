@@ -124,147 +124,32 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: wire-mounted-worktrees-into-claude-pi-add-dir
-  title: Wire mounted worktrees into claude/pi --add-dir
+- id: phase-cycle-triage-first-with-focus-objections-and-commits-yaml
+  title: 'Phase cycle: triage-first with focus-objections and commits.yaml'
   category: architecture-next
-  status: done
+  status: not_started
   dependencies: []
   description: |
-    Wire mounted worktrees into claude/pi agent spawns via `--add-dir` arguments.
+    Restructure the phase cycle to `triage → work → analyse-work → reflect`, eliminate the in-cycle dream phase, and make commit partitioning + phase boundary mechanics fully runner-driven.
 
-    ## Why
+    Reference: `docs/architecture-next.md` §Phase cycle (restructured), §Phase boundaries, §Commits (two streams), §Recovery from interrupted cycles.
 
-    Once targets are mounted, the agent spawn needs to know about them so the LLM can access worktree files. This is the prompt-loop change that makes mounted targets visible to work phases.
+    Scope:
+    - Reorder cycle: triage opens (true triage), reflect closes; no dream in cycle.
+    - `this-cycle-focus.yaml` (triage writes) — single target by default, multi-target only when atomic across components in same git root.
+    - `focus-objections.yaml` (work writes; triage consumes next cycle) — kinds: wrong-target, skip-item, premature. A cycle that produces only objections + memory is valid.
+    - `commits.yaml` (analyse-work writes) — partitions edits into ordered commits with `{ target, paths, message }`. Runner applies mechanically: resolves ComponentRef to (working_root, pathspec), runs `git add` + `git commit` in working_root.
+    - Phase boundary: drain target-requests, apply commits, run defeat cascade over plan KG, commit plan-state changes (`run-plan: <phase> (<plan>)`), save per-worktree baselines into `<phase>-baseline.yaml`.
+    - Two-stream commits: target work first, then context records.
+    - Recovery: Ctrl-C lands "between cycles"; next run starts with triage. No resume machinery; interrupted scratch files ignored.
 
-    ## Scope
-
-    - Read `targets.yaml` at agent spawn time in `claude_code.rs` and `pi.rs`.
-    - Pass each `working_root` as `--add-dir <path>` to the claude/pi subprocess.
-    - Test against `claude_code.rs`/`pi.rs` invocation argv construction — assert `--add-dir` flags appear for each mounted target's `working_root`.
-
-    ## Dependencies
-
-    Depends on `mount-targets-via-git-worktree-add` for the `working_root` values to be present in `targets.yaml`.
-  results: |
-    ## Results
-
-    Wired mounted worktrees into the claude agent spawn paths via
-    `--add-dir <abs-working-root>` arguments. Pi was deliberately left
-    untouched — see "Asymmetry: claude vs pi" below.
-
-    ### What was done
-
-    - Added `mounted_worktree_add_dirs(plan_dir, cwd) -> Result<Vec<String>>`
-      in `src/state/targets/yaml_io.rs`. Reads `targets.yaml`, resolves each
-      `working_root` against `plan_dir` to an absolute path, and **filters
-      out paths that are already descendants of `cwd`**. Re-exported from
-      `src/state/targets/mod.rs`.
-    - Modified `src/agent/claude_code.rs::build_headless_args` to call the
-      helper and append `--add-dir <path>` for each returned path. Signature
-      changed from `Vec<String>` to `Result<Vec<String>>` and from
-      `(prompt, phase, plan_dir)` to `(prompt, phase, ctx)` so it can read
-      both `plan_dir` and `project_dir` from `PlanContext`.
-    - Modified `src/agent/claude_code.rs::invoke_interactive` similarly:
-      emits `--add-dir <path>` for each mounted worktree outside cwd. The
-      load-bearing comment on the existing "no `--add-dir <plan_dir>`" rule
-      was extended to explain that `mounted_worktree_add_dirs` honours the
-      same cwd-descendant filter.
-    - Tests:
-      - 4 new tests in `state/targets/yaml_io.rs` covering empty/missing
-        targets.yaml, cwd-descendant filtering (v1 layout), out-of-cwd
-        paths emitted (v2 layout), and one `--add-dir` per target.
-      - 3 new tests in `agent/claude_code.rs` covering the same matrix at
-        the argv level — asserting the count of `--add-dir` flags and that
-        the expected absolute path appears in the argv vector.
-
-    ### Why the cwd-descendant filter
-
-    `claude_code.rs:176-180` already documented a load-bearing invariant:
-    emitting `--add-dir <plan_dir>` is wrong because plan_dir is already
-    under cwd, the flag adds no permission, and on a fresh machine it can
-    trigger an *unseen* trust-grant modal that hangs the work phase after
-    the banner. The same risk applies to redundant mounted-worktree paths
-    in v1 layout, where worktrees live under `<plan_dir>/.worktrees/<repo>/`
-    — a descendant of `<project_dir>` (cwd). Without the filter this task
-    would have regressed v1 interactive runs the moment any worktree was
-    mounted.
-
-    In v2 layout, `plan_dir` lives under `<context>/plans/` rather than
-    under `<project_dir>`, so worktrees end up genuinely outside cwd and
-    the helper emits real `--add-dir` flags. Forward-compatible without a
-    flag-day cutover.
-
-    ### Asymmetry: claude vs pi
-
-    The task scope said "claude/pi --add-dir", but verifying `pi --help`
-    showed pi has no `--add-dir` equivalent at all. Pi's read/bash/edit/
-    write tools appear to take any filesystem path the user has access to
-    — there is no path-based permission scope to grant. So for pi:
-
-    - Wiring `--add-dir` is impossible (the flag doesn't exist).
-    - Worktree paths under `<plan>/.worktrees/<repo>/` are already
-      filesystem-reachable; no permission grant is needed.
-
-    `pi.rs::invoke_interactive` and `invoke_headless` were left unchanged.
-    This is the right answer given pi's current CLI surface, but the task
-    title still says "claude/pi". The asymmetry should be reflected in
-    docs/architecture-next.md if the language is intended to be precise,
-    or accepted as shorthand if "wire to whichever agent supports it" is
-    the operative meaning.
-
-    ### What worked / what didn't
-
-    - The path-resolution + cwd-filter pattern matched cleanly with
-      `read_targets`'s "missing = empty" idiom, so plans without any mounts
-      produce zero extra args without special-casing.
-    - Changing `build_headless_args` to take `&PlanContext` instead of
-      `&str` simplified the call site (one ref instead of two strings) and
-      made the `cwd` plumbing trivial.
-
-    - Pi's lack of `--add-dir` was a small surprise — task description
-      assumed parity that doesn't exist. Did not block progress; just
-      meant scoping pi out.
-
-    ### What this suggests next
-
-    - The task table now has `wire-mounted-worktrees-into-claude-pi-add-dir`
-      done, which unblocks
-      `phase-cycle-triage-first-with-focus-objections-and-commits-yaml`
-      per the YAML deps.
-    - Consider amending `docs/architecture-next.md` (or the next architecture
-      task) to either:
-      - propose a future `pi --add-dir`-equivalent if pi gains a permission
-        model, or
-      - drop pi from any "wire-X-into-agent" task that is fundamentally
-        claude-specific (so future work-phase pickers don't waste time
-        re-checking the asymmetry).
-    - The constraint "don't install a new binary" (from
-      `feedback_no_llm_state_migrations_during_self_dev`) applies — these
-      changes are source-only; the installed `ravel-lite` binary is
-      unchanged. The new helper exercises only at *future* spawn time, so
-      there is no live behaviour change for the in-progress core plan
-      until a fresh binary ships post-migrator.
-
-    ### Files touched
-
-    - `src/state/targets/yaml_io.rs` — added `mounted_worktree_add_dirs` +
-      4 tests.
-    - `src/state/targets/mod.rs` — re-export.
-    - `src/agent/claude_code.rs` — `build_headless_args` signature change +
-      body, `invoke_interactive` body + comment, 3 new argv tests.
-
-    ### Verification
-
-    - `cargo test --lib`: 848 tests pass.
-    - `./scripts/check.sh` (`cargo clippy --all-targets --workspace -- -D
-      warnings`): clean.
-    - No `.gitignore` changes needed — only source-tree edits, no generated
-      artifacts.
+    Update phase prompts for the new cycle shape.
 - id: ravel-lite-create-seeds-target-requests-yaml
   title: ravel-lite create seeds target-requests.yaml
   category: architecture-next
   status: not_started
-  dependencies: []
+  dependencies:
+  - phase-cycle-triage-first-with-focus-objections-and-commits-yaml
   description: |
     Make `ravel-lite create` write an initial `target-requests.yaml` from user-supplied component references at plan creation time.
 
@@ -282,27 +167,6 @@ tasks:
     ## Dependencies
 
     Depends on `drain-target-requests-at-phase-boundaries` for the `target-requests.yaml` schema and write layer.
-- id: phase-cycle-triage-first-with-focus-objections-and-commits-yaml
-  title: 'Phase cycle: triage-first with focus-objections and commits.yaml'
-  category: architecture-next
-  status: not_started
-  dependencies:
-  - wire-mounted-worktrees-into-claude-pi-add-dir
-  description: |
-    Restructure the phase cycle to `triage → work → analyse-work → reflect`, eliminate the in-cycle dream phase, and make commit partitioning + phase boundary mechanics fully runner-driven.
-
-    Reference: `docs/architecture-next.md` §Phase cycle (restructured), §Phase boundaries, §Commits (two streams), §Recovery from interrupted cycles.
-
-    Scope:
-    - Reorder cycle: triage opens (true triage), reflect closes; no dream in cycle.
-    - `this-cycle-focus.yaml` (triage writes) — single target by default, multi-target only when atomic across components in same git root.
-    - `focus-objections.yaml` (work writes; triage consumes next cycle) — kinds: wrong-target, skip-item, premature. A cycle that produces only objections + memory is valid.
-    - `commits.yaml` (analyse-work writes) — partitions edits into ordered commits with `{ target, paths, message }`. Runner applies mechanically: resolves ComponentRef to (working_root, pathspec), runs `git add` + `git commit` in working_root.
-    - Phase boundary: drain target-requests, apply commits, run defeat cascade over plan KG, commit plan-state changes (`run-plan: <phase> (<plan>)`), save per-worktree baselines into `<phase>-baseline.yaml`.
-    - Two-stream commits: target work first, then context records.
-    - Recovery: Ctrl-C lands "between cycles"; next run starts with triage. No resume machinery; interrupted scratch files ignored.
-
-    Update phase prompts for the new cycle shape.
 - id: reflect-bounded-tms-plus-intent-trajectory-check
   title: 'Reflect: bounded TMS plus intent-trajectory check'
   category: architecture-next
