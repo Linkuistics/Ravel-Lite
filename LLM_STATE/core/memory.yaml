@@ -889,3 +889,15 @@ entries:
   title: target_requests.yaml is a drain queue; phase_loop empties per-cycle
   body: |
     `src/state/target_requests/` (schema, yaml_io, verbs, drain, mod) implements a write-queue pattern: external callers (e.g. `ravel-lite-create`) append mount requests to `target_requests.yaml`; `phase_loop` calls `drain_target_requests(plan_dir, config_root)` at the top of each iteration before `read_phase`, atomically consumes all entries (returns `Result<usize>` count mounted), and surfaces non-zero drains to the UI. CLI: `state target-requests {list,show,add,remove,drain}`. Missing file = empty queue (matches `targets.yaml` policy). See: `targets.yaml uses missing-equals-empty not missing-equals-error`.
+- id: check-anchors-walks-codeanchor-justifications-emits-suspectreport-yaml
+  title: check-anchors walks CodeAnchor justifications; emits SuspectReport YAML
+  body: |
+    `state memory check-anchors <plan> [--project-root <path>]` in `src/state/memory/check_anchors.rs`. Walks active (non-defeated, non-superseded) entries' `CodeAnchor` justifications; emits a `SuspectReport` YAML with `path-missing | sha-mismatch` reasons per failing anchor. Multi-anchor entries are checked independently. Cannot run against LLM_STATE/core until v1→v2 migrator ships (v1 schema lacks `schema_version`).
+- id: reflect-v2-adds-bounded-tms-check-and-intent-trajectory-review
+  title: Reflect v2 adds bounded TMS check and intent-trajectory review
+  body: |
+    `defaults/phases/reflect.md` v2 adds two steps before distilling session learnings: (1) bounded TMS check via `state memory check-anchors` with `still-true | refined | defeated` decision protocol; (2) intent-trajectory check via `state intents list`. Hand-off mechanics unchanged. The check-anchors step is a no-op against LLM_STATE/core until v1→v2 migrator ships. See: `check-anchors walks CodeAnchor justifications; emits SuspectReport YAML`.
+- id: state-memory-add-code-anchor-not-yet-implemented
+  title: state memory add --code-anchor not yet implemented
+  body: |
+    `state memory add` accepts only `--body`/`--body-file` for rationale; `--code-anchor` authoring is not yet implemented. Phase prompts steer LLM authors to name file paths inline so a future curate pass can promote entries to code-anchored shape.
