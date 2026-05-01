@@ -776,19 +776,15 @@ entries:
 - id: plan-cascade-extension-defeat-supersede-visibility-verb
   title: plan cascade extension — defeat/supersede visibility verb
   body: |
-    A natural extension to `ravel-lite plan` once the cascade primitives are exercised is `plan cascade <plan-dir> <id>` — show the items that would be defeated or superseded if `<id>` flips to a terminal status. This would use `cascade_serves_intent` and related primitives already defined in `crates/knowledge-graph/src/plan_kg.rs`.
+    A natural extension to `ravel-lite plan` once the cascade primitives are exercised is `plan cascade <plan-dir> <id>` — show items that would be defeated or superseded if `<id>` flips to a terminal status. Uses `cascade_serves_intent` and related primitives in `crates/knowledge-graph/src/plan_kg.rs`.
 
-    Not in scope for the initial `plan-inspect` task; flagged so it is not re-derived independently. Relevant once `findings-inbox` and `migrate` land and the cascade primitives are exercised against real plan data.
-
-    Forward-compatible: the `plan inspect` CLI surface in `src/plan_inspect.rs` would gain a new `run_cascade` arm; no existing verb needs to change.
+    Deferred; unblocked after `findings-inbox` and `migrate` land and cascade primitives are exercised against real plan data. Forward-compatible: `src/plan_inspect.rs` gains a new `run_cascade` arm; no existing verb changes.
 - id: plan-query-by-status-cross-kind-union-design-stance-deferred
   title: plan query-by-status cross-kind union — design stance deferred
   body: |
-    In `src/plan_inspect.rs`, `plan query-by-status` without `--kind` walks every known kind whose vocabulary includes the supplied status string and unions the matches. This works correctly today because no status string is shared across kinds with conflicting semantics.
+    In `src/plan_inspect.rs`, `plan query-by-status` without `--kind` walks every known kind whose vocabulary includes the supplied status string and unions the matches. Works correctly today because no status string is shared across kinds with conflicting semantics.
 
-    If the v2 design decides to forbid cross-kind status string sharing (e.g., `superseded` means different things for a backlog item vs. a memory entry), `plan query-by-status` is the place that would need an explicit stance — either an error, a disambiguation flag, or a kind-scoped union with explicit labels.
-
-    No action needed now; this is an advisory note so the design question doesn't have to be re-derived from first principles.
+    If the v2 design forbids cross-kind status string sharing (e.g., `superseded` means different things for a backlog item vs. a memory entry), `plan query-by-status` needs an explicit stance — either an error, a disambiguation flag, or a kind-scoped union with explicit labels.
 - id: no-ci-clippy-gate-lint-errors-accumulate-silently
   title: scripts/check.sh gates clippy; CI and git hook are not wired
   body: |
@@ -820,13 +816,11 @@ entries:
 - id: pre-push-gating-policy-fmt-and-test-expansion-pending
   title: 'Pre-push gating policy: fmt and test expansion pending'
   body: |
-    The `scripts/check.sh` pre-push gate currently runs only `cargo clippy --all-targets --workspace -- -D warnings`. The task results (install-hooks cycle) noted two expansion candidates:
+    `scripts/check.sh` gates `cargo clippy --all-targets --workspace -- -D warnings`. Two gate-expansion candidates:
     - `cargo fmt --check` — low runtime cost, catches formatting drift between sessions.
-    - `cargo test` — high runtime cost; has "very different runtime characteristics from clippy and may want to be a separate script."
+    - `cargo test` — high runtime cost; may warrant a separate `scripts/test.sh` guarded by an opt-in env flag.
 
-    No policy decision was made; both were deferred until "a clear policy is decided." Adding `cargo fmt --check` is a low-effort next step; `cargo test` in the pre-push gate needs a separate discussion (possibly a `scripts/test.sh` guarded by an opt-in env flag so contributors with slow machines can skip it).
-
-    `shellcheck` as a gate is also deferred, contingent on it becoming a project-wide expected dependency — not yet established.
+    `shellcheck` as a gate is deferred, contingent on it becoming a project-wide expected dependency.
 - id: findings-yaml-has-list-show-add-set-status-verb-surface
   title: findings.yaml has list/show/add/set-status verb surface
   body: |
@@ -842,15 +836,7 @@ entries:
 - id: build-directed-component-graph-projects-catalog-into-directedgraph-string
   title: build_directed_component_graph projects Catalog into DirectedGraph<String>
   body: |
-    `build_directed_component_graph` in `src/atlas.rs` projects a loaded `Catalog` through `EdgeGraph` into `DirectedGraph<String>` keyed on bare component IDs. Symmetric edge kinds (`co-implements`, `communicates-with`) are intentionally excluded: bidirectional projection of symmetric edges makes every peer-pair a 2-node SCC, drowning real circular-dependency findings. All catalog components are added as nodes even without incident edges — mirrors the `EdgeGraph::roots` universe pattern.
-- id: build-directed-component-graph-excludes-symmetric-edges-by-design
-  title: build_directed_component_graph excludes symmetric edges by design
-  body: |
-    `build_directed_component_graph` excludes symmetric edge kinds (`co-implements`, `communicates-with`) from the directed graph projection. Only asymmetric edges (e.g. `depends-on`, `implements`) are projected as directed edges.
-
-    Rationale: `atlas scc`'s motivating use case is circular dependency detection. Projecting symmetric edges as both directions would turn every peer relationship into a 2-node SCC, drowning real circular-dependency findings. Peer relationships remain accessible via `atlas neighbors` (undirected BFS over the existing flat `EdgeGraph`).
-
-    Decision documented in the `build_directed_component_graph` docstring in `src/atlas/mod.rs` (or equivalent). Applies to any future graph algorithm verb that builds on `DirectedGraph<String>`.
+    `build_directed_component_graph` in `src/atlas.rs` projects a loaded `Catalog` through `EdgeGraph` into `DirectedGraph<String>` keyed on bare component IDs. Symmetric edge kinds (`co-implements`, `communicates-with`) are excluded: bidirectional projection makes every peer-pair a 2-node SCC, drowning real circular-dependency findings. Peer relationships remain accessible via `atlas neighbors` (undirected BFS over `EdgeGraph`). All catalog components are added as nodes even without incident edges — mirrors the `EdgeGraph::roots` universe pattern. Design decision documented in the `build_directed_component_graph` docstring in `src/atlas.rs`. Applies to any future graph algorithm verb built on `DirectedGraph<String>`.
 - id: atlas-path-bfs-and-scc-tarjan-verbs-in-src-atlas-rs
   title: atlas path (BFS) and scc (Tarjan) verbs in src/atlas.rs
   body: |
