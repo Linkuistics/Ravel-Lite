@@ -270,7 +270,7 @@ entries:
 - id: src-state-module-structure
   title: '`src/state/` uses module-per-area layout'
   body: |
-    `src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, parse_md, verbs, mod), `memory/` (schema, yaml_io, parse_md, verbs, mod), `session_log/` (schema, yaml_io, parse_md, verbs, mod), `intents/` (schema, yaml_io, verbs, mod), `findings/` (schema, yaml_io, verbs, mod), `targets/` (schema, yaml_io, verbs, mount, mod), `target_requests/` (schema, yaml_io, verbs, drain, mod), `this_cycle_focus/` (schema, yaml_io, verbs, mod), `focus_objections/` (schema, yaml_io, verbs, mod), and `migrate.rs`. New state areas follow this layout.
+    `src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, parse_md, verbs, mod), `memory/` (schema, yaml_io, parse_md, verbs, mod), `session_log/` (schema, yaml_io, parse_md, verbs, mod), `intents/` (schema, yaml_io, verbs, mod), `findings/` (schema, yaml_io, verbs, mod), `targets/` (schema, yaml_io, verbs, mount, mod), `target_requests/` (schema, yaml_io, verbs, drain, mod), `this_cycle_focus/` (schema, yaml_io, verbs, mod), `focus_objections/` (schema, yaml_io, verbs, mod), `commits/` (schema, yaml_io, verbs, mod), and `migrate.rs`. New state areas follow this layout.
 - id: find-task-centralises-backlog-id-lookup
   title: '`find_task` centralises backlog id-lookup'
   body: |
@@ -518,7 +518,7 @@ entries:
 - id: analyse-work-writes-commits-yaml-git-commit-work-applies-it
   title: Analyse-work writes commits.yaml; git-commit-work applies it
   body: |
-    `analyse-work.md` step 9 writes a `commits.yaml` spec (ordered `{paths, message}` list) covering the full work diff. `GitCommitWork` calls `apply_commits_spec` in `src/git.rs`, applies each commit scoped to the project subtree, then removes the spec file before staging to prevent self-inclusion. Fallback on missing/malformed/empty spec: single catch-all commit of the whole subtree. Plan-state is folded into the first/only source commit by default; no separate plan-state commit is produced. See: `Analyse-work commits all non-plan paths`.
+    `CommitSpec` in `src/state/commits/schema.rs` (moved from inline in `src/git.rs`): ordered `{paths, message}` list with an optional `target: ComponentRef` field. `target` is reserved for two-stream routing; `apply_commits_spec` in `src/git.rs` currently ignores it. Read-only `list`/`show` CLI verbs wired in `src/main.rs`. `GitCommitWork` calls `apply_commits_spec`, applies each commit scoped to the project subtree, then removes the spec file before staging to prevent self-inclusion. Fallback on missing/malformed/empty spec: single catch-all commit of the whole subtree. Plan-state is folded into the first/only source commit by default; no separate plan-state commit is produced. See: `Analyse-work commits all non-plan paths`.
 - id: phase-summary-render-computes-structural-labels-only
   title: phase-summary render computes structural labels only
   body: |
