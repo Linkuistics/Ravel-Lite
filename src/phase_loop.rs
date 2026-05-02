@@ -13,7 +13,10 @@ use crate::git::{
     work_tree_snapshot, working_tree_status,
 };
 use crate::prompt::compose_prompt;
+use crate::defeat_cascade::run_defeat_cascade;
 use crate::state::filenames::PHASE_FILENAME;
+use crate::state::focus_objections::delete_focus_objections;
+use crate::state::intents::intents_path;
 use crate::state::target_requests::drain_target_requests;
 use crate::subagent::dispatch_subagents;
 use crate::types::*;
@@ -169,6 +172,54 @@ fn warn_if_project_tree_dirty(ui: &UI, project_dir: &Path, plan_dir: &Path) {
     }
 }
 
+/// Consume `focus-objections.yaml` at the close of triage.
+///
+/// The architecture frames this as "consume and remove"
+/// (architecture-next.md §TRIAGE step 8): once the triage LLM has
+/// read the prior cycle's objections and reflected them in its intent
+/// / backlog edits, the file's purpose is spent, and leaving it on
+/// disk would mislead the next triage into draining stale state.
+///
+/// Idempotent: returns `Ok(())` whether or not the file existed.
+/// Wraps `delete_focus_objections` with phase-scoped error context so
+/// a filesystem failure here surfaces clearly in the phase-loop log
+/// rather than as a bare path-not-removed error.
+fn consume_focus_objections(plan_dir: &Path) -> Result<()> {
+    delete_focus_objections(plan_dir).with_context(|| {
+        format!(
+            "Failed to consume focus-objections.yaml at {}",
+            plan_dir.display()
+        )
+    })
+}
+
+/// Run the serves-intent defeat cascade if the plan has migrated to
+/// the v2 wire shape (signal: `intents.yaml` exists).
+///
+/// Skipping when `intents.yaml` is absent is what keeps this safe to
+/// wire in before the v1→v2 migrator ships: the dogfood plan and any
+/// other v1 plan get no behaviour change, while v2 plans pick up the
+/// architecture-next §Phase boundaries cascade. The gate is purely
+/// presence-based — once the migrator runs, it produces both
+/// `intents.yaml` and a v2 `backlog.yaml` atomically, so the cascade
+/// finds a consistent pair to operate on.
+///
+/// Logged only when at least one item flipped — silent in the steady
+/// state where most cycles produce no cascades.
+fn cascade_defeated_items(plan_dir: &Path, ui: &UI, scope: &str) -> Result<()> {
+    if !intents_path(plan_dir).exists() {
+        return Ok(());
+    }
+    let cascaded = run_defeat_cascade(plan_dir)?;
+    if !cascaded.is_empty() {
+        ui.log(&format!(
+            "\n  ⚙  CASCADE  ·  {scope}  ·  defeated {} backlog item(s) via serves-intent",
+            cascaded.len()
+        ));
+    }
+    Ok(())
+}
+
 /// Append the freshly-written `latest-session.yaml` record to
 /// `session-log.yaml` so each cycle's narrative accumulates as a durable
 /// audit trail.
@@ -230,6 +281,24 @@ async fn handle_script_phase(
             // (intents, backlog, memory hygiene) and capture the post-
             // triage SHA as `work-baseline` so the next analyse-work can
             // diff `{{BACKLOG_TRANSITIONS}}` against the start of work.
+            //
+            // Drain `focus-objections.yaml` before writing the phase
+            // marker so the deletion is captured in the same commit as
+            // triage's other plan-state edits — the file's purpose is
+            // spent once triage has read it (architecture-next.md
+            // §TRIAGE step 8 "Consume and remove focus-objections.yaml").
+            consume_focus_objections(plan_dir)?;
+
+            // Run the serves-intent defeat cascade if the plan has a
+            // v2 `intents.yaml`. v1 plans (no intents.yaml) skip
+            // cleanly; v2 plans pick up cascade-induced backlog flips
+            // in this same triage commit so downstream phases see a
+            // consistent backlog. See architecture-next.md §TRIAGE
+            // step 2 ("Mechanically propagate intent status changes
+            // through serves-intent edges to backlog items. Run by
+            // the runner, not the LLM.")
+            cascade_defeated_items(plan_dir, ui, &scope)?;
+
             write_phase(plan_dir, Phase::Llm(LlmPhase::Work))?;
             let result = git_commit_plan(plan_dir, &name, "triage")?;
             log_commit(ui, "triage", &scope, &result);
@@ -500,6 +569,49 @@ mod tests {
         write_phase(dir.path(), Phase::Llm(LlmPhase::Reflect)).unwrap();
         let contents = fs::read_to_string(dir.path().join(PHASE_FILENAME)).unwrap();
         assert_eq!(contents, "reflect");
+    }
+
+    #[test]
+    fn consume_focus_objections_removes_existing_file() {
+        // Triage-entry drain contract: after the triage LLM exits, a
+        // present `focus-objections.yaml` must be removed so the next
+        // triage doesn't re-read stale objections.
+        use crate::state::focus_objections::{
+            focus_objections_path, write_focus_objections, FocusObjectionsFile,
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+        write_focus_objections(tmp.path(), &FocusObjectionsFile::default()).unwrap();
+        assert!(focus_objections_path(tmp.path()).exists());
+
+        consume_focus_objections(tmp.path()).unwrap();
+
+        assert!(
+            !focus_objections_path(tmp.path()).exists(),
+            "drain must remove the file"
+        );
+    }
+
+    #[test]
+    fn consume_focus_objections_is_idempotent_when_file_absent() {
+        // Steady-state contract: the common case is "no objections
+        // raised", so the drain runs every triage close and must be a
+        // no-op when there is nothing to remove.
+        let tmp = tempfile::TempDir::new().unwrap();
+        consume_focus_objections(tmp.path()).unwrap();
+        consume_focus_objections(tmp.path()).unwrap();
+    }
+
+    #[test]
+    fn cascade_defeated_items_skips_when_intents_yaml_is_absent() {
+        // v1-plan compatibility gate: the dogfood plan has no
+        // intents.yaml today, and the LLM_STATE freeze blocks the
+        // v1→v2 migrator from shipping yet. The wiring must be a
+        // pure no-op in that state — neither erroring nor reading
+        // backlog.yaml (which would fail on v1 wire shape).
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let ui = UI::new(tx);
+        cascade_defeated_items(tmp.path(), &ui, "test/scope").unwrap();
     }
 
     #[test]

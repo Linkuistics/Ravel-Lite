@@ -1,12 +1,16 @@
-id: session-121
-timestamp: 2026-05-02T09:07:16Z
+id: session-122
+timestamp: 2026-05-02T09:52:56Z
 phase: work
 body: |
-  ### Session 121 (2026-05-02T09:07:16Z) — Document and test restart-not-resume contract for scratch-file read paths
+  ### Session 122 (2026-05-02T09:52:56Z) — Wire focus-objections drain and serves-intent defeat cascade into GitCommitTriage
 
-  - Audited all four scratch-file read paths (`commits.yaml`, `target-requests.yaml`, `focus-objections.yaml`, `this-cycle-focus.yaml`) against the architecture-next §Recovery from interrupted cycles contract.
-  - All four read functions already had the correct behavior: absent file → safe empty default, malformed file → loud error with filename citation. No production code changes were needed.
-  - Added "Restart-not-resume contract" doc comment paragraphs to all four `read_*` functions explaining the absent vs. malformed semantics, the no-panic guarantee, and the rationale for each file's choice (silent fallback at caller for `commits.yaml`; loud error for the other three to preserve LLM-authored data).
-  - Added `read_bails_on_malformed_yaml` unit tests to `target_requests/yaml_io.rs`, `focus_objections/yaml_io.rs`, and `this_cycle_focus/yaml_io.rs`. (`commits/yaml_io.rs` already had this test.) Each test writes garbage YAML, calls `read_*`, and asserts the error message cites the filename.
-  - Verification: `cargo test --workspace` passes 933 tests; `./scripts/check.sh` is clippy-clean. All four `read_bails_on_malformed_yaml` tests pass.
-  - What this suggests next: when `phase-boundary-mechanics` wires `read_focus_objections` and `read_this_cycle_focus` into the triage entry path, the contract documented here is the prescription for those callers. A phase_loop-level integration test asserting "cycle restarts at triage with empty scratch files" becomes meaningful at that point.
+  - **Attempted:** Implement the three runner-side phase-boundary mechanics named in the task: drain `focus-objections.yaml` at triage entry, run the serves-intent defeat cascade on backlog items when `intents.yaml` is present, and verify cycle-aligned baseline filenames. The fourth bullet (commit-target routing) was explicitly deferred to the `two-stream-commits` task that owns it.
+  - **What worked:**
+    - `consume_focus_objections(plan_dir)` wraps `delete_focus_objections` with phase-scoped error context and is called at the top of `GitCommitTriage` before `write_phase`/`git_commit_plan`. Idempotent; two hermetic tests cover present-file removal and absent-file no-op.
+    - New `src/defeat_cascade.rs` implements `run_defeat_cascade`: reads `intents.yaml` and `backlog.yaml`, builds typed `IntentStore`/`BacklogStore`, invokes `knowledge_graph::cascade_serves_intent`, and mirrors `status`/`defeated_by` flips back onto on-disk `BacklogEntry` records while preserving v1 extension fields (`category`, `dependencies`, `results`, etc.). Disk write is conditional on at least one cascade hit. Seven hermetic tests: intent-defeated propagation, no-op byte-identity, satisfied-as-terminal, extension-field preservation, partial-serves protection, and both missing-file error paths.
+    - `cascade_defeated_items` gates on `intents_path(plan_dir).exists()` — v1 plans (including the dogfood plan) are pure no-ops; v2 plans pick up the cascade in the same triage commit. One hermetic test confirms the gate.
+    - `intents_path` re-exported from `src/state/intents/mod.rs` so `phase_loop` can presence-check without reaching into `yaml_io::`.
+    - Baseline filenames were already correct from the cycle-reorder predecessor — no code change needed there.
+    - All 943 lib tests pass (+10 new vs. 933 baseline). `./scripts/check.sh` clippy-clean.
+  - **What didn't / was deferred:** Commit-target routing inside `apply_commits_spec` (grouping by `target: ComponentRef`, per-worktree application, abort-before-context-record ordering) remains in the `two-stream-commits` task. No full phase-loop integration test with a live git repo was added; unit-level coverage of `consume_focus_objections` and `delete_focus_objections` gives equivalent contract coverage for now.
+  - **What this suggests next:** `two-stream-commits-target-worktrees-first-context-record-last` is now unblocked — its scope is now cleanly separable from the phase-boundary mechanics landed here. Phase prompts will need a note about `CASCADE` log lines once the v1→v2 migrator ships; that is already tracked in `phase-prompt-updates-for-triage-first-cycle-shape`.
