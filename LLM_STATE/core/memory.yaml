@@ -923,3 +923,11 @@ entries:
   title: 'Scratch-file reads: absent=empty, malformed=error citing filename'
   body: |
     `commits.yaml`, `target-requests.yaml`, `focus-objections.yaml`, and `this-cycle-focus.yaml` read paths follow: absent file → safe empty default; malformed YAML → hard error citing the filename. `commits.yaml` falls back silently at the caller level (safe for cycle restart); the other three surface the error loudly to preserve LLM-authored data. Unit tests `read_bails_on_malformed_yaml` in each file's `yaml_io.rs` enforce this contract. When `phase-boundary-mechanics` wires `read_focus_objections` / `read_this_cycle_focus` into triage, these semantics are the prescription for those callers.
+- id: focus-objections-yaml-drained-at-gitcommittriage-entry
+  title: focus-objections.yaml drained at GitCommitTriage entry
+  body: |
+    `consume_focus_objections` drains `focus-objections.yaml` at `GitCommitTriage` entry, before `write_phase`/`git_commit_plan`. Idempotent: absent file is a no-op.
+- id: defeat-cascade-rs-wires-cascade-serves-intent-into-triage-commit
+  title: defeat_cascade.rs wires cascade_serves_intent into triage commit
+  body: |
+    `src/defeat_cascade.rs::run_defeat_cascade` reads `intents.yaml` and `backlog.yaml`, runs `knowledge_graph::cascade_serves_intent`, and writes `status`/`defeated_by` flips back to disk preserving `BacklogEntry` extension fields (`category`, `dependencies`, `results`, etc.). Disk write is conditional on at least one cascade hit. `cascade_defeated_items` gates on `intents_path(plan_dir).exists()`: v1 plans (no `intents.yaml`) are pure no-ops; v2 plans get the cascade in the same triage commit.
