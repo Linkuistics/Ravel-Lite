@@ -888,7 +888,7 @@ entries:
 - id: target-requests-yaml-is-a-drain-queue-phase-loop-empties-per-cycle
   title: target_requests.yaml is a drain queue; phase_loop empties per-cycle
   body: |
-    `src/state/target_requests/` (schema, yaml_io, verbs, drain, mod) implements a write-queue pattern: external callers (e.g. `ravel-lite-create`) append mount requests to `target_requests.yaml`; `phase_loop` calls `drain_target_requests(plan_dir, config_root)` at the top of each iteration before `read_phase`, atomically consumes all entries (returns `Result<usize>` count mounted), and surfaces non-zero drains to the UI. CLI: `state target-requests {list,show,add,remove,drain}`. Missing file = empty queue (matches `targets.yaml` policy). See: `targets.yaml uses missing-equals-empty not missing-equals-error`.
+    `src/state/target_requests/` (schema, yaml_io, verbs, drain, mod) implements a write-queue pattern: external callers (e.g. `ravel-lite-create`) append mount requests to `target_requests.yaml`; `phase_loop` calls `drain_target_requests(plan_dir, config_root)` at the top of each iteration before `read_phase`, atomically consumes all entries (returns `Result<usize>` count mounted), and surfaces non-zero drains to the UI. `TargetRequest.component` is typed `ComponentRef`; serde emits the `<repo>:<id>` string scalar, so wire shape is preserved. CLI: `state target-requests {list,show,add,remove,drain}`. Missing file = empty queue (matches `targets.yaml` policy). See: `targets.yaml uses missing-equals-empty not missing-equals-error`.
 - id: check-anchors-walks-codeanchor-justifications-emits-suspectreport-yaml
   title: check-anchors walks CodeAnchor justifications; emits SuspectReport YAML
   body: |
@@ -916,8 +916,8 @@ entries:
 - id: this-cycle-focus-yaml-has-set-show-clear-verb-surface
   title: this-cycle-focus.yaml has set/show/clear verb surface
   body: |
-    `src/state/this_cycle_focus/` (schema.rs, yaml_io.rs, verbs.rs, mod.rs) is a single-document singleton state area for the triage-first phase cycle's declared focus. CLI verbs: `set`, `show`, `clear`. Follows the `state target-requests` / `state intents` module layout. See: `src/state/ uses module-per-area layout`.
+    `src/state/this_cycle_focus/` (schema.rs, yaml_io.rs, verbs.rs, mod.rs) is a single-document singleton state area for the triage-first phase cycle's declared focus. `ThisCycleFocus.target` is typed `ComponentRef`; serde emits the `<repo>:<id>` string scalar, preserving wire shape. CLI verbs: `set`, `show`, `clear`. Follows the `state target-requests` / `state intents` module layout. See: `src/state/ uses module-per-area layout`.
 - id: focus-objections-yaml-has-per-kind-add-verb-surface
   title: focus-objections.yaml has per-kind add verb surface
   body: |
-    `src/state/focus_objections/` (schema.rs, yaml_io.rs, verbs.rs, mod.rs) is a closed-vocabulary queue for the triage-first phase cycle. CLI verbs: `add-wrong-target`, `add-skip-item`, `add-premature`, `list`, `clear`. Kind vocabulary encoded as a tagged enum; clap rejects invalid kind values before any YAML is written. See: `Per-kind add-* verbs are the pattern for closed-vocabulary queues`; `src/state/ uses module-per-area layout`.
+    `src/state/focus_objections/` (schema.rs, yaml_io.rs, verbs.rs, mod.rs) is a closed-vocabulary queue for the triage-first phase cycle. CLI verbs: `add-wrong-target`, `add-skip-item`, `add-premature`, `list`, `clear`. Kind vocabulary encoded as a tagged enum; clap rejects invalid kind values before any YAML is written. `Objection::suggested_target` remains `String` — the last `validate_reference` outlier in the v2 scratch-file family; lifting it to `ComponentRef` is the outstanding follow-up. See: `Per-kind add-* verbs are the pattern for closed-vocabulary queues`; `src/state/ uses module-per-area layout`.
