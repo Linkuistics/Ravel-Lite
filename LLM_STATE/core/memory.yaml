@@ -955,3 +955,11 @@ entries:
   title: Triage verifies arch-next roots via git log before work recommendation
   body: |
     Dep-free architecture-next root tasks may have shipped without a status flip. Triage should run `git log -- <files referenced in task description>` on `active` arch-next root tasks to verify before recommending them as work items. Pattern confirmed: `cycle-reorder-triage-first-phase-sequence` was `not_started` after shipping in `ef892e8`.
+- id: check-dep-free-architecture-next-tasks-against-code-before-executing
+  title: Check dep-free architecture-next tasks against code before executing
+  body: |
+    Before executing a dep-free `architecture-next` task, run a quick code check to confirm the work isn't already shipped. The cycle that closed `cycle-reorder-triage-first-phase-sequence` found the reorder had already landed in `ef892e8` but the backlog item was never flipped. A `git log -- <referenced files>` or a grep of the named tests (from the task description) typically settles it in one round.
+
+    **Why:** The architecture-next tasks were written speculatively before implementation. As work accumulates they drift out of sync with the tree; silent drift wastes a full work cycle on a no-op.
+
+    **How to apply:** In triage, for each dep-free `architecture-next` task at `not_started` status, skim the task's referenced files and named tests before queueing it for the work phase.
