@@ -1829,3 +1829,13 @@ sessions:
     What worked: full implementation completed in one session with all planned tests. Phase prompt sweep covered all three affected files.
 
     What this suggests: the CLI audit task (`cli-surface-audit`) is now better positioned — the fixed-memory verbs follow the existing per-kind `OutputFormat` pattern, confirming the scope for the consolidation pass.
+- id: session-127
+  timestamp: 2026-05-02T13:17:01Z
+  phase: work
+  body: |
+    ### Session 127 (2026-05-02T13:17:01Z) — Reconcile triage-first cycle reorder backlog item
+
+    - Attempted: Verify and close the `cycle-reorder-triage-first-phase-sequence` task which describes reordering the plan cycle to triage-first. The task had `status: not_started` despite the implementation having shipped.
+    - What worked: Discovered the structural cycle reorder already shipped in commit `ef892e8 Reorder phase cycle to triage-first, eliminate in-cycle dream`. All four scope items from the task description confirmed in place: enum order in `src/types.rs`, `GitCommitTriage`/`GitCommitReflect` handlers in `src/phase_loop.rs`, inter-cycle prompt placement in `run_single_plan`, and multi-plan dispatch in `src/multi_plan.rs`. Closed the task as done with no source-tree change.
+    - What this suggests: Triage cycles should treat dep-free architecture-next root tasks as candidates for "is this already done?" reconciliation via `git log -- <referenced files>` before recommending them as work items. The phase-boundary-mechanics task is now unblocked and should be decomposed at next triage: `drain_target_requests` is already wired at `src/phase_loop.rs:399`; what remains is worktree mount/unmount, `targets.yaml` write, and the `resolve_target_worktree` function.
+    - Key learnings: Backlog drift from shipped-but-unflipped tasks is a real pattern. The `results` block on the closed task documents the sibling staleness risk in `phase-boundary-mechanics` and the unblocking sequence through to `phase-prompt-updates`.

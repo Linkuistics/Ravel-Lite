@@ -1,17 +1,10 @@
-id: session-126
-timestamp: 2026-05-02T12:26:31Z
+id: session-127
+timestamp: 2026-05-02T13:17:01Z
 phase: work
 body: |
-  ### Session 126 (2026-05-02T12:26:31Z) — Add fixed-memory CLI verbs and sweep phase prompts
+  ### Session 127 (2026-05-02T13:17:01Z) — Reconcile triage-first cycle reorder backlog item
 
-  - Implemented `ravel-lite fixed-memory list` and `ravel-lite fixed-memory show <slug>` verbs per the spec at `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`.
-  - Added `src/fixed_memory.rs` with `discover`, `compose`, `extract_description`, `render_list`, `OutputFormat`, `EntrySources`, `ShowError`, and `ADDENDUM_DELIMITER`.
-  - Added `tests/fixed_memory_cli.rs` with 9 end-to-end tests covering all three resolution cases (`embedded`, `user`, `both`), all output formats (`yaml`, `json`, `markdown`), invalid `--format`, and the unknown-slug error path.
-  - Wired `FixedMemory { command }` into `Commands` enum in `src/main.rs` and added `dispatch_fixed_memory` + `parse_fixed_memory_format` helpers.
-  - Swept `defaults/phases/work.md`: replaced hardcoded `{{ORCHESTRATOR}}/fixed-memory/...` read instructions with `ravel-lite fixed-memory list` then `ravel-lite fixed-memory show <slug>` so user overlay slugs are discoverable.
-  - Swept `defaults/phases/reflect.md` (lines 18, 84): replaced `{{ORCHESTRATOR}}/fixed-memory/memory-style.md` with `Bash(ravel-lite fixed-memory show memory-style)`.
-  - Swept `defaults/phases/dream.md` (lines 9, 22): same replacement as reflect.
-
-  What worked: full implementation completed in one session with all planned tests. Phase prompt sweep covered all three affected files.
-
-  What this suggests: the CLI audit task (`cli-surface-audit`) is now better positioned — the fixed-memory verbs follow the existing per-kind `OutputFormat` pattern, confirming the scope for the consolidation pass.
+  - Attempted: Verify and close the `cycle-reorder-triage-first-phase-sequence` task which describes reordering the plan cycle to triage-first. The task had `status: not_started` despite the implementation having shipped.
+  - What worked: Discovered the structural cycle reorder already shipped in commit `ef892e8 Reorder phase cycle to triage-first, eliminate in-cycle dream`. All four scope items from the task description confirmed in place: enum order in `src/types.rs`, `GitCommitTriage`/`GitCommitReflect` handlers in `src/phase_loop.rs`, inter-cycle prompt placement in `run_single_plan`, and multi-plan dispatch in `src/multi_plan.rs`. Closed the task as done with no source-tree change.
+  - What this suggests: Triage cycles should treat dep-free architecture-next root tasks as candidates for "is this already done?" reconciliation via `git log -- <referenced files>` before recommending them as work items. The phase-boundary-mechanics task is now unblocked and should be decomposed at next triage: `drain_target_requests` is already wired at `src/phase_loop.rs:399`; what remains is worktree mount/unmount, `targets.yaml` write, and the `resolve_target_worktree` function.
+  - Key learnings: Backlog drift from shipped-but-unflipped tasks is a real pattern. The `results` block on the closed task documents the sibling staleness risk in `phase-boundary-mechanics` and the unblocking sequence through to `phase-prompt-updates`.

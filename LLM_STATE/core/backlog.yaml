@@ -41,7 +41,7 @@ tasks:
 - id: cycle-reorder-triage-first-phase-sequence
   title: 'Cycle reorder: triage-first phase sequence'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Reorder the plan cycle so triage runs first (before work) rather than last (after reflect). This is the prerequisite structural change for the triage-first architecture: triage writes `this-cycle-focus.yaml`, which work consumes; the old end-of-cycle triage placement is removed.
@@ -63,6 +63,41 @@ tasks:
     - `docs/architecture-next.md` §Cycle reorder
     - `src/phase_loop.rs` — phase transition table
     - `src/run.rs` — `run_single_plan` inter-cycle prompt
+  results: |
+    ## Outcome
+
+    Already implemented — closing as done with no source-tree change.
+
+    ## What was found
+
+    The structural cycle reorder shipped in commit `ef892e8 Reorder phase cycle to triage-first, eliminate in-cycle dream` but the backlog item was never flipped. All four scope items from the task description are already in place:
+
+    - `src/types.rs` — `LlmPhase` and `ScriptPhase` enum order is `Triage, Work, AnalyseWork, Reflect` / `GitCommitTriage, GitCommitWork, GitCommitAnalyseWork, GitCommitReflect`. Dream is removed (`tests::parse_dream_is_no_longer_in_cycle` asserts this).
+    - `src/phase_loop.rs::handle_script_phase` — `GitCommitTriage` opens a cycle (writes phase=Work, commits "triage", saves `work-baseline`); `GitCommitReflect` closes it (writes phase=Triage, commits "reflect", saves `triage-baseline`, returns `Ok(false)` to end the loop).
+    - `src/phase_loop.rs::run_single_plan` — calls `phase_loop` once per cycle with a `confirm("Proceed to next work phase?")` between cycles. Comment at line 487-491 explicitly notes the prompt was lifted out of `GitCommitTriage` so multi-plan mode can run one cycle and return to its survey-based selection without a spurious confirm.
+    - `src/multi_plan.rs::run_multi_plan` — likewise dispatches one cycle per loop iteration; no in-cycle confirm.
+
+    Evidence the running deployed binary already executes the new ordering: the most recent five commits on `main` (`save-work-baseline`, `triage`, `save-triage-baseline`, `reflect`, `save-reflect-baseline`) are exactly the cycle-closing → cycle-opening sequence the new `GitCommitReflect`+`GitCommitTriage` handlers produce.
+
+    ## Verification
+
+    - `cargo test --workspace --no-fail-fast` — all suites pass (1000+ tests, including `phase_loop` 9/9).
+    - The two named tests from the task scope:
+      - `phase_contract_round_trip_writes_expected_files` — passes. Notable: the test was restructured for the new ordering and now runs `phase_loop` twice (a single cycle starts at triage and closes at git-commit-reflect, so exercising the triage leg of the contract requires a second cycle). Comment at `tests/phase_loop.rs:532-536` documents this.
+      - `git_commit_triage_leaves_plan_tree_clean_at_user_prompt` — passes. The companion `git_commit_work_leaves_plan_tree_clean_at_user_prompt` also passes.
+    - `./scripts/check.sh` (clippy gate) — passes.
+
+    ## What this suggests
+
+    1. **Triage hygiene gap.** The backlog kept this task as `not_started` while the code had shipped. Future triage cycles should treat dep-free architecture-next roots as candidates for "is this already done?" reconciliation before recommending them — a quick `git log -- <referenced files>` or a grep of the task's named tests can settle it cheaply.
+
+    2. **Likely sibling staleness.** `phase-boundary-mechanics-worktree-mount-drain-at-triage-work` (which depends on this) lists "drain `target-requests.yaml` at the triage→work phase boundary" as scope, but `src/phase_loop.rs:399` already calls `drain_target_requests(plan_dir, config_root)` inside the phase loop. Triage should re-scope or split that task: the drain-at-boundary mechanic is partially in place; what remains is worktree mount/unmount + `targets.yaml` write + the `resolve_target_worktree` function. Worth treating as a triage-time decomposition pass.
+
+    3. **Unblocks downstream.** With this task closed, the phase-boundary-mechanics task becomes the next root in the architecture-next DAG (after the reconciliation in #2), which in turn unblocks two-stream-commits → plan-finish/sync → phase-prompt-updates.
+
+    ## What was not changed
+
+    No source files. No `.gitignore` change (no generated artefacts introduced). The only state-tree changes will be made by analyse-work via this task's set-status + set-results writes.
 - id: phase-boundary-mechanics-worktree-mount-drain-at-triage-work
   title: 'Phase-boundary mechanics: worktree mount/drain at triage→work'
   category: architecture-next
