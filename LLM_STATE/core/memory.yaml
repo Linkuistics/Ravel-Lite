@@ -921,3 +921,7 @@ entries:
   title: Objection::SkipItem::item_id is a candidate for a BacklogId newtype
   body: |
     After lifting `Objection::WrongTarget.suggested_target` onto `ComponentRef`, the remaining stringly-typed field on `Objection` variants is `SkipItem::item_id: String` (a backlog row id). The newtype-with-stringly-Serialize/Deserialize pattern is the cheapest way to lift any `<x>:<y>` string field without changing the wire shape, but a `BacklogId` newtype does not exist yet and creating it would be a larger lift than the `ComponentRef` work. This is a future candidate — defer until the architecture-next schema stabilises.
+- id: scratch-file-reads-absent-empty-malformed-error-citing-filename
+  title: 'Scratch-file reads: absent=empty, malformed=error citing filename'
+  body: |
+    `commits.yaml`, `target-requests.yaml`, `focus-objections.yaml`, and `this-cycle-focus.yaml` read paths follow: absent file → safe empty default; malformed YAML → hard error citing the filename. `commits.yaml` falls back silently at the caller level (safe for cycle restart); the other three surface the error loudly to preserve LLM-authored data. Unit tests `read_bails_on_malformed_yaml` in each file's `yaml_io.rs` enforce this contract. When `phase-boundary-mechanics` wires `read_focus_objections` / `read_this_cycle_focus` into triage, these semantics are the prescription for those callers.
