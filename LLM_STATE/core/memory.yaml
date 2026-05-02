@@ -939,3 +939,11 @@ entries:
   title: create-plan.md raw YAML write overwrites seeded content; lacks schema_version
   body: |
     `defaults/create-plan.md` has two target-requests gaps: (1) example YAML omits `schema_version: 1`, so LLM-authored `target-requests.yaml` files fail the runner's version guard at the next phase boundary; (2) the raw "Write the proposed targets to..." instruction overwrites content pre-seeded by `--target`. Fix for both: replace the raw write instruction with a `state target-requests add` call, which handles schema_version and appends. Promoted to backlog. See: `Phase prompts use ravel-lite state CLI verbs`.
+- id: fixed-memory-show-uses-embedded-plus-user-layered-overlay
+  title: fixed-memory show uses embedded-plus-user layered overlay
+  body: |
+    `ravel-lite fixed-memory show <slug>` resolves from two sources: an embedded baseline (compiled into the binary) and an optional user file at `<config-dir>/fixed-memory/<slug>.md`. When both exist, output is embedded content followed by an addendum delimiter then the user file. `list` supports `--format yaml|json|markdown`. Unknown slugs error with the available-slug list as remediation. Spec: `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`.
+- id: cli-tool-design-md-is-the-cli-audit-reference
+  title: cli-tool-design.md is the CLI audit reference
+  body: |
+    `defaults/fixed-memory/cli-tool-design.md` is an embedded fixed-memory entry providing LLM-agent CLI design guidance: structured output, help examples, actionable errors, flag vocabulary, exit codes, audit checklist, anti-patterns. Accessible at slug `cli-tool-design` via `ravel-lite fixed-memory show`. Drives the `cli-audit-and-refactor-against-cli-tool-design-md` backlog task.
