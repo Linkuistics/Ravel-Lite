@@ -124,204 +124,11 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream
-  title: 'Phase cycle: reorder to triage-first, eliminate in-cycle dream'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Move triage from end-of-cycle to start-of-cycle in the runner: `triage → work → analyse-work → reflect → (boundary) → triage`. Eliminate the dream phase from the in-cycle execution path (it moves to the standalone `ravel-lite curate` command).
-
-    ## Why
-
-    The current cycle ends with triage; the architecture-next design opens each cycle with triage so the LLM can orient on the backlog *before* doing work, rather than retrospectively. This is the structural prerequisite for the rest of the triage-first follow-on DAG: phase-boundary-mechanics, two-stream-commits, and phase-prompt-updates all assume this ordering.
-
-    ## Scope
-
-    - Reorder `LlmPhase` enum variants and update any match arms that assume the current order in `src/phase_loop.rs`.
-    - Update `src/types.rs::LlmPhase` ordering if the variant order encodes cycle position.
-    - Remove the in-cycle dream dispatch path; dream is now only invoked by `ravel-lite curate` (standalone, out-of-cycle).
-    - Update any phase-summary code or baseline-wiring code that assumes the current cycle order.
-    - Update `ScriptPhase::GitCommit*` handlers: new baseline wiring is `GitCommitTriage` → `work-baseline`; `GitCommitWork` → `analyse-work-baseline`; `GitCommitAnalyseWork` → `reflect-baseline`; `GitCommitReflect` → `triage-baseline`.
-    - `cargo test` must pass; the phase-contract integration test and `pi_phase_cycle` test will need updating for the new order.
-
-    ## References
-
-    - `docs/architecture-next.md` §Phase cycle (restructured), §What this replaces or removes
-    - `src/phase_loop.rs` — main cycle dispatcher
-    - `src/types.rs` — `LlmPhase` enum
-
-    ## Note
-
-    This task enables: phase-boundary-mechanics, migrate-ravel-lite-migrate-for-v1-to-v2-cutover, plan-finish-pr-merge-with-memory-promotion-and-archive.
-  results: |
-    ## What was done
-
-    Reordered the phase cycle from work-first to **triage-first** in the
-    runner, eliminated the in-cycle dream phase, and re-wired the four
-    script phases per the architecture-next baseline-naming convention.
-    Source-only change — no binary install, no LLM_STATE/ wire-shape edits.
-
-    ### `src/types.rs`
-
-    - `LlmPhase`: variant order is now `Triage, Work, AnalyseWork, Reflect`
-      (matches cycle position). `Dream` removed.
-    - `ScriptPhase`: variant order is now `GitCommitTriage, GitCommitWork,
-      GitCommitAnalyseWork, GitCommitReflect`. `GitCommitDream` removed,
-      `GitCommitAnalyseWork` added.
-    - `parse()` / `as_str()` updated; tests pin both new orderings and
-      confirm `dream` / `git-commit-dream` are no longer parseable.
-
-    ### `src/phase_loop.rs::handle_script_phase`
-
-    Rewritten per the new wiring:
-
-    | script phase             | commits             | next LLM phase | baseline file written     | returns |
-    |--------------------------|---------------------|----------------|---------------------------|---------|
-    | `GitCommitTriage`        | triage plan-state   | `work`         | `work-baseline`           | `true`  |
-    | `GitCommitWork`          | work plan-state     | `analyse-work` | `analyse-work-baseline`   | `true`  |
-    | `GitCommitAnalyseWork`   | applies commits.yaml + analyse-work plan-state | `reflect` | `reflect-baseline` | `true` |
-    | `GitCommitReflect`       | reflect memory      | `triage`       | `triage-baseline`         | `false` (ends cycle) |
-
-    `apply_commits_spec` moved from the old `GitCommitWork` to the new
-    `GitCommitAnalyseWork` (commits.yaml is produced by analyse-work, so
-    the apply boundary slides). `warn_if_project_tree_dirty` runs after
-    that apply, same as before.
-
-    End-of-cycle moved from `GitCommitTriage` (returning `false`) to
-    `GitCommitReflect`. The user-prompt in `run_single_plan` now fires
-    between cycles after reflect, with the next cycle opening at triage.
-
-    ### Removed dream from in-cycle dispatch
-
-    - `src/phase_loop.rs`: dropped `seed_dream_word_count_if_missing`,
-      `should_dream`, `update_dream_word_count` imports and the
-      `if lp == LlmPhase::Dream` block in the main loop. The `headroom`
-      parameter is no longer needed by `handle_script_phase`; the
-      `&SharedConfig` parameter was unused after that removal so it was
-      also dropped from `phase_loop` and `run_single_plan` (callers in
-      `multi_plan.rs` and `main.rs` updated).
-    - `src/dream.rs` itself is **untouched**: the curate task (separate
-      backlog item) will reuse the word-count gating.
-    - `defaults/phases/dream.md` stays embedded for the same reason —
-      `embedded_defaults_drift.rs` still asserts its presence.
-
-    ### Other source updates
-
-    - `src/format.rs`: dropped `LlmPhase::Dream` from `PHASE_HIGHLIGHTS`
-      and `phase_info`; updated Triage's description to match the new
-      start-of-cycle role.
-    - `src/main.rs` and `src/multi_plan.rs`: removed `LlmPhase::Dream`
-      from the dangerous-phase arrays; updated the cycle docstring in
-      `multi_plan.rs` from `(work → ... → git-commit-triage)` to
-      `(triage → ... → git-commit-reflect)`.
-    - `src/state/phase.rs::VALID_PHASES`: dropped `dream` /
-      `git-commit-dream`, added `git-commit-analyse-work`. Test list
-      updated accordingly. `seed_dream_word_count_if_missing` is still
-      called from `run_set_phase` as defense-in-depth for curate's later
-      use.
-    - `src/create.rs`: scaffolded `phase.md` is now `triage\n` instead of
-      `work\n` (matches new cycle start). `dream-word-count` still seeded
-      (curate will use it).
-
-    ### Test updates
-
-    - `tests/common/mod.rs::MockAgent::tokens()` and
-      `tests/phase_loop.rs::ContractMockAgent::tokens()` now provide
-      `TOOL_READ=Read` so the work prompt substitutes cleanly. In the
-      triage-first cycle, even tests that don't *exercise* Work compose its
-      prompt because GitCommitTriage transitions to Work before the
-      `phase did not advance` exit fires.
-    - `tests/phase_loop.rs::ContractMockAgent`: removed the dead
-      `LlmPhase::Dream` arm; AnalyseWork branch now writes phase
-      `git-commit-analyse-work` (was `git-commit-work`).
-    - `phase_contract_round_trip_writes_expected_files`,
-      `handoff_marker_in_analyse_work_is_promoted_by_triage`, and
-      `handoff_marker_in_analyse_work_is_archived_by_triage`: now invoke
-      `phase_loop` **twice**. Cycle 1 (started at analyse-work) closes at
-      `git-commit-reflect`; cycle 2 runs the next triage which mines the
-      hand-off / appends the placeholder. Without this restructure the
-      tests asserted on triage outputs that no longer happen in a single
-      cycle.
-    - `tests/dream.rs`: deleted
-      `git_commit_reflect_seeds_dream_word_count_when_missing` (it
-      exercised the now-removed in-cycle dream-seeding path); kept the
-      module-level `dream_guard_integration` test.
-    - `tests/pi_agent.rs::pi_phase_cycle_substitutes_tokens_and_streams_events`:
-      fake pi script now writes `git-commit-analyse-work` (was
-      `git-commit-work`) after analyse-work; dropped the unreachable
-      `triage` branch (cycle 1 ends at `git-commit-reflect`).
-    - All callers updated for the new `phase_loop(agent, ctx, ui)` and
-      `run_single_plan(agent, ctx, ui)` signatures (no `&SharedConfig`).
-    - `let shared = SharedConfig { ... }` declarations dropped from
-      10 test setups where they had become unused.
-
-    ## Verification
-
-    - `cargo test`: **930 passed, 0 failed** (full suite, including the
-      9 phase-loop integration tests, 3 pi-agent tests, the dream module
-      guard, embedded-defaults-drift, set-phase tests).
-    - `./scripts/check.sh` (clippy gate, `--deny warnings`): **passes**.
-
-    ## What worked
-
-    - Shipping `analyse-work-baseline` from the new minimal `GitCommitWork`
-      even though the `analyse-work` LLM block still reads `work-baseline`
-      for its diff. The two SHAs are equivalent for source-tree purposes
-      in the current model (work doesn't commit source itself), so leaving
-      the analyse-work prompt untouched was the right minimum-coherent
-      call. The downstream "phase prompt updates" task can switch the
-      reader over to `analyse-work-baseline` once the prompts are being
-      rewritten anyway.
-    - Solving the `{{TOOL_READ}}` test breakage at the `tokens()` layer
-      rather than overriding `phases/work.md` on disk. `compose_prompt`
-      *appends* plan-level overrides instead of replacing the embedded
-      base, so a disk override couldn't have suppressed the unresolved
-      token — supplying the token via the mock was the only clean fix.
-
-    ## What didn't work / what to do next
-
-    - **README phase-cycle diagram is now stale.** The old work-first
-      diagram still appears under §"Phase Cycle". Left in place because
-      the deployed binary still runs the old cycle (constraint: source
-      evolves, deploy gated on migrator). Updating README belongs with
-      the v2 deploy story or the downstream `phase-prompt-updates` task.
-    - **`docs/architecture.md`** likely also still describes the old
-      cycle; not audited in this task.
-    - **`defaults/phases/*.md`** still tell the LLM to `set-phase` to the
-      *old* next-phase names (e.g., analyse-work writes
-      `git-commit-work`, work writes `analyse-work` directly skipping
-      `git-commit-work`). Deliberately left alone — that's the
-      `phase-prompt-updates-for-triage-first-cycle-shape` task's scope.
-      In practice this means: if someone *runs* the new-source binary
-      against the shipped prompts, work would skip `git-commit-work` and
-      go straight to analyse-work; analyse-work would set
-      `git-commit-work` (which now no-ops on commits.yaml), and the
-      cycle would stall because commits.yaml never gets applied. The
-      whole v2 cutover requires the prompt task + this one to land
-      together before reinstall — which is exactly the migration-gating
-      the auto-memory describes.
-    - **`apply_commits_spec` label**: I changed the `phase` argument from
-      `"work"` to `"analyse-work"`. The fallback catch-all commit
-      message is now `run-plan: analyse-work (<plan>)`. Consistent with
-      the new boundary semantics; downstream tasks that read commit
-      messages should be aware.
-
-    ## Suggests next
-
-    - The unblocked downstream tasks `phase-boundary-mechanics-...`,
-      `recovery-semantics-...`, `migrate-...`, `plan-finish-...` are now
-      pickable. The phase-prompt-updates task still depends on
-      `two-stream-commits` (which depends on phase-boundary-mechanics),
-      but in practice it should land near-simultaneously with the v2
-      binary install since the prompts and runner are now out of sync
-      by design.
 - id: phase-boundary-mechanics-drain-focus-objections-target-requests-apply-commits-defeat-cascade
   title: 'Phase boundary mechanics: drain focus-objections/target-requests, apply commits, defeat cascade'
   category: architecture-next
   status: not_started
-  dependencies:
-  - phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream
+  dependencies: []
   description: |
     Implement the runner-side phase boundary mechanics: drain `target-requests.yaml` and `focus-objections.yaml` at triage entry, apply `commits.yaml` at analyse-work exit, run the defeat cascade over plan KG when status changes, and save per-phase baselines.
 
@@ -391,8 +198,7 @@ tasks:
   title: 'Recovery semantics: verify and test restart-not-resume for interrupted cycles'
   category: architecture-next
   status: not_started
-  dependencies:
-  - phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream
+  dependencies: []
   description: |
     Verify and test that the runner correctly ignores partly-written scratch files on a fresh `ravel-lite run` ("restart the cycle, don't resume").
 
@@ -443,8 +249,7 @@ tasks:
   title: 'Migrate: ravel-lite migrate for v1 to v2 cutover'
   category: architecture-next
   status: not_started
-  dependencies:
-  - phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream
+  dependencies: []
   description: |
     Implement the `ravel-lite migrate <old-plan-path>` verb that cuts a v1 `<project>/LLM_STATE/<plan>` plan over to v2's `<context>/plans/<plan>` model. Hard cutover: the v2 binary refuses to run on unmigrated v1 plans.
 
@@ -464,8 +269,7 @@ tasks:
   title: 'Plan finish: pr/merge with memory promotion and archive'
   category: architecture-next
   status: not_started
-  dependencies:
-  - phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream
+  dependencies: []
   description: |
     Implement plan completion: promote plan memory into component memory, ship code + memory together via PR or local fast-forward, archive the plan dir.
 
