@@ -935,10 +935,6 @@ entries:
   title: create --target seeds target-requests.yaml; empty list is no-op
   body: |
     `seed_target_requests` in `src/create.rs` writes a valid `TargetRequestsFile` (schema_version: 1) via `write_target_requests`. Called from `run_create` when `--target` args are supplied; empty arg list is a no-op (no file written). Uses `ComponentRef::FromStr` at the clap boundary — same derivation already used for `suggested_target` at `src/main.rs:1087`. See: `target_requests.yaml is a drain queue; phase_loop empties per-cycle`.
-- id: create-plan-md-raw-yaml-write-overwrites-seeded-content-lacks-schema-version
-  title: create-plan.md raw YAML write overwrites seeded content; lacks schema_version
-  body: |
-    `defaults/create-plan.md` has two target-requests gaps: (1) example YAML omits `schema_version: 1`, so LLM-authored `target-requests.yaml` files fail the runner's version guard at the next phase boundary; (2) the raw "Write the proposed targets to..." instruction overwrites content pre-seeded by `--target`. Fix for both: replace the raw write instruction with a `state target-requests add` call, which handles schema_version and appends. Promoted to backlog. See: `Phase prompts use ravel-lite state CLI verbs`.
 - id: fixed-memory-show-uses-embedded-plus-user-layered-overlay
   title: fixed-memory show uses embedded-plus-user layered overlay
   body: |
@@ -947,3 +943,7 @@ entries:
   title: cli-tool-design.md is the CLI audit reference
   body: |
     `defaults/fixed-memory/cli-tool-design.md` is an embedded fixed-memory entry providing LLM-agent CLI design guidance: structured output, help examples, actionable errors, flag vocabulary, exit codes, audit checklist, anti-patterns. Accessible at slug `cli-tool-design` via `ravel-lite fixed-memory show`. Drives the `cli-audit-and-refactor-against-cli-tool-design-md` backlog task.
+- id: create-allowed-tools-must-track-create-plan-md-state-verb-usage
+  title: CREATE_ALLOWED_TOOLS must track create-plan.md state verb usage
+  body: |
+    `src/create.rs::CREATE_ALLOWED_TOOLS` must include `Bash(ravel-lite state <area>:*)` for every `ravel-lite state <area>` subcommand invoked from `defaults/create-plan.md`. The create spawn uses `--setting-sources project,local`; omitting a verb glob silently blocks that call during the create dialogue. Extend the constant (and its regression test in `src/create.rs`) when adding new state verb invocations to `create-plan.md`. The session that fixed `target-requests` also notes this pattern will recur when `fixed-memory` verbs are added to create-plan.md.
