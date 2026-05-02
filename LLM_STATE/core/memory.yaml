@@ -921,3 +921,7 @@ entries:
   title: focus-objections.yaml has per-kind add verb surface
   body: |
     `src/state/focus_objections/` (schema.rs, yaml_io.rs, verbs.rs, mod.rs) is a closed-vocabulary queue for the triage-first phase cycle. CLI verbs: `add-wrong-target`, `add-skip-item`, `add-premature`, `list`, `clear`. Kind vocabulary encoded as a tagged enum; clap rejects invalid kind values before any YAML is written. `Objection::suggested_target` remains `String` — the last `validate_reference` outlier in the v2 scratch-file family; lifting it to `ComponentRef` is the outstanding follow-up. See: `Per-kind add-* verbs are the pattern for closed-vocabulary queues`; `src/state/ uses module-per-area layout`.
+- id: componentref-serialises-as-its-string-wire-form-lifts-need-no-migration
+  title: ComponentRef serialises as its String wire form; lifts need no migration
+  body: |
+    `ComponentRef`'s `Serialize`/`Deserialize` impls round-trip through the canonical `<repo_slug>:<component_id>` string. Lifting a `String` field that holds this format to `ComponentRef` requires no YAML migration and no schema-version bump. Clap uses `FromStr` for argument parsing, so the same lift gates malformed values at the CLI boundary automatically — no separate validator needed.
