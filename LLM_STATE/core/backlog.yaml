@@ -38,75 +38,43 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: two-stream-commits-target-worktrees-first-context-record-last
-  title: 'Two-stream commits: target worktrees first, context record last'
+- id: phase-prompt-updates-for-triage-first-cycle-shape
+  title: Phase prompt updates for triage-first cycle shape
   category: architecture-next
-  status: done
+  status: not_started
   dependencies: []
   description: |
-    Implement the two-stream commit ordering: apply target-worktree commits first, then commit plan-state (context) changes. A target failure must not leave the context recording false-positive progress.
+    Update all four phase prompts for the triage-first cycle shape: triage writes `this-cycle-focus.yaml`, work consumes it, analyse-work writes `commits.yaml` with optional `target:` field, reflect closes the cycle. Remove `dream.md` from the in-cycle path.
 
     ## Why
 
-    Currently `GitCommitWork` applies `commits.yaml` and then commits the plan dir in a single sequence without worktree separation. The architecture-next design separates:
+    The phase prompts (`defaults/phases/triage.md`, `work.md`, `analyse-work.md`, `reflect.md`) were written for the old end-of-cycle-triage shape. After the cycle-reorder, two-stream-commits, and phase-boundary-mechanics tasks land, the prompts need to instruct the LLM to use the new mechanics:
 
-    1. **Work commits**: applied in each mounted target's worktree on `ravel-lite/<plan>/main`.
-    2. **Context commit**: the plan-state commit (`run-plan: <phase> (<plan>)`) in the ravel context repo.
-
-    Targets first so a target commit failure stops before the context record claims the work landed. Without this ordering, a partial failure produces a context record that overstates progress.
+    - **triage.md**: write `this-cycle-focus.yaml` (via `state this-cycle-focus set`); read and drain `focus-objections.yaml` from the prior cycle; new baseline file names.
+    - **work.md**: read `this-cycle-focus.yaml` at entry; may write `focus-objections.yaml` (via `state focus-objections add-*` verbs) when a target is wrong, skippable, or premature.
+    - **analyse-work.md**: write `commits.yaml` with optional `target: ComponentRef` per commit.
+    - **reflect.md**: close the cycle; no longer triggers dream.
+    - **dream.md**: update to reflect that it is now only invoked by `ravel-lite curate`, not the plan cycle.
 
     ## Scope
 
-    - In `apply_commits_spec` (currently `src/git.rs` or new `src/state/commits/`): group commits by their `target: ComponentRef`; apply each group in the target's worktree (resolved via `targets.yaml` + mounted worktrees). Unrouted commits (no `target:` field) fall back to the plan root, preserving v1 behaviour.
-    - After all target commits land, run the context-record commit (`git_commit_plan`).
-    - Propagate failure: if any target commit fails, abort before the context commit and surface the error.
-    - Update `GitCommitWork` handler to delegate to the new two-stream apply path.
-    - Tests: commit with two targets asserts target commits precede context commit; failure in second target leaves first committed but context unchanged.
+    1. Update `defaults/phases/triage.md` §Output format with new cycle order and `this-cycle-focus` / `focus-objections` verb examples.
+    2. Update `defaults/phases/work.md` to read `this-cycle-focus.yaml` on entry and document `focus-objections` write path.
+    3. Update `defaults/phases/analyse-work.md` step 9: `commits.yaml` now supports optional `target:` field.
+    4. Update `defaults/phases/reflect.md` to reflect no post-reflect dream in the cycle.
+    5. Update `defaults/phases/dream.md` to note standalone-only invocation.
+    6. Run drift-guard test (`every_file_under_defaults_is_registered_in_embedded_files`) to confirm no stale embed registrations.
+    7. `shipped_pi_prompts_have_no_dangling_tokens` must pass.
 
     ## Dependencies
 
-    Depends on phase-boundary-mechanics (which wires the new commit-apply path into the phase loop).
+    Depends on two-stream-commits (the full new mechanics must be in place before the prompts describe them as active). Also depends on cycle-reorder and phase-boundary-mechanics transitively via two-stream-commits.
 
     ## References
 
-    - `docs/architecture-next.md` §Commits (two streams)
-    - `src/git.rs::apply_commits_spec` — current implementation
-    - `src/phase_loop.rs` — `ScriptPhase::GitCommitWork` handler
-  results: |
-    ## What landed
-
-    Per-entry routing in `apply_commits_spec` (`src/git.rs`). Each `CommitSpec` entry's optional `target: ComponentRef` selects a mounted worktree resolved via `targets.yaml`; entries with no target apply in `project_dir`, preserving v1 behaviour.
-
-    - `apply_parsed_spec` now takes `plan_dir` and selects cwd per entry: `None` → `project_dir`, `Some(target)` → `resolve_target_worktree(plan_dir, target)?`.
-    - `unstage_subtree(&cwd)` runs against the routed cwd, so each worktree's index is cleaned independently between entries.
-    - Failure semantics fall out of `?` propagation: a target-resolution or git failure bails before any subsequent entry — and before the caller's `git_commit_plan` (context-record) runs at `phase_loop.rs:335-340`. Earlier commits stay in their respective worktrees; the context never advances on a partial failure.
-
-    Doc comment on `apply_commits_spec` updated to drop the "ignores `target`" note and state the two-stream contract.
-
-    ## What worked
-
-    - All 19 pre-existing `git::tests` still pass unchanged — the v1 fallback (target=None) hits the original code path with the original cwd.
-    - 4 new tests cover the routed path:
-      - `apply_commits_spec_routes_targeted_entry_to_worktree` — single routed entry lands in the worktree, `project_dir` HEAD does not advance.
-      - `apply_commits_spec_mixes_routed_and_unrouted_entries` — interleaved entries each commit in their respective git roots, spec order preserved 1-to-1.
-      - `apply_commits_spec_routes_distinct_targets_independently` — two routed entries to different targets land in their own worktrees only.
-      - `apply_commits_spec_bails_when_target_not_mounted_after_committing_prior_entries` — first commit lands; second entry's unmounted target bails with the ref in the message; `project_dir` HEAD unchanged (the architecture-next §Commits "context unchanged on partial failure" guarantee, surfaced at the function boundary).
-    - `cargo test --workspace`: all 974 lib tests + every integration crate green.
-    - `./scripts/check.sh` (clippy `-D warnings`) clean.
-
-    Test helpers (`seed_routed_target`, `head_subject`) are local to the test module. Worktree fixtures use plain `git init` repos at `<plan>/.worktrees/<repo_slug>/` rather than real `git worktree add` invocations — `apply_commits_spec` only cares about the cwd of git operations; worktree-vs-repo realism is covered by `state::targets::mount` tests already.
-
-    ## What this enables / suggests next
-
-    - **`phase-prompt-updates-for-triage-first-cycle-shape`** is now unblocked: the analyse-work prompt can be updated to describe the `target:` field as load-bearing rather than reserved.
-    - The `target` field's wire shape was already supported in the schema and the YAML reader, so existing v1 prompts continue to emit specs with no `target:` and they still apply to `project_dir` as before. This is the lowest-risk increment toward two-stream — a future analyse-work prompt update is the user-visible flip.
-    - Failure-test pattern (`match Result { Ok(_) => panic!, Err(e) => e }`) avoids forcing `Debug` onto `CommitResult` just for tests. If more tests need to pattern-match on errors from the apply path, lift this into a small helper.
-    - Caller side (`phase_loop.rs::ScriptPhase::GitCommitAnalyseWork`) needs no change — `apply_commits_spec`'s signature is unchanged, and its existing `?` propagation already implements the "abort before context commit" guarantee.
-
-    ## Out of scope (deliberately deferred)
-
-    - No move of `apply_commits_spec` into `src/state/commits/` (the task description offered this as an option). `git.rs` already imports from `state::commits`; an extraction is a refactor, not part of the routing change.
-    - No changes to phase prompts — that's the next task (`phase-prompt-updates-for-triage-first-cycle-shape`).
+    - `defaults/phases/` — phase prompt files
+    - `src/init.rs` — drift sentinel for `state phase-summary render` substring
+    - `src/prompt.rs` — `substitute_tokens` path all prompts go through
 - id: migrate-ravel-lite-migrate-for-v1-to-v2-cutover
   title: 'Migrate: ravel-lite migrate for v1 to v2 cutover'
   category: architecture-next
@@ -232,44 +200,6 @@ tasks:
     4. Tests: rendered output includes intent claims, task counts match backlog, phase transitions leave `phase.md` non-empty and structured.
 
     **Gating constraint:** Must wait until the v1→v2 migrator ships and a new binary deploys — `read_backlog` on `LLM_STATE/core/backlog.yaml` today hits the legacy v1 wire shape and would fail. See `LLM_STATE-shape-frozen` memory entry.
-- id: phase-prompt-updates-for-triage-first-cycle-shape
-  title: Phase prompt updates for triage-first cycle shape
-  category: architecture-next
-  status: not_started
-  dependencies:
-  - two-stream-commits-target-worktrees-first-context-record-last
-  description: |
-    Update all four phase prompts for the triage-first cycle shape: triage writes `this-cycle-focus.yaml`, work consumes it, analyse-work writes `commits.yaml` with optional `target:` field, reflect closes the cycle. Remove `dream.md` from the in-cycle path.
-
-    ## Why
-
-    The phase prompts (`defaults/phases/triage.md`, `work.md`, `analyse-work.md`, `reflect.md`) were written for the old end-of-cycle-triage shape. After the cycle-reorder, two-stream-commits, and phase-boundary-mechanics tasks land, the prompts need to instruct the LLM to use the new mechanics:
-
-    - **triage.md**: write `this-cycle-focus.yaml` (via `state this-cycle-focus set`); read and drain `focus-objections.yaml` from the prior cycle; new baseline file names.
-    - **work.md**: read `this-cycle-focus.yaml` at entry; may write `focus-objections.yaml` (via `state focus-objections add-*` verbs) when a target is wrong, skippable, or premature.
-    - **analyse-work.md**: write `commits.yaml` with optional `target: ComponentRef` per commit.
-    - **reflect.md**: close the cycle; no longer triggers dream.
-    - **dream.md**: update to reflect that it is now only invoked by `ravel-lite curate`, not the plan cycle.
-
-    ## Scope
-
-    1. Update `defaults/phases/triage.md` §Output format with new cycle order and `this-cycle-focus` / `focus-objections` verb examples.
-    2. Update `defaults/phases/work.md` to read `this-cycle-focus.yaml` on entry and document `focus-objections` write path.
-    3. Update `defaults/phases/analyse-work.md` step 9: `commits.yaml` now supports optional `target:` field.
-    4. Update `defaults/phases/reflect.md` to reflect no post-reflect dream in the cycle.
-    5. Update `defaults/phases/dream.md` to note standalone-only invocation.
-    6. Run drift-guard test (`every_file_under_defaults_is_registered_in_embedded_files`) to confirm no stale embed registrations.
-    7. `shipped_pi_prompts_have_no_dangling_tokens` must pass.
-
-    ## Dependencies
-
-    Depends on two-stream-commits (the full new mechanics must be in place before the prompts describe them as active). Also depends on cycle-reorder and phase-boundary-mechanics transitively via two-stream-commits.
-
-    ## References
-
-    - `defaults/phases/` — phase prompt files
-    - `src/init.rs` — drift sentinel for `state phase-summary render` substring
-    - `src/prompt.rs` — `substitute_tokens` path all prompts go through
 - id: cli-audit-and-refactor-against-cli-tool-design-md
   title: CLI audit and refactor against cli-tool-design.md
   category: architecture-next
