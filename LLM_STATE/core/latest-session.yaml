@@ -1,11 +1,13 @@
-id: session-128
-timestamp: 2026-05-02T13:41:26Z
+id: session-129
+timestamp: 2026-05-02T14:08:31Z
 phase: work
 body: |
-  ### Session 128 (2026-05-02T13:41:26Z) — Add resolve_target_worktree to complete phase-boundary-mechanics task
+  ### Session 129 (2026-05-02T14:08:31Z) — Two-stream commit routing in apply_commits_spec
 
-  - **What was attempted:** Implement the phase-boundary mechanics for the `phase-boundary-mechanics-worktree-mount-drain-at-triage-work` task — specifically the `resolve_target_worktree` function that translates a `ComponentRef` into an on-disk worktree path using `targets.yaml`.
-  - **What worked:** The mount/drain layer was already fully in place (`mount_target`, `drain_target_requests`, phase_loop wiring). The only gap was the resolver. Added `resolve_target_worktree(plan_dir: &Path, target: &ComponentRef) -> Result<PathBuf>` in `src/state/targets/yaml_io.rs`, exported from `state::targets`. The function reads `targets.yaml`, matches on `(repo_slug, component_id)`, and returns `plan_dir.join(working_root)`. Error message names the missing ref and points at `target-requests.yaml` for remediation. Four unit tests cover the happy path, missing component, absent file, and shared-worktree discrimination. All 1097 workspace tests pass.
-  - **What didn't work / surprises:** The `triage→work` wording in the task description is slightly misleading — drain runs at every phase boundary (loop-top in `phase_loop::phase_loop`), not only at the triage→work transition. That's correct per architecture-next §Phase boundaries; no relocation was needed.
-  - **What this suggests next:** `two-stream-commits-target-worktrees-first-context-record-last` is now unblocked. Its `apply_commits_spec` rewrite calls `resolve_target_worktree(plan_dir, &commit.target)` to chdir before staging each commit group.
-  - **Key learnings:** `cargo test --workspace --quiet` truncates to ~4 binary summaries and hides the full tally; use `cargo test --workspace` (without `--quiet`) for authoritative pass/fail counts.
+  - Implemented per-entry target routing in `apply_commits_spec` (`src/git.rs`): each `CommitSpec` entry's optional `target: ComponentRef` now resolves to a mounted worktree via `targets.yaml`; entries without a target fall back to `project_dir` (v1 behaviour preserved).
+  - Updated `apply_parsed_spec` signature to accept `plan_dir` alongside `project_dir`; routing cwd is selected per entry before `unstage_subtree`, `git add`, `diff --cached`, and `git commit` calls.
+  - Updated the doc comment on `apply_commits_spec` to replace the old "ignores target" note with the two-stream contract and the failure-atomicity guarantee.
+  - Added 4 new tests covering: single routed entry, mixed routed+unrouted entries preserving spec order, two distinct targets routing independently, and partial-failure bail leaving context unchanged.
+  - All 19 pre-existing `git::tests` pass unchanged; `cargo test --workspace` green (974 lib + integration tests); clippy `-D warnings` clean.
+  - The `target` field's wire shape was already supported in the YAML schema and reader, so v1 prompts (no `target:`) continue to work as before.
+  - `phase-prompt-updates-for-triage-first-cycle-shape` is now unblocked (its dependency `two-stream-commits-target-worktrees-first-context-record-last` is done).

@@ -10,6 +10,7 @@ use crate::state::filenames::BACKLOG_FILENAME;
 #[cfg(test)]
 use crate::state::filenames::COMMITS_FILENAME;
 use crate::state::commits::{delete_commits, read_commits, schema::CommitsSpec};
+use crate::state::targets::resolve_target_worktree;
 
 pub struct CommitResult {
     pub committed: bool,
@@ -79,12 +80,14 @@ pub fn git_commit_plan(plan_dir: &Path, plan_name: &str, phase_name: &str) -> Re
 /// catch-all pathspec like `"."` can't sweep the spec into its own
 /// commit. The file is intentionally one-shot scratch.
 ///
-/// The optional `target: ComponentRef` field on each `CommitSpec` is
-/// reserved for the two-stream-commits routing layer; this implementation
-/// ignores it and applies every entry to `project_dir`. Once the
-/// two-stream applier ships (architecture-next §Commits) it will route
-/// each entry by `target` and unrouted entries will keep falling back
-/// here.
+/// Two-stream routing: each entry's optional `target: ComponentRef`
+/// selects a mounted worktree (resolved via `targets.yaml`); entries
+/// without a target apply in `project_dir`, preserving v1 behaviour.
+/// On any per-entry git or routing failure the function bails — the
+/// caller's subsequent context-record commit (`git_commit_plan`) is
+/// then skipped via `?` propagation, so a failed work commit cannot
+/// leave the context recording false-positive progress
+/// (architecture-next §Commits).
 pub fn apply_commits_spec(
     project_dir: &Path,
     plan_dir: &Path,
@@ -108,24 +111,41 @@ pub fn apply_commits_spec(
     delete_commits(plan_dir).ok();
 
     let results = match parsed {
-        Some(spec) => apply_parsed_spec(project_dir, &spec)?,
+        Some(spec) => apply_parsed_spec(project_dir, plan_dir, &spec)?,
         None => vec![commit_whole_subtree(project_dir, &default_message)?],
     };
 
     Ok(results)
 }
 
-/// Apply each entry in a parsed `CommitsSpec`. Spec entries that stage
-/// nothing yield a `CommitResult { committed: false }` so the caller can
-/// log them consistently without treating the empty case as an error.
-fn apply_parsed_spec(project_dir: &Path, spec: &CommitsSpec) -> Result<Vec<CommitResult>> {
+/// Apply each entry in a parsed `CommitsSpec`, routing per-entry by
+/// `target`: `Some(component_ref)` resolves to the mounted worktree's
+/// `working_root` via `targets.yaml`; `None` falls back to `project_dir`
+/// (v1 behaviour). Spec entries that stage nothing yield a
+/// `CommitResult { committed: false }` so the caller can log them
+/// consistently without treating the empty case as an error.
+///
+/// Spec order is preserved across cwd switches. A target-resolution
+/// failure (entry references an unmounted component) bails before
+/// touching git, leaving any earlier commits in their respective
+/// worktrees and the context unchanged.
+fn apply_parsed_spec(
+    project_dir: &Path,
+    plan_dir: &Path,
+    spec: &CommitsSpec,
+) -> Result<Vec<CommitResult>> {
     let mut results = Vec::with_capacity(spec.commits.len());
     for entry in &spec.commits {
-        unstage_subtree(project_dir)?;
+        let cwd: PathBuf = match &entry.target {
+            None => project_dir.to_path_buf(),
+            Some(target) => resolve_target_worktree(plan_dir, target)?,
+        };
+
+        unstage_subtree(&cwd)?;
 
         if !entry.paths.is_empty() {
             let mut add = Command::new("git");
-            add.current_dir(project_dir).args(["add", "--"]);
+            add.current_dir(&cwd).args(["add", "--"]);
             for p in &entry.paths {
                 add.arg(p);
             }
@@ -133,7 +153,7 @@ fn apply_parsed_spec(project_dir: &Path, spec: &CommitsSpec) -> Result<Vec<Commi
         }
 
         let diff = Command::new("git")
-            .current_dir(project_dir)
+            .current_dir(&cwd)
             .args(["diff", "--cached", "--quiet"])
             .output()
             .context("Failed to run git diff --cached")?;
@@ -147,7 +167,7 @@ fn apply_parsed_spec(project_dir: &Path, spec: &CommitsSpec) -> Result<Vec<Commi
         }
 
         Command::new("git")
-            .current_dir(project_dir)
+            .current_dir(&cwd)
             .args(["commit", "-m", &entry.message])
             .output()
             .context("Failed to run git commit for commit spec")?;
@@ -883,6 +903,250 @@ mod tests {
 
         let _ = apply_commits_spec(repo, &plan_dir, "core", "work").unwrap();
         assert!(!plan_dir.join(COMMITS_FILENAME).exists(), "spec file must be removed after apply");
+    }
+
+    // ------------------------------------------------------------------
+    // Two-stream routing tests: each commit's `target: ComponentRef`
+    // selects a mounted worktree resolved via `targets.yaml`; entries
+    // without a target fall back to project_dir (v1 behaviour). See
+    // architecture-next §Commits.
+    // ------------------------------------------------------------------
+
+    /// Initialise a plain git repo at `<plan_dir>/.worktrees/<repo_slug>/`
+    /// with one baseline commit, and write a single-row `targets.yaml`
+    /// pointing at it. Uses a plain repo rather than a real
+    /// `git worktree add` because `apply_commits_spec` only cares about
+    /// the cwd of git operations — worktree-vs-repo realism is covered
+    /// by `state::targets::mount` tests.
+    fn seed_routed_target(
+        plan_dir: &Path,
+        repo_slug: &str,
+        component_id: &str,
+        baseline_files: &[(&str, &str)],
+    ) -> PathBuf {
+        let working_root_rel = format!(".worktrees/{repo_slug}");
+        let worktree_abs = plan_dir.join(&working_root_rel);
+        fs::create_dir_all(&worktree_abs).unwrap();
+        init_repo(&worktree_abs);
+        for (path, content) in baseline_files {
+            let full = worktree_abs.join(path);
+            if let Some(parent) = full.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(&full, content).unwrap();
+        }
+        Command::new("git").current_dir(&worktree_abs).args(["add", "-A"]).output().unwrap();
+        Command::new("git").current_dir(&worktree_abs).args(["commit", "-q", "-m", "wt baseline"]).output().unwrap();
+
+        // Append the row to whatever targets.yaml already exists; create
+        // an empty file first when this is the first target.
+        let targets_path = plan_dir.join("targets.yaml");
+        let existing = fs::read_to_string(&targets_path).unwrap_or_else(|_| {
+            "schema_version: 1\ntargets: []\n".to_string()
+        });
+        let appended = if existing.trim().ends_with("targets: []") {
+            existing.replace("targets: []", &format!(
+                "targets:\n  - repo_slug: {repo_slug}\n    component_id: {component_id}\n    working_root: {working_root_rel}\n    branch: ravel-lite/core/main\n    path_segments: []"
+            ))
+        } else {
+            format!(
+                "{}  - repo_slug: {repo_slug}\n    component_id: {component_id}\n    working_root: {working_root_rel}\n    branch: ravel-lite/core/main\n    path_segments: []\n",
+                existing.trim_end_matches('\n').to_string() + "\n"
+            )
+        };
+        fs::write(&targets_path, appended).unwrap();
+
+        worktree_abs
+    }
+
+    /// Subject of the most recent commit on HEAD in `repo`.
+    fn head_subject(repo: &Path) -> String {
+        let out = Command::new("git")
+            .current_dir(repo)
+            .args(["log", "-1", "--pretty=%s"])
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    }
+
+    #[test]
+    fn apply_commits_spec_routes_targeted_entry_to_worktree() {
+        // Single routed entry: the commit must land in the target's
+        // worktree (`.worktrees/atlas`), not in project_dir. project_dir
+        // stays at its baseline so a subsequent context-record commit
+        // would commit nothing — the work commit landed exactly where
+        // routing said it would.
+        let tmp = seed_repo(&[("project.txt", "p1\n")]);
+        let project = tmp.path();
+        let plan_dir = project.join("LLM_STATE").join("core");
+        fs::create_dir_all(&plan_dir).unwrap();
+
+        let worktree = seed_routed_target(
+            &plan_dir,
+            "atlas",
+            "atlas-core",
+            &[("src/lib.rs", "fn lib() {}\n")],
+        );
+        let project_head_before = head_subject(project);
+        fs::write(worktree.join("src/lib.rs"), "fn lib() { /* changed */ }\n").unwrap();
+
+        fs::write(
+            plan_dir.join(COMMITS_FILENAME),
+            "commits:\n  - paths: [\"src/**\"]\n    message: Bump atlas src\n    target: atlas:atlas-core\n",
+        ).unwrap();
+
+        let results = apply_commits_spec(project, &plan_dir, "core", "analyse-work").unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].committed);
+        assert_eq!(head_subject(&worktree), "Bump atlas src");
+        assert_eq!(
+            head_subject(project),
+            project_head_before,
+            "project_dir HEAD must not advance when entry routed to worktree"
+        );
+    }
+
+    #[test]
+    fn apply_commits_spec_mixes_routed_and_unrouted_entries() {
+        // Spec interleaves a routed entry (target=atlas, paths in the
+        // worktree) and an unrouted entry (no target, paths in project).
+        // Each must commit in its own git root, and spec order must
+        // map 1-to-1 to results order.
+        let tmp = seed_repo(&[("project.txt", "p1\n")]);
+        let project = tmp.path();
+        let plan_dir = project.join("LLM_STATE").join("core");
+        fs::create_dir_all(&plan_dir).unwrap();
+
+        let worktree = seed_routed_target(
+            &plan_dir,
+            "atlas",
+            "atlas-core",
+            &[("src/lib.rs", "v1\n")],
+        );
+        fs::write(worktree.join("src/lib.rs"), "v2\n").unwrap();
+        fs::write(project.join("project.txt"), "p2\n").unwrap();
+
+        let spec_yaml = r#"commits:
+  - paths: ["src/**"]
+    message: Bump atlas src
+    target: atlas:atlas-core
+  - paths: ["project.txt"]
+    message: Bump project file
+"#;
+        fs::write(plan_dir.join(COMMITS_FILENAME), spec_yaml).unwrap();
+
+        let results = apply_commits_spec(project, &plan_dir, "core", "analyse-work").unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.committed));
+        assert_eq!(results[0].message, "Bump atlas src");
+        assert_eq!(results[1].message, "Bump project file");
+        assert_eq!(head_subject(&worktree), "Bump atlas src");
+        assert_eq!(head_subject(project), "Bump project file");
+    }
+
+    #[test]
+    fn apply_commits_spec_routes_distinct_targets_independently() {
+        // Two targets, two routed entries — each lands in its own
+        // worktree exactly once. Cross-target commits are independent
+        // (no shared index), so a commit in one worktree must not
+        // disturb the other's HEAD or working tree.
+        let tmp = seed_repo(&[("unused.txt", "x\n")]);
+        let project = tmp.path();
+        let plan_dir = project.join("LLM_STATE").join("core");
+        fs::create_dir_all(&plan_dir).unwrap();
+
+        let atlas_wt = seed_routed_target(
+            &plan_dir,
+            "atlas",
+            "atlas-core",
+            &[("a.rs", "a v1\n")],
+        );
+        let ravel_wt = seed_routed_target(
+            &plan_dir,
+            "ravel",
+            "ravel-core",
+            &[("r.rs", "r v1\n")],
+        );
+        let atlas_baseline = head_subject(&atlas_wt);
+        let ravel_baseline = head_subject(&ravel_wt);
+
+        fs::write(atlas_wt.join("a.rs"), "a v2\n").unwrap();
+        fs::write(ravel_wt.join("r.rs"), "r v2\n").unwrap();
+
+        let spec_yaml = r#"commits:
+  - paths: ["a.rs"]
+    message: Atlas bump
+    target: atlas:atlas-core
+  - paths: ["r.rs"]
+    message: Ravel bump
+    target: ravel:ravel-core
+"#;
+        fs::write(plan_dir.join(COMMITS_FILENAME), spec_yaml).unwrap();
+
+        let results = apply_commits_spec(project, &plan_dir, "core", "analyse-work").unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.committed));
+        assert_eq!(head_subject(&atlas_wt), "Atlas bump");
+        assert_eq!(head_subject(&ravel_wt), "Ravel bump");
+        // Negative checks: each worktree must have advanced exactly one
+        // commit past its own baseline, not picked up the other's commit.
+        assert_ne!(atlas_baseline, "Atlas bump");
+        assert_ne!(ravel_baseline, "Ravel bump");
+    }
+
+    #[test]
+    fn apply_commits_spec_bails_when_target_not_mounted_after_committing_prior_entries() {
+        // First entry routes to a mounted target and commits successfully.
+        // Second entry references an unmounted target — the routing
+        // resolution must bail before any git in the second entry.
+        // The first commit stays in its worktree; the function returns
+        // Err so the caller skips the subsequent context-record
+        // commit (the "context unchanged on partial failure"
+        // architecture-next §Commits guarantee).
+        let tmp = seed_repo(&[("project.txt", "p1\n")]);
+        let project = tmp.path();
+        let plan_dir = project.join("LLM_STATE").join("core");
+        fs::create_dir_all(&plan_dir).unwrap();
+
+        let mounted_wt = seed_routed_target(
+            &plan_dir,
+            "atlas",
+            "atlas-core",
+            &[("src/lib.rs", "v1\n")],
+        );
+        let project_head_before = head_subject(project);
+        fs::write(mounted_wt.join("src/lib.rs"), "v2\n").unwrap();
+
+        let spec_yaml = r#"commits:
+  - paths: ["src/**"]
+    message: First lands
+    target: atlas:atlas-core
+  - paths: ["src/**"]
+    message: Second cannot route
+    target: ghost:not-mounted
+"#;
+        fs::write(plan_dir.join(COMMITS_FILENAME), spec_yaml).unwrap();
+
+        let err = match apply_commits_spec(project, &plan_dir, "core", "analyse-work") {
+            Ok(_) => panic!("expected bail when second entry references an unmounted target"),
+            Err(e) => e,
+        };
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("ghost:not-mounted"),
+            "error must cite the unmounted ref: {msg}"
+        );
+
+        // The first commit landed in its worktree — partial progress is
+        // expected; we don't roll back what's already in git history.
+        assert_eq!(head_subject(&mounted_wt), "First lands");
+        // project_dir HEAD is unchanged: no context-record commit ran
+        // (it's the caller's job, but we verify here that nothing was
+        // committed in project_dir as a side-effect of the bail).
+        assert_eq!(head_subject(project), project_head_before);
     }
 
     #[test]

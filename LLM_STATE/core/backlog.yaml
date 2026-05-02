@@ -41,7 +41,7 @@ tasks:
 - id: two-stream-commits-target-worktrees-first-context-record-last
   title: 'Two-stream commits: target worktrees first, context record last'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Implement the two-stream commit ordering: apply target-worktree commits first, then commit plan-state (context) changes. A target failure must not leave the context recording false-positive progress.
@@ -72,6 +72,41 @@ tasks:
     - `docs/architecture-next.md` §Commits (two streams)
     - `src/git.rs::apply_commits_spec` — current implementation
     - `src/phase_loop.rs` — `ScriptPhase::GitCommitWork` handler
+  results: |
+    ## What landed
+
+    Per-entry routing in `apply_commits_spec` (`src/git.rs`). Each `CommitSpec` entry's optional `target: ComponentRef` selects a mounted worktree resolved via `targets.yaml`; entries with no target apply in `project_dir`, preserving v1 behaviour.
+
+    - `apply_parsed_spec` now takes `plan_dir` and selects cwd per entry: `None` → `project_dir`, `Some(target)` → `resolve_target_worktree(plan_dir, target)?`.
+    - `unstage_subtree(&cwd)` runs against the routed cwd, so each worktree's index is cleaned independently between entries.
+    - Failure semantics fall out of `?` propagation: a target-resolution or git failure bails before any subsequent entry — and before the caller's `git_commit_plan` (context-record) runs at `phase_loop.rs:335-340`. Earlier commits stay in their respective worktrees; the context never advances on a partial failure.
+
+    Doc comment on `apply_commits_spec` updated to drop the "ignores `target`" note and state the two-stream contract.
+
+    ## What worked
+
+    - All 19 pre-existing `git::tests` still pass unchanged — the v1 fallback (target=None) hits the original code path with the original cwd.
+    - 4 new tests cover the routed path:
+      - `apply_commits_spec_routes_targeted_entry_to_worktree` — single routed entry lands in the worktree, `project_dir` HEAD does not advance.
+      - `apply_commits_spec_mixes_routed_and_unrouted_entries` — interleaved entries each commit in their respective git roots, spec order preserved 1-to-1.
+      - `apply_commits_spec_routes_distinct_targets_independently` — two routed entries to different targets land in their own worktrees only.
+      - `apply_commits_spec_bails_when_target_not_mounted_after_committing_prior_entries` — first commit lands; second entry's unmounted target bails with the ref in the message; `project_dir` HEAD unchanged (the architecture-next §Commits "context unchanged on partial failure" guarantee, surfaced at the function boundary).
+    - `cargo test --workspace`: all 974 lib tests + every integration crate green.
+    - `./scripts/check.sh` (clippy `-D warnings`) clean.
+
+    Test helpers (`seed_routed_target`, `head_subject`) are local to the test module. Worktree fixtures use plain `git init` repos at `<plan>/.worktrees/<repo_slug>/` rather than real `git worktree add` invocations — `apply_commits_spec` only cares about the cwd of git operations; worktree-vs-repo realism is covered by `state::targets::mount` tests already.
+
+    ## What this enables / suggests next
+
+    - **`phase-prompt-updates-for-triage-first-cycle-shape`** is now unblocked: the analyse-work prompt can be updated to describe the `target:` field as load-bearing rather than reserved.
+    - The `target` field's wire shape was already supported in the schema and the YAML reader, so existing v1 prompts continue to emit specs with no `target:` and they still apply to `project_dir` as before. This is the lowest-risk increment toward two-stream — a future analyse-work prompt update is the user-visible flip.
+    - Failure-test pattern (`match Result { Ok(_) => panic!, Err(e) => e }`) avoids forcing `Debug` onto `CommitResult` just for tests. If more tests need to pattern-match on errors from the apply path, lift this into a small helper.
+    - Caller side (`phase_loop.rs::ScriptPhase::GitCommitAnalyseWork`) needs no change — `apply_commits_spec`'s signature is unchanged, and its existing `?` propagation already implements the "abort before context commit" guarantee.
+
+    ## Out of scope (deliberately deferred)
+
+    - No move of `apply_commits_spec` into `src/state/commits/` (the task description offered this as an option). `git.rs` already imports from `state::commits`; an extraction is a refactor, not part of the routing change.
+    - No changes to phase prompts — that's the next task (`phase-prompt-updates-for-triage-first-cycle-shape`).
 - id: migrate-ravel-lite-migrate-for-v1-to-v2-cutover
   title: 'Migrate: ravel-lite migrate for v1 to v2 cutover'
   category: architecture-next
