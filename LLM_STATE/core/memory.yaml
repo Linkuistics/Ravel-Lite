@@ -4,17 +4,17 @@ entries:
   body: |
     `state memory list` renders `claim:` and `justifications:` field names. Phase prompts referencing `title:`/`body:` are stale but still function — the phase-loop does not parse these labels, only the LLM reads them. Low-priority: scan phase prompt prose for `title:`/`body:` references and update to `claim:`/`justifications:`.
 - id: serde-flatten-per-kind-wrapper-is-the-confirmed-tms-migration-pattern
-  title: Serde-flatten per-kind wrapper is the confirmed TMS migration pattern
+  title: 'Per-kind structs wrap Item<K> via #[serde(flatten)]'
   body: |
-    Per-kind schema wrappers use a per-kind struct (e.g. `BacklogEntry`, `MemoryEntry`) wrapping `Item<K>` via `#[serde(flatten)]`, with kind-specific extension fields as typed struct fields. `KindMarker<K>` gives type-level wire-kind verification: YAML labelled with the wrong `kind:` cannot deserialise as the wrong type. Applied in `src/state/memory/schema.rs`, `src/state/backlog/schema.rs`, and `src/state/intents/schema.rs`.
+    `BacklogEntry`, `MemoryEntry`, and similar per-kind structs wrap `Item<K>` via `#[serde(flatten)]`, with kind-specific extension fields as typed struct fields. `KindMarker<K>` gives type-level wire-kind verification: YAML labelled with the wrong `kind:` cannot deserialise as the wrong type. Applied in `src/state/memory/schema.rs`, `src/state/backlog/schema.rs`, and `src/state/intents/schema.rs`.
 - id: backlog-yaml-entries-are-backlogentry-wrapping-item-backlogitemkind
   title: backlog.yaml entries are BacklogEntry wrapping Item<BacklogItemKind>
   body: |
-    `BacklogEntry` in `src/state/backlog/schema.rs` wraps `Item<BacklogItemKind>` via `#[serde(flatten)]`. Extension fields: `category`, `dependencies`, `results`, `handoff`, `blocked_reason`. `description` moved into `item.justifications[0]` as `Rationale`. `schema_version: 1` guard in `yaml_io::read_backlog` hard-fails on mismatch. `create.rs` scaffold seeds `schema_version: 1\nitems: []\n`. Mirrors `MemoryEntry`; see: `serde-flatten per-kind wrapper is the confirmed TMS migration pattern`.
+    `BacklogEntry` in `src/state/backlog/schema.rs` wraps `Item<BacklogItemKind>` via `#[serde(flatten)]`. Extension fields: `category`, `dependencies`, `results`, `handoff`, `blocked_reason`. `description` moved into `item.justifications[0]` as `Rationale`. `schema_version: 1` guard in `yaml_io::read_backlog` hard-fails on mismatch. `create.rs` scaffold seeds `schema_version: 1\nitems: []\n`. Mirrors `MemoryEntry`; see: `Per-kind structs wrap Item<K> via #[serde(flatten)]`.
 - id: backlogstatus-has-5-states-in-progress-eliminated
-  title: BacklogStatus has 5 states; in_progress eliminated
+  title: 'BacklogStatus: 5 states; active subsumes in_progress'
   body: |
-    `BacklogStatus` enum in `crates/knowledge-graph/src/plan_kg.rs`: `active`, `done`, `blocked`, `defeated`, `superseded`. `in_progress` is eliminated; `active` covers both "not yet started" and "work staged but not flipped done". `parse_md.rs` maps legacy `not_started` → `active` and `in_progress` → `active` at migration time. `BacklogStatus::transitions()` defines the allowed-move table.
+    `BacklogStatus` enum in `crates/knowledge-graph/src/plan_kg.rs`: `active`, `done`, `blocked`, `defeated`, `superseded`. `active` covers both "not yet started" and "work staged but not flipped done"; no `in_progress` variant exists. `parse_md.rs` maps legacy `not_started` → `active` and `in_progress` → `active` at migration time. `BacklogStatus::transitions()` defines the allowed-move table.
 - id: rationale-text-collects-all-rationale-bodies-for-prose-scan
   title: rationale_text() collects all Rationale bodies for prose scan
   body: |
@@ -530,9 +530,7 @@ entries:
 - id: ops-log-yaml-mechanism-for-intent-label-capture-deferred
   title: ops.log.yaml mechanism for intent-label capture (deferred)
   body: |
-    `src/phase_summary.rs:21-23` describes an `ops.log.yaml` mechanism: mutating verbs record `--intent <label>` and `--reason "<text>"` at mutation time; the renderer merges structural diff with intent records, removing the LLM's responsibility for emitting intent labels.
-
-    **Deferred**: intent is currently LLM reasoning, not mechanical — the verb caller does not yet hold the intent value before invoking the verb. Only worth pursuing when intent becomes mechanical enough that LLM authorship is redundant.
+    `src/phase_summary.rs:21-23` describes an `ops.log.yaml` mechanism: mutating verbs record `--intent <label>` and `--reason "<text>"` at mutation time; the renderer merges structural diff with intent records, removing the LLM's responsibility for emitting intent labels. Deferred: intent is currently LLM reasoning, not mechanical — the verb caller does not yet hold the intent value before invoking the verb. Only worth pursuing when intent becomes mechanical enough that LLM authorship is redundant.
 - id: triage-reprioritised-requires-an-llm-authored-reason
   title: Triage `[REPRIORITISED]` requires an LLM-authored reason
   body: |
@@ -870,7 +868,7 @@ entries:
   body: |
     When `local_path` is absent for a `repo_slug` in `repos.yaml`, `mount_target` (in `src/state/targets/mount.rs`) currently errors with an actionable message citing the slug and showing the `repo add` migration command. The settled design for clone-on-demand is: clone into `<context>/.cache/repos/<slug>/` when `local_path` is absent. This is deferred until a real use case lands — the error path is clear and intentional for now. Implement as a small follow-up task once a concrete need arises.
 - id: worktree-branch-mismatch-recovery-in-mount-target-is-a-deferred-ergonomic-improvement
-  title: Worktree branch-mismatch recovery in mount_target is a deferred ergonomic improvement
+  title: mount_target errors on worktree branch mismatch; manual cleanup for now
   body: |
     If `<plan>/.worktrees/<repo>/` already exists on a different branch than the expected `ravel-lite/<plan-name>/main`, `mount_target` currently errors and asks the user to remove the directory manually. A future ergonomic improvement could detect a clean worktree and offer to re-create it automatically. Deferred until the manual removal UX becomes a recurring pain point.
 - id: atlas-freshness-coupling-in-mount-target-is-an-open-design-question
@@ -894,13 +892,13 @@ entries:
   body: |
     `state memory add` accepts `--code-anchor key=value` (repeatable). Keys: `component`, `path`, `sha`, `lines`; all fields required except `lines`. `AddRequest.code_anchors: Vec<Justification>` carries pre-parsed typed values; `parse_code_anchor` lives in `src/state/memory/verbs.rs`, re-exported from `src/state/memory/mod.rs` for future reuse (e.g. `state intents add`). `defaults/phases/reflect.md` updated to use `--code-anchor` directly — the "name paths inline" workaround paragraph is removed. `state memory set-body` does not support anchor add/replace; defer until a real edit workflow demands it.
 - id: check-anchors-bounded-scoping-defer-limit-k-touched-since-until-entry-count-warrants-it
-  title: 'check-anchors bounded scoping: defer --limit-k / --touched-since until entry count warrants it'
+  title: check-anchors is unbounded; add --limit-k or --touched-since when count grows
   body: |
-    `state memory check-anchors` currently walks every active entry. At LLM_STATE/core's entry count (low tens), this is microseconds so the bound was deferred. If entry count grows to where the full pass is painful, add `--limit-k <int>` (check only the K most recently modified entries) or `--touched-since <baseline-sha>` (check only entries whose code-anchored paths appear in the diff since that baseline). The doc spec called for "last K cycles or N entries" bounding; the current unbounded implementation is correct for now.
+    `state memory check-anchors` currently walks every active entry. At LLM_STATE/core's entry count (low tens), this is microseconds — no bound needed now. If entry count grows to where the full pass is painful, add `--limit-k <int>` (check only the K most recently modified entries) or `--touched-since <baseline-sha>` (check only entries whose code-anchored paths appear in the diff since that baseline).
 - id: intent-trajectory-rust-pre-pass-defer-until-a-real-trajectory-entry-is-produced
-  title: 'Intent-trajectory Rust pre-pass: defer until a real [TRAJECTORY] entry is produced'
+  title: Intent-trajectory Rust pre-pass deferred until [TRAJECTORY] entries exist
   body: |
-    The intent-trajectory check in the v2 reflect prompt is fully prompt-driven. A mechanical pre-pass (compare active intents to session-log entries by id-coverage) could surface candidate drift before the LLM looks — at lower cost than a full LLM re-evaluation. Open question per `docs/architecture-next.md`: whether trajectory grows into its own phase. Defer until at least one real reflect cycle produces a `[TRAJECTORY]` entry in anger; the heuristics for "substantial activity" and "drift worth flagging" are LLM-judgement-bearing right now and may need examples added before a Rust pre-pass is worth building.
+    The intent-trajectory check in the v2 reflect prompt is fully prompt-driven. A mechanical pre-pass (compare active intents to session-log entries by id-coverage) could surface candidate drift at lower cost. Deferred: heuristics for "substantial activity" and "drift worth flagging" are LLM-judgement-bearing and need examples before a Rust pre-pass adds value. Open question per `docs/architecture-next.md`: whether trajectory grows into its own phase.
 - id: per-kind-add-verbs-are-the-pattern-for-closed-vocabulary-queues
   title: Per-kind add-* verbs are the pattern for closed-vocabulary queues
   body: |
