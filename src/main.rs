@@ -250,6 +250,16 @@ enum Commands {
         #[command(subcommand)]
         command: AtlasCommands,
     },
+    /// Inspect the layered fixed-memory namespace (coding-style guides,
+    /// memory-style rules, the cli-tool-design checklist). Each entry is
+    /// a slug pinning an embedded shipped file plus an optional user
+    /// override at `<config-dir>/fixed-memory/<slug>.md`. `show` emits
+    /// the embedded body, then a delimiter, then the user body when both
+    /// layers are present so the LLM sees which guidance is the user's.
+    FixedMemory {
+        #[command(subcommand)]
+        command: FixedMemoryCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -290,6 +300,36 @@ enum RepoCommands {
         #[arg(long)]
         config: Option<PathBuf>,
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum FixedMemoryCommands {
+    /// Enumerate every fixed-memory slug across the embedded set and the
+    /// `<config-dir>/fixed-memory/` overlay. Each entry surfaces `slug`,
+    /// `description` (the file's first H1, if any), and `sources`
+    /// (`embedded`, `user`, or both).
+    List {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// `yaml` (default), `json`, or `markdown`. The yaml form matches
+        /// the existing `state <kind> list` verbs.
+        #[arg(long, default_value = "yaml")]
+        format: String,
+    },
+    /// Emit the body of one fixed-memory entry. With both layers present,
+    /// the embedded body is printed first, then a delimiter, then the
+    /// user body — signalling that the user content takes precedence.
+    Show {
+        /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
+        /// the default location at <dirs::config_dir()>/ravel-lite/.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Bare slug (no extension, no path prefix). Round-trips with the
+        /// `slug` field emitted by `list`.
+        slug: String,
     },
 }
 
@@ -1501,6 +1541,45 @@ async fn main() -> Result<()> {
         Commands::Plan { command } => dispatch_plan(command),
         Commands::Findings { command } => dispatch_findings(command),
         Commands::Atlas { command } => dispatch_atlas(command),
+        Commands::FixedMemory { command } => dispatch_fixed_memory(command),
+    }
+}
+
+fn parse_fixed_memory_format(input: &str) -> Result<ravel_lite::fixed_memory::OutputFormat> {
+    ravel_lite::fixed_memory::OutputFormat::parse(input).ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid --format value {input:?}; expected `yaml`, `json`, or `markdown`"
+        )
+    })
+}
+
+fn dispatch_fixed_memory(command: FixedMemoryCommands) -> Result<()> {
+    use ravel_lite::fixed_memory;
+
+    match command {
+        FixedMemoryCommands::List { config, format } => {
+            let config_root = resolve_config_dir(config)?;
+            let fmt = parse_fixed_memory_format(&format)?;
+            let map = fixed_memory::discover(&config_root)?;
+            let rendered = fixed_memory::render_list(&map, fmt)?;
+            print!("{rendered}");
+            Ok(())
+        }
+        FixedMemoryCommands::Show { config, slug } => {
+            let config_root = resolve_config_dir(config)?;
+            match fixed_memory::compose(&slug, &config_root) {
+                Ok(body) => {
+                    print!("{body}");
+                    Ok(())
+                }
+                Err(err) => {
+                    // UnknownSlug already names the remediation; surface
+                    // the formatted message as the anyhow error so it
+                    // lands on stderr at exit-1, per cli-tool-design §3.
+                    bail!("{err}")
+                }
+            }
+        }
     }
 }
 

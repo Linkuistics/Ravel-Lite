@@ -41,7 +41,7 @@ tasks:
 - id: implement-fixed-memory-cli-overlay-and-sweep-phase-prompts
   title: Implement fixed-memory CLI overlay and sweep phase prompts
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Implement the `ravel-lite fixed-memory list` and `ravel-lite fixed-memory show <slug>` verbs per the spec at `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`.
@@ -72,6 +72,112 @@ tasks:
     ## Reference
 
     Full design: `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`. Supersedes the now-`done` task `add-ravel-lite-show-verb-for-embedded-fixed-memory-content`.
+  results: |
+    ## What was done
+
+    Implemented `ravel-lite fixed-memory list|show` per spec at
+    `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`, swept the three
+    phase prompts that referenced the broken `{{ORCHESTRATOR}}/fixed-memory/...`
+    reads, and added unit + integration test coverage.
+
+    ### Files added
+    - `src/fixed_memory.rs` — `discover`, `compose`, `extract_description`,
+      `render_list`, `OutputFormat`, `EntrySources`, `ShowError`, +
+      `ADDENDUM_DELIMITER` constant matching the spec verbatim.
+    - `tests/fixed_memory_cli.rs` — 9 end-to-end tests against the binary
+      covering all three resolution cases (`embedded`, `user`, `both`),
+      every output format (`yaml`, `json`, `markdown`), invalid `--format`,
+      and the unknown-slug error path.
+
+    ### Files modified
+    - `src/lib.rs` — registered `pub mod fixed_memory`.
+    - `src/main.rs` — added `Commands::FixedMemory`, `FixedMemoryCommands`
+      enum (`List`, `Show`), `dispatch_fixed_memory`, and
+      `parse_fixed_memory_format`.
+    - `defaults/phases/work.md` — replaced lines 33-51 of the coding-style
+      block with a `ravel-lite fixed-memory list` + `show <slug>` flow that
+      also surfaces user-overlay slugs (fixed the latent bug where a user's
+      `coding-style-haskell.md` was hard-invisible).
+    - `defaults/phases/reflect.md` lines 18 + 84 — swapped the
+      `memory-style.md` reads for `fixed-memory show memory-style`.
+    - `defaults/phases/dream.md` lines 9 + 22 — same swap.
+
+    ## What worked
+
+    - **Compile clean on first attempt.** The per-kind `OutputFormat` +
+      `parse_*_format` pattern transferred verbatim from
+      `state::intents::OutputFormat`.
+    - **All 18 unit tests + 9 integration tests pass.**
+    - **`scripts/check.sh` clean.** Zero clippy warnings under
+      `--all-targets --workspace -- -D warnings`.
+    - **Full `cargo test` suite green** — 966 unit tests + every integration
+      suite (drift-guard tests included). The
+      `every_file_under_defaults_is_registered_in_embedded_files` and
+      `shipped_pi_prompts_have_no_dangling_tokens` guards continue to pass.
+    - **End-to-end smoke test against the real config dir** at
+      `/Users/antony/Development/ravel-lite-config/`: `list` emits all 9
+      embedded slugs with descriptions; `show <embedded>` emits content;
+      `show bogus` exits 1 with stderr naming the available slugs and the
+      remediation verb.
+
+    ## What didn't work — and what I did about it
+
+    ### Allowlist task: no per-phase constants exist for work/reflect/dream
+
+    The spec said: "Add `Bash(ravel-lite fixed-memory:*)` to whatever
+    per-phase allowlist constants govern the work, reflect, and dream
+    phases. The implementation step locates the constants
+    (`CREATE_ALLOWED_TOOLS` in `src/create.rs:40` is the existing pattern)."
+
+    Investigation: `src/create.rs:40` is the **only** Bash-allowlist string
+    constant under `src/agent/` or anywhere a phase prompt's spawn flows.
+    The actual phase-loop allowlist mechanism is
+    `--dangerously-skip-permissions`, applied to every headless phase per
+    `src/agent/claude_code.rs:73,214` when the per-phase `dangerous: true`
+    param is set (which `force_dangerous` in `src/main.rs:24-35` always
+    sets for triage/work/analyse-work/reflect). The interactive work-phase
+    spawn at `src/agent/claude_code.rs:179-225` doesn't pass
+    `--allowed-tools` at all — it inherits the user's machine-level
+    `settings.json`.
+
+    So there are no per-phase allowlist constants to update for
+    work/reflect/dream. Adding `Bash(ravel-lite fixed-memory:*)` to
+    `CREATE_ALLOWED_TOOLS` would be incorrect on two counts: (1) the
+    create-plan prompt does not currently invoke fixed-memory verbs, so
+    the addition would be aspirational, and (2) `CREATE_ALLOWED_TOOLS` is
+    the create-flow's allowlist, not a work/reflect/dream one.
+
+    The disposition: leave the allowlists alone. The drift between the
+    spec's assumption and the actual code is captured here. If a future
+    shipped settings.json or per-phase allowlist constant lands, this
+    addition becomes a one-line edit at that point.
+
+    ## What this suggests next
+
+    - **Supersede the blocked `add-ravel-lite-show-verb-for-embedded-fixed-memory-content`
+      task.** The spec's §"Blocked-task disposition" calls this out. The
+      triage phase should mark that task `done` with a results body
+      pointing at this work, since the layered overlay shape shipped here
+      is the v2 of what that task was reaching for (and the embedded-only
+      shape it originally proposed is explicitly *not* what we want).
+    - **The `cli-audit-and-refactor-against-cli-tool-design-md` task is now
+      unblocked** — it depends on this one. It will, among other things,
+      consolidate the now-12 per-kind `OutputFormat` enums into a shared
+      type. The new `fixed_memory::OutputFormat` is a deliberate copy of
+      the existing pattern so the audit's scope of work doesn't shift
+      underneath it.
+    - **Future shipped allowlists.** If any work in
+      `architecture-next` lands a settings.json overlay or a per-phase
+      allowlist constant for headless phases, that work should add
+      `Bash(ravel-lite fixed-memory:*)` at the same time — phase prompts
+      authored after this task assume the verbs are reachable.
+    - **The "empty H1 = description omitted from list" behaviour** is
+      spec-faithful but can surprise an LLM scanning `list` output for a
+      user-only slug. Worth keeping an eye on whether any user overlay
+      ends up authored without an H1; the JSON test at
+      `tests/fixed_memory_cli.rs::list_records_both_sources_for_overlapping_slug`
+      exercises only the `description: present` path. Trivial follow-up
+      if it bites.
 - id: cycle-reorder-triage-first-phase-sequence
   title: 'Cycle reorder: triage-first phase sequence'
   category: architecture-next

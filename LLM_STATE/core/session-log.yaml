@@ -1812,3 +1812,20 @@ sessions:
 
     - §3 (anchors) still uses raw `Write` to `anchors.yaml`; out of scope here since no `state anchors` verb exists yet. A future task would design the verb surface first.
     - The `implement-fixed-memory-cli-overlay-and-sweep-phase-prompts` task will need to add `Bash(ravel-lite fixed-memory:*)` to allowlists across multiple per-phase constants — the pattern is now well established.
+- id: session-126
+  timestamp: 2026-05-02T12:26:31Z
+  phase: work
+  body: |
+    ### Session 126 (2026-05-02T12:26:31Z) — Add fixed-memory CLI verbs and sweep phase prompts
+
+    - Implemented `ravel-lite fixed-memory list` and `ravel-lite fixed-memory show <slug>` verbs per the spec at `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`.
+    - Added `src/fixed_memory.rs` with `discover`, `compose`, `extract_description`, `render_list`, `OutputFormat`, `EntrySources`, `ShowError`, and `ADDENDUM_DELIMITER`.
+    - Added `tests/fixed_memory_cli.rs` with 9 end-to-end tests covering all three resolution cases (`embedded`, `user`, `both`), all output formats (`yaml`, `json`, `markdown`), invalid `--format`, and the unknown-slug error path.
+    - Wired `FixedMemory { command }` into `Commands` enum in `src/main.rs` and added `dispatch_fixed_memory` + `parse_fixed_memory_format` helpers.
+    - Swept `defaults/phases/work.md`: replaced hardcoded `{{ORCHESTRATOR}}/fixed-memory/...` read instructions with `ravel-lite fixed-memory list` then `ravel-lite fixed-memory show <slug>` so user overlay slugs are discoverable.
+    - Swept `defaults/phases/reflect.md` (lines 18, 84): replaced `{{ORCHESTRATOR}}/fixed-memory/memory-style.md` with `Bash(ravel-lite fixed-memory show memory-style)`.
+    - Swept `defaults/phases/dream.md` (lines 9, 22): same replacement as reflect.
+
+    What worked: full implementation completed in one session with all planned tests. Phase prompt sweep covered all three affected files.
+
+    What this suggests: the CLI audit task (`cli-surface-audit`) is now better positioned — the fixed-memory verbs follow the existing per-kind `OutputFormat` pattern, confirming the scope for the consolidation pass.

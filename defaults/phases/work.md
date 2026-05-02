@@ -30,25 +30,30 @@ is the triage phase's job via dispatched subagents.
 
 ## Coding style
 
-`{{ORCHESTRATOR}}/fixed-memory/` holds universal coding-style
-reference material. Treat it like this:
+The `fixed-memory` namespace holds universal and per-language coding-
+style reference material. Treat it like this:
 
 - **At the moment you are about to write or modify code**, and not
-  before, check `fixed-memory/`:
-  - Always read `{{ORCHESTRATOR}}/fixed-memory/coding-style.md`
-    — it contains the universal rules that apply to any language.
-  - Also read `{{ORCHESTRATOR}}/fixed-memory/coding-style-<lang>.md`
-    for whichever language you are about to touch, if such a file
-    exists (e.g. `coding-style-rust.md` for Rust). If no file matches
-    the language, there is no language-specific guidance for it —
-    carry on with just the universal rules.
+  before, consult `fixed-memory`:
+  - First run `Bash(ravel-lite fixed-memory list)` to see the full set
+    of available slugs, including any user-added overlays (e.g. a
+    project may ship its own `coding-style-haskell` that the embedded
+    set does not have). Hard-coding a fixed slug list here would hide
+    those overlays.
+  - Always run `Bash(ravel-lite fixed-memory show coding-style)` for
+    the universal rules that apply to any language.
+  - Also run `Bash(ravel-lite fixed-memory show coding-style-<lang>)`
+    for whichever language you are about to touch, if `list` shows
+    such a slug. If no slug matches the language, there is no
+    language-specific guidance for it — carry on with just the
+    universal rules.
 - If a task involves **no code** (pure docs, planning, backlog
   triage), skip this section entirely.
-- If a task touches **multiple languages**, read each matching file
-  before touching that language.
+- If a task touches **multiple languages**, run `show` for each
+  matching slug before touching that language.
 
 The plan does not tell you which language files apply — look at the
-code you are about to change and pick from `fixed-memory/` yourself.
+code you are about to change and pick from the `list` output yourself.
 
 ## Behavior
 

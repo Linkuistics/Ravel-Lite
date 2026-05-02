@@ -15,8 +15,8 @@ throughout.
 3. Active intents — run `ravel-lite state intents list {{PLAN}}`. The
    intent-trajectory check (step 3 below) needs these. If the file is
    absent (legacy v1 plan), skip the trajectory check.
-4. `{{ORCHESTRATOR}}/fixed-memory/memory-style.md` — the Memory style
-   rules. Read this file directly.
+4. The Memory style rules — run
+   `Bash(ravel-lite fixed-memory show memory-style)`.
 
 ## Do NOT read
 
@@ -81,7 +81,7 @@ For each learning in the latest session, decide against current memory:
   `ravel-lite state memory delete {{PLAN}} <id>`.
 
 When writing new or updated memory entries, follow the Memory style
-rules from `fixed-memory/memory-style.md` exactly: assertion register
+rules from `ravel-lite fixed-memory show memory-style` exactly: assertion register
 (not narrative), one fact per entry, cross-reference over re-explanation,
 short subject-predicate headings, no session numbers or dates.
 

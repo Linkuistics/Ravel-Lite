@@ -10,6 +10,7 @@ pub mod defeat_cascade;
 pub mod directed_graph;
 pub mod discover;
 pub mod dream;
+pub mod fixed_memory;
 pub mod format;
 pub mod git;
 pub mod init;

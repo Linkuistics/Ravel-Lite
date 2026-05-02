@@ -6,8 +6,8 @@ consolidating memories, like dreaming.
 ## Required reads
 
 1. Current memory — run `ravel-lite state memory list {{PLAN}}`.
-2. `{{ORCHESTRATOR}}/fixed-memory/memory-style.md` — the Memory style
-   rules. Read this file directly.
+2. The Memory style rules — run
+   `Bash(ravel-lite fixed-memory show memory-style)`.
 
 ## Do NOT read
 
@@ -19,8 +19,8 @@ just the text and the style rules.
 ## Behavior
 
 1. Rewrite memory **in place, per entry**, applying the Memory style
-   rules from `fixed-memory/memory-style.md`. For each entry that needs
-   prose tightening:
+   rules from `ravel-lite fixed-memory show memory-style`. For each
+   entry that needs prose tightening:
 
    - Rewrite the body via
      `ravel-lite state memory set-body {{PLAN}} <id> --body-file <path>`
