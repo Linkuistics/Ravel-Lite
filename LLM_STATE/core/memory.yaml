@@ -925,3 +925,7 @@ entries:
   title: ComponentRef serialises as its String wire form; lifts need no migration
   body: |
     `ComponentRef`'s `Serialize`/`Deserialize` impls round-trip through the canonical `<repo_slug>:<component_id>` string. Lifting a `String` field that holds this format to `ComponentRef` requires no YAML migration and no schema-version bump. Clap uses `FromStr` for argument parsing, so the same lift gates malformed values at the CLI boundary automatically — no separate validator needed.
+- id: objection-skipitem-item-id-is-a-candidate-for-a-backlogid-newtype
+  title: Objection::SkipItem::item_id is a candidate for a BacklogId newtype
+  body: |
+    After lifting `Objection::WrongTarget.suggested_target` onto `ComponentRef`, the remaining stringly-typed field on `Objection` variants is `SkipItem::item_id: String` (a backlog row id). The newtype-with-stringly-Serialize/Deserialize pattern is the cheapest way to lift any `<x>:<y>` string field without changing the wire shape, but a `BacklogId` newtype does not exist yet and creating it would be a larger lift than the `ComponentRef` work. This is a future candidate — defer until the architecture-next schema stabilises.
