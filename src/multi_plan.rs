@@ -5,8 +5,8 @@
 // Selection is code-driven (parsing `recommended_invocation_order`
 // from the survey YAML), with a plain-stdout numbered prompt and a
 // single stdin read — no ratatui widget. Each dispatched cycle
-// brings the TUI up, runs one full `phase_loop` pass (work through
-// git-commit-triage), and tears the TUI down before the next
+// brings the TUI up, runs one full `phase_loop` pass (triage through
+// git-commit-reflect), and tears the TUI down before the next
 // selection.
 
 use std::collections::HashMap;
@@ -207,11 +207,10 @@ pub fn select_plan_from_response<R: BufRead, W: Write>(
 /// plumbing the helper across module boundaries.
 fn force_dangerous(config: &mut AgentConfig) {
     let phases = [
+        LlmPhase::Triage,
         LlmPhase::Work,
         LlmPhase::AnalyseWork,
         LlmPhase::Reflect,
-        LlmPhase::Dream,
-        LlmPhase::Triage,
     ];
     for phase in phases {
         let params = config.params.entry(phase.as_str().to_string()).or_default();
@@ -219,7 +218,7 @@ fn force_dangerous(config: &mut AgentConfig) {
     }
 }
 
-/// Run exactly one full phase cycle (work → ... → git-commit-triage)
+/// Run exactly one full phase cycle (triage → ... → git-commit-reflect)
 /// for the selected plan. Handles TUI setup/teardown per cycle so the
 /// plain-stdout survey/selection prompt renders cleanly between
 /// dispatches.
@@ -270,7 +269,7 @@ async fn dispatch_one_cycle(
     let ui = UI::new(tx);
     let tui_handle = tokio::spawn(run_tui(rx));
 
-    let result = phase_loop::phase_loop(agent, &ctx, &shared_config, &ui).await;
+    let result = phase_loop::phase_loop(agent, &ctx, &ui).await;
 
     if let Err(ref e) = result {
         ui.log("");

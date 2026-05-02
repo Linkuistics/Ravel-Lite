@@ -140,6 +140,11 @@ impl Agent for MockAgent {
     }
 
     fn tokens(&self) -> HashMap<String, String> {
-        HashMap::new()
+        // The shipped work prompt references `{{TOOL_READ}}`. In the
+        // triage-first cycle the loop transitions through Work after
+        // GitCommitTriage, so even tests that don't exercise the work
+        // phase compose its prompt — supply a stand-in to keep
+        // substitution successful.
+        HashMap::from([("TOOL_READ".to_string(), "Read".to_string())])
     }
 }

@@ -4,34 +4,33 @@ use std::fmt;
 
 use serde::Deserialize;
 
-/// LLM phases — the agent subprocess runs these.
+/// LLM phases — the agent subprocess runs these. Variant order matches
+/// the cycle position: triage opens, reflect closes. Dream is no longer
+/// part of the in-cycle execution; it moves to `ravel-lite curate`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LlmPhase {
+    Triage,
     Work,
     AnalyseWork,
     Reflect,
-    Dream,
-    Triage,
 }
 
 impl LlmPhase {
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Triage => "triage",
             Self::Work => "work",
             Self::AnalyseWork => "analyse-work",
             Self::Reflect => "reflect",
-            Self::Dream => "dream",
-            Self::Triage => "triage",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
+            "triage" => Some(Self::Triage),
             "work" => Some(Self::Work),
             "analyse-work" => Some(Self::AnalyseWork),
             "reflect" => Some(Self::Reflect),
-            "dream" => Some(Self::Dream),
-            "triage" => Some(Self::Triage),
             _ => None,
         }
     }
@@ -50,28 +49,28 @@ impl fmt::Display for LlmPhase {
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ScriptPhase {
-    GitCommitWork,
-    GitCommitReflect,
-    GitCommitDream,
     GitCommitTriage,
+    GitCommitWork,
+    GitCommitAnalyseWork,
+    GitCommitReflect,
 }
 
 impl ScriptPhase {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::GitCommitWork => "git-commit-work",
-            Self::GitCommitReflect => "git-commit-reflect",
-            Self::GitCommitDream => "git-commit-dream",
             Self::GitCommitTriage => "git-commit-triage",
+            Self::GitCommitWork => "git-commit-work",
+            Self::GitCommitAnalyseWork => "git-commit-analyse-work",
+            Self::GitCommitReflect => "git-commit-reflect",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "git-commit-work" => Some(Self::GitCommitWork),
-            "git-commit-reflect" => Some(Self::GitCommitReflect),
-            "git-commit-dream" => Some(Self::GitCommitDream),
             "git-commit-triage" => Some(Self::GitCommitTriage),
+            "git-commit-work" => Some(Self::GitCommitWork),
+            "git-commit-analyse-work" => Some(Self::GitCommitAnalyseWork),
+            "git-commit-reflect" => Some(Self::GitCommitReflect),
             _ => None,
         }
     }
@@ -150,19 +149,24 @@ mod tests {
 
     #[test]
     fn parse_llm_phases() {
+        assert_eq!(Phase::parse("triage"), Some(Phase::Llm(LlmPhase::Triage)));
         assert_eq!(Phase::parse("work"), Some(Phase::Llm(LlmPhase::Work)));
         assert_eq!(Phase::parse("analyse-work"), Some(Phase::Llm(LlmPhase::AnalyseWork)));
         assert_eq!(Phase::parse("reflect"), Some(Phase::Llm(LlmPhase::Reflect)));
-        assert_eq!(Phase::parse("dream"), Some(Phase::Llm(LlmPhase::Dream)));
-        assert_eq!(Phase::parse("triage"), Some(Phase::Llm(LlmPhase::Triage)));
+    }
+
+    #[test]
+    fn parse_dream_is_no_longer_in_cycle() {
+        assert_eq!(Phase::parse("dream"), None);
+        assert_eq!(Phase::parse("git-commit-dream"), None);
     }
 
     #[test]
     fn parse_script_phases() {
-        assert_eq!(Phase::parse("git-commit-work"), Some(Phase::Script(ScriptPhase::GitCommitWork)));
-        assert_eq!(Phase::parse("git-commit-reflect"), Some(Phase::Script(ScriptPhase::GitCommitReflect)));
-        assert_eq!(Phase::parse("git-commit-dream"), Some(Phase::Script(ScriptPhase::GitCommitDream)));
         assert_eq!(Phase::parse("git-commit-triage"), Some(Phase::Script(ScriptPhase::GitCommitTriage)));
+        assert_eq!(Phase::parse("git-commit-work"), Some(Phase::Script(ScriptPhase::GitCommitWork)));
+        assert_eq!(Phase::parse("git-commit-analyse-work"), Some(Phase::Script(ScriptPhase::GitCommitAnalyseWork)));
+        assert_eq!(Phase::parse("git-commit-reflect"), Some(Phase::Script(ScriptPhase::GitCommitReflect)));
     }
 
     #[test]

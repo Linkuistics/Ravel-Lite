@@ -23,11 +23,10 @@ use ravel_lite::{
 /// whatever was loaded from the config file.
 fn force_dangerous(config: &mut AgentConfig) {
     let phases = [
+        LlmPhase::Triage,
         LlmPhase::Work,
         LlmPhase::AnalyseWork,
         LlmPhase::Reflect,
-        LlmPhase::Dream,
-        LlmPhase::Triage,
     ];
     for phase in phases {
         let params = config.params.entry(phase.as_str().to_string()).or_default();
@@ -2426,7 +2425,7 @@ async fn run_phase_loop(config_root: &Path, plan_dir: &Path, dangerous: bool) ->
 
     let tui_handle = tokio::spawn(run_tui(rx));
 
-    let result = phase_loop::run_single_plan(agent, ctx, &shared_config, &ui).await;
+    let result = phase_loop::run_single_plan(agent, ctx, &ui).await;
 
     if let Err(ref e) = result {
         // Show the error inside the TUI first so the user sees it in

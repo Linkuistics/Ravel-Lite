@@ -23,7 +23,7 @@ use tempfile::TempDir;
 use ravel_lite::agent::pi::PiAgent;
 use ravel_lite::agent::Agent;
 use ravel_lite::phase_loop::phase_loop;
-use ravel_lite::types::{AgentConfig, LlmPhase, PlanContext, SharedConfig};
+use ravel_lite::types::{AgentConfig, LlmPhase, PlanContext};
 use ravel_lite::ui::{UIMessage, UI};
 
 mod common;
@@ -214,13 +214,10 @@ commits:
 
     Written by the fake pi binary in pi_phase_cycle test.
 COMMITS_EOF
-        printf 'git-commit-work' > '__PLAN_DIR__/phase.md'
+        printf 'git-commit-analyse-work' > '__PLAN_DIR__/phase.md'
         ;;
     reflect)
         printf 'git-commit-reflect' > '__PLAN_DIR__/phase.md'
-        ;;
-    triage)
-        printf 'git-commit-triage' > '__PLAN_DIR__/phase.md'
         ;;
 esac
 echo '{"type":"tool_execution_start","tool_name":"read","tool_input":{"file_path":"/x.md"}}'
@@ -236,11 +233,6 @@ echo '{"type":"message_end","content":[{"type":"text","text":"done"}]}'
         agent_config,
         config_root.to_string_lossy().to_string(),
     ));
-
-    let shared = SharedConfig {
-        agent: "pi".into(),
-        headroom: 10_000,
-    };
 
     let ctx = PlanContext {
         plan_dir: plan_dir.to_string_lossy().to_string(),
@@ -270,7 +262,7 @@ echo '{"type":"message_end","content":[{"type":"text","text":"done"}]}'
         }
     });
 
-    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    let result = phase_loop(agent, &ctx, &ui).await;
     ui.quit();
     let _ = drain.await;
 

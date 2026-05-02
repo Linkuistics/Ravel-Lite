@@ -120,7 +120,7 @@ pub fn resolve_plan_dir(context_root: &Path, plan_name: &str) -> Result<PathBuf>
 /// before the create-plan LLM session runs. Creates the directory
 /// itself (refusing if it already exists) and writes:
 ///
-/// - `phase.md` = `work\n`
+/// - `phase.md` = `triage\n`
 /// - `backlog.yaml` = `schema_version: 1\nitems: []\n`
 /// - `intents.yaml` = `schema_version: 1\nitems: []\n`
 /// - `memory.yaml` = `schema_version: 1\nitems: []\n`
@@ -143,7 +143,7 @@ pub fn scaffold_plan_dir(abs_plan_dir: &Path) -> Result<()> {
     })?;
 
     let writes: [(&str, &[u8]); 6] = [
-        (PHASE_FILENAME, b"work\n"),
+        (PHASE_FILENAME, b"triage\n"),
         (BACKLOG_FILENAME, b"schema_version: 1\nitems: []\n"),
         (INTENTS_FILENAME, b"schema_version: 1\nitems: []\n"),
         (MEMORY_FILENAME, b"schema_version: 1\nitems: []\n"),
@@ -287,7 +287,7 @@ mod tests {
         let plan = tmp.path().join("plan-name");
         scaffold_plan_dir(&plan).unwrap();
         assert!(plan.is_dir(), "plan directory must exist after scaffold");
-        assert_eq!(fs::read_to_string(plan.join(PHASE_FILENAME)).unwrap(), "work\n");
+        assert_eq!(fs::read_to_string(plan.join(PHASE_FILENAME)).unwrap(), "triage\n");
         assert_eq!(
             fs::read_to_string(plan.join(BACKLOG_FILENAME)).unwrap(),
             "schema_version: 1\nitems: []\n"

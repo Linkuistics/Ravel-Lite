@@ -8,7 +8,7 @@ use tempfile::TempDir;
 
 use ravel_lite::agent::Agent;
 use ravel_lite::phase_loop::phase_loop;
-use ravel_lite::types::{LlmPhase, PlanContext, SharedConfig};
+use ravel_lite::types::{LlmPhase, PlanContext};
 use ravel_lite::ui::{UIMessage, UISender, UI};
 
 mod common;
@@ -275,7 +275,7 @@ impl Agent for ContractMockAgent {
                         }
                     }
                 }
-                fs::write(plan.join("phase.md"), "git-commit-work")?;
+                fs::write(plan.join("phase.md"), "git-commit-analyse-work")?;
             }
             LlmPhase::Reflect => {
                 fs::write(
@@ -283,12 +283,6 @@ impl Agent for ContractMockAgent {
                     "# Memory\n\n## Mock learning\nExercised by the contract test.\n",
                 )?;
                 fs::write(plan.join("phase.md"), "git-commit-reflect")?;
-            }
-            LlmPhase::Dream => {
-                // Not expected in this test (memory too small for headroom),
-                // but handle gracefully so a future change doesn't crash the
-                // mock.
-                fs::write(plan.join("phase.md"), "git-commit-dream")?;
             }
             LlmPhase::Triage => {
                 let backlog_path = plan.join("backlog.md");
@@ -374,12 +368,12 @@ impl Agent for ContractMockAgent {
     }
 
     fn tokens(&self) -> HashMap<String, String> {
-        // The phase prompts the orchestrator exercises headlessly
-        // (analyse-work, reflect, triage) only reference the built-in
-        // tokens (PLAN, PROJECT, ORCHESTRATOR, RELATED_PLANS). The work
-        // prompt uses {{TOOL_READ}}, but this test never enters Work —
-        // it declines the final confirm.
-        HashMap::new()
+        // The shipped work prompt references `{{TOOL_READ}}`. With the
+        // triage-first cycle, even analyse-work-started tests reach
+        // Work on the second cycle (after triage runs and transitions
+        // to Work via GitCommitTriage). Supply a stand-in so prompt
+        // substitution succeeds — Work itself is a no-op for this mock.
+        HashMap::from([("TOOL_READ".to_string(), "Read".to_string())])
     }
 }
 
@@ -436,11 +430,6 @@ async fn phase_loop_triage_cycle_exits_cleanly_on_no_confirm() {
         plan_dir: plan_dir.clone(),
     });
 
-    let shared = SharedConfig {
-        agent: "mock".into(),
-        headroom: 1500,
-    };
-
     let ctx = PlanContext {
         plan_dir: plan_dir.to_string_lossy().to_string(),
         project_dir: root.to_string_lossy().to_string(),
@@ -467,7 +456,7 @@ async fn phase_loop_triage_cycle_exits_cleanly_on_no_confirm() {
         }
     });
 
-    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    let result = phase_loop(agent, &ctx, &ui).await;
     ui.quit();
     let _ = drain.await;
 
@@ -529,11 +518,6 @@ async fn phase_contract_round_trip_writes_expected_files() {
 
     let agent = Arc::new(ContractMockAgent::new(plan_dir.clone()));
 
-    let shared = SharedConfig {
-        agent: "mock".into(),
-        headroom: 10_000, // High: ensures dream never triggers.
-    };
-
     let ctx = PlanContext {
         plan_dir: plan_dir.to_string_lossy().to_string(),
         project_dir: root.to_string_lossy().to_string(),
@@ -545,10 +529,11 @@ async fn phase_contract_round_trip_writes_expected_files() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let ui = UI::new(tx);
 
-    // The phase loop asks for confirmation once per full cycle: after
-    // git-commit-triage ("Proceed to next work phase?"). Decline it so
-    // the loop exits cleanly after one cycle without entering the
-    // interactive work phase of the next.
+    // The phase loop runs one cycle per call. In the new triage-first
+    // ordering, cycle 1 (started here at analyse-work) closes at
+    // git-commit-reflect with phase.md = "triage" — so to exercise the
+    // triage leg of the contract we need a second phase_loop call that
+    // runs the next cycle's triage.
     let drain = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             match msg {
@@ -561,11 +546,13 @@ async fn phase_contract_round_trip_writes_expected_files() {
         }
     });
 
-    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    let result = phase_loop(agent.clone(), &ctx, &ui).await;
+    assert!(result.is_ok(), "cycle 1 phase_loop returned error: {result:?}");
+    let result = phase_loop(agent, &ctx, &ui).await;
     ui.quit();
     let _ = drain.await;
 
-    assert!(result.is_ok(), "phase_loop returned error: {result:?}");
+    assert!(result.is_ok(), "cycle 2 phase_loop returned error: {result:?}");
 
     // Contract assertion 1: analyse-work produced latest-session.md.
     let latest = fs::read_to_string(plan_dir.join("latest-session.md"))
@@ -576,10 +563,10 @@ async fn phase_contract_round_trip_writes_expected_files() {
     );
 
     // Contract assertion 2: commits.yaml was consumed by
-    // git-commit-work and is no longer on disk.
+    // git-commit-analyse-work and is no longer on disk.
     assert!(
         !plan_dir.join("commits.yaml").exists(),
-        "commits.yaml should have been consumed by git-commit-work"
+        "commits.yaml should have been consumed by git-commit-analyse-work"
     );
 
     // Contract assertion 3: reflect wrote memory.md in the expected
@@ -609,11 +596,12 @@ async fn phase_contract_round_trip_writes_expected_files() {
         "expected phase.md to advance to 'work' after git-commit-triage"
     );
 
-    // Contract assertion 6 (R3): GitCommitWork appended latest-session.yaml
-    // to session-log.yaml. The record is identified by its session id,
-    // not a tail-string match — the new append is idempotent on id.
+    // Contract assertion 6 (R3): GitCommitAnalyseWork appended
+    // latest-session.yaml to session-log.yaml. The record is identified
+    // by its session id, not a tail-string match — the new append is
+    // idempotent on id.
     let session_log_yaml = fs::read_to_string(plan_dir.join("session-log.yaml"))
-        .expect("session-log.yaml should exist after git-commit-work");
+        .expect("session-log.yaml should exist after git-commit-analyse-work");
     assert!(
         session_log_yaml.contains("id: 2026-04-18-contract-test"),
         "session-log.yaml should contain the appended session id, got:\n{session_log_yaml}"
@@ -696,11 +684,6 @@ Placeholder for the safety-net test.
 
     let agent = Arc::new(ContractMockAgent::new(plan_dir.clone()));
 
-    let shared = SharedConfig {
-        agent: "mock".into(),
-        headroom: 10_000,
-    };
-
     let ctx = PlanContext {
         plan_dir: plan_dir.to_string_lossy().to_string(),
         project_dir: root.to_string_lossy().to_string(),
@@ -726,7 +709,7 @@ Placeholder for the safety-net test.
         }
     });
 
-    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    let result = phase_loop(agent, &ctx, &ui).await;
     ui.quit();
     let _ = drain.await;
 
@@ -787,11 +770,6 @@ async fn handoff_marker_in_analyse_work_is_promoted_by_triage() {
         }),
     );
 
-    let shared = SharedConfig {
-        agent: "mock".into(),
-        headroom: 10_000,
-    };
-
     let ctx = PlanContext {
         plan_dir: plan_dir.to_string_lossy().to_string(),
         project_dir: root.to_string_lossy().to_string(),
@@ -815,11 +793,17 @@ async fn handoff_marker_in_analyse_work_is_promoted_by_triage() {
         }
     });
 
-    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    // Cycle 1: analyse-work injects the marker, reflect runs, cycle
+    // closes at git-commit-reflect with phase.md = "triage".
+    // Cycle 2: triage mines the marker; the cycle aborts at Work via
+    // the "phase did not advance" exit (mock doesn't progress Work).
+    let result = phase_loop(agent.clone(), &ctx, &ui).await;
+    assert!(result.is_ok(), "cycle 1 phase_loop returned error: {result:?}");
+    let result = phase_loop(agent, &ctx, &ui).await;
     ui.quit();
     let _ = drain.await;
 
-    assert!(result.is_ok(), "phase_loop returned error: {result:?}");
+    assert!(result.is_ok(), "cycle 2 phase_loop returned error: {result:?}");
 
     // The original completed task is gone (triage deletes done tasks
     // after mining).
@@ -910,11 +894,6 @@ async fn handoff_marker_in_analyse_work_is_archived_by_triage() {
         }),
     );
 
-    let shared = SharedConfig {
-        agent: "mock".into(),
-        headroom: 10_000,
-    };
-
     let ctx = PlanContext {
         plan_dir: plan_dir.to_string_lossy().to_string(),
         project_dir: root.to_string_lossy().to_string(),
@@ -938,11 +917,15 @@ async fn handoff_marker_in_analyse_work_is_archived_by_triage() {
         }
     });
 
-    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    // Cycle 1 closes at git-commit-reflect; cycle 2 runs triage which
+    // mines the marker (see promote variant for rationale).
+    let result = phase_loop(agent.clone(), &ctx, &ui).await;
+    assert!(result.is_ok(), "cycle 1 phase_loop returned error: {result:?}");
+    let result = phase_loop(agent, &ctx, &ui).await;
     ui.quit();
     let _ = drain.await;
 
-    assert!(result.is_ok(), "phase_loop returned error: {result:?}");
+    assert!(result.is_ok(), "cycle 2 phase_loop returned error: {result:?}");
 
     // Original done task deleted; no new backlog entry for the hand-off.
     let backlog = fs::read_to_string(plan_dir.join("backlog.md")).unwrap();
@@ -1011,11 +994,6 @@ async fn analyse_work_receives_snapshot_and_commits_uncommitted_source() {
     });
     let captured = agent.captured_prompts.clone();
 
-    let shared = SharedConfig {
-        agent: "mock".into(),
-        headroom: 10_000,
-    };
-
     let ctx = PlanContext {
         plan_dir: plan_dir.to_string_lossy().to_string(),
         project_dir: root.to_string_lossy().to_string(),
@@ -1041,7 +1019,7 @@ async fn analyse_work_receives_snapshot_and_commits_uncommitted_source() {
         }
     });
 
-    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    let result = phase_loop(agent, &ctx, &ui).await;
     ui.quit();
     let _ = drain.await;
 
@@ -1125,11 +1103,6 @@ async fn git_commit_triage_leaves_plan_tree_clean_at_user_prompt() {
         plan_dir: plan_dir.clone(),
     });
 
-    let shared = SharedConfig {
-        agent: "mock".into(),
-        headroom: 1500,
-    };
-
     let ctx = PlanContext {
         plan_dir: plan_dir.to_string_lossy().to_string(),
         project_dir: root.to_string_lossy().to_string(),
@@ -1155,7 +1128,7 @@ async fn git_commit_triage_leaves_plan_tree_clean_at_user_prompt() {
         }
     });
 
-    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    let result = phase_loop(agent, &ctx, &ui).await;
     ui.quit();
     let _ = drain.await;
 
@@ -1201,11 +1174,6 @@ async fn git_commit_work_leaves_plan_tree_clean_at_user_prompt() {
 
     let agent = Arc::new(ContractMockAgent::new(plan_dir.clone()));
 
-    let shared = SharedConfig {
-        agent: "mock".into(),
-        headroom: 10_000,
-    };
-
     let ctx = PlanContext {
         plan_dir: plan_dir.to_string_lossy().to_string(),
         project_dir: root.to_string_lossy().to_string(),
@@ -1232,7 +1200,7 @@ async fn git_commit_work_leaves_plan_tree_clean_at_user_prompt() {
         }
     });
 
-    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    let result = phase_loop(agent, &ctx, &ui).await;
     ui.quit();
     let _ = drain.await;
 
@@ -1284,11 +1252,6 @@ async fn git_commit_triage_records_work_baseline_at_triage_commit_sha() {
         plan_dir: plan_dir.clone(),
     });
 
-    let shared = SharedConfig {
-        agent: "mock".into(),
-        headroom: 1500,
-    };
-
     let ctx = PlanContext {
         plan_dir: plan_dir.to_string_lossy().to_string(),
         project_dir: root.to_string_lossy().to_string(),
@@ -1312,7 +1275,7 @@ async fn git_commit_triage_records_work_baseline_at_triage_commit_sha() {
         }
     });
 
-    let result = phase_loop(agent, &ctx, &shared, &ui).await;
+    let result = phase_loop(agent, &ctx, &ui).await;
     ui.quit();
     let _ = drain.await;
     assert!(result.is_ok(), "phase_loop returned error: {result:?}");

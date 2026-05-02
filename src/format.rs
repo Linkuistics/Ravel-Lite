@@ -134,9 +134,6 @@ static PHASE_HIGHLIGHTS: Lazy<HashMap<LlmPhase, Vec<HighlightRule>>> = Lazy::new
     m.insert(LlmPhase::Reflect, vec![
         HighlightRule { pattern: filename_suffix_regex(MEMORY_FILENAME), label: "Updating memory" },
     ]);
-    m.insert(LlmPhase::Dream, vec![
-        HighlightRule { pattern: filename_suffix_regex(MEMORY_FILENAME), label: "Rewriting memory" },
-    ]);
     m.insert(LlmPhase::Triage, vec![
         HighlightRule { pattern: filename_suffix_regex(BACKLOG_FILENAME), label: "Updating backlog" },
         HighlightRule { pattern: filename_suffix_regex(SUBAGENT_DISPATCH_FILENAME), label: "Dispatching to related plans" },
@@ -181,11 +178,10 @@ pub struct PhaseInfo {
 
 pub fn phase_info(phase: LlmPhase) -> PhaseInfo {
     match phase {
+        LlmPhase::Triage => PhaseInfo { label: "TRIAGE", description: "Orient on backlog, run hygiene, choose this cycle's focus" },
         LlmPhase::Work => PhaseInfo { label: "WORK", description: "Pick a task, implement it, record results" },
         LlmPhase::AnalyseWork => PhaseInfo { label: "ANALYSE", description: "Examine git diff, write session log and commit message" },
         LlmPhase::Reflect => PhaseInfo { label: "REFLECT", description: "Distil session learnings into durable memory" },
-        LlmPhase::Dream => PhaseInfo { label: "DREAM", description: "Rewrite memory losslessly in tighter form" },
-        LlmPhase::Triage => PhaseInfo { label: "TRIAGE", description: "Reprioritise backlog, propagate to related plans" },
     }
 }
 

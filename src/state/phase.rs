@@ -16,15 +16,14 @@ use crate::types::Phase;
 /// Enumerated for error messages so a typo'd phase string comes back
 /// with an actionable list of accepted values.
 const VALID_PHASES: &[&str] = &[
+    "triage",
     "work",
     "analyse-work",
     "reflect",
-    "dream",
-    "triage",
-    "git-commit-work",
-    "git-commit-reflect",
-    "git-commit-dream",
     "git-commit-triage",
+    "git-commit-work",
+    "git-commit-analyse-work",
+    "git-commit-reflect",
 ];
 
 pub fn run_set_phase(plan_dir: &Path, phase: &str) -> Result<()> {
@@ -167,9 +166,9 @@ mod tests {
         assert!(msg.contains("analyze-work"), "error must include the bad input: {msg}");
         // Enumeration of valid phase names in the error lets the LLM
         // self-correct without a second round-trip.
-        for valid in ["work", "analyse-work", "reflect", "dream", "triage",
-                      "git-commit-work", "git-commit-reflect", "git-commit-dream",
-                      "git-commit-triage"] {
+        for valid in ["triage", "work", "analyse-work", "reflect",
+                      "git-commit-triage", "git-commit-work",
+                      "git-commit-analyse-work", "git-commit-reflect"] {
             assert!(msg.contains(valid), "error must list '{valid}': {msg}");
         }
 

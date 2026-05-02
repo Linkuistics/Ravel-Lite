@@ -1,15 +1,16 @@
-id: session-119
-timestamp: 2026-05-02T07:33:02Z
+id: session-120
+timestamp: 2026-05-02T08:33:42Z
 phase: work
 body: |
-  ### Session 119 (2026-05-02T07:33:02Z) — Lift WrongTarget.suggested_target from String to ComponentRef
+  ### Session 120 (2026-05-02T08:33:42Z) — Reorder phase cycle to triage-first, eliminate in-cycle dream
 
-  - Lifted `Objection::WrongTarget.suggested_target` from `String` to `ComponentRef` in `src/state/focus_objections/schema.rs`
-  - Updated the CLI `--suggested-target` flag in `src/main.rs` to parse directly into `ComponentRef` via clap's `from_str` — malformed `<repo>:<id>` now fails at the CLI boundary before any YAML write
-  - Deleted the `validate_reference` runtime helper in `src/state/focus_objections/verbs.rs` — its single in-file caller (`run_add_wrong_target`) was gone, and type enforcement supersedes the string guard
-  - Wire shape unchanged: `ComponentRef` serialises as the canonical `<repo_slug>:<component_id>` string, confirmed by the round-trip test asserting the literal YAML output
-  - All tests pass (1015 total, 0 failed); clippy clean with `-D warnings`
-
-  What worked: the lift was straightforward because `ComponentRef::from_str` was already implemented and clap uses `FromStr` for argument parsing. The only non-mechanical step was verifying the Serialize/Deserialize impls preserved wire compatibility.
-
-  What this suggests next: the infra category is now effectively drained (only one blocked task remains). The `item_id: String` field on `Objection::SkipItem` is the next candidate for a similar lift if a `BacklogId` newtype is ever introduced, but that requires more design.
+  - Implemented the `phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream` task end-to-end: new cycle order is `triage → work → analyse-work → reflect`, closed by `git-commit-reflect` instead of `git-commit-triage`.
+  - Removed the in-cycle dream phase entirely: `LlmPhase::Dream` and `ScriptPhase::GitCommitDream` deleted from `src/types.rs`; all dream-gating logic (`should_dream`, `seed_dream_word_count_if_missing`, `update_dream_word_count`, `headroom`) removed from `src/phase_loop.rs`.
+  - Added `ScriptPhase::GitCommitAnalyseWork` (sits between analyse-work and reflect; applies `commits.yaml` for the source-tree changes work made, then writes `reflect-baseline`). Repositioned `GitCommitWork` to sit between work and analyse-work (commits in-flight plan-state from the work agent, writes `analyse-work-baseline`).
+  - Repositioned `GitCommitTriage` to open the cycle: commits triage's plan-state mutations, writes `work-baseline`, advances to Work. `GitCommitReflect` now closes the cycle: writes `triage-baseline`, advances to Triage.
+  - `SharedConfig` parameter removed from `phase_loop` and `run_single_plan` (the `headroom` field was the only consumer in that path; dream gate is gone).
+  - `src/create.rs`: new plans now scaffold with `phase.md = "triage"` (was `"work"`).
+  - `src/state/phase.rs`: `VALID_PHASES` updated to new cycle order; old `dream`/`git-commit-dream` removed, new `git-commit-analyse-work` added.
+  - Tests updated throughout: `SharedConfig` removed from all test setups; `ContractMockAgent` writes `git-commit-analyse-work` after analyse-work; two-cycle contract tests (`phase_contract_round_trip_writes_expected_files`, `handoff_marker_in_analyse_work_is_promoted_by_triage`, `handoff_marker_in_analyse_work_is_archived_by_triage`) now invoke `phase_loop` twice; `tests/dream.rs` dropped the `git_commit_reflect_seeds_dream_word_count_when_missing` test (no longer applicable).
+  - What worked: the restructure was clean — removing `headroom` as a parameter eliminated a source of implicit coupling; moving the cycle boundary to `git-commit-reflect` makes the "end of cycle" semantically clearer. Tests pass.
+  - What this suggests next: the phase-boundary-mechanics task (draining `target-requests.yaml` and `focus-objections.yaml` at triage entry, defeat cascade, etc.) is now the structural follow-on.

@@ -7,7 +7,6 @@ use anyhow::{Context, Result};
 use crate::agent::Agent;
 use crate::backlog_transitions::backlog_transitions;
 use crate::config_lua;
-use crate::dream::{seed_dream_word_count_if_missing, should_dream, update_dream_word_count};
 use crate::format::phase_info;
 use crate::git::{
     apply_commits_spec, git_commit_plan, git_save_baseline, paths_changed_since_baseline,
@@ -204,7 +203,6 @@ async fn handle_script_phase(
     phase: ScriptPhase,
     plan_dir: &Path,
     project_dir: &Path,
-    headroom: usize,
     ui: &UI,
 ) -> Result<bool> {
     let name = plan_name(plan_dir);
@@ -219,27 +217,57 @@ async fn handle_script_phase(
     // multi-plan monorepos (where `warn_if_project_tree_dirty` scans the
     // whole project dir and mistakes the leak for work the agent forgot
     // to commit).
+    //
+    // The cycle order is `triage → work → analyse-work → reflect`,
+    // committed at four boundaries. The baseline filename written by
+    // each script phase is named after the *LLM phase that consumes it*:
+    // `git-commit-triage` writes `work-baseline`, `git-commit-work`
+    // writes `analyse-work-baseline`, etc. See `docs/architecture-next.md`
+    // §Phase boundaries.
     match phase {
+        ScriptPhase::GitCommitTriage => {
+            // Triage opens the cycle. Commit triage's plan-state mutations
+            // (intents, backlog, memory hygiene) and capture the post-
+            // triage SHA as `work-baseline` so the next analyse-work can
+            // diff `{{BACKLOG_TRANSITIONS}}` against the start of work.
+            write_phase(plan_dir, Phase::Llm(LlmPhase::Work))?;
+            let result = git_commit_plan(plan_dir, &name, "triage")?;
+            log_commit(ui, "triage", &scope, &result);
+
+            git_save_baseline(plan_dir, "work-baseline");
+            let baseline_result = git_commit_plan(plan_dir, &name, "save-work-baseline")?;
+            log_commit(ui, "save-work-baseline", &scope, &baseline_result);
+            Ok(true)
+        }
         ScriptPhase::GitCommitWork => {
+            // Sits between work and analyse-work. Commits any plan-state
+            // changes the work agent made in-flight (memory entries,
+            // focus-objections.yaml). Source-tree changes from work
+            // remain dirty for analyse-work to inspect via the
+            // work-tree snapshot.
+            write_phase(plan_dir, Phase::Llm(LlmPhase::AnalyseWork))?;
+            let result = git_commit_plan(plan_dir, &name, "work")?;
+            log_commit(ui, "work", &scope, &result);
+
+            git_save_baseline(plan_dir, "analyse-work-baseline");
+            let baseline_result =
+                git_commit_plan(plan_dir, &name, "save-analyse-work-baseline")?;
+            log_commit(ui, "save-analyse-work-baseline", &scope, &baseline_result);
+            Ok(true)
+        }
+        ScriptPhase::GitCommitAnalyseWork => {
             append_session_log(plan_dir)?;
             write_phase(plan_dir, Phase::Llm(LlmPhase::Reflect))?;
-            // Unlike the reflect/dream/triage commits (which only touch
-            // plan-state files and use `git_commit_plan`), the work commit
-            // spans the whole subtree — source, docs, config, and plan
-            // state together. `apply_commits_spec` reads commits.yaml and
-            // applies one-or-more scoped commits in order, falling back
-            // to a single catch-all when no spec is present.
-            let results = apply_commits_spec(project_dir, plan_dir, &name, "work")?;
+            // Apply analyse-work's `commits.yaml` to commit the source-
+            // tree changes work made (partitioned per the spec, falling
+            // back to a single catch-all when the spec is missing).
+            // Then commit any plan-state changes analyse-work itself
+            // produced (latest-session.yaml, backlog status repairs).
+            let results = apply_commits_spec(project_dir, plan_dir, &name, "analyse-work")?;
             for result in &results {
-                log_commit(ui, "work", &scope, result);
+                log_commit(ui, "analyse-work", &scope, result);
             }
 
-            // Capture HEAD post-work-commits as `reflect-baseline` so the
-            // reflect phase can render its memory.yaml diff via
-            // `state phase-summary render --baseline $(cat reflect-baseline)`.
-            // A follow-on commit lands the file (mirrors the
-            // save-work-baseline pattern in GitCommitTriage); amending
-            // would orphan the SHA the file just captured.
             git_save_baseline(plan_dir, "reflect-baseline");
             let baseline_result = git_commit_plan(plan_dir, &name, "save-reflect-baseline")?;
             log_commit(ui, "save-reflect-baseline", &scope, &baseline_result);
@@ -248,92 +276,22 @@ async fn handle_script_phase(
             Ok(true)
         }
         ScriptPhase::GitCommitReflect => {
-            // First-run fallback for plans created before `dream-word-count`
-            // was seeded by plan-creation. Without this, `should_dream`
-            // returns `false` on every cycle (missing-file short-circuit),
-            // and `update_dream_word_count` never fires (it runs only after
-            // a dream phase) — a permanent deadlock. Seeding to zero (or
-            // migrating a legacy `dream-baseline` word-count file) means
-            // the first dream triggers after memory grows by `headroom`
-            // from here, matching the post-dream steady state.
-            seed_dream_word_count_if_missing(plan_dir);
-            let skip_dream = !should_dream(plan_dir, headroom);
-            // The next-phase baseline file is named after the LLM phase
-            // that will read it: `dream-baseline` if dream runs next,
-            // `triage-baseline` if dream is skipped. Both hold the
-            // post-reflect-commit SHA so the consumer's
-            // `phase-summary render --baseline` shows changes since
-            // reflect finished.
-            let next_baseline = if skip_dream {
-                write_phase(plan_dir, Phase::Llm(LlmPhase::Triage))?;
-                "triage-baseline"
-            } else {
-                write_phase(plan_dir, Phase::Llm(LlmPhase::Dream))?;
-                "dream-baseline"
-            };
+            // Closes the cycle. Commits reflect's memory mutations,
+            // captures the post-reflect SHA as `triage-baseline` so the
+            // next cycle's triage knows what changed, and writes the
+            // cycle-opening phase marker so a fresh `ravel-lite run`
+            // picks up at triage.
+            write_phase(plan_dir, Phase::Llm(LlmPhase::Triage))?;
             let result = git_commit_plan(plan_dir, &name, "reflect")?;
             log_commit(ui, "reflect", &scope, &result);
 
-            git_save_baseline(plan_dir, next_baseline);
-            let save_label = format!("save-{next_baseline}");
-            let baseline_result = git_commit_plan(plan_dir, &name, &save_label)?;
-            log_commit(ui, &save_label, &scope, &baseline_result);
-
-            if skip_dream {
-                // Render a full DREAM header with a skip description so the
-                // absence-of-work is as legible as the other phases.
-                let info = phase_info(LlmPhase::Dream);
-                ui.log(&format!("\n{HR}"));
-                ui.log(&format!("  ◆  {}  ·  {scope}", info.label));
-                ui.log("  Skipped — memory within headroom");
-                ui.log(HR);
-            }
-            Ok(true)
-        }
-        ScriptPhase::GitCommitDream => {
-            write_phase(plan_dir, Phase::Llm(LlmPhase::Triage))?;
-            let result = git_commit_plan(plan_dir, &name, "dream")?;
-            log_commit(ui, "dream", &scope, &result);
-
-            // Capture HEAD post-dream-commit as `triage-baseline` so
-            // triage can render its backlog.yaml diff.
             git_save_baseline(plan_dir, "triage-baseline");
             let baseline_result = git_commit_plan(plan_dir, &name, "save-triage-baseline")?;
             log_commit(ui, "save-triage-baseline", &scope, &baseline_result);
 
-            Ok(true)
-        }
-        ScriptPhase::GitCommitTriage => {
-            // `latest-session.yaml` is intentionally NOT touched here:
-            // analyse-work overwrites it next cycle (see
-            // `defaults/phases/analyse-work.md` step 8), and leaving it
-            // in place through the triage commit keeps the prior
-            // session's record available for operator inspection in the
-            // gap between cycles.
-            write_phase(plan_dir, Phase::Llm(LlmPhase::Work))?;
-
-            // Commit triage mutations first so HEAD advances to the
-            // triage commit. Only after this does `git rev-parse HEAD`
-            // yield the SHA the next work phase should diff against.
-            // Saving the baseline before this commit (the prior
-            // arrangement) captured the reflect commit's SHA, which
-            // conflated the previous cycle's triage mutations into
-            // `{{BACKLOG_TRANSITIONS}}` on the next analyse-work.
-            let result = git_commit_plan(plan_dir, &name, "triage")?;
-            log_commit(ui, "triage", &scope, &result);
-
-            // Baseline must land in a commit (not float in the working
-            // tree) so `warn_if_project_tree_dirty` sees a clean subtree
-            // at the post-cycle user prompt. A follow-on commit is
-            // simpler than `git commit --amend`, which would orphan the
-            // pre-amend SHA that `work-baseline` names.
-            git_save_baseline(plan_dir, "work-baseline");
-            let baseline_result = git_commit_plan(plan_dir, &name, "save-work-baseline")?;
-            log_commit(ui, "save-work-baseline", &scope, &baseline_result);
-
-            // Exit phase_loop after one full cycle. Whether another
-            // cycle starts — and, in multi-plan mode, which plan runs
-            // next — is the outer loop's decision, not this function's.
+            // Exit phase_loop after one full cycle. The outer loop
+            // (run_single_plan / multi-plan dispatcher) decides whether
+            // to start another cycle.
             Ok(false)
         }
     }
@@ -342,7 +300,6 @@ async fn handle_script_phase(
 pub async fn phase_loop(
     agent: Arc<dyn Agent>,
     ctx: &PlanContext,
-    config: &SharedConfig,
     ui: &UI,
 ) -> Result<()> {
     let tokens = agent.tokens();
@@ -382,10 +339,11 @@ pub async fn phase_loop(
 
         match phase {
             Phase::Script(sp) => {
-                if !handle_script_phase(sp, plan_dir, project_dir, config.headroom, ui).await? {
-                    // Script-phase handler signalled end-of-cycle. Today
-                    // that's only `GitCommitTriage` finishing one full
-                    // phase cycle; callers decide what happens next.
+                if !handle_script_phase(sp, plan_dir, project_dir, ui).await? {
+                    // Script-phase handler signalled end-of-cycle.
+                    // `GitCommitReflect` closes the cycle in the new
+                    // triage-first ordering; callers decide what happens
+                    // next.
                     return Ok(());
                 }
                 continue;
@@ -448,10 +406,6 @@ pub async fn phase_loop(
                     return Ok(());
                 }
 
-                if lp == LlmPhase::Dream {
-                    update_dream_word_count(plan_dir);
-                }
-
                 if lp == LlmPhase::Triage {
                     dispatch_subagents(agent.clone(), plan_dir, ui).await?;
                 }
@@ -469,11 +423,10 @@ pub async fn phase_loop(
 pub async fn run_single_plan(
     agent: Arc<dyn Agent>,
     ctx: PlanContext,
-    config: &SharedConfig,
     ui: &UI,
 ) -> Result<()> {
     loop {
-        phase_loop(agent.clone(), &ctx, config, ui).await?;
+        phase_loop(agent.clone(), &ctx, ui).await?;
         if !ui.confirm("Proceed to next work phase?").await {
             ui.log("\nExiting.");
             return Ok(());
