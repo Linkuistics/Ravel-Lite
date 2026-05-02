@@ -22,17 +22,20 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::component_ref::ComponentRef;
+
 pub const THIS_CYCLE_FOCUS_SCHEMA_VERSION: u32 = 1;
 
-/// One cycle's focus record. `target` names the ComponentRef the work
-/// phase should edit. `backlog_items` lists the backlog item ids work
-/// should attempt; an empty list is valid (a "look around, no specific
-/// items" cycle). `notes` is free-form prose surfaced verbatim into the
-/// work-phase prompt.
+/// One cycle's focus record. `target` is a typed `ComponentRef`; its
+/// serde impl emits the `<repo_slug>:<component_id>` string scalar on
+/// the wire, matching the rest of the v2 surface. `backlog_items` lists
+/// the backlog item ids work should attempt; an empty list is valid (a
+/// "look around, no specific items" cycle). `notes` is free-form prose
+/// surfaced verbatim into the work-phase prompt.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ThisCycleFocus {
     pub schema_version: u32,
-    pub target: String,
+    pub target: ComponentRef,
     #[serde(default)]
     pub backlog_items: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -43,10 +46,10 @@ impl ThisCycleFocus {
     /// Build a focus record at the current schema version with no
     /// backlog items and no notes — useful as a starting point when the
     /// caller intends to mutate the record before writing.
-    pub fn new(target: impl Into<String>) -> Self {
+    pub fn new(target: ComponentRef) -> Self {
         Self {
             schema_version: THIS_CYCLE_FOCUS_SCHEMA_VERSION,
-            target: target.into(),
+            target,
             backlog_items: Vec::new(),
             notes: None,
         }
@@ -59,9 +62,9 @@ mod tests {
 
     #[test]
     fn new_record_has_current_schema_version_and_empty_collections() {
-        let focus = ThisCycleFocus::new("atlas:atlas-core");
+        let focus = ThisCycleFocus::new(ComponentRef::new("atlas", "atlas-core"));
         assert_eq!(focus.schema_version, THIS_CYCLE_FOCUS_SCHEMA_VERSION);
-        assert_eq!(focus.target, "atlas:atlas-core");
+        assert_eq!(focus.target, ComponentRef::new("atlas", "atlas-core"));
         assert!(focus.backlog_items.is_empty());
         assert!(focus.notes.is_none());
     }
@@ -70,13 +73,26 @@ mod tests {
     fn full_record_round_trips_through_yaml() {
         let focus = ThisCycleFocus {
             schema_version: THIS_CYCLE_FOCUS_SCHEMA_VERSION,
-            target: "atlas:atlas-core".to_string(),
+            target: ComponentRef::new("atlas", "atlas-core"),
             backlog_items: vec!["t-001".into(), "t-005".into()],
             notes: Some("t-005 depends on t-001 — do them in order.\n".into()),
         };
         let yaml = serde_yaml::to_string(&focus).unwrap();
         let decoded: ThisCycleFocus = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(decoded, focus);
+    }
+
+    #[test]
+    fn target_serialises_as_string_scalar() {
+        // Wire-shape compatibility: typed `ComponentRef` field still
+        // emits a single string scalar (`target: <repo>:<id>`), matching
+        // the v1 wire shape so existing on-disk files keep round-tripping.
+        let focus = ThisCycleFocus::new(ComponentRef::new("atlas", "atlas-core"));
+        let yaml = serde_yaml::to_string(&focus).unwrap();
+        assert!(
+            yaml.contains("target: atlas:atlas-core"),
+            "target must serialise as `<repo>:<id>` scalar: {yaml}"
+        );
     }
 
     #[test]
@@ -108,7 +124,7 @@ mod tests {
     fn absent_notes_does_not_serialise_a_null() {
         // `notes: None` should not emit `notes: null` — that round-trips,
         // but the cleaner wire shape is to omit the key entirely.
-        let focus = ThisCycleFocus::new("atlas:atlas-core");
+        let focus = ThisCycleFocus::new(ComponentRef::new("atlas", "atlas-core"));
         let yaml = serde_yaml::to_string(&focus).unwrap();
         assert!(
             !yaml.contains("notes:"),

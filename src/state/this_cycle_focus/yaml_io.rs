@@ -82,12 +82,13 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component_ref::ComponentRef;
     use tempfile::TempDir;
 
     fn sample_focus() -> ThisCycleFocus {
         ThisCycleFocus {
             schema_version: THIS_CYCLE_FOCUS_SCHEMA_VERSION,
-            target: "atlas:atlas-core".into(),
+            target: ComponentRef::new("atlas", "atlas-core"),
             backlog_items: vec!["t-001".into(), "t-005".into()],
             notes: Some("Order matters: t-001 first.\n".into()),
         }

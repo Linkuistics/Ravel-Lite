@@ -445,7 +445,7 @@ tasks:
 - id: lift-target-requests-and-this-cycle-focus-onto-typed-componentref
   title: Lift target_requests and this_cycle_focus onto typed ComponentRef
   category: infra
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Lift `target_requests` and `this_cycle_focus` off `component: String` + runtime `validate_reference` onto the typed `ComponentRef` wire shape.
@@ -469,3 +469,147 @@ tasks:
     - `src/state/this_cycle_focus/{schema,yaml_io,verbs}.rs`
     - `src/component_ref.rs` — the typed form and its serde hook
     - `src/state/commits/schema.rs` — the reference implementation using `Option<ComponentRef>`
+  results: |
+    ## What was done
+
+    Lifted `target_requests.yaml` and `this_cycle_focus.yaml` off the
+    stringly-typed `component: String` + runtime `validate_reference`
+    pattern onto the typed `ComponentRef` wire shape, matching the
+    reference implementation in `src/state/commits/schema.rs`
+    (commits-yaml-v2). `validate_reference` is gone from both modules —
+    the parse runs once at the CLI/serde boundary and the field is typed
+    from there on.
+
+    ### Files touched
+
+    - `src/state/target_requests/schema.rs` — `TargetRequest.component:
+      String → ComponentRef`. Added `target_request_component_serialises_as_string_scalar`
+      test pinning the wire-shape contract.
+    - `src/state/target_requests/verbs.rs` — deleted local `validate_reference`;
+      `run_show`/`run_add`/`run_remove` parse `&str → ComponentRef` once at
+      entry; `find_request` now takes `&ComponentRef`. Added two
+      empty-half rejection tests so the boundary check coverage matches
+      the deleted helper's coverage.
+    - `src/state/target_requests/yaml_io.rs` — fixture updated.
+    - `src/state/target_requests/drain.rs` — `parse_component_ref` helper
+      deleted (the field is already a `ComponentRef`); fixtures updated;
+      `drain_errors_on_malformed_component_reference` rewritten to write
+      raw YAML directly, since malformed `ComponentRef` can't be
+      constructed in code — the parse error now surfaces at deserialise
+      time inside `read_target_requests`, but drain still errors loudly,
+      which is the property the runner relies on.
+    - `src/state/this_cycle_focus/schema.rs` — `ThisCycleFocus.target:
+      String → ComponentRef`; `new()` now takes `ComponentRef` directly.
+      Added `target_serialises_as_string_scalar` wire-shape test.
+    - `src/state/this_cycle_focus/verbs.rs` — deleted local
+      `validate_reference`; `run_set` parses `&str → ComponentRef` once.
+      Added two empty-half rejection tests.
+    - `src/state/this_cycle_focus/yaml_io.rs` — fixture updated.
+    - `src/state/focus_objections/verbs.rs` — doc comment on its own
+      `validate_reference` updated, since the cross-reference target
+      (`state::target_requests::verbs::validate_reference`) no longer
+      exists. The function itself is unchanged — `Objection::suggested_target`
+      is still `String` and out of scope here.
+
+    ### Wire-shape preservation
+
+    The freeze constraint ("don't change LLM_STATE wire shape") holds:
+    `ComponentRef`'s serde impls emit a single string scalar, so on disk
+    `component: ravel-lite:phase-loop` and `target: atlas:atlas-core`
+    look identical to the v1 form. Confirmed by two new tests
+    (`target_request_component_serialises_as_string_scalar`,
+    `target_serialises_as_string_scalar`).
+
+    ### Verification
+
+    - `cargo test`: 929 unit tests + every integration suite pass; no
+      failures.
+    - `./scripts/check.sh` (clippy --all-targets --workspace -D warnings):
+      clean.
+    - Targeted runs:
+      - `state::target_requests` — 27 passed.
+      - `state::this_cycle_focus` — 20 passed.
+      - `state::focus_objections` — 24 passed (untouched semantics; only a
+        doc comment changed).
+
+    ### Where the runtime check moved
+
+    In v1, malformed references were caught by `validate_reference` *at
+    the verb call site* and *inside drain*. After the lift:
+
+    - For verb callers (`state target-requests add ...`, `state
+      this-cycle-focus set ...`): the error fires immediately when
+      `&str.parse::<ComponentRef>()` runs at the top of the verb. The
+      on-disk file is never written.
+    - For deserialise-time (any read of `target-requests.yaml` or
+      `this-cycle-focus.yaml` containing a malformed `component:` /
+      `target:`): `ComponentRef::deserialize` errors via serde, surfacing
+      as a parse error from `read_target_requests` /
+      `read_this_cycle_focus`. Drain therefore errors at read time rather
+      than mount time — same end-state, slightly earlier failure point.
+
+    Either way, no badly shaped reference can land on disk through a typed
+    write path, and no badly shaped reference on disk can be silently
+    processed.
+
+    ## What this suggests next
+
+    - The same lift is still pending for
+      `Objection::suggested_target: String` in
+      `src/state/focus_objections/schema.rs` — the only remaining `String`
+      + `validate_reference` outlier in the v2 scratch-file family. That
+      was deliberately out of scope for this task (the scope explicitly
+      named only `target_requests` and `this_cycle_focus`). A small
+      follow-up backlog item would mop it up and let the local
+      `validate_reference` in `focus_objections/verbs.rs` go away too —
+      closing the "Prefer typed APIs over stringly-typed" loop for every
+      v2 component-reference field.
+    - The wire-shape preservation tests added here
+      (`target_request_component_serialises_as_string_scalar`,
+      `target_serialises_as_string_scalar`) make the right pattern to
+      copy when introducing any future `ComponentRef`-typed field, since
+      they pin the freeze-relevant property explicitly rather than
+      relying on the round-trip tests to catch a wire-shape regression.
+- id: lift-focus-objections-suggested-target-onto-typed-componentref
+  title: Lift focus_objections suggested_target onto typed ComponentRef
+  category: infra
+  status: not_started
+  dependencies: []
+  description: |
+    Lift `Objection::suggested_target: String` in `src/state/focus_objections/schema.rs`
+    onto the typed `ComponentRef` wire shape, completing the "Prefer typed APIs over
+    stringly-typed" lift for every v2 component-reference field.
+
+    ## Why
+
+    After lifting `target_requests` and `this_cycle_focus`, `Objection::suggested_target`
+    is the sole remaining `String` + runtime `validate_reference` outlier in the v2
+    scratch-file family. The local `validate_reference` in
+    `src/state/focus_objections/verbs.rs` now documents itself as a temporary stand-in
+    until this lift happens.
+
+    ## Scope
+
+    - `src/state/focus_objections/schema.rs`: change `suggested_target: String` to
+      `suggested_target: ComponentRef`; update serde derives as needed.
+    - `src/state/focus_objections/verbs.rs`: delete local `validate_reference` (now
+      redundant); parse `&str → ComponentRef` once at the CLI boundary instead.
+    - Update any test fixtures that construct `Objection` with a string literal for
+      `suggested_target`.
+    - Add a `suggested_target_serialises_as_string_scalar` wire-shape pinning test
+      (matching the pattern introduced in session 118 for `target_requests` and
+      `this_cycle_focus`).
+
+    ## Reference examples
+
+    - `src/state/target_requests/schema.rs` — reference implementation of
+      `component: ComponentRef` with wire-shape pinning test (added session 118).
+    - `src/state/this_cycle_focus/schema.rs` — same pattern for `target: ComponentRef`.
+    - `src/state/target_requests/verbs.rs` — shows `&str.parse::<ComponentRef>()` at
+      verb entry, error naming `repo_slug` / `component_id` respectively.
+    - `src/component_ref.rs` — the typed form and its serde hook.
+
+    ## Dependencies
+
+    None; `ComponentRef` is already imported in the codebase and the pattern is
+    established. Wire shape is unchanged (`<repo>:<id>` string scalar), so no migration.

@@ -91,8 +91,11 @@ fn append(plan_dir: &Path, objection: Objection) -> Result<()> {
     write_focus_objections(plan_dir, &file)
 }
 
-/// Mirrors `state::target_requests::verbs::validate_reference` so the
-/// reference grammar stays uniform across every v2 scratch file.
+/// Mirrors the reference grammar enforced by `ComponentRef::from_str`
+/// (used by `target_requests` and `this_cycle_focus` for their typed
+/// `ComponentRef` fields). Kept as a runtime check here because
+/// `Objection::suggested_target` is still a free-form `String` — once
+/// that field is lifted onto `ComponentRef` this helper goes away too.
 pub(crate) fn validate_reference(reference: &str) -> Result<()> {
     match reference.split_once(':') {
         Some((repo, component)) if !repo.is_empty() && !component.is_empty() => Ok(()),

@@ -81,12 +81,13 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component_ref::ComponentRef;
     use crate::state::target_requests::schema::TargetRequest;
     use tempfile::TempDir;
 
     fn sample_request() -> TargetRequest {
         TargetRequest {
-            component: "atlas:atlas-ontology".to_string(),
+            component: ComponentRef::new("atlas", "atlas-ontology"),
             reason: "core schema needs work".to_string(),
         }
     }

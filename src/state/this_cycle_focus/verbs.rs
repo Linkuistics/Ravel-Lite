@@ -20,6 +20,7 @@ use anyhow::{bail, Result};
 
 use super::schema::{ThisCycleFocus, THIS_CYCLE_FOCUS_SCHEMA_VERSION};
 use super::yaml_io::{delete_this_cycle_focus, read_this_cycle_focus, write_this_cycle_focus};
+use crate::component_ref::ComponentRef;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum OutputFormat {
@@ -49,7 +50,7 @@ pub fn run_set(
     backlog_items: &[String],
     notes: Option<&str>,
 ) -> Result<()> {
-    validate_reference(target)?;
+    let target: ComponentRef = target.parse()?;
     for id in backlog_items {
         if id.is_empty() {
             bail!("--item ids must be non-empty");
@@ -57,7 +58,7 @@ pub fn run_set(
     }
     let focus = ThisCycleFocus {
         schema_version: THIS_CYCLE_FOCUS_SCHEMA_VERSION,
-        target: target.to_string(),
+        target,
         backlog_items: backlog_items.to_vec(),
         notes: notes.map(ensure_trailing_newline),
     };
@@ -66,18 +67,6 @@ pub fn run_set(
 
 pub fn run_clear(plan_dir: &Path) -> Result<()> {
     delete_this_cycle_focus(plan_dir)
-}
-
-/// Reject malformed `<repo>:<component>` references at the CLI boundary.
-/// Mirrors `state::target_requests::verbs::validate_reference` so the
-/// reference grammar stays uniform across every v2 scratch file.
-pub(crate) fn validate_reference(reference: &str) -> Result<()> {
-    match reference.split_once(':') {
-        Some((repo, component)) if !repo.is_empty() && !component.is_empty() => Ok(()),
-        _ => bail!(
-            "target reference {reference:?} must be `<repo_slug>:<component_id>` with both parts non-empty"
-        ),
-    }
 }
 
 fn emit(focus: &ThisCycleFocus, format: OutputFormat) -> Result<()> {
@@ -103,24 +92,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn validate_reference_accepts_well_formed() {
-        validate_reference("atlas:atlas-ontology").unwrap();
-    }
-
-    #[test]
-    fn validate_reference_rejects_missing_colon() {
-        let err = validate_reference("atlas-only").unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(msg.contains("repo_slug"), "error must explain expected shape: {msg}");
-    }
-
-    #[test]
-    fn validate_reference_rejects_empty_repo_or_component() {
-        assert!(validate_reference(":only-component").is_err());
-        assert!(validate_reference("only-repo:").is_err());
-    }
-
-    #[test]
     fn run_set_writes_focus_with_all_fields() {
         let tmp = TempDir::new().unwrap();
         run_set(
@@ -132,7 +103,7 @@ mod tests {
         .unwrap();
 
         let focus = read_this_cycle_focus(tmp.path()).unwrap().unwrap();
-        assert_eq!(focus.target, "atlas:atlas-core");
+        assert_eq!(focus.target, ComponentRef::new("atlas", "atlas-core"));
         assert_eq!(focus.backlog_items, vec!["t-001", "t-005"]);
         assert_eq!(
             focus.notes.as_deref(),
@@ -148,7 +119,7 @@ mod tests {
         run_set(tmp.path(), "sidekick:router", &[], Some("Different focus.")).unwrap();
 
         let focus = read_this_cycle_focus(tmp.path()).unwrap().unwrap();
-        assert_eq!(focus.target, "sidekick:router");
+        assert_eq!(focus.target, ComponentRef::new("sidekick", "router"));
         assert!(focus.backlog_items.is_empty());
         assert_eq!(focus.notes.as_deref(), Some("Different focus.\n"));
     }
@@ -159,6 +130,20 @@ mod tests {
         let err = run_set(tmp.path(), "atlas-only", &[], None).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("repo_slug"), "error must explain expected shape: {msg}");
+    }
+
+    #[test]
+    fn run_set_rejects_target_with_empty_repo_slug() {
+        let tmp = TempDir::new().unwrap();
+        let err = run_set(tmp.path(), ":only-component", &[], None).unwrap_err();
+        assert!(format!("{err:#}").contains("repo_slug"));
+    }
+
+    #[test]
+    fn run_set_rejects_target_with_empty_component_id() {
+        let tmp = TempDir::new().unwrap();
+        let err = run_set(tmp.path(), "only-repo:", &[], None).unwrap_err();
+        assert!(format!("{err:#}").contains("component_id"));
     }
 
     #[test]

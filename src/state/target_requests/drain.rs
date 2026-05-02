@@ -36,8 +36,13 @@ pub fn drain_target_requests(plan_dir: &Path, context_root: &Path) -> Result<usi
 
     let mut mounted = 0usize;
     for req in &file.requests {
-        let (repo_slug, component_id) = parse_component_ref(&req.component)?;
-        mount_target(plan_dir, context_root, &repo_slug, &component_id).with_context(|| {
+        mount_target(
+            plan_dir,
+            context_root,
+            &req.component.repo_slug,
+            &req.component.component_id,
+        )
+        .with_context(|| {
             format!(
                 "failed to mount {} (reason: {}) from {}/target-requests.yaml",
                 req.component,
@@ -52,20 +57,10 @@ pub fn drain_target_requests(plan_dir: &Path, context_root: &Path) -> Result<usi
     Ok(mounted)
 }
 
-fn parse_component_ref(reference: &str) -> Result<(String, String)> {
-    match reference.split_once(':') {
-        Some((repo, component)) if !repo.is_empty() && !component.is_empty() => {
-            Ok((repo.to_string(), component.to_string()))
-        }
-        _ => anyhow::bail!(
-            "target-request component {reference:?} must be `<repo_slug>:<component_id>` with both parts non-empty"
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component_ref::ComponentRef;
     use crate::repos;
     use crate::state::target_requests::schema::{
         TargetRequest, TargetRequestsFile, TARGET_REQUESTS_SCHEMA_VERSION,
@@ -155,11 +150,11 @@ mod tests {
             schema_version: TARGET_REQUESTS_SCHEMA_VERSION,
             requests: vec![
                 TargetRequest {
-                    component: "atlas:atlas-ontology".into(),
+                    component: ComponentRef::new("atlas", "atlas-ontology"),
                     reason: "core schema".into(),
                 },
                 TargetRequest {
-                    component: "atlas:atlas-discovery".into(),
+                    component: ComponentRef::new("atlas", "atlas-discovery"),
                     reason: "discovery pipeline".into(),
                 },
             ],
@@ -189,7 +184,7 @@ mod tests {
         let file = TargetRequestsFile {
             schema_version: TARGET_REQUESTS_SCHEMA_VERSION,
             requests: vec![TargetRequest {
-                component: "atlas:atlas-ontology".into(),
+                component: ComponentRef::new("atlas", "atlas-ontology"),
                 reason: "core".into(),
             }],
         };
@@ -230,7 +225,7 @@ mod tests {
         let file = TargetRequestsFile {
             schema_version: TARGET_REQUESTS_SCHEMA_VERSION,
             requests: vec![TargetRequest {
-                component: "atlas:not-a-real-component".into(),
+                component: ComponentRef::new("atlas", "not-a-real-component"),
                 reason: "typo".into(),
             }],
         };
@@ -250,18 +245,23 @@ mod tests {
 
     #[test]
     fn drain_errors_on_malformed_component_reference() {
+        // After lifting `component` to `ComponentRef`, the parse error
+        // surfaces at deserialise time inside `read_target_requests`
+        // rather than at drain time. Either way drain still errors out
+        // loudly without mounting anything — that is the property the
+        // runner relies on.
         let (_tmp, plan, context) = fixture(&["atlas-ontology"]);
-        let file = TargetRequestsFile {
-            schema_version: TARGET_REQUESTS_SCHEMA_VERSION,
-            requests: vec![TargetRequest {
-                component: "no-colon-here".into(),
-                reason: "bad".into(),
-            }],
-        };
-        write_target_requests(&plan, &file).unwrap();
+        fs::write(
+            target_requests_path(&plan),
+            "schema_version: 1\nrequests:\n  - component: no-colon-here\n    reason: bad\n",
+        )
+        .unwrap();
 
         let err = drain_target_requests(&plan, &context).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("repo_slug"), "error must explain expected shape: {msg}");
+        assert!(
+            msg.contains("repo_slug") || msg.contains("missing ':'"),
+            "error must explain expected shape: {msg}"
+        );
     }
 }

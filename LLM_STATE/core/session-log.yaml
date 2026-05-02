@@ -1690,3 +1690,15 @@ sessions:
     - All 1048 workspace tests passed after the refactor; 20 new unit tests cover round-tripping, v1 wire-shape parsing, permissive schema_version handling, atomic write, idempotent delete, and CLI bounds checking.
     - The `target` field is reserved for the two-stream-commits routing layer — `apply_commits_spec` currently ignores it. The `phase-boundary-mechanics-...` task is now unblocked on its `commits-yaml-v2` dependency. The `phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream` task (no-deps) is the other unblocked frontier item.
     - Key pattern confirmed: `ComponentRef` already implements `Serialize`/`Deserialize` against its stringified form, so `Option<ComponentRef>` slots into the wire shape with no runtime `validate_*` helper — the typed-API memory principle validated in practice.
+- id: session-118
+  timestamp: 2026-05-02T06:34:12Z
+  phase: work
+  body: |
+    ### Session 118 (2026-05-02T06:34:12Z) — Lift target_requests and this_cycle_focus onto typed ComponentRef
+
+    - Lifted `TargetRequest.component: String` and `ThisCycleFocus.target: String` onto typed `ComponentRef`, eliminating the runtime `validate_reference` helpers in both modules. The parse boundary now sits at the CLI/serde edge; the field is fully typed from there on.
+    - All 929 unit tests pass; `cargo clippy --all-targets --workspace -D warnings` is clean. Wire shape is preserved: `ComponentRef`'s serde impl emits `<repo>:<id>` string scalars, so existing on-disk YAML files round-trip without migration.
+    - `focus_objections/verbs.rs` got only a doc-comment update: its local `validate_reference` is now the sole remaining outlier in the v2 scratch-file family, noted explicitly in the comment.
+    - Two new wire-shape pinning tests added per module (`target_request_component_serialises_as_string_scalar`, `target_serialises_as_string_scalar`) to guard the freeze constraint directly.
+    - The `drain_errors_on_malformed_component_reference` test was rewritten to inject raw YAML (since a malformed `ComponentRef` cannot be constructed in typed code); the error now surfaces at deserialise time rather than drain time, but drain still errors loudly — the runtime property the runner relies on is unchanged.
+    - What this suggests next: lift `Objection::suggested_target: String` in `src/state/focus_objections/schema.rs` onto `ComponentRef`, which would let the last local `validate_reference` go away too.

@@ -18,6 +18,7 @@ use anyhow::{bail, Result};
 
 use super::schema::{TargetRequest, TargetRequestsFile, TARGET_REQUESTS_SCHEMA_VERSION};
 use super::yaml_io::{read_target_requests, write_target_requests};
+use crate::component_ref::ComponentRef;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum OutputFormat {
@@ -41,9 +42,9 @@ pub fn run_list(plan_dir: &Path, format: OutputFormat) -> Result<()> {
 }
 
 pub fn run_show(plan_dir: &Path, reference: &str, format: OutputFormat) -> Result<()> {
-    validate_reference(reference)?;
+    let reference: ComponentRef = reference.parse()?;
     let requests = read_target_requests(plan_dir)?;
-    let entry = find_request(&requests, reference)?;
+    let entry = find_request(&requests, &reference)?;
     let wrapper = TargetRequestsFile {
         schema_version: TARGET_REQUESTS_SCHEMA_VERSION,
         requests: vec![entry.clone()],
@@ -52,23 +53,23 @@ pub fn run_show(plan_dir: &Path, reference: &str, format: OutputFormat) -> Resul
 }
 
 pub fn run_add(plan_dir: &Path, reference: &str, reason: &str) -> Result<()> {
-    validate_reference(reference)?;
+    let reference: ComponentRef = reference.parse()?;
     if reason.is_empty() {
         bail!("--reason must be non-empty");
     }
     let mut file = read_target_requests(plan_dir)?;
-    if find_request(&file, reference).is_ok() {
+    if find_request(&file, &reference).is_ok() {
         bail!("request for {reference} already queued");
     }
     file.requests.push(TargetRequest {
-        component: reference.to_string(),
+        component: reference,
         reason: reason.to_string(),
     });
     write_target_requests(plan_dir, &file)
 }
 
 pub fn run_remove(plan_dir: &Path, reference: &str) -> Result<()> {
-    validate_reference(reference)?;
+    let reference: ComponentRef = reference.parse()?;
     let mut file = read_target_requests(plan_dir)?;
     let before = file.requests.len();
     file.requests.retain(|r| r.component != reference);
@@ -78,27 +79,13 @@ pub fn run_remove(plan_dir: &Path, reference: &str) -> Result<()> {
     write_target_requests(plan_dir, &file)
 }
 
-/// Reject malformed `<repo>:<component>` references at the boundary so
-/// no badly shaped row ever lands on disk. Mirrors
-/// `state::targets::verbs::parse_reference` semantics — both halves
-/// non-empty, exactly one colon — without allocating the split halves
-/// (we keep the original string for storage).
-pub(crate) fn validate_reference(reference: &str) -> Result<()> {
-    match reference.split_once(':') {
-        Some((repo, component)) if !repo.is_empty() && !component.is_empty() => Ok(()),
-        _ => bail!(
-            "target reference {reference:?} must be `<repo_slug>:<component_id>` with both parts non-empty"
-        ),
-    }
-}
-
 pub(crate) fn find_request<'a>(
     file: &'a TargetRequestsFile,
-    reference: &str,
+    reference: &ComponentRef,
 ) -> Result<&'a TargetRequest> {
     file.requests
         .iter()
-        .find(|r| r.component == reference)
+        .find(|r| &r.component == reference)
         .ok_or_else(|| anyhow::anyhow!("no request for {reference}"))
 }
 
@@ -117,32 +104,31 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn validate_reference_accepts_well_formed() {
-        validate_reference("atlas:atlas-ontology").unwrap();
-    }
-
-    #[test]
-    fn validate_reference_rejects_missing_colon() {
-        let err = validate_reference("atlas-only").unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(msg.contains("repo_slug"), "error must explain expected shape: {msg}");
-    }
-
-    #[test]
-    fn validate_reference_rejects_empty_repo_or_component() {
-        assert!(validate_reference(":only-component").is_err());
-        assert!(validate_reference("only-repo:").is_err());
-    }
-
-    #[test]
     fn run_add_appends_request_to_empty_file() {
         let tmp = TempDir::new().unwrap();
         run_add(tmp.path(), "atlas:atlas-ontology", "core schema").unwrap();
 
         let updated = read_target_requests(tmp.path()).unwrap();
         assert_eq!(updated.requests.len(), 1);
-        assert_eq!(updated.requests[0].component, "atlas:atlas-ontology");
+        assert_eq!(
+            updated.requests[0].component,
+            ComponentRef::new("atlas", "atlas-ontology")
+        );
         assert_eq!(updated.requests[0].reason, "core schema");
+    }
+
+    #[test]
+    fn run_add_rejects_reference_with_empty_repo_slug() {
+        let tmp = TempDir::new().unwrap();
+        let err = run_add(tmp.path(), ":only-component", "reason").unwrap_err();
+        assert!(format!("{err:#}").contains("repo_slug"));
+    }
+
+    #[test]
+    fn run_add_rejects_reference_with_empty_component_id() {
+        let tmp = TempDir::new().unwrap();
+        let err = run_add(tmp.path(), "only-repo:", "reason").unwrap_err();
+        assert!(format!("{err:#}").contains("component_id"));
     }
 
     #[test]
@@ -179,7 +165,10 @@ mod tests {
 
         let updated = read_target_requests(tmp.path()).unwrap();
         assert_eq!(updated.requests.len(), 1);
-        assert_eq!(updated.requests[0].component, "sidekick:router");
+        assert_eq!(
+            updated.requests[0].component,
+            ComponentRef::new("sidekick", "router")
+        );
     }
 
     #[test]
@@ -193,14 +182,15 @@ mod tests {
 
     #[test]
     fn find_request_returns_match() {
+        let component = ComponentRef::new("atlas", "ontology");
         let file = TargetRequestsFile {
             schema_version: TARGET_REQUESTS_SCHEMA_VERSION,
             requests: vec![TargetRequest {
-                component: "atlas:ontology".into(),
+                component: component.clone(),
                 reason: "x".into(),
             }],
         };
-        let found = find_request(&file, "atlas:ontology").unwrap();
-        assert_eq!(found.component, "atlas:ontology");
+        let found = find_request(&file, &component).unwrap();
+        assert_eq!(found.component, component);
     }
 }
