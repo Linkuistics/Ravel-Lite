@@ -27,15 +27,18 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::component_ref::ComponentRef;
+
 pub const FOCUS_OBJECTIONS_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Objection {
     /// The chosen target is not the right component for this work.
-    /// `suggested_target` proposes a replacement (`<repo>:<component>`).
+    /// `suggested_target` proposes a replacement; serialises as the
+    /// canonical `<repo_slug>:<component_id>` string form.
     WrongTarget {
-        suggested_target: String,
+        suggested_target: ComponentRef,
         reasoning: String,
     },
     /// A specific backlog item is not ready and should be deferred.
@@ -81,7 +84,7 @@ mod tests {
     #[test]
     fn wrong_target_round_trips_with_kebab_kind() {
         let obj = Objection::WrongTarget {
-            suggested_target: "atlas:atlas-ontology".into(),
+            suggested_target: ComponentRef::new("atlas", "atlas-ontology"),
             reasoning: "Edit needs ontology-side change first.\n".into(),
         };
         let yaml = serde_yaml::to_string(&obj).unwrap();
@@ -89,7 +92,21 @@ mod tests {
             yaml.contains("kind: wrong-target"),
             "kind must be kebab-cased: {yaml}"
         );
+        assert!(
+            yaml.contains("suggested_target: atlas:atlas-ontology"),
+            "suggested_target must serialise as <repo>:<id> string: {yaml}"
+        );
         assert_eq!(serde_yaml::from_str::<Objection>(&yaml).unwrap(), obj);
+    }
+
+    #[test]
+    fn wrong_target_rejects_malformed_suggested_target_at_parse() {
+        let yaml = "kind: wrong-target\nsuggested_target: no-colon\nreasoning: x\n";
+        let result: Result<Objection, _> = serde_yaml::from_str(yaml);
+        assert!(
+            result.is_err(),
+            "ComponentRef must reject missing-colon at parse time"
+        );
     }
 
     #[test]
@@ -137,7 +154,7 @@ mod tests {
     fn kind_str_matches_wire_discriminator() {
         assert_eq!(
             Objection::WrongTarget {
-                suggested_target: "a:b".into(),
+                suggested_target: ComponentRef::new("a", "b"),
                 reasoning: "r".into(),
             }
             .kind_str(),
@@ -173,7 +190,7 @@ mod tests {
             schema_version: FOCUS_OBJECTIONS_SCHEMA_VERSION,
             objections: vec![
                 Objection::WrongTarget {
-                    suggested_target: "atlas:ontology".into(),
+                    suggested_target: ComponentRef::new("atlas", "ontology"),
                     reasoning: "Need ontology change first.\n".into(),
                 },
                 Objection::SkipItem {

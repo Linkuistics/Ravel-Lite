@@ -21,6 +21,7 @@ use super::schema::{FocusObjectionsFile, Objection};
 use super::yaml_io::{
     delete_focus_objections, read_focus_objections, write_focus_objections,
 };
+use crate::component_ref::ComponentRef;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum OutputFormat {
@@ -49,15 +50,14 @@ pub fn run_clear(plan_dir: &Path) -> Result<()> {
 
 pub fn run_add_wrong_target(
     plan_dir: &Path,
-    suggested_target: &str,
+    suggested_target: ComponentRef,
     reasoning: &str,
 ) -> Result<()> {
-    validate_reference(suggested_target)?;
     require_non_empty(reasoning, "--reasoning")?;
     append(
         plan_dir,
         Objection::WrongTarget {
-            suggested_target: suggested_target.to_string(),
+            suggested_target,
             reasoning: ensure_trailing_newline(reasoning),
         },
     )
@@ -89,20 +89,6 @@ fn append(plan_dir: &Path, objection: Objection) -> Result<()> {
     let mut file = read_focus_objections(plan_dir)?;
     file.objections.push(objection);
     write_focus_objections(plan_dir, &file)
-}
-
-/// Mirrors the reference grammar enforced by `ComponentRef::from_str`
-/// (used by `target_requests` and `this_cycle_focus` for their typed
-/// `ComponentRef` fields). Kept as a runtime check here because
-/// `Objection::suggested_target` is still a free-form `String` — once
-/// that field is lifted onto `ComponentRef` this helper goes away too.
-pub(crate) fn validate_reference(reference: &str) -> Result<()> {
-    match reference.split_once(':') {
-        Some((repo, component)) if !repo.is_empty() && !component.is_empty() => Ok(()),
-        _ => bail!(
-            "target reference {reference:?} must be `<repo_slug>:<component_id>` with both parts non-empty"
-        ),
-    }
 }
 
 fn require_non_empty(value: &str, flag_name: &str) -> Result<()> {
@@ -137,7 +123,12 @@ mod tests {
     #[test]
     fn run_add_wrong_target_appends_typed_objection() {
         let tmp = TempDir::new().unwrap();
-        run_add_wrong_target(tmp.path(), "atlas:atlas-ontology", "Need ontology change first").unwrap();
+        run_add_wrong_target(
+            tmp.path(),
+            ComponentRef::new("atlas", "atlas-ontology"),
+            "Need ontology change first",
+        )
+        .unwrap();
 
         let file = read_focus_objections(tmp.path()).unwrap();
         assert_eq!(file.objections.len(), 1);
@@ -146,18 +137,11 @@ mod tests {
                 suggested_target,
                 reasoning,
             } => {
-                assert_eq!(suggested_target, "atlas:atlas-ontology");
+                assert_eq!(suggested_target, &ComponentRef::new("atlas", "atlas-ontology"));
                 assert_eq!(reasoning, "Need ontology change first\n");
             }
             other => panic!("expected WrongTarget, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn run_add_wrong_target_rejects_malformed_reference() {
-        let tmp = TempDir::new().unwrap();
-        let err = run_add_wrong_target(tmp.path(), "no-colon", "reasoning").unwrap_err();
-        assert!(format!("{err:#}").contains("repo_slug"));
     }
 
     #[test]
@@ -186,7 +170,7 @@ mod tests {
     #[test]
     fn each_add_verb_rejects_empty_reasoning() {
         let tmp = TempDir::new().unwrap();
-        assert!(run_add_wrong_target(tmp.path(), "a:b", "").is_err());
+        assert!(run_add_wrong_target(tmp.path(), ComponentRef::new("a", "b"), "").is_err());
         assert!(run_add_skip_item(tmp.path(), "t-1", "").is_err());
         assert!(run_add_premature(tmp.path(), "").is_err());
     }
@@ -201,7 +185,7 @@ mod tests {
     #[test]
     fn objections_accumulate_across_calls() {
         let tmp = TempDir::new().unwrap();
-        run_add_wrong_target(tmp.path(), "a:b", "r1").unwrap();
+        run_add_wrong_target(tmp.path(), ComponentRef::new("a", "b"), "r1").unwrap();
         run_add_skip_item(tmp.path(), "t-1", "r2").unwrap();
         run_add_premature(tmp.path(), "r3").unwrap();
 

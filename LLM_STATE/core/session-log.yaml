@@ -1702,3 +1702,18 @@ sessions:
     - Two new wire-shape pinning tests added per module (`target_request_component_serialises_as_string_scalar`, `target_serialises_as_string_scalar`) to guard the freeze constraint directly.
     - The `drain_errors_on_malformed_component_reference` test was rewritten to inject raw YAML (since a malformed `ComponentRef` cannot be constructed in typed code); the error now surfaces at deserialise time rather than drain time, but drain still errors loudly — the runtime property the runner relies on is unchanged.
     - What this suggests next: lift `Objection::suggested_target: String` in `src/state/focus_objections/schema.rs` onto `ComponentRef`, which would let the last local `validate_reference` go away too.
+- id: session-119
+  timestamp: 2026-05-02T07:33:02Z
+  phase: work
+  body: |
+    ### Session 119 (2026-05-02T07:33:02Z) — Lift WrongTarget.suggested_target from String to ComponentRef
+
+    - Lifted `Objection::WrongTarget.suggested_target` from `String` to `ComponentRef` in `src/state/focus_objections/schema.rs`
+    - Updated the CLI `--suggested-target` flag in `src/main.rs` to parse directly into `ComponentRef` via clap's `from_str` — malformed `<repo>:<id>` now fails at the CLI boundary before any YAML write
+    - Deleted the `validate_reference` runtime helper in `src/state/focus_objections/verbs.rs` — its single in-file caller (`run_add_wrong_target`) was gone, and type enforcement supersedes the string guard
+    - Wire shape unchanged: `ComponentRef` serialises as the canonical `<repo_slug>:<component_id>` string, confirmed by the round-trip test asserting the literal YAML output
+    - All tests pass (1015 total, 0 failed); clippy clean with `-D warnings`
+
+    What worked: the lift was straightforward because `ComponentRef::from_str` was already implemented and clap uses `FromStr` for argument parsing. The only non-mechanical step was verifying the Serialize/Deserialize impls preserved wire compatibility.
+
+    What this suggests next: the infra category is now effectively drained (only one blocked task remains). The `item_id: String` field on `Objection::SkipItem` is the next candidate for a similar lift if a `BacklogId` newtype is ever introduced, but that requires more design.

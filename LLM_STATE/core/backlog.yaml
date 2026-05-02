@@ -127,7 +127,7 @@ tasks:
 - id: lift-focus-objections-suggested-target-onto-typed-componentref
   title: Lift focus_objections suggested_target onto typed ComponentRef
   category: infra
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Lift `Objection::suggested_target: String` in `src/state/focus_objections/schema.rs`
@@ -167,6 +167,17 @@ tasks:
 
     None; `ComponentRef` is already imported in the codebase and the pattern is
     established. Wire shape is unchanged (`<repo>:<id>` string scalar), so no migration.
+  results: |
+    **What changed.** `Objection::WrongTarget.suggested_target` is now `ComponentRef` instead of `String`. The CLI flag `--suggested-target` is parsed into `ComponentRef` by clap at the boundary (using `ComponentRef::from_str`), so a malformed `<repo>:<id>` fails before any YAML write. The runtime `validate_reference` helper in `src/state/focus_objections/verbs.rs` was deleted — its single in-file caller is gone, and the type system now enforces the same grammar at three boundaries (CLI parsing, YAML deserialisation, function signature).
+
+    **Wire-shape compatibility.** Confirmed identical: `ComponentRef` has a custom `Serialize`/`Deserialize` (in `src/component_ref.rs:72-83`) that emits/reads the canonical `<repo_slug>:<component_id>` string. So `focus-objections.yaml` is byte-identical before and after the lift; the LLM_STATE shape freeze is not at risk. Verified by `wrong_target_round_trips_with_kebab_kind` which now also asserts `suggested_target: atlas:atlas-ontology` appears literally in the YAML.
+
+    **Test impact.** Added `wrong_target_rejects_malformed_suggested_target_at_parse` to assert the new schema-level rejection. Removed `run_add_wrong_target_rejects_malformed_reference` because validation no longer happens at the verb layer (it happens upstream at clap and downstream at deserialisation, both already covered). All other tests updated mechanically to construct `ComponentRef::new("atlas", "atlas-ontology")` instead of `"atlas:atlas-ontology".into()`. Workspace test count: 1015 passed, 0 failed; `scripts/check.sh` (`cargo clippy --all-targets --workspace -- -D warnings`) clean.
+
+    **What this suggests next.**
+    - The infra category now has only one open task ("Add PTY-capture debug path…") which is `blocked`, so infra is effectively drained for now.
+    - This pattern — newtype with stringly Serialize/Deserialize — is the cheapest way to lift any other "looks like `<x>:<y>`" string field without changing the wire shape. Worth scanning for other free-form `String` fields on backlog/memory/intent schemas that match a parsed format. The `item_id: String` on `Objection::SkipItem` is a candidate (it's a backlog row id), though there is no `BacklogId` newtype yet — that would be a larger lift.
+    - The doc comment on `Objection::WrongTarget` no longer needs the prose "still a free-form `String`" caveat — it's been removed from the schema docstring. The verbs.rs forward-reference comment that said "once that field is lifted onto `ComponentRef` this helper goes away too" was deleted alongside the helper.
 - id: phase-cycle-reorder-to-triage-first-eliminate-in-cycle-dream
   title: 'Phase cycle: reorder to triage-first, eliminate in-cycle dream'
   category: architecture-next

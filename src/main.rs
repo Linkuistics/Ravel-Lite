@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use ravel_lite::agent::claude_code::ClaudeCodeAgent;
 use ravel_lite::agent::pi::PiAgent;
 use ravel_lite::agent::Agent;
+use ravel_lite::component_ref::ComponentRef;
 use ravel_lite::config::{load_agent_config, load_shared_config, resolve_config_dir};
 use ravel_lite::git::project_root_for_plan;
 use component_ontology::cli::{parse_edge_kind, parse_evidence_grade, parse_lifecycle_scope};
@@ -1084,7 +1085,7 @@ enum FocusObjectionsCommands {
         plan_dir: PathBuf,
         /// `<repo_slug>:<component_id>` reference proposing a replacement target.
         #[arg(long)]
-        suggested_target: String,
+        suggested_target: ComponentRef,
         /// Free-form explanation surfaced verbatim into the next triage prompt.
         #[arg(long)]
         reasoning: String,
@@ -2233,7 +2234,7 @@ fn dispatch_focus_objections(command: FocusObjectionsCommands) -> Result<()> {
             plan_dir,
             suggested_target,
             reasoning,
-        } => focus_objections::run_add_wrong_target(&plan_dir, &suggested_target, &reasoning),
+        } => focus_objections::run_add_wrong_target(&plan_dir, suggested_target, &reasoning),
         FocusObjectionsCommands::AddSkipItem {
             plan_dir,
             item_id,
