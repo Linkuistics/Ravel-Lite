@@ -947,3 +947,7 @@ entries:
   title: CREATE_ALLOWED_TOOLS must track create-plan.md state verb usage
   body: |
     `src/create.rs::CREATE_ALLOWED_TOOLS` must include `Bash(ravel-lite state <area>:*)` for every `ravel-lite state <area>` subcommand invoked from `defaults/create-plan.md`. The create spawn uses `--setting-sources project,local`; omitting a verb glob silently blocks that call during the create dialogue. Extend the constant (and its regression test in `src/create.rs`) when adding new state verb invocations to `create-plan.md`. The session that fixed `target-requests` also notes this pattern will recur when `fixed-memory` verbs are added to create-plan.md.
+- id: anchors-yaml-verb-surface-deferred-until-anchors-yaml-is-consumed
+  title: anchors.yaml verb surface deferred until anchors.yaml is consumed
+  body: |
+    §3 of `defaults/create-plan.md` still uses a raw `Write` to `anchors.yaml`. A follow-up could mirror the target-requests fix: introduce `state anchors {list,add,remove}` verbs, update §3 to call them, and allowlist `Bash(ravel-lite state anchors:*)` in `CREATE_ALLOWED_TOOLS`. Defer until `anchors.yaml` is actually consumed by something other than a passive read — today nothing reads it, so a schema-enforcing verb adds safety without unblocking any downstream work.

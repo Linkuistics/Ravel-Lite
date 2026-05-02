@@ -38,99 +38,6 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: create-plan-prompt-use-state-target-requests-add-allowlist-the-tool-read-seeded-queue-before-proposing
-  title: 'create-plan prompt: use state target-requests add, allowlist the tool, read seeded queue before proposing'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Update the create-plan prompt (`defaults/create-plan.md`) to use the
-    `state target-requests add` verb for writing targets, allowlist the tool
-    in `CREATE_ALLOWED_TOOLS`, and instruct the LLM to read any CLI-seeded
-    entries before proposing additions.
-
-    ## Problem being solved
-
-    Two gaps surfaced after shipping `ravel-lite create --target`:
-
-    1. **Schema-version bug (pre-existing):** The prompt's §2 instructs the
-       LLM to write `target-requests.yaml` raw, and the example YAML omits
-       `schema_version: 1`. LLM-authored files therefore fail
-       `read_target_requests`'s `TARGET_REQUESTS_SCHEMA_VERSION` check at
-       the next phase boundary. The CLI-seeded path produces a valid file;
-       the LLM-authored path does not.
-
-    2. **Overwrite clobber (new gap):** When the user passes `--target`,
-       the file already exists when claude starts. The current prompt says
-       "Write the proposed targets to `{{PLAN}}/target-requests.yaml`" —
-       a raw Write-overwrite that clobbers the seeded entries.
-
-    ## Settled decisions
-
-    - **Use `state target-requests add` in the prompt.** Mechanical file
-      writes belong in Rust per the `feedback_mechanical_ops_in_runner.md`
-      memory constraint. The verb handles `schema_version` automatically and
-      appends rather than overwrites.
-    - **Allowlist the tool.** Add `Bash(ravel-lite state target-requests:*)`
-      to `CREATE_ALLOWED_TOOLS` in `src/create.rs`. This parallels how
-      other state verbs (backlog, intents) are already allowed during the
-      create dialogue.
-    - **Read before proposing.** Add a paragraph instructing the LLM to
-      first call `state target-requests list` to see CLI-seeded entries, then
-      treat the dialogue as proposing additions/removals on top — not a blank
-      slate.
-
-    ## Reference examples
-
-    - `src/create.rs` — `CREATE_ALLOWED_TOOLS` constant; `run_create` where
-      the create dialogue is launched.
-    - `defaults/create-plan.md` — §2 body that currently writes
-      `target-requests.yaml` raw; §3 where anchors are handled (similar
-      pattern, separate concern).
-    - `src/state/target_requests/verbs.rs` — `run_add` verb the prompt
-      should call (validates non-empty reason, enforces schema version).
-
-    ## Scope
-
-    1. Replace the §2 prompt body that hand-writes `target-requests.yaml`
-       with an instruction to call
-       `ravel-lite state target-requests add <ref> --reason <text>` per
-       proposed component.
-    2. Add `Bash(ravel-lite state target-requests:*)` to `CREATE_ALLOWED_TOOLS`.
-    3. Add a paragraph telling the LLM to first inspect existing requests via
-       `state target-requests list` before proposing, so CLI-seeded entries
-       are visible and not clobbered.
-    4. Confirm `./scripts/check.sh` clean and
-       `shipped_pi_prompts_have_no_dangling_tokens` passes.
-
-    ## Dependencies
-
-    None. Self-contained prompt + allowlist change.
-  results: |
-    ## What was done
-
-    - **defaults/create-plan.md §2** rewritten: removed the raw `Write target-requests.yaml` instruction (and its schema-version-omitting example YAML); replaced with `ravel-lite state target-requests {list,add,remove}` invocations. New paragraph instructs the LLM to first call `state target-requests list` so CLI-seeded entries are visible and not clobbered. Explicit "do not write `target-requests.yaml` directly" guard included with the rationale (schema_version + clobber).
-    - **defaults/create-plan.md §4** updated: review step now lists target-requests via `state target-requests list` for consistency with intents.
-    - **src/create.rs** `CREATE_ALLOWED_TOOLS` constant: added `Bash(ravel-lite state target-requests:*)` so the new verbs flow without per-call approval prompts.
-    - **src/create.rs tests**: added two regression guards — `create_prompt_uses_target_requests_verbs_not_raw_yaml_writes` (fails if §2 reverts to instructing raw YAML writes) and `create_allowed_tools_includes_target_requests_verbs` (fails if the allowlist drops the new permission).
-    - **src/init.rs**: added `EmbeddedFile` entry for `fixed-memory/cli-tool-design.md` to clear the pre-existing `every_file_under_defaults_is_registered_in_embedded_files` drift-guard failure that was unrelated to this task but blocking a green test run. (The file existed in `defaults/` from an earlier task but had not been registered in `EMBEDDED_FILES`.)
-
-    ## What worked
-
-    - The fix is the smallest possible: a prompt rewrite plus one allowlist entry. No new module, no new verb, no schema change. The existing `state target-requests add` verb already enforces non-empty `--reason`, rejects duplicates, and writes `schema_version: 1` — so the LLM-authored failure mode (`schema_version` missing) is impossible by construction once the LLM is routed through it.
-    - The two new tests are tight: they assert presence of specific substrings in the embedded prompt and the constant. A future regression that re-introduced the raw-write instruction would fail loudly during `cargo test --lib create::tests`.
-    - `./scripts/check.sh` clean. `cargo test --workspace` clean (948 lib tests + integration suites all pass). `shipped_pi_prompts_have_no_dangling_tokens` and `every_file_under_defaults_is_registered_in_embedded_files` both pass.
-
-    ## What didn't work / was deliberately skipped
-
-    - §3 (anchors) still uses raw `Write` to `anchors.yaml`. Out of scope per the task description (which scoped only §2 / target-requests). The same pattern would apply: an `anchors` CLI verb does not exist yet, so closing this gap requires a separate task that designs the anchors verb surface first.
-    - The pre-existing `init` drift-guard fix for `cli-tool-design.md` is adjacent to this task, not part of it. It was a one-line registration that pulled `cargo test --workspace` to green; without it, the failing test would have masked any regression my edits introduced. The fix belongs to whoever shipped `cli-tool-design.md` (the in-flight `implement-fixed-memory-cli-overlay-and-sweep-phase-prompts` task, which references this file in its scope), but absent that task landing, the orphaned file was breaking the gate.
-
-    ## What this suggests next
-
-    - The `implement-fixed-memory-cli-overlay-and-sweep-phase-prompts` task (next ready candidate, no deps) will need to introduce `Bash(ravel-lite fixed-memory:*)` to allowlists across multiple per-phase constants — same allowlist pattern, broader sweep. The pattern is well established (this task plus the existing `state intents:*`, `state backlog:*`, `state memory:*` entries).
-    - The CLI-audit task (`cli-audit-and-refactor-against-cli-tool-design-md`, blocked on fixed-memory) should consider whether `state target-requests` (and similar scratch-queue verbs) belong under a separate top-level command rather than buried under `state`, since they aren't TMS items. Out of scope here.
-    - Anchors verb design: a follow-up task could mirror this one — introduce `state anchors {list,add,remove}` (or similar), update §3 of create-plan.md to use it, allowlist the verb. Defer until anchors actually consume more than a passive YAML file (today nothing reads `anchors.yaml` — verifying this would be a precondition).
 - id: implement-fixed-memory-cli-overlay-and-sweep-phase-prompts
   title: Implement fixed-memory CLI overlay and sweep phase prompts
   category: architecture-next
@@ -279,7 +186,8 @@ tasks:
   title: 'Plan finish: pr/merge with memory promotion and archive'
   category: architecture-next
   status: not_started
-  dependencies: []
+  dependencies:
+  - phase-boundary-mechanics-worktree-mount-drain-at-triage-work
   description: |
     Implement plan completion: promote plan memory into component memory, ship code + memory together via PR or local fast-forward, archive the plan dir.
 
@@ -319,7 +227,8 @@ tasks:
   title: 'Sync: ravel-lite sync plan from other-plan'
   category: architecture-next
   status: not_started
-  dependencies: []
+  dependencies:
+  - phase-boundary-mechanics-worktree-mount-drain-at-triage-work
   description: |
     Add explicit cross-plan visibility for solo devs running multiple plans in parallel. Replaces the v1 "direct mode" target types from earlier drafts.
 
