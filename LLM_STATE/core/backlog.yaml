@@ -38,75 +38,11 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: phase-boundary-mechanics-worktree-mount-drain-at-triage-work
-  title: 'Phase-boundary mechanics: worktree mount at triage→work'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Implement the phase-boundary mechanics that mount/unmount target worktrees at the triage→work transition and write `targets.yaml`, so the two-stream-commits task has a concrete worktree-resolution layer to build on.
-
-    ## Why
-
-    `two-stream-commits` groups commits by `target: ComponentRef` and applies each group in the target's worktree. That requires (a) a mounted worktree per target, (b) a resolver from `ComponentRef` → worktree path, and (c) `targets.yaml` populated with the mounted paths. The drain of `target-requests.yaml` into `targets.yaml` is already in place (`src/phase_loop.rs` calls `drain_target_requests(plan_dir, config_root)` inside the phase loop). What remains is the worktree mount/unmount layer and the resolver.
-
-    ## Scope
-
-    - At the triage→work phase boundary, for each new entry drained into `targets.yaml`: mount a `ravel-lite/<plan>/main` worktree for the target's resolved repo path.
-    - Expose `resolve_target_worktree(plan_dir, target: &ComponentRef) -> PathBuf` that reads `targets.yaml` and returns the mounted worktree path. `apply_commits_spec` will use this.
-    - Unmount worktrees at plan finish (out of scope here; noted for the `plan-finish` task).
-    - Tests: draining a request mounts the worktree and writes the mount path into `targets.yaml`; a second drain of the same ref is idempotent; `resolve_target_worktree` returns the correct path.
-
-    ## Note on drain
-
-    `drain_target_requests` at the phase boundary is already wired in `src/phase_loop.rs`. This task only adds the worktree mount/unmount layer on top of the existing drain.
-
-    ## References
-
-    - `docs/architecture-next.md` §Target worktrees, §Phase boundaries
-    - `src/phase_loop.rs` — `ScriptPhase::GitCommitTriage` handler where drain fires
-    - `src/state/target_requests/` — existing read/write layer
-    - `src/state/targets/` — `targets.yaml` write layer
-  results: |
-    ## What was done
-
-    Added `resolve_target_worktree(plan_dir: &Path, target: &ComponentRef) -> Result<PathBuf>` in `src/state/targets/yaml_io.rs`, exported via `state::targets::resolve_target_worktree`. It reads `targets.yaml`, finds the row matching `(repo_slug, component_id)`, and returns `plan_dir.join(working_root)` — preserving the absoluteness of the supplied `plan_dir`. Unmounted refs surface a clear error pointing at `target-requests.yaml`.
-
-    Four new unit tests in `yaml_io::tests`:
-    - `resolve_target_worktree_returns_plan_relative_path_for_mounted_target` — happy path.
-    - `resolve_target_worktree_errors_when_component_not_mounted` — error cites the missing ref + names `target-requests`.
-    - `resolve_target_worktree_errors_when_targets_yaml_absent` — pre-mount state collapses to the same not-mounted error contract via `read_targets`'s "missing = empty default".
-    - `resolve_target_worktree_distinguishes_components_sharing_a_worktree` — two components in one repo share a `working_root`; resolver still discriminates on `component_id`.
-
-    ## What worked
-
-    - **Pre-existing mount/drain layer was complete.** `mount_target` already does `git worktree add -b ravel-lite/<plan>/main`, idempotent on repeat, attaches second component to existing worktree, writes `targets.yaml` rows. `drain_target_requests` calls it for each queued request and is wired into `phase_loop`'s loop-top boundary (line 399), which subsumes the triage→work boundary the task names. So the only real gap was the resolver — much smaller than the task description's headline implied.
-    - **Signature widening to `Result<PathBuf>`** — task spec said `-> PathBuf` but that would silently produce wrong paths for unmounted refs. Result-typed error matches sibling APIs (`read_targets`, `mounted_worktree_add_dirs`) and matches the typed-API memory rule.
-    - **Co-locating with `mounted_worktree_add_dirs`.** Both functions read targets.yaml + project to mount paths; sharing a module file kept the surface area in one read.
-
-    ## What didn't work / surprises
-
-    - The task's "triage→work" wording is slightly misleading — drain runs at every phase boundary in the current implementation (loop-top in `phase_loop::phase_loop`, before `read_phase`). That's per the architecture-next §Phase boundaries spec ("between phases"), so no relocation needed. Worth mentioning in the next reflect for memory if the work_phase prompt ever diverges.
-    - `cargo test --workspace --quiet` truncated to ~10 tests visible (only 4 binaries' summaries shown). Without `--quiet`, full tally is **1097 passed / 0 failed**. Don't trust `--quiet` for verification across a workspace.
-
-    ## Verification
-
-    - `./scripts/check.sh` — clippy gate clean.
-    - `cargo test --workspace` — 1097 passed, 0 failed.
-    - `cargo test --lib state::targets::yaml_io` — 12 passed (4 new + 8 existing).
-    - Tree dirty after work, only `src/state/targets/mod.rs` + `src/state/targets/yaml_io.rs` modified — analyse-work picks them up.
-
-    ## What this suggests next
-
-    The downstream `two-stream-commits-target-worktrees-first-context-record-last` task is now unblocked. Its `apply_commits_spec` rewrite can call `resolve_target_worktree(plan_dir, &commit.target)` to chdir into each commit's working_root before `git add -- <pathspec>` + `git commit`. The fall-back path for commits without a `target:` field stays at `project_dir` (v1 behaviour preserved).
-
-    Sibling architecture-next tasks that also depend on phase-boundary-mechanics — `plan-finish-pr-merge-with-memory-promotion-and-archive` and `sync-ravel-lite-sync-plan-from-other-plan` — are now equally unblocked, but the natural next step is two-stream-commits since it's the consumer of the resolver and the most direct test of whether the abstraction is right.
 - id: two-stream-commits-target-worktrees-first-context-record-last
   title: 'Two-stream commits: target worktrees first, context record last'
   category: architecture-next
   status: not_started
-  dependencies:
-  - phase-boundary-mechanics-worktree-mount-drain-at-triage-work
+  dependencies: []
   description: |
     Implement the two-stream commit ordering: apply target-worktree commits first, then commit plan-state (context) changes. A target failure must not leave the context recording false-positive progress.
 
@@ -160,8 +96,7 @@ tasks:
   title: 'Plan finish: pr/merge with memory promotion and archive'
   category: architecture-next
   status: not_started
-  dependencies:
-  - phase-boundary-mechanics-worktree-mount-drain-at-triage-work
+  dependencies: []
   description: |
     Implement plan completion: promote plan memory into component memory, ship code + memory together via PR or local fast-forward, archive the plan dir.
 
@@ -201,8 +136,7 @@ tasks:
   title: 'Sync: ravel-lite sync plan from other-plan'
   category: architecture-next
   status: not_started
-  dependencies:
-  - phase-boundary-mechanics-worktree-mount-drain-at-triage-work
+  dependencies: []
   description: |
     Add explicit cross-plan visibility for solo devs running multiple plans in parallel. Replaces the v1 "direct mode" target types from earlier drafts.
 
