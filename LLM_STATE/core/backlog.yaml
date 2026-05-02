@@ -161,7 +161,7 @@ tasks:
 - id: ravel-lite-create-seeds-target-requests-yaml
   title: ravel-lite create seeds target-requests.yaml
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Make `ravel-lite create` write an initial `target-requests.yaml` from user-supplied component references at plan creation time.
@@ -180,6 +180,114 @@ tasks:
     ## Dependencies
 
     Depends on `drain-target-requests-at-phase-boundaries` for the `target-requests.yaml` schema and write layer.
+  results: |
+    ## Results
+
+    Implemented end-to-end. The `Create` subcommand now accepts a
+    repeatable `--target <repo>:<component>` flag whose values parse as
+    `ComponentRef` at the clap boundary; malformed values fail with the
+    same diagnostics `ComponentRef::FromStr` produces elsewhere ("missing
+    ':' separator", "empty repo_slug", "empty component_id"). After
+    `scaffold_plan_dir`, `seed_target_requests` writes the queue to
+    `<plan>/target-requests.yaml` via the canonical `write_target_requests`
+    path so the runner drains it identically to LLM-authored entries at the
+    next phase boundary. Empty target lists are a no-op (no file written),
+    preserving the steady-state "absent file = nothing queued" invariant
+    the drain relies on.
+
+    ### What worked
+
+    - Reused `TargetRequestsFile` / `TargetRequest` directly — no new
+      schema, no new wire shape, no migration concern. The file produced
+      by `seed_target_requests` round-trips through `read_target_requests`
+      with the current `schema_version: 1` guard intact.
+    - Clap's auto-`FromStr` derivation (already used at
+      `src/main.rs:1087` for `suggested_target: ComponentRef`) made the
+      parse-time validation a single `Vec<ComponentRef>` field — no
+      custom `value_parser` needed.
+    - TDD discipline held: three failing tests in `src/create.rs` first,
+      then minimal implementation. One iteration of red-green-red-green
+      caught a substring assertion ("creation" doesn't contain "create")
+      and forced a more honest reason string (`"Seeded by `ravel-lite
+      create --target`"`).
+    - All 946 lib tests + integration suites green; `./scripts/check.sh`
+      (clippy `-D warnings` across workspace) clean.
+
+    ### What didn't / surfaced issues
+
+    **Pre-existing bug in `defaults/create-plan.md` (out of scope, but
+    relevant):** the prompt instructs the LLM to write
+    `target-requests.yaml` raw, and the example YAML omits
+    `schema_version: 1`. If the LLM follows the prompt literally, the
+    resulting file fails `read_target_requests`'s
+    `TARGET_REQUESTS_SCHEMA_VERSION` check at the next phase boundary.
+    This bug pre-exists and is not made worse by this change — but it
+    becomes visible once the create flow is actually exercised end-to-end
+    (my CLI-seeded path produces a *valid* file, while the LLM-authored
+    path does not).
+
+    **Prompt obliviousness to pre-seeded files:** with this change, when
+    the user supplies `--target`, the file already exists when claude
+    starts. The current prompt says "Write the proposed targets to
+    `{{PLAN}}/target-requests.yaml`" — i.e. it would Write-overwrite,
+    clobbering the seeded entries. Two clean fixes (architecturally — out
+    of scope here):
+
+    1. Update the prompt to read existing requests and append, not
+       overwrite.
+    2. Have the prompt use `state target-requests add` (mechanical work
+       in Rust per the `feedback_mechanical_ops_in_runner.md` memory
+       constraint) and add `Bash(ravel-lite state target-requests:*)` to
+       `CREATE_ALLOWED_TOOLS`. This is the architecturally clean path and
+       eliminates the schema-version bug above for free.
+
+    ### What this suggests next
+
+    A small follow-up task: **"create-plan prompt: use `state
+    target-requests add` verb, allowlist the tool, and read seeded queue
+    before proposing"**. Scope:
+
+    - Replace the §2 prompt body that hand-writes
+      `target-requests.yaml` with an instruction to call
+      `ravel-lite state target-requests add <ref> --reason <text>` per
+      proposed component.
+    - Replace the equivalent §3 anchors path similarly when an `anchors`
+      state surface lands (separate concern; might be a sibling task).
+    - Add `Bash(ravel-lite state target-requests:*)` to
+      `CREATE_ALLOWED_TOOLS` in `src/create.rs`.
+    - Add a paragraph telling the LLM to first inspect existing requests
+      via `state target-requests list` (to see CLI-seeded entries) and
+      treat the dialogue as proposing additions/removals on top.
+
+    This unblocks rich LLM-driven target proposal while keeping the CLI
+    fast-path I just added as the explicit "I already know what I want"
+    route.
+
+    ### Files changed
+
+    - `src/create.rs` — added `seed_target_requests` (with three tests),
+      threaded `targets: &[ComponentRef]` through `run_create`, imported
+      `ComponentRef` and `TargetRequest`/`TargetRequestsFile`/
+      `TARGET_REQUESTS_SCHEMA_VERSION`/`write_target_requests` from
+      `crate::state::target_requests`.
+    - `src/main.rs` — added `targets: Vec<ComponentRef>` field with
+      `#[arg(long = "target")]` to the `Create` variant and threaded it
+      through the dispatch site.
+
+    ### Verification
+
+    - `cargo test` — 946 lib tests + 6 integration tests + 26 across other
+      test binaries, all green.
+    - `./scripts/check.sh` — clippy `-D warnings` clean.
+    - Smoke tests of the actual CLI:
+      - `ravel-lite create --help` shows the `--target` flag with the
+        expected description.
+      - `ravel-lite create --target bad-no-colon myplan` exits 2 with
+        `error: invalid value 'bad-no-colon' for '--target <TARGETS>':
+        ComponentRef 'bad-no-colon' missing ':' separator`.
+      - `ravel-lite create --target atlas: myplan` and
+        `ravel-lite create --target :atlas-core myplan` similarly fail at
+        parse time with the empty-half diagnostics.
 - id: migrate-ravel-lite-migrate-for-v1-to-v2-cutover
   title: 'Migrate: ravel-lite migrate for v1 to v2 cutover'
   category: architecture-next
@@ -343,3 +451,71 @@ tasks:
     - `defaults/phases/` — phase prompt files
     - `src/init.rs` — drift sentinel for `state phase-summary render` substring
     - `src/prompt.rs` — `substitute_tokens` path all prompts go through
+- id: create-plan-prompt-use-state-target-requests-add-allowlist-the-tool-read-seeded-queue-before-proposing
+  title: 'create-plan prompt: use state target-requests add, allowlist the tool, read seeded queue before proposing'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Update the create-plan prompt (`defaults/create-plan.md`) to use the
+    `state target-requests add` verb for writing targets, allowlist the tool
+    in `CREATE_ALLOWED_TOOLS`, and instruct the LLM to read any CLI-seeded
+    entries before proposing additions.
+
+    ## Problem being solved
+
+    Two gaps surfaced after shipping `ravel-lite create --target`:
+
+    1. **Schema-version bug (pre-existing):** The prompt's §2 instructs the
+       LLM to write `target-requests.yaml` raw, and the example YAML omits
+       `schema_version: 1`. LLM-authored files therefore fail
+       `read_target_requests`'s `TARGET_REQUESTS_SCHEMA_VERSION` check at
+       the next phase boundary. The CLI-seeded path produces a valid file;
+       the LLM-authored path does not.
+
+    2. **Overwrite clobber (new gap):** When the user passes `--target`,
+       the file already exists when claude starts. The current prompt says
+       "Write the proposed targets to `{{PLAN}}/target-requests.yaml`" —
+       a raw Write-overwrite that clobbers the seeded entries.
+
+    ## Settled decisions
+
+    - **Use `state target-requests add` in the prompt.** Mechanical file
+      writes belong in Rust per the `feedback_mechanical_ops_in_runner.md`
+      memory constraint. The verb handles `schema_version` automatically and
+      appends rather than overwrites.
+    - **Allowlist the tool.** Add `Bash(ravel-lite state target-requests:*)`
+      to `CREATE_ALLOWED_TOOLS` in `src/create.rs`. This parallels how
+      other state verbs (backlog, intents) are already allowed during the
+      create dialogue.
+    - **Read before proposing.** Add a paragraph instructing the LLM to
+      first call `state target-requests list` to see CLI-seeded entries, then
+      treat the dialogue as proposing additions/removals on top — not a blank
+      slate.
+
+    ## Reference examples
+
+    - `src/create.rs` — `CREATE_ALLOWED_TOOLS` constant; `run_create` where
+      the create dialogue is launched.
+    - `defaults/create-plan.md` — §2 body that currently writes
+      `target-requests.yaml` raw; §3 where anchors are handled (similar
+      pattern, separate concern).
+    - `src/state/target_requests/verbs.rs` — `run_add` verb the prompt
+      should call (validates non-empty reason, enforces schema version).
+
+    ## Scope
+
+    1. Replace the §2 prompt body that hand-writes `target-requests.yaml`
+       with an instruction to call
+       `ravel-lite state target-requests add <ref> --reason <text>` per
+       proposed component.
+    2. Add `Bash(ravel-lite state target-requests:*)` to `CREATE_ALLOWED_TOOLS`.
+    3. Add a paragraph telling the LLM to first inspect existing requests via
+       `state target-requests list` before proposing, so CLI-seeded entries
+       are visible and not clobbered.
+    4. Confirm `./scripts/check.sh` clean and
+       `shipped_pi_prompts_have_no_dangling_tokens` passes.
+
+    ## Dependencies
+
+    None. Self-contained prompt + allowlist change.

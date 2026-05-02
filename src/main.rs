@@ -142,6 +142,13 @@ enum Commands {
         /// Plan name. Resolved to <context_root>/plans/<plan>/.
         /// See `create::validate_plan_name` for accepted characters.
         plan: String,
+        /// Seed `target-requests.yaml` with one or more `<repo>:<component>`
+        /// component references. Repeatable. Each reference is parsed and
+        /// validated at the CLI boundary. The runner drains the queued
+        /// requests at the first phase boundary, mounting worktrees the
+        /// LLM otherwise would have proposed during the create dialogue.
+        #[arg(long = "target")]
+        targets: Vec<ComponentRef>,
     },
     /// Produce an LLM-driven plan status overview for one or more plan
     /// directories. Reads each plan's phase/backlog/memory into a single
@@ -1466,9 +1473,9 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Create { config, plan } => {
+        Commands::Create { config, plan, targets } => {
             let config_root = resolve_config_dir(config)?;
-            create::run_create(&config_root, &plan).await
+            create::run_create(&config_root, &plan, &targets).await
         }
         Commands::Survey { config, plan_dirs, model, timeout_secs, prior, force } => {
             let config_root = resolve_config_dir(config)?;

@@ -19,11 +19,15 @@ use std::process::Stdio;
 use anyhow::{Context, Result};
 use tokio::process::Command as TokioCommand;
 
+use crate::component_ref::ComponentRef;
 use crate::config::{load_agent_config, load_shared_config};
 use crate::init::require_embedded;
 use crate::prompt::substitute_tokens;
 use crate::state::filenames::{
     BACKLOG_FILENAME, DREAM_WORD_COUNT_FILENAME, INTENTS_FILENAME, MEMORY_FILENAME, PHASE_FILENAME,
+};
+use crate::state::target_requests::{
+    write_target_requests, TargetRequest, TargetRequestsFile, TARGET_REQUESTS_SCHEMA_VERSION,
 };
 use crate::types::PlanContext;
 
@@ -158,7 +162,39 @@ pub fn scaffold_plan_dir(abs_plan_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_create(config_root: &Path, plan_name: &str) -> Result<()> {
+/// Write `<plan>/target-requests.yaml` seeded from CLI-supplied
+/// `--target` flags. Empty input is a no-op (no file written) so that
+/// plans created without `--target` don't carry a stub the runner
+/// would parse-and-discard at every phase boundary.
+///
+/// Per architecture-next §`ravel-lite create <plan>`, target proposal is
+/// usually the LLM's job during the create dialogue — but a user who
+/// already knows their components can skip that round-trip by passing
+/// `--target` flags. The shape (TargetRequestsFile + TargetRequest) is
+/// the same one the runner drains at the next phase boundary, so seeded
+/// entries flow through `mount_target` identically to LLM-authored ones.
+fn seed_target_requests(abs_plan_dir: &Path, targets: &[ComponentRef]) -> Result<()> {
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let file = TargetRequestsFile {
+        schema_version: TARGET_REQUESTS_SCHEMA_VERSION,
+        requests: targets
+            .iter()
+            .map(|component| TargetRequest {
+                component: component.clone(),
+                reason: "Seeded by `ravel-lite create --target`".to_string(),
+            })
+            .collect(),
+    };
+    write_target_requests(abs_plan_dir, &file)
+}
+
+pub async fn run_create(
+    config_root: &Path,
+    plan_name: &str,
+    targets: &[ComponentRef],
+) -> Result<()> {
     let shared = load_shared_config(config_root)?;
     if shared.agent != "claude-code" {
         anyhow::bail!(
@@ -180,6 +216,7 @@ pub async fn run_create(config_root: &Path, plan_name: &str) -> Result<()> {
     // intents/backlog/memory exclusively through `state intents add` etc.
     // — no raw writes.
     scaffold_plan_dir(&abs_plan_dir)?;
+    seed_target_requests(&abs_plan_dir, targets)?;
 
     let template = require_embedded(CREATE_PLAN_PROMPT_PATH)?;
     let prompt = compose_create_prompt(template, &abs_plan_dir, config_root)?;
@@ -346,6 +383,80 @@ mod tests {
         assert!(
             format!("{err:#}").contains("create plan directory"),
             "scaffold_plan_dir must error when the plan dir already exists; got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn seed_target_requests_writes_supplied_components_into_target_requests_yaml() {
+        // CLI-seeded targets land as TargetRequest entries that the
+        // first phase boundary will drain into mounted worktrees.
+        use crate::component_ref::ComponentRef;
+        use crate::state::target_requests::read_target_requests;
+
+        let tmp = TempDir::new().unwrap();
+        let plan = tmp.path().join("plan-name");
+        scaffold_plan_dir(&plan).unwrap();
+
+        let targets = vec![
+            ComponentRef::new("atlas", "atlas-core"),
+            ComponentRef::new("ravel-lite", "phase-loop"),
+        ];
+        seed_target_requests(&plan, &targets).unwrap();
+
+        let parsed = read_target_requests(&plan).unwrap();
+        assert_eq!(parsed.requests.len(), 2);
+        assert_eq!(
+            parsed.requests[0].component,
+            ComponentRef::new("atlas", "atlas-core")
+        );
+        assert_eq!(
+            parsed.requests[1].component,
+            ComponentRef::new("ravel-lite", "phase-loop")
+        );
+        assert!(
+            !parsed.requests[0].reason.is_empty(),
+            "TargetRequest.reason must be non-empty (verbs::run_add enforces this for LLM-authored entries)"
+        );
+    }
+
+    #[test]
+    fn seed_target_requests_with_empty_list_is_a_no_op() {
+        // The CLI flag is optional; create without --target must not
+        // leave behind an empty target-requests.yaml that the runner
+        // would then parse-and-discard each phase boundary.
+        use crate::state::target_requests::yaml_io::target_requests_path;
+
+        let tmp = TempDir::new().unwrap();
+        let plan = tmp.path().join("plan-name");
+        scaffold_plan_dir(&plan).unwrap();
+
+        seed_target_requests(&plan, &[]).unwrap();
+
+        assert!(
+            !target_requests_path(&plan).exists(),
+            "no target-requests.yaml should be written when --target is absent"
+        );
+    }
+
+    #[test]
+    fn seed_target_requests_reason_identifies_create_time_origin() {
+        // A human reading the queue (or triage) needs to be able to
+        // distinguish CLI-seeded entries from later LLM-authored ones.
+        use crate::component_ref::ComponentRef;
+        use crate::state::target_requests::read_target_requests;
+
+        let tmp = TempDir::new().unwrap();
+        let plan = tmp.path().join("plan-name");
+        scaffold_plan_dir(&plan).unwrap();
+
+        let targets = vec![ComponentRef::new("atlas", "atlas-core")];
+        seed_target_requests(&plan, &targets).unwrap();
+
+        let parsed = read_target_requests(&plan).unwrap();
+        assert!(
+            parsed.requests[0].reason.to_lowercase().contains("create"),
+            "reason must identify create-time origin; got: {}",
+            parsed.requests[0].reason
         );
     }
 

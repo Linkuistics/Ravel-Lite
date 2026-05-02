@@ -1761,3 +1761,21 @@ sessions:
       - All 943 lib tests pass (+10 new vs. 933 baseline). `./scripts/check.sh` clippy-clean.
     - **What didn't / was deferred:** Commit-target routing inside `apply_commits_spec` (grouping by `target: ComponentRef`, per-worktree application, abort-before-context-record ordering) remains in the `two-stream-commits` task. No full phase-loop integration test with a live git repo was added; unit-level coverage of `consume_focus_objections` and `delete_focus_objections` gives equivalent contract coverage for now.
     - **What this suggests next:** `two-stream-commits-target-worktrees-first-context-record-last` is now unblocked — its scope is now cleanly separable from the phase-boundary mechanics landed here. Phase prompts will need a note about `CASCADE` log lines once the v1→v2 migrator ships; that is already tracked in `phase-prompt-updates-for-triage-first-cycle-shape`.
+- id: session-123
+  timestamp: 2026-05-02T10:17:14Z
+  phase: work
+  body: |
+    ### Session 123 (2026-05-02T10:17:14Z) — Add --target flag to ravel-lite create
+
+    - Implemented a repeatable `--target <repo>:<component>` flag for `ravel-lite create` that seeds `target-requests.yaml` at plan creation time, bypassing the create dialogue round-trip when the user already knows their components.
+    - `seed_target_requests` in `src/create.rs` writes a valid `TargetRequestsFile` (schema_version: 1) using the canonical `write_target_requests` path; empty target list is a no-op so plans created without `--target` don't carry a stub that the runner parses-and-discards each phase boundary.
+    - Reused `ComponentRef::FromStr` at the clap boundary — no custom `value_parser`; same derivation already used for `suggested_target` at `src/main.rs:1087`.
+    - Three tests written first, implementation second: `seed_target_requests_writes_supplied_components_into_target_requests_yaml`, `seed_target_requests_with_empty_list_is_a_no_op`, `seed_target_requests_reason_identifies_create_time_origin`. One red-green-red-green caught a substring assertion ("creation" doesn't contain "create") and forced an honest reason string.
+    - All 946 lib + 6 integration tests green; clippy `-D warnings` clean across workspace.
+
+    What surfaced:
+    - Pre-existing bug: `defaults/create-plan.md` omits `schema_version: 1` from its example YAML, so LLM-authored `target-requests.yaml` files fail the runner's version guard at the next phase boundary.
+    - Prompt gap: when `--target` pre-seeds the file, the create prompt's raw "Write the proposed targets to..." instruction overwrites it.
+    - Both gaps are cleanly fixed by having the prompt call `state target-requests add` instead (the verb handles schema_version and appends). Promoted as a new backlog task with full scope inlined.
+
+    What this suggests next: the promoted backlog task covers the prompt-fix follow-up. Beyond that, this change becomes meaningful once `drain-target-requests-at-phase-boundaries` is implemented so the runner actually mounts the seeded worktrees.
