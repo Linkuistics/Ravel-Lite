@@ -1,43 +1,4 @@
 tasks:
-- id: add-ravel-lite-show-verb-for-embedded-fixed-memory-content
-  title: Add ravel-lite show verb for embedded fixed-memory content
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Add a `ravel-lite show <embedded-path>` verb that prints embedded content via `init::require_embedded`, and sweep phase prompts that use `Read({{ORCHESTRATOR}}/fixed-memory/...)` to use `Bash(ravel-lite show ...)` instead.
-
-    Problem: `defaults/fixed-memory/*.md` are referenced by phase prompts (e.g. `Read {{ORCHESTRATOR}}/fixed-memory/...`) but `ravel-lite init` no longer materialises those files to disk (see `src/init.rs:130`). The LLM is instructed to read files that do not exist, causing silent failures.
-
-    Scope:
-    - Add `ravel-lite show <embedded-path>` subcommand. `<embedded-path>` is a relative path within the embedded asset bundle (e.g. `fixed-memory/norms.md`). Command prints the content to stdout and exits 0, or exits non-zero with a clear message if the path is not found.
-    - Implementation: thin wrapper over `init::require_embedded(path)` — that function already returns `&'static str` from the compile-time embed.
-    - Sweep `defaults/phases/*.md` and any other prompt templates for `Read({{ORCHESTRATOR}}/fixed-memory/...)` occurrences; replace with `Bash(ravel-lite show fixed-memory/<name>)`.
-
-    Reference examples:
-    - `src/init.rs` — `require_embedded` is defined here; the embed catalogue is already known at compile time.
-    - `defaults/phases/` — the prompt files that reference fixed-memory paths.
-
-    No new dependencies. Self-contained once `ravel-lite show` is wired into `src/main.rs`.
-  results: |
-    ## Results — superseded
-
-    The original scope (a thin `ravel-lite show <embedded-path>` wrapper over `init::require_embedded`) is superseded by the layered `fixed-memory list` / `fixed-memory show <slug>` verbs designed in `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`.
-
-    The superseding shape resolves the blocking constraint that originally deferred this task (settling the disk-overlay layer):
-
-    - Layers user-owned `<config-dir>/fixed-memory/<slug>.md` over the embedded set.
-    - Concatenates user content after embedded with a "User addendum (takes precedence)" delimiter when both exist.
-    - Round-trips a bare slug (no extension, no path prefix) between `list` and `show`.
-
-    Implementation continues under the new task `implement-fixed-memory-cli-overlay-and-sweep-phase-prompts`.
-
-    ### Files inspected (no edits made by this task)
-
-    - `src/init.rs` — `require_embedded`, `EMBEDDED_FILES` registry, `LAYOUT_DIRS` (which already creates `<config-dir>/fixed-memory/` empty).
-    - `src/main.rs` — clap `Commands` enum where the new `FixedMemory` subcommand will land.
-    - `defaults/phases/{work,reflect,dream}.md` — the prompts whose `{{ORCHESTRATOR}}/fixed-memory/...` references will be swept by the superseding task.
-    - `src/create.rs:40` — the `CREATE_ALLOWED_TOOLS` constant pattern the new `Bash(ravel-lite fixed-memory:*)` allowlist entry will follow.
 - id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
   title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
   category: infra
@@ -145,6 +106,40 @@ tasks:
     ## Dependencies
 
     None. Self-contained prompt + allowlist change.
+- id: implement-fixed-memory-cli-overlay-and-sweep-phase-prompts
+  title: Implement fixed-memory CLI overlay and sweep phase prompts
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Implement the `ravel-lite fixed-memory list` and `ravel-lite fixed-memory show <slug>` verbs per the spec at `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`.
+
+    ## Scope
+
+    - New module `src/fixed_memory.rs` with `discover`, `compose`, `extract_description`, and a kind-local `OutputFormat` enum.
+    - Two new clap subcommands under `Commands::FixedMemory`: `List` and `Show`.
+    - Layered overlay semantics: when both an embedded entry and a user file at `<config-dir>/fixed-memory/<slug>.md` exist, `show` emits embedded content + addendum delimiter (`\n---\n\n## User addendum (takes precedence over the above)\n\n`) + user content. Embedded-only and user-only cases emit content unchanged.
+    - Phase prompt sweep:
+      - `defaults/phases/work.md` lines 33-51: replace `Read({{ORCHESTRATOR}}/fixed-memory/coding-style*.md)` prose with instruction to first run `ravel-lite fixed-memory list` (so user-overlay slugs are visible) then `ravel-lite fixed-memory show <slug>`.
+      - `defaults/phases/reflect.md` lines 18, 84: swap `{{ORCHESTRATOR}}/fixed-memory/memory-style.md` for `Bash(ravel-lite fixed-memory show memory-style)`.
+      - `defaults/phases/dream.md` lines 9, 22: same swap as reflect.
+    - Allowlist: add `Bash(ravel-lite fixed-memory:*)` to per-phase allowlists wherever `CREATE_ALLOWED_TOOLS`-style constants live (model on `src/create.rs:40`).
+
+    ## Tests
+
+    - Unit tests in `src/fixed_memory.rs`: `extract_description` (H1, no H1, leading whitespace), `discover` (mixed embedded/user/both), `compose` (all three resolution cases, addendum delimiter appears verbatim for "both").
+    - Integration tests in `tests/`: `list` against a temp config dir with mixed entries (yaml/json/markdown rendering); `show` for each of the three resolution cases; unknown slug exits non-zero with stderr containing "Available slugs:".
+    - Existing drift-guard `every_file_under_defaults_is_registered_in_embedded_files` and `shipped_pi_prompts_have_no_dangling_tokens` must still pass.
+
+    ## Verification
+
+    - `./scripts/check.sh` clean (`cargo clippy --all-targets --workspace -- -D warnings`).
+    - `cargo test` passes including new tests.
+    - Manual smoke: against a populated config dir, exercise `list` and `show` for embedded-only, user-only, and both-sources slugs.
+
+    ## Reference
+
+    Full design: `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`. Supersedes the now-`done` task `add-ravel-lite-show-verb-for-embedded-fixed-memory-content`.
 - id: cycle-reorder-triage-first-phase-sequence
   title: 'Cycle reorder: triage-first phase sequence'
   category: architecture-next
@@ -398,45 +393,12 @@ tasks:
     - `defaults/phases/` — phase prompt files
     - `src/init.rs` — drift sentinel for `state phase-summary render` substring
     - `src/prompt.rs` — `substitute_tokens` path all prompts go through
-- id: implement-fixed-memory-cli-overlay-and-sweep-phase-prompts
-  title: Implement fixed-memory CLI overlay and sweep phase prompts
-  category: architecture-next
-  status: not_started
-  dependencies: []
-  description: |
-    Implement the `ravel-lite fixed-memory list` and `ravel-lite fixed-memory show <slug>` verbs per the spec at `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`.
-
-    ## Scope
-
-    - New module `src/fixed_memory.rs` with `discover`, `compose`, `extract_description`, and a kind-local `OutputFormat` enum.
-    - Two new clap subcommands under `Commands::FixedMemory`: `List` and `Show`.
-    - Layered overlay semantics: when both an embedded entry and a user file at `<config-dir>/fixed-memory/<slug>.md` exist, `show` emits embedded content + addendum delimiter (`\n---\n\n## User addendum (takes precedence over the above)\n\n`) + user content. Embedded-only and user-only cases emit content unchanged.
-    - Phase prompt sweep:
-      - `defaults/phases/work.md` lines 33-51: replace `Read({{ORCHESTRATOR}}/fixed-memory/coding-style*.md)` prose with instruction to first run `ravel-lite fixed-memory list` (so user-overlay slugs are visible) then `ravel-lite fixed-memory show <slug>`.
-      - `defaults/phases/reflect.md` lines 18, 84: swap `{{ORCHESTRATOR}}/fixed-memory/memory-style.md` for `Bash(ravel-lite fixed-memory show memory-style)`.
-      - `defaults/phases/dream.md` lines 9, 22: same swap as reflect.
-    - Allowlist: add `Bash(ravel-lite fixed-memory:*)` to per-phase allowlists wherever `CREATE_ALLOWED_TOOLS`-style constants live (model on `src/create.rs:40`).
-
-    ## Tests
-
-    - Unit tests in `src/fixed_memory.rs`: `extract_description` (H1, no H1, leading whitespace), `discover` (mixed embedded/user/both), `compose` (all three resolution cases, addendum delimiter appears verbatim for "both").
-    - Integration tests in `tests/`: `list` against a temp config dir with mixed entries (yaml/json/markdown rendering); `show` for each of the three resolution cases; unknown slug exits non-zero with stderr containing "Available slugs:".
-    - Existing drift-guard `every_file_under_defaults_is_registered_in_embedded_files` and `shipped_pi_prompts_have_no_dangling_tokens` must still pass.
-
-    ## Verification
-
-    - `./scripts/check.sh` clean (`cargo clippy --all-targets --workspace -- -D warnings`).
-    - `cargo test` passes including new tests.
-    - Manual smoke: against a populated config dir, exercise `list` and `show` for embedded-only, user-only, and both-sources slugs.
-
-    ## Reference
-
-    Full design: `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`. Supersedes the now-`done` task `add-ravel-lite-show-verb-for-embedded-fixed-memory-content`.
 - id: cli-audit-and-refactor-against-cli-tool-design-md
   title: CLI audit and refactor against cli-tool-design.md
   category: architecture-next
   status: not_started
-  dependencies: []
+  dependencies:
+  - implement-fixed-memory-cli-overlay-and-sweep-phase-prompts
   description: |
     Audit and refactor the existing CLI surface against the guidance in `defaults/fixed-memory/cli-tool-design.md`. Each item below maps to an audit-checklist line; the goal is to bring the tree to a uniform standard before the v2 binary deploys.
 
