@@ -124,153 +124,11 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: phase-boundary-mechanics-drain-focus-objections-target-requests-apply-commits-defeat-cascade
-  title: 'Phase boundary mechanics: drain focus-objections/target-requests, apply commits, defeat cascade'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Implement the runner-side phase boundary mechanics: drain `target-requests.yaml` and `focus-objections.yaml` at triage entry, apply `commits.yaml` at analyse-work exit, run the defeat cascade over plan KG when status changes, and save per-phase baselines.
-
-    ## Why
-
-    The triage-first cycle requires mechanical work at phase boundaries that is currently absent or incomplete:
-
-    1. **Triage entry**: drain `focus-objections.yaml` (call `delete_focus_objections` after triage reads it) and drain `target-requests.yaml` (mount new target worktrees).
-    2. **Analyse-work exit / GitCommitWork**: apply `commits.yaml` spec to the correct worktrees (currently always the plan root).
-    3. **Defeat cascade**: when a task status changes to `done`/`defeated`, run the plan KG defeat-cascade so dependent tasks whose only blocker is now resolved flip to unblocked.
-    4. **Baselines**: save per-phase baselines atomically in each `GitCommit*` handler.
-
-    ## Scope
-
-    - At `GitCommitTriage` / triage entry: after the triage LLM exits, call `delete_focus_objections(plan_dir)` and `drain_target_requests(plan_dir)` (mount worktrees for any new requests, write to `targets.yaml`).
-    - At `GitCommitAnalyseWork` (was `GitCommitWork`): route `apply_commits_spec` using the optional `target:` field from `CommitSpec` (introduced in commits-yaml-v2 task) to apply each commit in the correct worktree.
-    - Defeat cascade: after each backlog status flip, call `plan_kg::run_defeat_cascade(plan_dir)` or equivalent.
-    - Baseline writes: update baseline filenames to match the new cycle order.
-    - Integration test: simulate a cycle with `focus-objections.yaml` present; assert it is consumed at triage entry.
-
-    ## Dependencies
-
-    Depends on the cycle-reorder task (new phase order) and on the commits-yaml-v2 task (optional `target:` field on `CommitSpec`).
-
-    ## References
-
-    - `docs/architecture-next.md` §Phase boundaries, §Recovery from interrupted cycles
-    - `src/phase_loop.rs` — `ScriptPhase::GitCommit*` handlers
-    - `src/state/focus_objections/` — `delete_focus_objections`
-    - `src/state/target_requests/` — drain mechanics
-  results: |
-    ## Results
-
-    Implemented the three runner-side mechanics this task names — focus-objections drain,
-    serves-intent defeat cascade, and baseline writes — and verified the fourth (cycle-aligned
-    baseline filenames) was already correct from the cycle-reorder predecessor. The commit-
-    target routing bullet is not in scope here; it belongs to the `two-stream-commits` task
-    that explicitly owns it.
-
-    ### What landed
-
-    **Focus-objections drain at GitCommitTriage entry** (`src/phase_loop.rs`)
-    - New helper `consume_focus_objections(plan_dir)` wraps `delete_focus_objections` with
-      phase-scoped error context. Idempotent: a successful previous drain (or steady-state
-      "no objections raised") is a no-op.
-    - Called at the top of the `GitCommitTriage` script-phase handler, before `write_phase`
-      and `git_commit_plan`, so the deletion is captured in the same commit as triage's
-      other plan-state edits. Matches architecture-next.md §TRIAGE step 8 ("Consume and
-      remove focus-objections.yaml").
-    - Two hermetic tests: present-file removal and absent-file idempotency.
-
-    **Serves-intent defeat cascade** (new `src/defeat_cascade.rs`)
-    - `run_defeat_cascade(plan_dir) -> Result<Vec<String>>` reads `intents.yaml` and
-      `backlog.yaml`, materialises both into typed `IntentStore` / `BacklogStore` instances,
-      invokes the substrate primitive `knowledge_graph::cascade_serves_intent`, and mirrors
-      the resulting `status` / `defeated_by` flips back onto the on-disk `BacklogEntry`
-      records (so v1 extension fields like `category`, `dependencies`, `results` survive).
-    - Disk write is conditional on at least one cascade hit, so a no-op cascade leaves
-      `backlog.yaml` byte-identical and produces no commit churn.
-    - Wired into `GitCommitTriage` via a new `cascade_defeated_items` helper that gates on
-      `intents_path(plan_dir).exists()` — the v1 dogfood plan (no `intents.yaml`) is a pure
-      no-op; v2 plans pick up the cascade in the same commit as triage's other edits.
-      Logged only when at least one item flipped.
-    - Seven hermetic tests in `defeat_cascade.rs` covering: intent-defeated propagation,
-      no-op byte-identity preservation, satisfied-as-terminal, extension-field preservation,
-      partial-serves protection (item serving one defeated + one active intent stays
-      active), and the two missing-file error paths.
-    - One hermetic test in `phase_loop.rs` confirming the `intents.yaml`-absence gate.
-
-    **Baseline filenames already match the new cycle order** — no code change needed.
-    The cycle-reorder predecessor task already updated the four `git_save_baseline` call
-    sites in `handle_script_phase` so each writes the file consumed by the next phase
-    (`work-baseline` after triage commit, `analyse-work-baseline` after work commit,
-    `reflect-baseline` after analyse-work commit, `triage-baseline` after reflect commit).
-
-    ### What worked
-
-    - **Substrate-side cascade was reusable as-is.** `knowledge_graph::cascade_serves_intent`
-      already implements the algorithm and is well-tested; the plan-side wrapper is just
-      disk I/O + a Store/entry mirror. Aligns with the "Never do in an LLM what you can do
-      in code" memory entry — the cascade is pure mechanical work, not LLM reasoning.
-    - **The wrapper-mirror pattern.** Building a `Store<K>` from on-disk entries via clone,
-      running the cascade, then mirroring only the changed `(status, defeated_by)` fields
-      back to the on-disk entries by id, preserves the `BacklogEntry` v1 extension fields
-      (`category`, `dependencies`, `results`, `handoff`, `blocked_reason`) without
-      reconstructing entries from scratch. This pattern will recur whenever the substrate
-      mutates Items but on-disk storage carries extensions.
-    - **Presence-gating the wiring** turned a deploy-blocked task into a deploy-safe one
-      while still committing the wiring path. `cascade_defeated_items` skips cleanly when
-      `intents.yaml` is absent (the dogfood plan today), and the migrator's contract of
-      producing `intents.yaml` and v2 `backlog.yaml` atomically guarantees the cascade will
-      find a consistent pair to operate on whenever the gate opens.
-    - All 943 lib tests pass (was 933; +10 new). Full workspace test run clean. Clippy
-      clean per `scripts/check.sh`. No new generated files; `.gitignore` unchanged.
-
-    ### What didn't (and what was deferred)
-
-    - **Commit target routing in `apply_commits_spec`** is owned by the next task,
-      `two-stream-commits-target-worktrees-first-context-record-last`. That task explicitly
-      scopes "group commits by their `target: ComponentRef`; apply each group in the
-      target's worktree" and "after all target commits land, run the context-record commit
-      ... if any target commit fails, abort before the context commit". The phase-boundary
-      task description's mention of routing is duplicated scope; leaving it for two-stream-
-      commits avoids interleaved partial implementations across two tasks.
-    - **No standalone integration test exercising a full triage→work→… cycle with
-      `focus-objections.yaml` present.** Setting up a phase-loop integration test requires
-      a UI, an Agent trait impl, and a real git repo — all heavy. The unit tests on
-      `consume_focus_objections` plus the existing `delete_focus_objections` tests on the
-      underlying primitive give equivalent coverage of the contract ("present file becomes
-      absent after the drain"); a heavier integration test would mostly exercise scaffolding
-      rather than the contract under test.
-
-    ### What this suggests next
-
-    - **`two-stream-commits` is now genuinely unblocked.** Its scope is now cleanly
-      separable: implement target-grouping inside `apply_commits_spec` plus the failure-
-      abort ordering, with the phase-boundary mechanics already in place.
-    - **Phase prompts will need updating** when the v1→v2 migrator ships and the cascade
-      starts firing on real plans. The triage prompt should note that a `CASCADE` log line
-      may follow the `triage` commit and that backlog items it sees may have flipped to
-      `defeated` via the cascade rather than via direct LLM action. That is already covered
-      by the deferred `phase-prompt-updates-for-triage-first-cycle-shape` task.
-    - **The wrapper-mirror pattern** (build typed Store from on-disk entries, mutate in
-      Store, mirror changes back) is reusable for any future substrate operation that
-      mutates Items where on-disk storage carries extensions. Worth pulling into a memory
-      entry if it gets used a third time (memory hygiene operations may follow this shape).
-
-    ### Files touched
-
-    - `src/lib.rs` — new `pub mod defeat_cascade;` declaration
-    - `src/phase_loop.rs` — focus-objections drain + cascade gate wired into
-      `GitCommitTriage`; new helpers `consume_focus_objections` and `cascade_defeated_items`;
-      three new tests
-    - `src/defeat_cascade.rs` — NEW. `run_defeat_cascade` plus seven tests
-    - `src/state/intents/mod.rs` — re-export `intents_path` so `phase_loop` can presence-
-      check without reaching into `yaml_io::`
 - id: two-stream-commits-target-worktrees-first-context-record-last
   title: 'Two-stream commits: target worktrees first, context record last'
   category: architecture-next
   status: not_started
-  dependencies:
-  - phase-boundary-mechanics-drain-focus-objections-target-requests-apply-commits-defeat-cascade
+  dependencies: []
   description: |
     Implement the two-stream commit ordering: apply target-worktree commits first, then commit plan-state (context) changes. A target failure must not leave the context recording false-positive progress.
 
@@ -304,8 +162,7 @@ tasks:
   title: ravel-lite create seeds target-requests.yaml
   category: architecture-next
   status: not_started
-  dependencies:
-  - phase-boundary-mechanics-drain-focus-objections-target-requests-apply-commits-defeat-cascade
+  dependencies: []
   description: |
     Make `ravel-lite create` write an initial `target-requests.yaml` from user-supplied component references at plan creation time.
 
