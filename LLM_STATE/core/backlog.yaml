@@ -197,7 +197,7 @@ tasks:
 - id: recovery-semantics-verify-and-test-restart-not-resume-for-interrupted-cycles
   title: 'Recovery semantics: verify and test restart-not-resume for interrupted cycles'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Verify and test that the runner correctly ignores partly-written scratch files on a fresh `ravel-lite run` ("restart the cycle, don't resume").
@@ -222,6 +222,57 @@ tasks:
     - `src/state/commits/yaml_io.rs` — read path for commits.yaml
     - `src/state/focus_objections/yaml_io.rs` — read path for focus-objections.yaml
     - `src/state/this_cycle_focus/yaml_io.rs` — read path for this-cycle-focus.yaml
+  results: |
+    ## Results
+
+    Audited the four scratch-file read paths and made the restart-not-resume contract explicit in code and tests. No behaviour change — this task is verification + documentation + test coverage.
+
+    ### Audit findings
+
+    All four read paths already satisfy the architecture-next §Recovery from interrupted cycles contract: absent file → safe default; malformed file → loud error (no panic).
+
+    | File | Read fn | Absent → | Malformed → | Schema mismatch → |
+    |---|---|---|---|---|
+    | `commits.yaml` | `read_commits` | `CommitsSpec::default()` | `Err` (cites filename) | accepts (intentional) |
+    | `target-requests.yaml` | `read_target_requests` | `TargetRequestsFile::default()` | `Err` (cites filename) | `Err` |
+    | `focus-objections.yaml` | `read_focus_objections` | `FocusObjectionsFile::default()` | `Err` (cites filename) | `Err` |
+    | `this-cycle-focus.yaml` | `read_this_cycle_focus` | `Ok(None)` | `Err` (cites filename) | `Err` |
+
+    Atomic-rename on the writer side (`std::fs::write` to `.<file>.tmp` + `std::fs::rename` to final) means partial writes from our own code are not possible: a Ctrl-C either leaves an orphan `.tmp` (invisible to readers) or the fully renamed file. Partial / malformed content can only appear via external writes (LLM tool use, manual editing). The test added in each module simulates this case.
+
+    ### Caller-side handling
+
+    - `apply_commits_spec` in `src/git.rs:104-108` already swallows `read_commits` errors and falls back to a catch-all whole-subtree commit. Documented in the inline comment as the design choice for commits specifically.
+    - `drain_target_requests` in `src/state/target_requests/drain.rs:28` propagates `read_target_requests` errors loudly — leaving the file on disk for user inspection. Documented in the module-level comment as the right behaviour for a queue that must not be silently dropped.
+    - `read_focus_objections` and `read_this_cycle_focus` are currently only invoked by CLI verbs; the phase-loop wiring will be added by the `phase-boundary-mechanics` task. The contract documented here is the prescription for that future caller.
+
+    ### Changes made
+
+    1. **Doc comments on each read fn** — added a "Restart-not-resume contract" paragraph explaining absent vs. malformed semantics and the no-panic guarantee. Each docstring is tailored to the file's specific design choice (commits = silent fallback at caller, others = loud error to preserve LLM- or user-authored data).
+    2. **Three new `read_bails_on_malformed_yaml` tests** — added to `target_requests/yaml_io.rs`, `focus_objections/yaml_io.rs`, and `this_cycle_focus/yaml_io.rs` (the fourth, `commits/yaml_io.rs`, already had one). Each test writes garbage YAML to the scratch file's path, asserts `read_*` returns `Err`, and asserts the error message cites the filename so a user can locate the corrupt file.
+
+    ### What was NOT done and why
+
+    - **No new integration test in `tests/`.** The unit tests already cover the per-file no-panic property; an integration test that combines all four files in one plan dir would have no additional discriminating power (the files are independent on disk; cross-file interference is impossible).
+    - **Did not assert "cycle proceeds normally from triage."** That part of the original task description depends on the cycle-reorder work that lands as part of `phase-prompt-updates-for-triage-first-cycle-shape` and the upstream `phase-boundary-mechanics` task. Today the cycle resumes at whatever phase `phase.md` records, which is the prior-baseline behaviour — not yet "always triage on restart."
+    - **No production code changed.** All four read paths already had the required behaviour; only the contract was implicit. Surfacing it in docstrings + tests prevents drift when the new triage-entry callers wire up `read_focus_objections` and `read_this_cycle_focus`.
+
+    ### Verification
+
+    - `cargo test --workspace` — 933 lib tests + every integration suite pass.
+    - `./scripts/check.sh` — clippy clean (`-D warnings`).
+    - The four new/existing `read_bails_on_malformed_yaml` tests fire individually:
+      ```
+      test state::commits::yaml_io::tests::read_bails_on_malformed_yaml ... ok
+      test state::focus_objections::yaml_io::tests::read_bails_on_malformed_yaml ... ok
+      test state::target_requests::yaml_io::tests::read_bails_on_malformed_yaml ... ok
+      test state::this_cycle_focus::yaml_io::tests::read_bails_on_malformed_yaml ... ok
+      ```
+
+    ### What this suggests next
+
+    - When `phase-boundary-mechanics` wires `read_focus_objections` and `read_this_cycle_focus` into the triage entry path, the contract documented here is the prescription for how those calls should handle errors. A follow-up integration test at the `phase_loop` level becomes meaningful at that point — it can assert the cycle restarts at triage with empty scratch files, satisfying the original task's part (b).
+    - The `commits.yaml` design (silent fallback at caller) versus the other three (loud error at caller) is now explicit in the docstrings. If a future change unifies them in either direction, the contract docstrings need to be updated together so the whole-system semantics remain coherent.
 - id: ravel-lite-create-seeds-target-requests-yaml
   title: ravel-lite create seeds target-requests.yaml
   category: architecture-next

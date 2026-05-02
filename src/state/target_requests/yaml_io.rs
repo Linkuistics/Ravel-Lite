@@ -19,6 +19,16 @@ pub fn target_requests_path(plan_dir: &Path) -> PathBuf {
 
 /// Read `<plan>/target-requests.yaml`. Returns an empty default when
 /// the file is absent — see module docs.
+///
+/// Restart-not-resume contract (architecture-next §Recovery from
+/// interrupted cycles): an absent file means "no mounts queued from
+/// a previous cycle" — it is the steady-state condition between
+/// cycles, not an error. A present-but-malformed file (or a
+/// `schema_version` mismatch) is surfaced as a loud error rather
+/// than silently swallowed: a swallowed parse error would lose a
+/// mount the user requested. Neither shape panics, so a fresh
+/// `ravel-lite run` after Ctrl-C can always start, but malformed
+/// queues require user attention before the drain succeeds.
 pub fn read_target_requests(plan_dir: &Path) -> Result<TargetRequestsFile> {
     let path = target_requests_path(plan_dir);
     if !path.exists() {
@@ -123,6 +133,27 @@ mod tests {
         let msg = format!("{err:#}");
         assert!(msg.contains("schema_version"), "error must cite schema_version: {msg}");
         assert!(msg.contains("99"), "error must show found version: {msg}");
+    }
+
+    #[test]
+    fn read_bails_on_malformed_yaml() {
+        // Restart-not-resume: a malformed file (e.g. an LLM authored
+        // garbage, or Ctrl-C interrupted a non-atomic external writer)
+        // surfaces as a loud error rather than panicking or silently
+        // dropping the queue. The error must cite the filename so the
+        // user can locate the corrupt file.
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            target_requests_path(tmp.path()),
+            "this: is not: a valid: shape\n",
+        )
+        .unwrap();
+        let err = read_target_requests(tmp.path()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains(TARGET_REQUESTS_FILENAME),
+            "error must cite the file: {msg}"
+        );
     }
 
     #[test]

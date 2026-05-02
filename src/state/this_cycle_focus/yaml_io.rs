@@ -20,6 +20,16 @@ pub fn this_cycle_focus_path(plan_dir: &Path) -> PathBuf {
 
 /// Read `<plan>/this-cycle-focus.yaml`. Returns `Ok(None)` when the
 /// file is absent; an absent focus is a normal state between cycles.
+///
+/// Restart-not-resume contract (architecture-next §Recovery from
+/// interrupted cycles): an absent file means "no focus declared by
+/// the current triage" — the steady-state condition between cycles,
+/// not an error. A present-but-malformed file (or a `schema_version`
+/// mismatch) is surfaced as a loud error: silently dropping a focus
+/// declaration would let the work phase proceed against an
+/// unspecified target. Neither shape panics, so a fresh
+/// `ravel-lite run` after Ctrl-C can always start, but a malformed
+/// focus requires user attention before work can consume it.
 pub fn read_this_cycle_focus(plan_dir: &Path) -> Result<Option<ThisCycleFocus>> {
     let path = this_cycle_focus_path(plan_dir);
     if !path.exists() {
@@ -121,6 +131,27 @@ mod tests {
         let msg = format!("{err:#}");
         assert!(msg.contains("schema_version"), "error must cite schema_version: {msg}");
         assert!(msg.contains("99"), "error must show found version: {msg}");
+    }
+
+    #[test]
+    fn read_bails_on_malformed_yaml() {
+        // Restart-not-resume: a malformed file (e.g. an LLM authored
+        // garbage, or Ctrl-C interrupted a non-atomic external writer)
+        // surfaces as a loud error rather than panicking or silently
+        // dropping the focus. The error must cite the filename so the
+        // user can locate the corrupt file.
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            this_cycle_focus_path(tmp.path()),
+            "this: is not: a valid: shape\n",
+        )
+        .unwrap();
+        let err = read_this_cycle_focus(tmp.path()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains(THIS_CYCLE_FOCUS_FILENAME),
+            "error must cite the file: {msg}"
+        );
     }
 
     #[test]

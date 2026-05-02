@@ -1733,3 +1733,15 @@ sessions:
     - Tests updated throughout: `SharedConfig` removed from all test setups; `ContractMockAgent` writes `git-commit-analyse-work` after analyse-work; two-cycle contract tests (`phase_contract_round_trip_writes_expected_files`, `handoff_marker_in_analyse_work_is_promoted_by_triage`, `handoff_marker_in_analyse_work_is_archived_by_triage`) now invoke `phase_loop` twice; `tests/dream.rs` dropped the `git_commit_reflect_seeds_dream_word_count_when_missing` test (no longer applicable).
     - What worked: the restructure was clean — removing `headroom` as a parameter eliminated a source of implicit coupling; moving the cycle boundary to `git-commit-reflect` makes the "end of cycle" semantically clearer. Tests pass.
     - What this suggests next: the phase-boundary-mechanics task (draining `target-requests.yaml` and `focus-objections.yaml` at triage entry, defeat cascade, etc.) is now the structural follow-on.
+- id: session-121
+  timestamp: 2026-05-02T09:07:16Z
+  phase: work
+  body: |
+    ### Session 121 (2026-05-02T09:07:16Z) — Document and test restart-not-resume contract for scratch-file read paths
+
+    - Audited all four scratch-file read paths (`commits.yaml`, `target-requests.yaml`, `focus-objections.yaml`, `this-cycle-focus.yaml`) against the architecture-next §Recovery from interrupted cycles contract.
+    - All four read functions already had the correct behavior: absent file → safe empty default, malformed file → loud error with filename citation. No production code changes were needed.
+    - Added "Restart-not-resume contract" doc comment paragraphs to all four `read_*` functions explaining the absent vs. malformed semantics, the no-panic guarantee, and the rationale for each file's choice (silent fallback at caller for `commits.yaml`; loud error for the other three to preserve LLM-authored data).
+    - Added `read_bails_on_malformed_yaml` unit tests to `target_requests/yaml_io.rs`, `focus_objections/yaml_io.rs`, and `this_cycle_focus/yaml_io.rs`. (`commits/yaml_io.rs` already had this test.) Each test writes garbage YAML, calls `read_*`, and asserts the error message cites the filename.
+    - Verification: `cargo test --workspace` passes 933 tests; `./scripts/check.sh` is clippy-clean. All four `read_bails_on_malformed_yaml` tests pass.
+    - What this suggests next: when `phase-boundary-mechanics` wires `read_focus_objections` and `read_this_cycle_focus` into the triage entry path, the contract documented here is the prescription for those callers. A phase_loop-level integration test asserting "cycle restarts at triage with empty scratch files" becomes meaningful at that point.

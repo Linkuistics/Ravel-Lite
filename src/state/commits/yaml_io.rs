@@ -26,6 +26,15 @@ pub fn commits_path(plan_dir: &Path) -> PathBuf {
 /// error). Bails on parse failure so CLI verbs can surface malformed
 /// YAML to the user; callers that prefer to fall back silently —
 /// notably `apply_commits_spec` — must do so at their own boundary.
+///
+/// Restart-not-resume contract (architecture-next §Recovery from
+/// interrupted cycles): an absent file means "no in-flight commit
+/// queue from a previous cycle" — it is the steady-state condition
+/// between cycles, not an error. A present-but-malformed file means
+/// the LLM or a bug authored content the runner can't trust; the
+/// error returned here is the surfacing mechanism. Neither shape
+/// panics, so a fresh `ravel-lite run` after Ctrl-C can always start
+/// without manual cleanup of the scratch file.
 pub fn read_commits(plan_dir: &Path) -> Result<CommitsSpec> {
     let path = commits_path(plan_dir);
     if !path.exists() {
