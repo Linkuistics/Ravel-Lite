@@ -10,9 +10,10 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 
 use super::schema::{TargetsFile, TARGETS_SCHEMA_VERSION};
+use crate::component_ref::ComponentRef;
 use crate::state::filenames::TARGETS_FILENAME;
 
 pub fn targets_path(plan_dir: &Path) -> PathBuf {
@@ -46,6 +47,31 @@ pub fn write_targets(plan_dir: &Path, targets: &TargetsFile) -> Result<()> {
     let yaml = serde_yaml::to_string(targets)
         .with_context(|| format!("Failed to serialise {TARGETS_FILENAME}"))?;
     atomic_write(&path, yaml.as_bytes())
+}
+
+/// Mounted worktree path for the named target, joined onto `plan_dir`.
+/// Errors when no `Target` row in `targets.yaml` matches the
+/// `(repo_slug, component_id)` reference — meaning the caller asked for
+/// a worktree that hasn't been mounted yet.
+///
+/// Used by the `commits.yaml` applier (architecture-next §Commits) to
+/// resolve each commit's `target: ComponentRef` to the worktree it must
+/// `chdir` into. The result preserves the absoluteness of `plan_dir`:
+/// pass an absolute plan_dir to get an absolute worktree path.
+pub fn resolve_target_worktree(plan_dir: &Path, target: &ComponentRef) -> Result<PathBuf> {
+    let targets = read_targets(plan_dir)?;
+    let entry = targets
+        .targets
+        .iter()
+        .find(|t| t.repo_slug == target.repo_slug && t.component_id == target.component_id)
+        .ok_or_else(|| {
+            anyhow!(
+                "{target} is not a mounted target in {}; \
+                 add it via target-requests.yaml so the next phase boundary mounts it",
+                plan_dir.display()
+            )
+        })?;
+    Ok(plan_dir.join(&entry.working_root))
 }
 
 /// Absolute filesystem paths of every mounted target's `working_root`
@@ -200,6 +226,92 @@ mod tests {
         let dirs = mounted_worktree_add_dirs(&plan_dir, &cwd).unwrap();
         let expected = plan_dir.join(".worktrees/atlas").to_string_lossy().to_string();
         assert_eq!(dirs, vec![expected]);
+    }
+
+    #[test]
+    fn resolve_target_worktree_returns_plan_relative_path_for_mounted_target() {
+        // Common-path lookup: a target row with the matching ComponentRef
+        // produces `plan_dir/<working_root>`, preserving plan_dir's
+        // absoluteness so callers feeding the result to `git -C` get an
+        // absolute path when they passed one in.
+        let tmp = TempDir::new().unwrap();
+        let plan_dir = tmp.path();
+        let targets = TargetsFile {
+            schema_version: TARGETS_SCHEMA_VERSION,
+            targets: vec![sample_target()],
+        };
+        write_targets(plan_dir, &targets).unwrap();
+
+        let r = ComponentRef::new("atlas", "atlas-ontology");
+        let resolved = resolve_target_worktree(plan_dir, &r).unwrap();
+        assert_eq!(resolved, plan_dir.join(".worktrees/atlas"));
+    }
+
+    #[test]
+    fn resolve_target_worktree_errors_when_component_not_mounted() {
+        // Caller asked for a worktree the runner hasn't mounted yet. Must
+        // surface a clear, actionable error pointing at target-requests
+        // rather than silently returning a non-existent path.
+        let tmp = TempDir::new().unwrap();
+        let plan_dir = tmp.path();
+        let targets = TargetsFile {
+            schema_version: TARGETS_SCHEMA_VERSION,
+            targets: vec![sample_target()],
+        };
+        write_targets(plan_dir, &targets).unwrap();
+
+        let r = ComponentRef::new("ravel-lite", "phase-loop");
+        let err = resolve_target_worktree(plan_dir, &r).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("ravel-lite:phase-loop"), "must cite the missing ref: {msg}");
+        assert!(msg.contains("target-requests"), "must point user at the mount path: {msg}");
+    }
+
+    #[test]
+    fn resolve_target_worktree_errors_when_targets_yaml_absent() {
+        // Pre-mount state: no `targets.yaml` on disk. `read_targets`
+        // returns an empty default, so the resolver still hits the
+        // not-mounted path with the same error contract — the caller
+        // does not need to special-case "file missing" vs "row missing".
+        let tmp = TempDir::new().unwrap();
+        let r = ComponentRef::new("atlas", "atlas-ontology");
+        let err = resolve_target_worktree(tmp.path(), &r).unwrap_err();
+        assert!(format!("{err:#}").contains("atlas:atlas-ontology"));
+    }
+
+    #[test]
+    fn resolve_target_worktree_distinguishes_components_sharing_a_worktree() {
+        // Two components can share one repo's worktree; the resolver
+        // returns the same path for both because `working_root` is
+        // identical, but matches on the full ComponentRef so the wrong
+        // component_id can't accidentally bind to the right worktree.
+        let tmp = TempDir::new().unwrap();
+        let plan_dir = tmp.path();
+        let mut second = sample_target();
+        second.component_id = "atlas-discovery".into();
+        let targets = TargetsFile {
+            schema_version: TARGETS_SCHEMA_VERSION,
+            targets: vec![sample_target(), second],
+        };
+        write_targets(plan_dir, &targets).unwrap();
+
+        let ontology = resolve_target_worktree(
+            plan_dir,
+            &ComponentRef::new("atlas", "atlas-ontology"),
+        )
+        .unwrap();
+        let discovery = resolve_target_worktree(
+            plan_dir,
+            &ComponentRef::new("atlas", "atlas-discovery"),
+        )
+        .unwrap();
+        assert_eq!(ontology, discovery, "shared worktree means equal paths");
+
+        let unmounted = resolve_target_worktree(
+            plan_dir,
+            &ComponentRef::new("atlas", "not-a-component"),
+        );
+        assert!(unmounted.is_err());
     }
 
     #[test]
