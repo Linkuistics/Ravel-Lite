@@ -2,8 +2,7 @@ tasks:
 - id: add-ravel-lite-show-verb-for-embedded-fixed-memory-content
   title: Add ravel-lite show verb for embedded fixed-memory content
   category: architecture-next
-  status: blocked
-  blocked_reason: 'Design constraint: the disk-overlay layer (user-owned fixed-memory/) must be settled in the v2 init scaffolding task before layered lookup semantics (disk-overlay -> embedded fallback) can be designed. Blocked until architecture-next redesign clarifies where user-owned fixed-memory/ lives under <context>/ v2 and what the lookup order is.'
+  status: done
   dependencies: []
   description: |
     Add a `ravel-lite show <embedded-path>` verb that prints embedded content via `init::require_embedded`, and sweep phase prompts that use `Read({{ORCHESTRATOR}}/fixed-memory/...)` to use `Bash(ravel-lite show ...)` instead.
@@ -21,70 +20,24 @@ tasks:
 
     No new dependencies. Self-contained once `ravel-lite show` is wired into `src/main.rs`.
   results: |
-    ## Results
+    ## Results — superseded
 
-    Task moved to `blocked` before any code was written. The trigger was a
-    design constraint surfaced during work-phase planning: `fixed-memory/`
-    must remain **user-extensible**, but the proposed `ravel-lite show
-    <embedded-path>` verb is a thin wrapper over `init::require_embedded`
-    and therefore serves *only* the compile-time embed set.
+    The original scope (a thin `ravel-lite show <embedded-path>` wrapper over `init::require_embedded`) is superseded by the layered `fixed-memory list` / `fixed-memory show <slug>` verbs designed in `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`.
 
-    A user adding their own `coding-style-<lang>.md` (e.g. for a language
-    the shipped set doesn't cover) would either:
-    - be silently ignored by `show` (re-introducing the same
-      silent-failure bug this task was meant to fix), or
-    - need a separate read path, splitting the "single source of truth"
-      the embedded set is meant to provide.
+    The superseding shape resolves the blocking constraint that originally deferred this task (settling the disk-overlay layer):
 
-    The right shape is probably layered:
-    1. `show <relative-path>` first looks for `<config-dir>/<relative-path>`
-       on disk and serves it if present.
-    2. Falls back to `init::require_embedded(<relative-path>)`.
-    3. Errors with a deterministic message if neither path resolves.
+    - Layers user-owned `<config-dir>/fixed-memory/<slug>.md` over the embedded set.
+    - Concatenates user content after embedded with a "User addendum (takes precedence)" delimiter when both exist.
+    - Round-trips a bare slug (no extension, no path prefix) between `list` and `show`.
 
-    That mirrors the existing `compose_prompt` layering for phase prompts
-    (plan-level `prompt-<phase>.md` override on top of embedded base) and
-    would let the phase-prompt sweep proceed without sacrificing
-    user-extensibility.
+    Implementation continues under the new task `implement-fixed-memory-cli-overlay-and-sweep-phase-prompts`.
 
-    The decision was deferred because:
+    ### Files inspected (no edits made by this task)
 
-    - The disk-overlay layer interacts with `ravel-lite init v2: context
-      layout scaffolding` (separate backlog task) — that task introduces
-      the new `<context>/` layout where user-owned `fixed-memory/` would
-      presumably live, so deciding the directory now would either
-      pre-empt v2 or be re-litigated under it.
-    - The `architecture-next` redesign track may reshape what counts as
-      "user-owned" prompt material vs "shipped reference material",
-      which changes the right merge semantics.
-
-    ### What this suggests next
-
-    - Settle the `fixed-memory/` extensibility model as part of the v2
-      init scaffolding task, then unblock this task with the agreed
-      layering. Specifically: where does user-owned `fixed-memory/` live
-      under `<context>/` v2, and what is the lookup order?
-    - The phase-prompt sweep (the second half of this task's scope) is
-      conditional on the verb existing in its final form, so it stays
-      bundled here rather than being split out.
-    - The drift-guard test
-      (`every_file_under_defaults_is_registered_in_embedded_files`) is
-      unchanged by this deferral — the embed set still ships the current
-      `fixed-memory/*.md` files; only the *reach mechanism* from the LLM
-      side is undecided.
-
-    ### Files inspected (no edits made)
-
-    - `src/init.rs` — `require_embedded` and the `EMBEDDED_FILES`
-      registry; the natural backing for any future `show` verb.
-    - `src/main.rs` — clap structure where a new `Show` subcommand would
-      land alongside `Init`, `Run`, `Create`, etc.
-    - `defaults/phases/work.md`, `defaults/phases/reflect.md`,
-      `defaults/phases/dream.md` — the three prompts that currently
-      reference `{{ORCHESTRATOR}}/fixed-memory/...` and would have been
-      swept to `Bash(ravel-lite show ...)` once the verb existed.
-    - `src/prompt.rs` — confirmed token substitution is the only
-      composition layer; no other reach path exists today.
+    - `src/init.rs` — `require_embedded`, `EMBEDDED_FILES` registry, `LAYOUT_DIRS` (which already creates `<config-dir>/fixed-memory/` empty).
+    - `src/main.rs` — clap `Commands` enum where the new `FixedMemory` subcommand will land.
+    - `defaults/phases/{work,reflect,dream}.md` — the prompts whose `{{ORCHESTRATOR}}/fixed-memory/...` references will be swept by the superseding task.
+    - `src/create.rs:40` — the `CREATE_ALLOWED_TOOLS` constant pattern the new `Bash(ravel-lite fixed-memory:*)` allowlist entry will follow.
 - id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
   title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
   category: infra
@@ -445,3 +398,65 @@ tasks:
     - `defaults/phases/` — phase prompt files
     - `src/init.rs` — drift sentinel for `state phase-summary render` substring
     - `src/prompt.rs` — `substitute_tokens` path all prompts go through
+- id: implement-fixed-memory-cli-overlay-and-sweep-phase-prompts
+  title: Implement fixed-memory CLI overlay and sweep phase prompts
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Implement the `ravel-lite fixed-memory list` and `ravel-lite fixed-memory show <slug>` verbs per the spec at `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`.
+
+    ## Scope
+
+    - New module `src/fixed_memory.rs` with `discover`, `compose`, `extract_description`, and a kind-local `OutputFormat` enum.
+    - Two new clap subcommands under `Commands::FixedMemory`: `List` and `Show`.
+    - Layered overlay semantics: when both an embedded entry and a user file at `<config-dir>/fixed-memory/<slug>.md` exist, `show` emits embedded content + addendum delimiter (`\n---\n\n## User addendum (takes precedence over the above)\n\n`) + user content. Embedded-only and user-only cases emit content unchanged.
+    - Phase prompt sweep:
+      - `defaults/phases/work.md` lines 33-51: replace `Read({{ORCHESTRATOR}}/fixed-memory/coding-style*.md)` prose with instruction to first run `ravel-lite fixed-memory list` (so user-overlay slugs are visible) then `ravel-lite fixed-memory show <slug>`.
+      - `defaults/phases/reflect.md` lines 18, 84: swap `{{ORCHESTRATOR}}/fixed-memory/memory-style.md` for `Bash(ravel-lite fixed-memory show memory-style)`.
+      - `defaults/phases/dream.md` lines 9, 22: same swap as reflect.
+    - Allowlist: add `Bash(ravel-lite fixed-memory:*)` to per-phase allowlists wherever `CREATE_ALLOWED_TOOLS`-style constants live (model on `src/create.rs:40`).
+
+    ## Tests
+
+    - Unit tests in `src/fixed_memory.rs`: `extract_description` (H1, no H1, leading whitespace), `discover` (mixed embedded/user/both), `compose` (all three resolution cases, addendum delimiter appears verbatim for "both").
+    - Integration tests in `tests/`: `list` against a temp config dir with mixed entries (yaml/json/markdown rendering); `show` for each of the three resolution cases; unknown slug exits non-zero with stderr containing "Available slugs:".
+    - Existing drift-guard `every_file_under_defaults_is_registered_in_embedded_files` and `shipped_pi_prompts_have_no_dangling_tokens` must still pass.
+
+    ## Verification
+
+    - `./scripts/check.sh` clean (`cargo clippy --all-targets --workspace -- -D warnings`).
+    - `cargo test` passes including new tests.
+    - Manual smoke: against a populated config dir, exercise `list` and `show` for embedded-only, user-only, and both-sources slugs.
+
+    ## Reference
+
+    Full design: `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md`. Supersedes the now-`done` task `add-ravel-lite-show-verb-for-embedded-fixed-memory-content`.
+- id: cli-audit-and-refactor-against-cli-tool-design-md
+  title: CLI audit and refactor against cli-tool-design.md
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Audit and refactor the existing CLI surface against the guidance in `defaults/fixed-memory/cli-tool-design.md`. Each item below maps to an audit-checklist line; the goal is to bring the tree to a uniform standard before the v2 binary deploys.
+
+    ## Scope (driven by cli-tool-design.md §§1-10)
+
+    1. **`--format json` parity** (§1, §4) — every data-producing verb supports `--format yaml|json` with a stable schema. Currently uneven: `repo list` is YAML-only, `atlas list-components` and `atlas summary` are text-only, etc.
+    2. **Stable, documented JSON schemas** — every JSON output carries a top-level `schema_version` and a stable shape; document each verb's schema (a `ravel-lite schema <command>` verb per §"Optional but valuable" is one shape).
+    3. **Help text examples** (§2) — every subcommand's `--help` includes ≥2 concrete invocation examples. Currently most blocks document args/flags but show no examples.
+    4. **Actionable error messages with stable codes** (§3) — every error names a remediation; in `--format json` mode, errors carry a stable `code` field (e.g., `AUTH_REQUIRED`, `NOT_FOUND`).
+    5. **Exit-code categories** (§8) — move from anyhow's 0/1 to documented 0/1/2/3/4/5/6 (success / generic failure / usage error / not found / forbidden / conflict / rate-limited). Define a small `ExitCategory` enum that anyhow-style errors map to.
+    6. **`OutputFormat` consolidation** — currently 11+ near-identical per-kind enums (`backlog::OutputFormat`, `memory::OutputFormat`, `intents::OutputFormat`, etc.) each with their own `parse_*_format` wrapper in `src/main.rs`. Consolidate to a single shared enum + parse fn.
+    7. **Optional discoverability surfaces** — `ravel-lite capabilities` (§"Optional but valuable"), `ravel-lite schema <command>`, possibly `ravel-lite llm-instructions`. Pure additions; ship the high-leverage ones.
+    8. **Audit-checklist sweep** — walk the full audit-checklist in cli-tool-design.md §"Audit checklist" and capture remaining findings as inline TODOs that become subtasks if substantial.
+
+    ## Why deferred
+
+    - The fixed-memory verbs from `implement-fixed-memory-cli-overlay-and-sweep-phase-prompts` adhere to existing patterns (YAML-default, kind-local `OutputFormat`) so they don't pre-empt this audit's design choices.
+    - The audit is most valuable in one focused pass after in-flight architecture-next feature work settles, so the surface it audits is stable.
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` — the guidance document.
+    - `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md` §"Audit posture" and §"Out of scope" — the scoping decision that captured this task.

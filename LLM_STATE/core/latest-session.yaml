@@ -1,18 +1,18 @@
-id: session-123
-timestamp: 2026-05-02T10:17:14Z
+id: session-124
+timestamp: 2026-05-02T11:26:21Z
 phase: work
 body: |
-  ### Session 123 (2026-05-02T10:17:14Z) — Add --target flag to ravel-lite create
+  ### Session 124 (2026-05-02T11:26:21Z) — Settle fixed-memory CLI design, add cli-tool-design guide
 
-  - Implemented a repeatable `--target <repo>:<component>` flag for `ravel-lite create` that seeds `target-requests.yaml` at plan creation time, bypassing the create dialogue round-trip when the user already knows their components.
-  - `seed_target_requests` in `src/create.rs` writes a valid `TargetRequestsFile` (schema_version: 1) using the canonical `write_target_requests` path; empty target list is a no-op so plans created without `--target` don't carry a stub that the runner parses-and-discards each phase boundary.
-  - Reused `ComponentRef::FromStr` at the clap boundary — no custom `value_parser`; same derivation already used for `suggested_target` at `src/main.rs:1087`.
-  - Three tests written first, implementation second: `seed_target_requests_writes_supplied_components_into_target_requests_yaml`, `seed_target_requests_with_empty_list_is_a_no_op`, `seed_target_requests_reason_identifies_create_time_origin`. One red-green-red-green caught a substring assertion ("creation" doesn't contain "create") and forced an honest reason string.
-  - All 946 lib + 6 integration tests green; clippy `-D warnings` clean across workspace.
+  - Attempted to design and plan the `ravel-lite fixed-memory list` / `fixed-memory show <slug>` verbs, unblocking the stalled task `add-ravel-lite-show-verb-for-embedded-fixed-memory-content`.
+  - Settled the full CLI design: layered overlay semantics (embedded + user file at `<config-dir>/fixed-memory/<slug>.md`), bare-slug identifier shape, addendum delimiter for the both-sources case, `--format yaml|json|markdown` parity for `list`, and an error with available-slugs remediation for unknown slugs on `show`.
+  - Wrote `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md` — the approved spec covering architecture, data flow, phase-prompt sweep targets (work.md lines 33–51, reflect.md lines 18/84, dream.md lines 9/22), allowlist entries, error handling, schema appendix, test plan, and out-of-scope items.
+  - Wrote `defaults/fixed-memory/cli-tool-design.md` — a new fixed-memory entry providing LLM-agent CLI design guidance (structured output, help examples, actionable errors, flag vocabulary, exit codes, audit checklist, anti-patterns). This becomes a first-class embedded resource for the fixed-memory set and is the audit reference for the new CLI audit task.
+  - Flipped `add-ravel-lite-show-verb-for-embedded-fixed-memory-content` from `blocked` to `done` with a superseded results block: the original thin-wrapper shape is replaced by the layered overlay design shipped in the spec.
+  - Added two new backlog tasks: `implement-fixed-memory-cli-overlay-and-sweep-phase-prompts` (implementation of the spec, not_started, no deps) and `cli-audit-and-refactor-against-cli-tool-design-md` (broader CLI audit driven by the new guide, not_started, deliberately deferred until in-flight architecture-next work settles).
+  - No source code was written this session; the deliverable is the design doc and guide, not the implementation.
 
-  What surfaced:
-  - Pre-existing bug: `defaults/create-plan.md` omits `schema_version: 1` from its example YAML, so LLM-authored `target-requests.yaml` files fail the runner's version guard at the next phase boundary.
-  - Prompt gap: when `--target` pre-seeds the file, the create prompt's raw "Write the proposed targets to..." instruction overwrites it.
-  - Both gaps are cleanly fixed by having the prompt call `state target-requests add` instead (the verb handles schema_version and appends). Promoted as a new backlog task with full scope inlined.
+  ## What this suggests next
 
-  What this suggests next: the promoted backlog task covers the prompt-fix follow-up. Beyond that, this change becomes meaningful once `drain-target-requests-at-phase-boundaries` is implemented so the runner actually mounts the seeded worktrees.
+  - Pick up `implement-fixed-memory-cli-overlay-and-sweep-phase-prompts` next work cycle; the spec is ready to implement against.
+  - The cli-tool-design.md guide will be visible to the work LLM via `ravel-lite fixed-memory show cli-tool-design` once the implementation lands; in the meantime it is accessible as an embedded file.
