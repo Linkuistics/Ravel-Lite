@@ -54,7 +54,7 @@ entries:
 - id: analyse-work-commits-all-non-plan-paths
   title: Analyse-work commits all non-plan paths
   body: |
-    Analyse-work stages and commits every path outside the plan dir, or justifies each skipped path in the session log. Mechanism: `commits.yaml` spec authored in step 9; see `Analyse-work writes commits.yaml; git-commit-work applies it`.
+    Analyse-work stages and commits every path outside the plan dir, or justifies each skipped path in the session log. Mechanism: `commits.yaml` spec authored in step 9; see `Analyse-work writes commits.yaml; git-commit-analyse-work applies it`.
 - id: analyse-work-receives-dirty-tree-snapshot-as-work-tree-status
   title: Analyse-work receives dirty-tree snapshot as `{{WORK_TREE_STATUS}}`
   body: |
@@ -70,7 +70,7 @@ entries:
 - id: phase-contract-test-validates-per-phase-file-writes
   title: Phase contract test validates per-phase file writes
   body: |
-    `phase_contract_round_trip_writes_expected_files` runs `phase_loop` from `analyse-work` via `ContractMockAgent`; assertions cover latest-session.md, memory.md updated, backlog.md updated, phase.md ends at `work`, and git log subjects. `commit-message.md` is absent from the flow; analyse-work authors `commits.yaml` instead. See: `Analyse-work writes commits.yaml; git-commit-work applies it`.
+    `phase_contract_round_trip_writes_expected_files` runs `phase_loop` twice via `ContractMockAgent`; assertions cover latest-session.md, memory.md updated, backlog.md updated, phase.md ends at `triage`, and git log subjects. `ContractMockAgent` writes `git-commit-analyse-work` after analyse-work to trigger the `GitCommitAnalyseWork` handler. `commit-message.md` is absent from the flow; analyse-work authors `commits.yaml` instead. See: `Analyse-work writes commits.yaml; git-commit-analyse-work applies it`.
 - id: tool-read-token-scoped-to-work-md-only
   title: '`{{TOOL_READ}}` token scoped to `work.md` only'
   body: |
@@ -106,7 +106,7 @@ entries:
 - id: write-phase-precedes-git-commit-plan-in-all-commit-handlers
   title: '`write_phase` precedes `git_commit_plan` in all commit handlers'
   body: |
-    All four `ScriptPhase::GitCommit*` handlers in `phase_loop.rs` call `write_phase(next)` before `git_commit_plan`. Phase.md is captured in the same commit as other plan-state writes; the plan tree is clean at every user-prompt point.
+    All four `ScriptPhase::GitCommit*` handlers in `phase_loop.rs` call `write_phase(next)` before `git_commit_plan`. Phase.md is captured in the same commit as other plan-state writes; the plan tree is clean at every user-prompt point. The four handlers are: `GitCommitWork`, `GitCommitAnalyseWork`, `GitCommitTriage`, `GitCommitReflect`.
 - id: work-baseline-seeded-atomically-in-the-triage-commit
   title: Work-baseline seeded atomically in the triage commit
   body: |
@@ -123,14 +123,6 @@ entries:
   title: '`spawn_blocking` does not cancel cleanly in `tokio::select!`'
   body: |
     Use `tokio::time::sleep` for tty event polling. A `spawn_blocking` thread is not dropped when the select arm is cancelled; it races the spawned child for the tty. `tokio::time::sleep` is properly cancellable and eliminates the race.
-- id: dream-word-count-sums-entry-titles-and-bodies
-  title: Dream word-count sums entry titles and bodies
-  body: |
-    `dream.rs` computes word count by summing title and body text across all parsed `MemoryEntry` values; markdown punctuation is excluded. `update_baseline_counts_entry_titles_and_bodies` regression test pins this contract. `update_dream_baseline` self-corrects after the first successful dream if a prior raw-markdown baseline drifts.
-- id: dream-baseline-seeded-from-three-call-sites
-  title: dream-word-count seeded from three call sites
-  body: |
-    `seed_dream_word_count_if_missing` in `src/dream.rs` is called from `run_create` (post-session scaffolding), `run_set_phase` (every LLM phase transition including coordinators), and `GitCommitReflect`. Seeds `dream-word-count` to 0, not current word count; seeding to current count silently delays the first dream by `headroom` words on populated plans. Legacy migration: if `dream-word-count` is missing and `dream-baseline` parses as a usize, the value is copied and the legacy file is deleted. `dream-baseline` is a SHA file; `dream-word-count` is the word-count store.
 - id: phase-prompts-use-ravel-lite-state-cli-verbs
   title: Phase prompts use `ravel-lite state` CLI verbs
   body: |
@@ -152,9 +144,9 @@ entries:
   body: |
     `src/term_title.rs` exposes `set_title(project, plan, phase)` (side-effecting) and `format_title_escape` (testable helper). Writes to stdout; clean side-channel because Ratatui uses stderr backend. Includes tmux passthrough (doubled inner ESCs). Called at `LlmPhase` entry in `phase_loop` and `run_single_plan`. Phase labels uppercased to match the phase-header banner convention.
 - id: reflect-phase-runs-automatically-after-git-commit-work
-  title: Reflect phase runs automatically after git-commit-work
+  title: Reflect phase runs automatically after git-commit-analyse-work
   body: |
-    The runner proceeds from `GitCommitWork` to reflect without user confirmation; no pre-reflect gate exists.
+    The runner proceeds from `GitCommitAnalyseWork` to reflect without user confirmation; no pre-reflect gate exists.
 - id: fake-pi-script-must-be-phase-aware
   title: Fake-pi script must be phase-aware
   body: |
@@ -498,7 +490,7 @@ entries:
 - id: run-create-pre-seeds-plan-dir-in-rust-before-llm-spawn
   title: run_create pre-seeds plan dir in Rust before LLM spawn
   body: |
-    `run_create` takes `plan_name: &str`; `validate_plan_name` replaces `validate_target`; `resolve_plan_dir` enforces `<context_root>/plans/<name>/` placement. Callers must pass a bare plan name, not a path. `src/create.rs` scaffolds the plan directory — `backlog.yaml`, `memory.yaml`, `intents.yaml`, and related plan-state files — via CLI calls before the create-plan LLM spawn. Eliminates format drift; `defaults/create-plan.md` carries no scaffolding instructions. See: `Pre-initialise output file before CLI-driven spawn`.
+    `run_create` takes `plan_name: &str`; `validate_plan_name` replaces `validate_target`; `resolve_plan_dir` enforces `<context_root>/plans/<name>/` placement. Callers must pass a bare plan name, not a path. `src/create.rs` scaffolds the plan directory — `backlog.yaml`, `memory.yaml`, `intents.yaml`, and related plan-state files — via CLI calls before the create-plan LLM spawn; initial `phase.md` is seeded to `triage`. Eliminates format drift; `defaults/create-plan.md` carries no scaffolding instructions. See: `Pre-initialise output file before CLI-driven spawn`.
 - id: headless-output-filters-hr-lines-in-rust
   title: Headless output filters `---` HR lines in Rust
   body: |
@@ -516,9 +508,9 @@ entries:
   body: |
     `PlanRow.blocked` (computed by `plan_row_counts()`) counts tasks with `status=blocked` OR `status=not_started` with at least one unmet dependency. Matches the `blocked` column key in `src/survey/render.rs:20`. Narrow `status==blocked`-only definitions undercount. See: `PlanRowCounts injects unblocked/blocked/received into survey`.
 - id: analyse-work-writes-commits-yaml-git-commit-work-applies-it
-  title: Analyse-work writes commits.yaml; git-commit-work applies it
+  title: Analyse-work writes commits.yaml; git-commit-analyse-work applies it
   body: |
-    `CommitSpec` in `src/state/commits/schema.rs` (moved from inline in `src/git.rs`): ordered `{paths, message}` list with an optional `target: ComponentRef` field. `target` is reserved for two-stream routing; `apply_commits_spec` in `src/git.rs` currently ignores it. Read-only `list`/`show` CLI verbs wired in `src/main.rs`. `GitCommitWork` calls `apply_commits_spec`, applies each commit scoped to the project subtree, then removes the spec file before staging to prevent self-inclusion. Fallback on missing/malformed/empty spec: single catch-all commit of the whole subtree. Plan-state is folded into the first/only source commit by default; no separate plan-state commit is produced. See: `Analyse-work commits all non-plan paths`.
+    `CommitSpec` in `src/state/commits/schema.rs`: ordered `{paths, message}` list with an optional `target: ComponentRef` field. `target` is reserved for two-stream routing; `apply_commits_spec` in `src/git.rs` currently ignores it. Read-only `list`/`show` CLI verbs wired in `src/main.rs`. `GitCommitAnalyseWork` calls `apply_commits_spec`, applies each commit scoped to the project subtree, then removes the spec file before staging to prevent self-inclusion. Fallback on missing/malformed/empty spec: single catch-all commit of the whole subtree. Plan-state is folded into the first/only source commit by default; no separate plan-state commit is produced. See: `Analyse-work commits all non-plan paths`.
 - id: phase-summary-render-computes-structural-labels-only
   title: phase-summary render computes structural labels only
   body: |
@@ -526,11 +518,11 @@ entries:
 - id: phase-summary-render-prompt-wiring-needs-orchestrator-baseline
   title: Phase prompts invoke `phase-summary render` via CLI directive
   body: |
-    `defaults/phases/{reflect,dream,triage}.md` `## Output format` sections each contain a single CLI directive: `ravel-lite state phase-summary render {{PLAN}} --phase <phase> --baseline $(cat {{PLAN}}/<phase>-baseline 2>/dev/null || echo "")`. Emitting that directive's output verbatim is the LLM's only structural obligation; the narrative preamble and intent-required labels remain the LLM's authoring responsibility. Baseline wiring: `GitCommitWork` → `reflect-baseline`; `GitCommitReflect` → `dream-baseline` (or `triage-baseline` when skipping dream); `GitCommitDream` → `triage-baseline`; `GitCommitTriage` → `work-baseline`.
+    `defaults/phases/{reflect,dream,triage}.md` `## Output format` sections each contain a single CLI directive: `ravel-lite state phase-summary render {{PLAN}} --phase <phase> --baseline $(cat {{PLAN}}/<phase>-baseline 2>/dev/null || echo "")`. Emitting that directive's output verbatim is the LLM's only structural obligation; the narrative preamble and intent-required labels remain the LLM's authoring responsibility. Baseline wiring: `GitCommitWork` → `analyse-work-baseline`; `GitCommitAnalyseWork` → `reflect-baseline`; `GitCommitReflect` → `triage-baseline`; `GitCommitTriage` → `work-baseline`.
 - id: each-phase-baseline-holds-the-sha-from-the-preceding-commit
   title: Each <phase>-baseline holds the SHA from the preceding commit
   body: |
-    Each `<phase>-baseline` file holds the commit SHA from just before that phase started — written by the preceding `git-commit-*` step, not by the phase itself. Mapping: `reflect-baseline` ← `GitCommitWork`; `dream-baseline` ← `GitCommitReflect`; `triage-baseline` ← `GitCommitDream` (or `GitCommitReflect` when `should_dream` is false); `work-baseline` ← `GitCommitTriage`. Enables `state phase-summary render --baseline $(cat <phase>-baseline)` calls from phase prompts.
+    Each `<phase>-baseline` file holds the commit SHA from just before that phase started — written by the preceding `git-commit-*` step, not by the phase itself. Mapping: `analyse-work-baseline` ← `GitCommitWork`; `reflect-baseline` ← `GitCommitAnalyseWork`; `triage-baseline` ← `GitCommitReflect`; `work-baseline` ← `GitCommitTriage`. Enables `state phase-summary render --baseline $(cat <phase>-baseline)` calls from phase prompts.
 - id: init-rs-drift-sentinel-checks-phase-prompts-for-state-phase-summary-render
   title: '`init.rs` drift sentinel checks phase prompts for `state phase-summary render`'
   body: |
