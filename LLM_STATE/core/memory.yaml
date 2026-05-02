@@ -947,3 +947,7 @@ entries:
   title: Phase prompts use ravel-lite fixed-memory show for content
   body: |
     `defaults/phases/reflect.md` and `dream.md` call `Bash(ravel-lite fixed-memory show memory-style)` to load style rules. `defaults/phases/work.md` calls `ravel-lite fixed-memory list` then `ravel-lite fixed-memory show <slug>` to discover and read fixed-memory content. Direct reads to `{{ORCHESTRATOR}}/fixed-memory/*.md` file paths are removed; the CLI verb handles embedded-plus-user overlay.
+- id: per-phase-allowlist-architecture-headless-uses-dangerously-skip-permissions
+  title: 'Per-phase allowlist architecture: headless uses --dangerously-skip-permissions'
+  body: |
+    Headless phases (analyse-work, reflect, triage, dream) run with `--dangerously-skip-permissions` — set via the `dangerous: true` param and `force_dangerous` in `src/main.rs:24-35`. The interactive work phase does not pass `--allowed-tools`; it inherits the user's machine-level `settings.json`. There are no per-phase allowlist constants to update for work/reflect/dream in the current architecture. `CREATE_ALLOWED_TOOLS` in `src/create.rs` governs the create-plan flow only — it is not a template for the main phase loop. If a future shipped `settings.json` overlay or a per-phase allowlist constant for headless phases lands via architecture-next work, add `Bash(ravel-lite fixed-memory:*)` at the same time — phase prompts authored after the fixed-memory CLI task assume those verbs are reachable.
