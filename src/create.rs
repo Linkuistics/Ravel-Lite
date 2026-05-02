@@ -42,6 +42,7 @@ Bash(ravel-lite repo:*),\
 Bash(ravel-lite state intents:*),\
 Bash(ravel-lite state backlog:*),\
 Bash(ravel-lite state memory:*),\
+Bash(ravel-lite state target-requests:*),\
 Read,Write,Glob,Grep";
 
 /// Compose the v2 create prompt. Substitutes `{{PLAN}}` (the absolute
@@ -316,6 +317,36 @@ mod tests {
         assert!(out.contains("Target proposal"), "missing §2 marker");
         assert!(out.contains("Anchor capture"), "missing §3 marker");
         assert!(out.contains("/abs/plans/myplan"), "{{PLAN}} did not substitute");
+    }
+
+    #[test]
+    fn create_prompt_uses_target_requests_verbs_not_raw_yaml_writes() {
+        // Regression guard: §2 must instruct the LLM to use the
+        // `state target-requests` verbs, not raw `Write` against
+        // `target-requests.yaml`. A raw write would (a) clobber any
+        // entries seeded by `ravel-lite create --target` and (b) almost
+        // always omit `schema_version: 1`, producing a file the runner
+        // rejects at the next phase boundary.
+        let template = crate::init::require_embedded(CREATE_PLAN_PROMPT_PATH).unwrap();
+        assert!(
+            template.contains("state target-requests add"),
+            "create-plan §2 must instruct using `state target-requests add` to record proposed targets"
+        );
+        assert!(
+            template.contains("state target-requests list"),
+            "create-plan §2 must instruct reading the seeded queue via `state target-requests list` before proposing"
+        );
+    }
+
+    #[test]
+    fn create_allowed_tools_includes_target_requests_verbs() {
+        // The prompt instructs the LLM to call `state target-requests`
+        // verbs; the allowlist must permit them or every invocation
+        // would prompt the user during a flow that should be friction-free.
+        assert!(
+            CREATE_ALLOWED_TOOLS.contains("Bash(ravel-lite state target-requests:*)"),
+            "CREATE_ALLOWED_TOOLS must permit `state target-requests` verbs; got: {CREATE_ALLOWED_TOOLS}"
+        );
     }
 
     #[test]

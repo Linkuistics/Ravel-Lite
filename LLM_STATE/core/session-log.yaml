@@ -1797,3 +1797,18 @@ sessions:
 
     - Pick up `implement-fixed-memory-cli-overlay-and-sweep-phase-prompts` next work cycle; the spec is ready to implement against.
     - The cli-tool-design.md guide will be visible to the work LLM via `ravel-lite fixed-memory show cli-tool-design` once the implementation lands; in the meantime it is accessible as an embedded file.
+- id: session-125
+  timestamp: 2026-05-02T11:57:35Z
+  phase: work
+  body: |
+    ### Session 125 (2026-05-02T11:57:35Z) — Route create-plan target-requests through state verbs
+
+    - Rewrote `defaults/create-plan.md` §2 to use `ravel-lite state target-requests {list,add,remove}` instead of raw `Write` against `target-requests.yaml`. The raw-write path had two failure modes: missing `schema_version: 1` (runner rejection at next phase boundary) and overwrite-clobber of any entries already seeded by `ravel-lite create --target`.
+    - Updated §4 review step to inspect target-requests via `state target-requests list` for consistency with intents.
+    - Added `Bash(ravel-lite state target-requests:*)` to `CREATE_ALLOWED_TOOLS` in `src/create.rs` so the new verbs flow without per-call approval prompts during the create dialogue.
+    - Added two regression test cases to `src/create.rs`: one guards against §2 reverting to raw YAML writes, one guards against the allowlist dropping the permission.
+    - Registered `fixed-memory/cli-tool-design.md` in `EMBEDDED_FILES` in `src/init.rs` to resolve a pre-existing `every_file_under_defaults_is_registered_in_embedded_files` drift-guard failure that was blocking a clean `cargo test --workspace` run. The file was present in `defaults/` from an earlier session but had never been added to the embed registry.
+    - `cargo test --workspace` clean (948 lib tests + integration suites). `scripts/check.sh` clean.
+
+    - §3 (anchors) still uses raw `Write` to `anchors.yaml`; out of scope here since no `state anchors` verb exists yet. A future task would design the verb surface first.
+    - The `implement-fixed-memory-cli-overlay-and-sweep-phase-prompts` task will need to add `Bash(ravel-lite fixed-memory:*)` to allowlists across multiple per-phase constants — the pattern is now well established.

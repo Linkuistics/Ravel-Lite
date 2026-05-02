@@ -1,4 +1,4 @@
-# Memory Style Rules
+# memory.yaml Entry Style Rules
 
 All `memory.yaml` entries in a backlog plan follow these rules. Both the
 reflect phase (incremental per-session) and the dream phase (periodic

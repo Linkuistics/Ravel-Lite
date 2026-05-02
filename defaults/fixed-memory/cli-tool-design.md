@@ -1,4 +1,4 @@
-# Designing CLIs for Agentic (LLM) Use
+# CLI Design Guidelines for LLM Agents
 
 Instructions for an LLM tasked with writing, auditing, or refactoring a CLI tool so that other LLM agents can use it reliably and efficiently.
 

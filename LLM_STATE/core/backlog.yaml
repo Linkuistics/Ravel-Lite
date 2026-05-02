@@ -41,7 +41,7 @@ tasks:
 - id: create-plan-prompt-use-state-target-requests-add-allowlist-the-tool-read-seeded-queue-before-proposing
   title: 'create-plan prompt: use state target-requests add, allowlist the tool, read seeded queue before proposing'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Update the create-plan prompt (`defaults/create-plan.md`) to use the
@@ -106,6 +106,31 @@ tasks:
     ## Dependencies
 
     None. Self-contained prompt + allowlist change.
+  results: |
+    ## What was done
+
+    - **defaults/create-plan.md §2** rewritten: removed the raw `Write target-requests.yaml` instruction (and its schema-version-omitting example YAML); replaced with `ravel-lite state target-requests {list,add,remove}` invocations. New paragraph instructs the LLM to first call `state target-requests list` so CLI-seeded entries are visible and not clobbered. Explicit "do not write `target-requests.yaml` directly" guard included with the rationale (schema_version + clobber).
+    - **defaults/create-plan.md §4** updated: review step now lists target-requests via `state target-requests list` for consistency with intents.
+    - **src/create.rs** `CREATE_ALLOWED_TOOLS` constant: added `Bash(ravel-lite state target-requests:*)` so the new verbs flow without per-call approval prompts.
+    - **src/create.rs tests**: added two regression guards — `create_prompt_uses_target_requests_verbs_not_raw_yaml_writes` (fails if §2 reverts to instructing raw YAML writes) and `create_allowed_tools_includes_target_requests_verbs` (fails if the allowlist drops the new permission).
+    - **src/init.rs**: added `EmbeddedFile` entry for `fixed-memory/cli-tool-design.md` to clear the pre-existing `every_file_under_defaults_is_registered_in_embedded_files` drift-guard failure that was unrelated to this task but blocking a green test run. (The file existed in `defaults/` from an earlier task but had not been registered in `EMBEDDED_FILES`.)
+
+    ## What worked
+
+    - The fix is the smallest possible: a prompt rewrite plus one allowlist entry. No new module, no new verb, no schema change. The existing `state target-requests add` verb already enforces non-empty `--reason`, rejects duplicates, and writes `schema_version: 1` — so the LLM-authored failure mode (`schema_version` missing) is impossible by construction once the LLM is routed through it.
+    - The two new tests are tight: they assert presence of specific substrings in the embedded prompt and the constant. A future regression that re-introduced the raw-write instruction would fail loudly during `cargo test --lib create::tests`.
+    - `./scripts/check.sh` clean. `cargo test --workspace` clean (948 lib tests + integration suites all pass). `shipped_pi_prompts_have_no_dangling_tokens` and `every_file_under_defaults_is_registered_in_embedded_files` both pass.
+
+    ## What didn't work / was deliberately skipped
+
+    - §3 (anchors) still uses raw `Write` to `anchors.yaml`. Out of scope per the task description (which scoped only §2 / target-requests). The same pattern would apply: an `anchors` CLI verb does not exist yet, so closing this gap requires a separate task that designs the anchors verb surface first.
+    - The pre-existing `init` drift-guard fix for `cli-tool-design.md` is adjacent to this task, not part of it. It was a one-line registration that pulled `cargo test --workspace` to green; without it, the failing test would have masked any regression my edits introduced. The fix belongs to whoever shipped `cli-tool-design.md` (the in-flight `implement-fixed-memory-cli-overlay-and-sweep-phase-prompts` task, which references this file in its scope), but absent that task landing, the orphaned file was breaking the gate.
+
+    ## What this suggests next
+
+    - The `implement-fixed-memory-cli-overlay-and-sweep-phase-prompts` task (next ready candidate, no deps) will need to introduce `Bash(ravel-lite fixed-memory:*)` to allowlists across multiple per-phase constants — same allowlist pattern, broader sweep. The pattern is well established (this task plus the existing `state intents:*`, `state backlog:*`, `state memory:*` entries).
+    - The CLI-audit task (`cli-audit-and-refactor-against-cli-tool-design-md`, blocked on fixed-memory) should consider whether `state target-requests` (and similar scratch-queue verbs) belong under a separate top-level command rather than buried under `state`, since they aren't TMS items. Out of scope here.
+    - Anchors verb design: a follow-up task could mirror this one — introduce `state anchors {list,add,remove}` (or similar), update §3 of create-plan.md to use it, allowlist the verb. Defer until anchors actually consume more than a passive YAML file (today nothing reads `anchors.yaml` — verifying this would be a precondition).
 - id: implement-fixed-memory-cli-overlay-and-sweep-phase-prompts
   title: Implement fixed-memory CLI overlay and sweep phase prompts
   category: architecture-next

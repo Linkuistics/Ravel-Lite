@@ -1,6 +1,6 @@
-# Coding Style Guidelines
+# Universal Coding Style Guidelines
 
-When writing or refactoring code in this project, follow these principles:
+When writing or refactoring code in this project, follow these principles. These rules apply to any language; per-language files (`coding-style-<lang>`) extend them.
 
 ## Development Approach
 - **Use Test-Driven Development (TDD)** - This is particularly useful when working with LLMs

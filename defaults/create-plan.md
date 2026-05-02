@@ -62,17 +62,36 @@ queries:
 - `ravel-lite atlas describe <repo>:<component>` — component details.
 - `ravel-lite atlas neighbors <repo>:<component>` — connected components.
 
-Write the proposed targets to `{{PLAN}}/target-requests.yaml`:
+Before proposing anything, inspect the existing queue:
 
-    requests:
-      - component: <repo_slug>:<component_id>
-        reason: <one-sentence reason this component serves the intent>
+    ravel-lite state target-requests list {{PLAN}}
 
-Show the file to the user; accept corrections by editing the file.
+If the user passed `--target` to `ravel-lite create`, those requests
+are already seeded in the queue. Treat the dialogue as proposing
+additions or removals on top of what is already there — do not start
+from a blank slate, and do not overwrite seeded entries.
+
+Record each new proposed target by appending to the queue:
+
+    ravel-lite state target-requests add {{PLAN}} <repo_slug>:<component_id> \
+      --reason "<one-sentence reason this component serves the intent>"
+
+To drop a queued entry (whether CLI-seeded or earlier-proposed) the
+user no longer wants:
+
+    ravel-lite state target-requests remove {{PLAN}} <repo_slug>:<component_id>
+
+Do not write `target-requests.yaml` directly with the Write tool: the
+verbs handle the file's `schema_version` and append/remove semantics
+correctly, while a raw write would clobber seeded entries and produce
+a file the runner rejects at the next phase boundary.
+
+Show the resulting queue with `ravel-lite state target-requests list
+{{PLAN}}` and confirm with the user.
 
 If no concrete targets are knowable yet (rare — usually means the plan
-needs more clarification on §1), the file may be omitted. Note this to
-the user explicitly.
+needs more clarification on §1), the queue may stay empty. Note this
+to the user explicitly.
 
 ## §3. Anchor capture
 
@@ -93,6 +112,6 @@ omitted.
 ## §4. Review and exit
 
 Show all three artifacts (intents via `ravel-lite state intents list
-{{PLAN}}`, target-requests by reading the file, anchors by reading the
-file) and confirm with the user. Once approved, exit. The user will
+{{PLAN}}`, target-requests via `ravel-lite state target-requests list
+{{PLAN}}`, anchors by reading the file) and confirm with the user. Once approved, exit. The user will
 commit the plan directory separately.
