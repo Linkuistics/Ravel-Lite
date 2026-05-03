@@ -408,7 +408,7 @@ entries:
   body: |
     The `component_ontology` crate exposes `render_kinds_for_prompt(&OntologyYaml) -> String` and `render_embedded_kinds_for_prompt() -> Result<String>`. `src/discover/stage2.rs` calls `render_embedded_kinds_for_prompt()` to substitute `{{ONTOLOGY_KINDS}}` in the Stage 2 prompt. This is the sole injection point for the EdgeKind vocabulary into LLM prompts.
 - id: interaction-role-hints-spec-is-in-migration-doc-5-2-not-ontology-doc
-  title: interaction_role_hints spec is in migration doc §5.2, not ontology doc
+  title: \`interaction_role_hints\` spec is in migration doc §5.2
   body: |
     `docs/component-ontology.md` has no §13.2 or §14.1. The `interaction_role_hints` design lives in `docs/component-ontology-migration.md §5.2`. Task briefs that cite the former section numbers are wrong; use the migration companion doc.
 - id: prompt-vocab-enum-variant-bijection-tests-guard-llm-code-alignment
@@ -440,7 +440,7 @@ entries:
   body: |
     Pre-initialise the output file before spawning an LLM with CLI write tools: the zero-calls case produces a valid empty file (load succeeds) rather than a missing-file error. Seed prior-phase failures into the initial file so they survive the round-trip regardless of LLM output. `run_stage2` demonstrates this: creates `discover-proposals.yaml` with Stage 1 failures before spawning Stage 2.
 - id: create-spawn-binds-purpose-via-invariant-in-prompt-and-template
-  title: '`create` spawn binds purpose via INVARIANT in prompt and template'
+  title: \`create\` spawn binds purpose via INVARIANT block
   body: |
     `compose_create_prompt` in `src/create.rs` appends an INVARIANT paragraph after the path instruction. `defaults/create-plan.md` §0 leads with the invariant heading before the §1 clarification dialogue. Without both, the agent interprets a concrete problem description (bug report, feature request) as a pivot signal and skips plan creation. Single-task plans are explicitly named as valid to prevent "only one thing to do" being treated as a non-plan.
 - id: compose-prompt-asserts-plan-only-output-invariant-guards-the-create-invariant
@@ -448,7 +448,7 @@ entries:
   body: |
     `compose_prompt_asserts_plan_only_output_invariant` in `src/create.rs` tests asserts both key phrases are present in the composed prompt. Guards the INVARIANT binding against drift. See: `create` spawn binds purpose via INVARIANT in prompt and template.
 - id: bash-var-pat-repl-treats-in-replacement-as-matched-text
-  title: Bash ${var//pat/repl} treats & in replacement as matched text
+  title: Bash ${var//pat/repl} treats & as matched text
   body: |
     In bash 5.2+, `&` in the replacement side of `${var//pat/repl}` expands to the matched pattern, not a literal ampersand. HTML entities like `&lt;` in replacement content become the matched text, silently corrupting output. Escape `&` → `\&` before using content as a replacement string.
 - id: build-docs-sh-esc-must-wrap-every-substitution-replacement
@@ -480,7 +480,7 @@ entries:
   body: |
     `src/backlog_transitions.rs` diffs `backlog.yaml` at the work-baseline SHA against the current state. Covers status flips, result additions/modifications, added/deleted tasks, dependency changes, and handoff changes. Soft-fails to a human-readable placeholder on any error. Wired into `phase_loop.rs` `AnalyseWork` branch alongside `{{WORK_TREE_STATUS}}`; `analyse-work.md` presents the block as context for understanding what moved — the commit title must describe the shape of the changes (e.g., "Extract auth module", "Remove deprecated sync path"), not cite task ids. The commits.yaml authoring step in `analyse-work.md` explicitly forbids task ids in commit titles or bodies.
 - id: work-baseline-is-prior-triage-commit-triage-additions-bleed-into-backlog-transitions
-  title: Work-baseline is prior triage commit; triage additions bleed into {{BACKLOG_TRANSITIONS}}
+  title: Triage additions bleed into {{BACKLOG_TRANSITIONS}} from work-baseline
   body: |
     The work-baseline SHA is captured at the triage commit (end of the previous cycle), not at session start. Triage additions from the prior cycle therefore appear in the `{{BACKLOG_TRANSITIONS}}` diff alongside this cycle's work changes. `analyse-work.md` includes a caveat about this. A cleaner fix requires a separate session-start baseline snapshot. See: `Work-baseline seeded atomically in the triage commit`.
 - id: llm-reasoning-preamble-in-reflect-dream-triage-is-a-preserved-feature
@@ -524,7 +524,7 @@ entries:
   body: |
     Each `<phase>-baseline` file holds the commit SHA from just before that phase started — written by the preceding `git-commit-*` step, not by the phase itself. Mapping: `analyse-work-baseline` ← `GitCommitWork`; `reflect-baseline` ← `GitCommitAnalyseWork`; `triage-baseline` ← `GitCommitReflect`; `work-baseline` ← `GitCommitTriage`. Enables `state phase-summary render --baseline $(cat <phase>-baseline)` calls from phase prompts.
 - id: init-rs-drift-sentinel-checks-phase-prompts-for-state-phase-summary-render
-  title: '`init.rs` drift sentinel checks phase prompts for `state phase-summary render`'
+  title: '`init.rs` drift sentinel checks for `phase-summary render`'
   body: |
     `src/init.rs` contains a drift-guard sentinel asserting phase prompt templates include the substring `state phase-summary render`. Any change to how phase prompts emit their output requires updating this sentinel.
 - id: ops-log-yaml-mechanism-for-intent-label-capture-deferred
@@ -584,7 +584,7 @@ entries:
   body: |
     `--debug` is a `run` flag; `create::run_create` and `discover::stage1` are intentionally uninstrumented because they are unreachable from `ravel-lite run`. Four instrumented spawn sites: `src/agent/claude_code.rs` (interactive + headless), `src/agent/pi.rs` (interactive + headless), `src/agent/common.rs` (`pump_stdout_to_ui`, `spawn_stderr_drain`, exit in `run_streaming_child`), and `src/survey/invoke.rs` (`spawn_claude_and_read`).
 - id: interactive-tui-paths-log-stdio-inherited-not-transcript
-  title: Pi interactive logs "inherited"; claude_code uses PTY under --debug
+  title: Pi `--debug` logs 'inherited'; claude_code uses PTY
   body: |
     `pi` interactive spawn paths: stdio is inherited and not capturable; `--debug` records "stdio: inherited (no transcript available)" to avoid silent lossiness. `claude_code` interactive paths: `--debug` routes through `spawn_claude_via_pty` in `src/agent/claude_code.rs`, enabling PTY byte-stream capture via `log_pty_chunk`/`render_pty_bytes` in `debug_log.rs`. The "inherited" log message is pi-only. Headless paths capture full output in both cases.
 - id: select-config-dir-strips-trailing-slashes-via-components-collect
@@ -592,7 +592,7 @@ entries:
   body: |
     `src/config.rs::select_config_dir` normalises all candidate paths with `candidate.components().collect::<PathBuf>()` before any downstream use. This is the single normalisation point; trailing slashes on user-supplied config dirs do not propagate. Regression test: `trailing_slash_in_candidate_is_normalised_away`.
 - id: interactive-work-phase-spawn-omits-add-dir-for-plan-dir
-  title: Claude spawns inject --add-dir for mounted worktrees outside cwd
+  title: Claude spawns inject `--add-dir` for external worktrees
   body: |
     `invoke_interactive` and `build_headless_args` in `src/agent/claude_code.rs` inject `--add-dir <path>` for each mounted worktree path not already under `cwd`, via `mounted_worktree_add_dirs(plan_dir, cwd)` in `src/state/targets/yaml_io.rs`. Plan dir itself is never emitted: in v1 layout it is always a descendant of cwd. The cwd-descendant filter makes v1/v2 layout transparent with no flag-day cutover: v1 emits no extra flags; v2 (plan dir outside project dir) emits real grants. An unnecessary `--add-dir` on a fresh machine triggers a trust-grant modal that hangs the spawn. Pi has no `--add-dir` equivalent and no filesystem permission model; worktree paths are reachable without grants. See: `Discover stage spawns need --allowed-tools and --add-dir` for headless stage spawns.
 - id: v1-v2-config-migration-wired-into-config-lua-resolve
@@ -600,7 +600,7 @@ entries:
   body: |
     `src/migrate_v1_to_v2.rs` migrates legacy materialised YAML config (global `config.yaml`, `config.local.yaml`, per-agent `config.yaml`/`tokens.yaml`) to a `config.lua` with version marker. Detects legacy layout by intersecting embedded-default paths with disk. Crash-safe: file writes precede deletes; a mid-run crash leaves legacy files on disk for the next call to complete. Wired in `config_lua::resolve` as the first-touch call before any config layer is read. See: `Config model is layered Lua; config_lua.rs owns it`.
 - id: pty-capture-rs-is-the-pty-orchestrator-for-claude-code-debug-capture
-  title: pty_capture.rs is the PTY orchestrator for claude_code debug capture
+  title: \`pty_capture.rs\` is the PTY orchestrator for claude_code
   body: |
     `src/agent/pty_capture.rs` exposes `run_pty_session` (production entry, called via `spawn_blocking`), `drive_pty_io` (three-thread orchestrator: stdout pump, stdin pump, SIGWINCH forwarder), `pump_stdin_with_shutdown` (`libc::poll`-based with `AtomicBool` shutdown to avoid `spawn_blocking` cancellation), `tee_to` (byte-copy with tap closure), and `current_terminal_size` (TIOCGWINSZ, 24×80 fallback). Dependencies: `portable-pty = "0.9"`, `libc = "0.2"`. See: `Pi interactive logs "inherited"; claude_code uses PTY under --debug`.
 - id: masterpty-send-not-sync-take-reader-writer-before-moving-master
@@ -632,7 +632,7 @@ entries:
   body: |
     For interactive CLI phases where the agent paraphrases questions, use screenshot-per-prompt for the volatile conversation and `transcript_at` for any deterministic post-command state. Maps capture fidelity to content stability: screenshots tolerate paraphrase variance; `transcript_at` is reproducible text. A marker-echo (`echo CHAPTER_03_CREATE_DONE`) after the interactive command provides a deterministic `find-text` sync point. Chapter 03 `ravel-lite create` demonstrates the pattern.
 - id: capture-response-files-are-authored-source-live-outside-docs-captures
-  title: Capture response files are authored source, live outside docs/captures/
+  title: Capture response files are authored source outside docs/captures/
   body: |
     `scripts/capture/responses/` holds authored verbatim responses for interactive capture scenarios (e.g. `03-purpose.txt`, `03-project.txt`). Located outside `docs/captures/` so `.gitignore`'s `docs/captures/` rule does not silently exclude them; they are authored source content, not captured output.
 - id: capture-harness-bypasses-three-claude-security-gates
@@ -648,7 +648,7 @@ entries:
   body: |
     `find-text "phase: work"` will never match in a capture run: the string `phase: work` lives in YAML state files only; the TUI renders the phase name via `term_title.rs` OSC escapes and banner text, not the raw YAML field. Use a screenshot or a banner-text string for phase-change sync points.
 - id: testanyware-download-cannot-pull-a-directory-use-per-file-exec-workaround
-  title: testanyware download cannot pull a directory; use per-file exec workaround
+  title: testanyware download can't pull a directory; use exec
   body: |
     `testanyware download` cannot pull a directory (`LLM_STATE/`); fails with HTTP 400. Workaround: capture individual transcripts via `testanyware exec`. Full-directory options: (a) recursive walk + per-file download; (b) tar roundtrip (`testanyware exec -- tar czf /tmp/llm_state.tar.gz LLM_STATE && testanyware download /tmp/llm_state.tar.gz`). Low priority: per-file exec covers prose-fold tasks.
 - id: capture-chapter-transitions-use-exit-sentinel-echo-before-next-chapter
@@ -668,7 +668,7 @@ entries:
   body: |
     `ascent` 0.8 (recompute-based) is the chosen Datalog engine for the knowledge-graph crate. Recompute is fast enough at ravel-lite scale; differential-dataflow's incremental complexity is not warranted. Settled in Phase A of architecture-next. BYODS and lattice features are available in 0.8 but unused; the stable surface (relation declarations, tuple-pattern heads, stratified negation, if-guard predicates) is unchanged from 0.6.
 - id: v1-v2-cutover-is-hard-v2-binary-refuses-unmigrated-plans
-  title: v1→v2 cutover is hard; v2 binary refuses unmigrated plans
+  title: v2 binary refuses unmigrated plans; no migration window
   body: |
     No migration window: the v2 binary hard-fails on unmigrated plans. Users must run `ravel-lite state migrate` before switching to v2. Settled in Phase A of architecture-next.
 - id: legacy-backfill-uses-one-shot-llm-extraction-at-migrate-time
@@ -684,7 +684,7 @@ entries:
   body: |
     No shared runtime rule-registry exists in the knowledge-graph crate. Each consumer authors its own `ascent!` Datalog program with the rules it needs. Centralising rules would couple the generic substrate to consumer-specific vocabulary.
 - id: blocked-by-is-kind-specific-extension-data-not-a-justification-edge
-  title: blocked_by is kind-specific extension data, not a justification edge
+  title: '`blocked_by` belongs in extension data, not justification edge'
   body: |
     `blocked_by` relationships belong in kind-specific extension data, not in the generic `justification` edge enum. Threading `blocked_by` through the substrate `store` would re-couple the generic substrate to ravel-lite plan vocabulary. The wiring task handles it as a domain wrapper.
 - id: src-repos-rs-holds-reposregistry-on-disk-is-name-keyed-map
@@ -736,11 +736,11 @@ entries:
   body: |
     `crates/knowledge-graph/src/plan_kg.rs` defines `IntentKind`, `BacklogItemKind`, `MemoryEntryKind`, and `FindingKind`, each with its own status enum and transition table. Type aliases (`IntentItem`, `BacklogStore`, etc.) and the intent→backlog cross-store cascade live here. See: `Store<K> is per-kind; cascade_serves_intent is the cross-store join`.
 - id: datalog-rs-smoke-tests-are-the-canary-for-ascent-upgrades
-  title: datalog.rs smoke tests are the canary for ascent upgrades
+  title: \`datalog.rs\` smoke tests are the ascent upgrade canary
   body: |
     Three smoke tests in `crates/knowledge-graph/src/datalog.rs` (`orphaned_rule_finds_backlog_items_without_active_intent`, `suspect_rule_finds_memory_entries_with_changed_sha`, `empty_program_runs_clean`) verify the stable ascent surface (relation declarations, tuple-pattern heads, stratified negation, if-guard predicates). Run these first on any ascent version bump; they are the primary canary for macro-generated code breakage.
 - id: llm-state-core-backlog-yaml-is-in-legacy-format-pending-v1-v2-migrator
-  title: LLM_STATE/core backlog.yaml is in legacy format pending v1→v2 migrator
+  title: LLM_STATE/core backlog.yaml is legacy; awaits v1→v2 migrator
   body: |
     `LLM_STATE/core/backlog.yaml` still uses the legacy `tasks: [...]` shape; the deployed binary (v1.0.2) reads only that shape and hard-fails on the TMS `items:` format. The source migration (`BacklogEntry` wrapping `Item<BacklogItemKind>`) is complete in `main`. File-level cutover belongs to the `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` task. Do not schedule LLM_STATE file-shape changes until the v1→v2 migrator ships. See: `v1→v2 cutover is hard; v2 binary refuses unmigrated plans`.
 - id: intents-yaml-has-list-show-add-set-status-verb-surface
@@ -768,7 +768,7 @@ entries:
 
     If the v2 design forbids cross-kind status string sharing (e.g., `superseded` means different things for a backlog item vs. a memory entry), `plan query-by-status` needs an explicit stance — either an error, a disambiguation flag, or a kind-scoped union with explicit labels.
 - id: no-ci-clippy-gate-lint-errors-accumulate-silently
-  title: scripts/check.sh gates clippy; CI and git hook are not wired
+  title: scripts/check.sh gates clippy; CI and hook not wired
   body: |
     scripts/check.sh runs clippy workspace-wide with -D warnings. Git pre-push hook recipe is documented in the script header but not installed — opt-in by design. CI has no clippy gate; drift between sessions is possible if check.sh is not run manually.
 - id: atlas-cli-routes-via-dispatch-atlas-in-src-atlas-rs
@@ -776,7 +776,7 @@ entries:
   body: |
     `src/atlas.rs` implements `dispatch_atlas`; `src/main.rs` routes `Commands::Atlas` to it via `AtlasCommands` enum. `atlas-index` is a workspace path dep in `Cargo.toml`. Core verbs: `atlas list-repos` (delegates to `repos::run_list`), `atlas freshness [--require-fresh]` (four status outcomes: `fresh`, `missing`, `no_local_path`, `unparseable`), `atlas list-components [--repo <slug>]`, `atlas summary [--repo <slug>]` (both load the `Catalog`), `atlas describe <ref>` (resolves qualified `<repo>/<id>` or bare `<id>`, emits `ComponentEntry` YAML with `compute_children` list), `atlas memory <ref> [--search <term>]` (reads `.atlas/memory.yaml`, optional case-insensitive substring filter). `--repo` validates against the fresh-repo set and emits a named-repos error on unknown slug rather than silent empty output. Additional verbs: `atlas edges`, `atlas neighbors`, `atlas roots` (EdgeGraph traversal); `atlas path`, `atlas scc` (DirectedGraph algorithms). See: `atlas edges/neighbors/roots traverse EdgeGraph from catalog`; `atlas path (BFS) and scc (Tarjan) verbs in src/atlas.rs`.
 - id: catalog-projects-token-is-not-in-phase-prompts-strip-task-is-no-op
-  title: CATALOG_PROJECTS token is not in phase prompts; strip task is no-op
+  title: '`CATALOG_PROJECTS` absent from phase prompts'
   body: |
     `defaults/phases/*.md` contains no `{{CATALOG_PROJECTS}}` token; grepping returns zero hits. The token lives only in `src/discover/stage1.rs` for repos-list scoping. "Strip atlas catalog from prompts" is a no-op task — triage should drop it.
 - id: catalog-in-src-atlas-rs-union-loads-fresh-repos-components
@@ -820,7 +820,7 @@ entries:
   body: |
     `build_directed_component_graph` in `src/atlas.rs` projects a loaded `Catalog` through `EdgeGraph` into `DirectedGraph<String>` keyed on bare component IDs. Symmetric edge kinds (`co-implements`, `communicates-with`) are excluded: bidirectional projection makes every peer-pair a 2-node SCC, drowning real circular-dependency findings. Peer relationships remain accessible via `atlas neighbors` (undirected BFS over `EdgeGraph`). All catalog components are added as nodes even without incident edges — mirrors the `EdgeGraph::roots` universe pattern. Design decision documented in the `build_directed_component_graph` docstring in `src/atlas.rs`. Applies to any future graph algorithm verb built on `DirectedGraph<String>`.
 - id: atlas-path-bfs-and-scc-tarjan-verbs-in-src-atlas-rs
-  title: atlas path (BFS) and scc (Tarjan) verbs in src/atlas.rs
+  title: '`atlas path` (BFS) and `scc` (Tarjan) verbs'
   body: |
     `atlas path <from> <to> [--max-hops N]` — BFS shortest path; `--max-hops` bounds search depth; returns `None` when no path exists or hop limit exceeded. `atlas scc [--all]` — Tarjan SCC; by default only non-singleton SCCs are shown; `--all` includes singletons. Both implemented as `run_path`/`run_scc` in `src/atlas.rs`; resolve component refs via `resolve_ref` and delegate to `build_directed_component_graph`. Algorithms live on `DirectedGraph<N>` as `shortest_path` (BFS, parent-map reconstruction) and `strongly_connected_components` (recursive Tarjan, sorted within-SCC and across SCCs for determinism). See: `build_directed_component_graph projects Catalog into DirectedGraph<String>`.
 - id: create-post-hoc-verification-checks-intents-yaml-emptiness
@@ -840,7 +840,7 @@ entries:
   body: |
     `targets.yaml` is created at first worktree mount, not at plan-creation time. `yaml_io.rs` returns an empty `TargetsFile` when the path is absent (`missing = empty` policy), unlike `intents.yaml` which errors on missing (`missing = error`). Rule: apply `missing = empty` for state files born lazily at runtime; `missing = error` for files seeded at `create`.
 - id: target-struct-is-not-a-tms-item-runtime-cache-table-not-knowledge-graph-node
-  title: Target struct is not a TMS item — runtime cache table, not knowledge-graph node
+  title: Target is a runtime table, not a TMS item
   body: |
     `Target` in `src/state/targets/schema.rs` is deliberately NOT a TMS item (`Item<K>` + `Justification` + `KindMarker`). Using `serde-flatten Item<K>` would force-fit empty `claim`/`status`/`justifications` fields onto what is a runtime cache table — targets are mutable operational state (mount path, branch ref), not knowledge-graph nodes where provenance and supersession matter. The `serde-flatten` pattern applies only to intents, backlog, memory, and findings; runtime config files like `targets.yaml` and `repos.yaml` use plain structs.
 - id: targets-mount-persists-target-row-to-targets-yaml
@@ -848,7 +848,7 @@ entries:
   body: |
     `targets mount` creates `.worktrees/<repo>/` and persists a `Target` row to `targets.yaml`. Worktree branch is `ravel-lite/<plan>/main`, rooted at the default-branch starting point. Component `path_segments` sourced from `.atlas/components.yaml`. `.worktrees/` is gitignored via `scaffold_plan_dir` in `src/create.rs`.
 - id: targets-mount-falls-back-to-head-for-repos-without-a-remote
-  title: targets mount falls back to HEAD for repos without a remote
+  title: targets mount falls back to HEAD without remote
   body: |
     `mount_target` in `src/state/targets/mount.rs` detects the starting-point branch via `git symbolic-ref --short refs/remotes/origin/HEAD`. Falls back to `HEAD` when no remote exists (fixture repos in tests have no remote).
 - id: targets-mount-is-two-level-idempotent
@@ -860,11 +860,11 @@ entries:
   body: |
     When `local_path` is absent for a `repo_slug` in `repos.yaml`, `mount_target` (in `src/state/targets/mount.rs`) currently errors with an actionable message citing the slug and showing the `repo add` migration command. The settled design for clone-on-demand is: clone into `<context>/.cache/repos/<slug>/` when `local_path` is absent. This is deferred until a real use case lands — the error path is clear and intentional for now. Implement as a small follow-up task once a concrete need arises.
 - id: worktree-branch-mismatch-recovery-in-mount-target-is-a-deferred-ergonomic-improvement
-  title: mount_target errors on worktree branch mismatch; manual cleanup for now
+  title: mount_target errors on branch mismatch; manual cleanup
   body: |
     If `<plan>/.worktrees/<repo>/` already exists on a different branch than the expected `ravel-lite/<plan-name>/main`, `mount_target` currently errors and asks the user to remove the directory manually. A future ergonomic improvement could detect a clean worktree and offer to re-create it automatically. Deferred until the manual removal UX becomes a recurring pain point.
 - id: atlas-freshness-coupling-in-mount-target-is-an-open-design-question
-  title: Atlas freshness coupling in mount_target is an open design question
+  title: mount_target freshness coupling is an open design question
   body: |
     `mount_target` in `src/state/targets/mount.rs` reads `.atlas/components.yaml` unconditionally to resolve component `path_segments`. A stale Atlas catalog produces stale `path_segments` in `targets.yaml`. Open design question: whether mount should call `atlas freshness` and warn when the catalog is older than some threshold. Deferred — the freshness coupling is acknowledged but the right threshold and remediation UX are not yet settled. Consider when Atlas freshness tooling matures.
 - id: target-requests-yaml-is-a-drain-queue-phase-loop-empties-per-cycle
@@ -884,7 +884,7 @@ entries:
   body: |
     `state memory add` accepts `--code-anchor key=value` (repeatable). Keys: `component`, `path`, `sha`, `lines`; all fields required except `lines`. `AddRequest.code_anchors: Vec<Justification>` carries pre-parsed typed values; `parse_code_anchor` lives in `src/state/memory/verbs.rs`, re-exported from `src/state/memory/mod.rs` for future reuse (e.g. `state intents add`). `defaults/phases/reflect.md` updated to use `--code-anchor` directly — the "name paths inline" workaround paragraph is removed. `state memory set-body` does not support anchor add/replace; defer until a real edit workflow demands it.
 - id: check-anchors-bounded-scoping-defer-limit-k-touched-since-until-entry-count-warrants-it
-  title: check-anchors is unbounded; add --limit-k or --touched-since when count grows
+  title: check-anchors is unbounded; add --limit-k when count grows
   body: |
     `state memory check-anchors` currently walks every active entry. At LLM_STATE/core's entry count (low tens), this is microseconds — no bound needed now. If entry count grows to where the full pass is painful, add `--limit-k <int>` (check only the K most recently modified entries) or `--touched-since <baseline-sha>` (check only entries whose code-anchored paths appear in the diff since that baseline).
 - id: intent-trajectory-rust-pre-pass-defer-until-a-real-trajectory-entry-is-produced
@@ -904,7 +904,7 @@ entries:
   body: |
     `src/state/focus_objections/` (schema.rs, yaml_io.rs, verbs.rs, mod.rs) is a closed-vocabulary queue for the triage-first phase cycle. CLI verbs: `add-wrong-target`, `add-skip-item`, `add-premature`, `list`, `clear`. Kind vocabulary encoded as a tagged enum; clap rejects invalid kind values before any YAML is written. `Objection::suggested_target` remains `String` — the last `validate_reference` outlier in the v2 scratch-file family; lifting it to `ComponentRef` is the outstanding follow-up. See: `Per-kind add-* verbs are the pattern for closed-vocabulary queues`; `src/state/ uses module-per-area layout`.
 - id: componentref-serialises-as-its-string-wire-form-lifts-need-no-migration
-  title: ComponentRef serialises as its String wire form; lifts need no migration
+  title: ComponentRef lifts need no migration; wire form unchanged
   body: |
     `ComponentRef`'s `Serialize`/`Deserialize` impls round-trip through the canonical `<repo_slug>:<component_id>` string. Lifting a `String` field that holds this format to `ComponentRef` requires no YAML migration and no schema-version bump. Clap uses `FromStr` for argument parsing, so the same lift gates malformed values at the CLI boundary automatically — no separate validator needed.
 - id: objection-skipitem-item-id-is-a-candidate-for-a-backlogid-newtype
@@ -952,7 +952,7 @@ entries:
   body: |
     Headless phases (analyse-work, reflect, triage, dream) run with `--dangerously-skip-permissions` — set via the `dangerous: true` param and `force_dangerous` in `src/main.rs:24-35`. The interactive work phase does not pass `--allowed-tools`; it inherits the user's machine-level `settings.json`. There are no per-phase allowlist constants to update for work/reflect/dream in the current architecture. `CREATE_ALLOWED_TOOLS` in `src/create.rs` governs the create-plan flow only — it is not a template for the main phase loop. If a future shipped `settings.json` overlay or a per-phase allowlist constant for headless phases lands via architecture-next work, add `Bash(ravel-lite fixed-memory:*)` at the same time — phase prompts authored after the fixed-memory CLI task assume those verbs are reachable.
 - id: triage-verifies-arch-next-roots-via-git-log-before-work-recommendation
-  title: Triage verifies arch-next roots via git log before work recommendation
+  title: Triage verifies arch-next roots via git log first
   body: |
     Dep-free architecture-next root tasks may have shipped without a status flip. Triage should run `git log -- <files referenced in task description>` on `active` arch-next root tasks to verify before recommending them as work items. Pattern confirmed: `cycle-reorder-triage-first-phase-sequence` was `not_started` after shipping in `ef892e8`.
 - id: check-dep-free-architecture-next-tasks-against-code-before-executing
@@ -971,38 +971,19 @@ entries:
   title: '`cargo test --workspace --quiet` truncates to ~4 summaries'
   body: |
     `cargo test --workspace --quiet` emits only ~4 binary-level summaries and suppresses the workspace-wide total. Use `cargo test --workspace` (without `--quiet`) for an authoritative pass/fail count.
-- id: running-33-tests-test-result-ok-33-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-01s-running-970-tests-87-970-174-970-261-970-348-970-435-970-522-970-609-970-696-970-783-970-870-970-957-970-test-result-ok-970-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-1-34s-running-0-tests-test-result-ok-0-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-00s-running-6-tests-test-result-ok-6-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-85s-running-2-tests-test-result-ok-2-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-00s-running-1-test-test-result-ok-1-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-57s-running-1-test-test-result-ok-1-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-01s-running-2-tests-test-result-ok-2-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-03s-running-9-tests-test-result-ok-9-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-13s-running-7-tests-test-result-ok-7-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-01s-running-4-tests-test-result-ok-4-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-02s-running-9-tests-0-tmp20mxm1-test-plan-triage-0-tmphcyhyj-clean-triage-plan-triage-0-tmpa4mk4m-baseline-sha-plan-triage-0-tmpj1heam-snapshot-plan-analyse-work-0-tmpsdp5zy-handoff-archive-plan-analyse-work-0-tmp9vslig-stale-status-plan-analyse-work-0-tmps8agdb-handoff-promote-plan-analyse-work-0-tmpjreiii-contract-plan-analyse-work-0-tmpkg5opl-clean-work-plan-analyse-work-0-tmphcyhyj-clean-triage-plan-work-0-tmp20mxm1-test-plan-work-0-tmpa4mk4m-baseline-sha-plan-work-0-tmps8agdb-handoff-promote-plan-reflect-0-tmpsdp5zy-handoff-archive-plan-reflect-0-tmp9vslig-stale-status-plan-reflect-0-tmpjreiii-contract-plan-reflect-0-tmpkg5opl-clean-work-plan-reflect-0-tmpj1heam-snapshot-plan-reflect-0-tmpsdp5zy-handoff-archive-plan-triage-0-tmps8agdb-handoff-promote-plan-triage-0-tmpjreiii-contract-plan-triage-0-tmps8agdb-handoff-promote-plan-work-0-tmpsdp5zy-handoff-archive-plan-work-0-tmpjreiii-contract-plan-work-test-result-ok-9-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-63s-running-3-tests-0-tmpcmxubv-pi-cycle-plan-analyse-work-0-tmpcmxubv-pi-cycle-plan-reflect-test-result-ok-3-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-1-47s-running-3-tests-test-result-ok-3-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-02s-running-16-tests-test-result-ok-16-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-06s-running-4-tests-test-result-ok-4-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-04s-running-4-tests-test-result-ok-4-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-11s-running-13-tests-test-result-ok-13-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-07s-running-4-tests-test-result-ok-4-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-04s-running-6-tests-test-result-ok-6-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-01s-running-0-tests-test-result-ok-0-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-00s-running-0-tests-test-result-ok-0-passed-0-failed-0-ignored-0-measured-0-filtered-out-finished-in-0-00s-truncates-to-4-summaries
-  title: "\nrunning 33 tests\n.................................\ntest result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n\nrunning 970 tests\n....................................................................................... 87/970\n....................................................................................... 174/970\n....................................................................................... 261/970\n....................................................................................... 348/970\n....................................................................................... 435/970\n....................................................................................... 522/970\n....................................................................................... 609/970\n....................................................................................... 696/970\n....................................................................................... 783/970\n....................................................................................... 870/970\n....................................................................................... 957/970\n.............\ntest result: ok. 970 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.34s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 6 tests\n......\ntest result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.85s\n\n\nrunning 2 tests\n..\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 1 test\n.\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s\n\n\nrunning 1 test\n.\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n\nrunning 2 tests\n..\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s\n\n\nrunning 9 tests\n.........\ntest result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s\n\n\nrunning 7 tests\n.......\ntest result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n\nrunning 4 tests\n....\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s\n\n\nrunning 9 tests\n\e]0;.tmp20mXm1 test-plan TRIAGE\a\e]0;.tmphcyHyJ clean-triage-plan TRIAGE\a\e]0;.tmpA4mK4m baseline-sha-plan TRIAGE\a\e]0;.tmpj1heaM snapshot-plan ANALYSE-WORK\a\e]0;.tmpsDP5zY handoff-archive-plan ANALYSE-WORK\a\e]0;.tmp9vSLIg stale-status-plan ANALYSE-WORK\a\e]0;.tmps8AgDB handoff-promote-plan ANALYSE-WORK\a\e]0;.tmpjrEIii contract-plan ANALYSE-WORK\a\e]0;.tmpkg5oPL clean-work-plan ANALYSE-WORK\a\e]0;.tmphcyHyJ clean-triage-plan WORK\a\e]0;.tmp20mXm1 test-plan WORK\a\e]0;.tmpA4mK4m baseline-sha-plan WORK\a...\e]0;.tmps8AgDB handoff-promote-plan REFLECT\a\e]0;.tmpsDP5zY handoff-archive-plan REFLECT\a\e]0;.tmp9vSLIg stale-status-plan REFLECT\a\e]0;.tmpjrEIii contract-plan REFLECT\a\e]0;.tmpkg5oPL clean-work-plan REFLECT\a\e]0;.tmpj1heaM snapshot-plan REFLECT\a\e]0;.tmpsDP5zY handoff-archive-plan TRIAGE\a\e]0;.tmps8AgDB handoff-promote-plan TRIAGE\a\e]0;.tmpjrEIii contract-plan TRIAGE\a...\e]0;.tmps8AgDB handoff-promote-plan WORK\a\e]0;.tmpsDP5zY handoff-archive-plan WORK\a\e]0;.tmpjrEIii contract-plan WORK\a...\ntest result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s\n\n\nrunning 3 tests\n..\e]0;.tmpCmxUbv pi-cycle-plan ANALYSE-WORK\a\e]0;.tmpCmxUbv pi-cycle-plan REFLECT\a.\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.47s\n\n\nrunning 3 tests\n...\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s\n\n\nrunning 16 tests\n................\ntest result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s\n\n\nrunning 4 tests\n....\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s\n\n\nrunning 4 tests\n....\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s\n\n\nrunning 13 tests\n.............\ntest result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s\n\n\nrunning 4 tests\n....\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s\n\n\nrunning 6 tests\n......\ntest result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s truncates to ~4 summaries"
-  body: |
-    `cargo test --workspace --quiet` emits only ~4 binary-level summaries and suppresses the workspace-wide total. Use `cargo test --workspace` (without `--quiet`) for an authoritative pass/fail count.
 - id: drain-target-requests-fires-at-every-phase-boundary-not-just-triage-work
-  title: drain_target_requests fires at every phase boundary, not just triage→work
+  title: drain_target_requests fires at every phase boundary
   body: |
     `drain_target_requests` fires at every phase boundary — loop-top in `phase_loop::phase_loop` (line ~399), before `read_phase`. Despite the triage-focused wording in the architecture-next doc ("triage→work boundary"), drain is not gated to a single transition. This is intentional per §Phase boundaries ("between phases"), but task descriptions that say "at the triage→work boundary" are technically imprecise. When writing phase-boundary logic, assume drain may have already run before any phase is read; avoid reasoning as if drain is triage-exclusive.
 - id: triage-reads-focus-objections-at-step-3-writes-this-cycle-focus-at-step-8
-  title: Triage reads focus-objections at step 3; writes this-cycle-focus at step 8
+  title: Triage reads focus-objections and writes this-cycle-focus
   body: |
-    ---
-    name: Triage reads focus-objections at step 3; writes this-cycle-focus at step 8
-    description: Triage prompt wiring for focus/objections mechanism; work reads this-cycle-focus at step 5
-    type: project
-    ---
     `defaults/phases/triage.md`: step 3 reads prior-cycle `focus-objections.yaml` (`wrong-target`, `skip-item`, `premature` objections); step 7 acts on them; step 8 writes `this-cycle-focus.yaml` via `state this-cycle-focus set`. `defaults/phases/work.md`: step 5 reads `state this-cycle-focus show` (advisory; v1 fallback: proceed without focus if absent). See: `this-cycle-focus.yaml has set/show/clear verb surface`; `focus-objections.yaml has per-kind add verb surface`.
 - id: cycle-closes-at-reflect-dream-is-out-of-cycle
   title: Cycle closes at reflect; dream is out-of-cycle
   body: |
-    ---
-    name: Cycle closes at reflect; dream is out-of-cycle
-    description: Automated cycle is triage→work→analyse-work→reflect; dream runs out-of-cycle
-    type: project
-    ---
     The automated phase cycle is `triage → work → analyse-work → reflect`. Reflect always sets `git-commit-reflect` as next phase; post-reflect routing (including dream invocation) belongs to the run script. `dream.md` is an out-of-cycle phase; `ravel-lite curate` is the named out-of-cycle mechanism for compaction runs. See: `Reflect phase runs automatically after git-commit-analyse-work`.
 - id: phase-baseline-filename-rename-requires-runner-prompt-to-ship-together
   title: Phase-baseline filename rename requires runner+prompt to ship together
   body: |
-    ---
-    name: Phase-baseline filename rename requires runner+prompt to ship together
-    description: Constraint: renaming <phase>-baseline files in prompts before runner-side ships breaks shell substitution
-    type: project
-    ---
     `<phase>-baseline` filenames appear in both phase prompts (as `$(cat {{PLAN}}/<phase>-baseline ...)` in `phase-summary render` directives) and runner scripts (written files). Renaming to per-worktree YAML maps requires both sides to change atomically; renaming the prompt side before the runner-side rename ships silently breaks `phase-summary render` in all three output-format sections. Deferred. See: `Phase prompts invoke phase-summary render via CLI directive`; `Each <phase>-baseline holds the SHA from the preceding commit`.
