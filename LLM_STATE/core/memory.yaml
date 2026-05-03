@@ -982,8 +982,12 @@ entries:
 - id: cycle-closes-at-reflect-dream-is-out-of-cycle
   title: Cycle closes at reflect; dream is out-of-cycle
   body: |
-    The automated phase cycle is `triage → work → analyse-work → reflect`. Reflect always sets `git-commit-reflect` as next phase; post-reflect routing (including dream invocation) belongs to the run script. `dream.md` is an out-of-cycle phase; `ravel-lite curate` is the named out-of-cycle mechanism for compaction runs. See: `Reflect phase runs automatically after git-commit-analyse-work`.
+    The automated phase cycle is `triage → work → analyse-work → reflect`. Reflect always sets `git-commit-reflect` as next phase; post-reflect routing (including dream invocation) belongs to the run script. `dream.md` is an out-of-cycle phase; `ravel-lite curate` is the planned out-of-cycle mechanism for compaction runs — the CLI verb does not yet exist. Phase prompt prose references "the planned `curate` phase" to avoid false CLI implications caught by the phase prompt CLI verb resolution test. See: `Reflect phase runs automatically after git-commit-analyse-work`.
 - id: phase-baseline-filename-rename-requires-runner-prompt-to-ship-together
   title: Phase-baseline filename rename requires runner+prompt to ship together
   body: |
     `<phase>-baseline` filenames appear in both phase prompts (as `$(cat {{PLAN}}/<phase>-baseline ...)` in `phase-summary render` directives) and runner scripts (written files). Renaming to per-worktree YAML maps requires both sides to change atomically; renaming the prompt side before the runner-side rename ships silently breaks `phase-summary render` in all three output-format sections. Deferred. See: `Phase prompts invoke phase-summary render via CLI directive`; `Each <phase>-baseline holds the SHA from the preceding commit`.
+- id: phase-prompt-cli-verb-test-validates-all-chains
+  title: Phase prompt CLI verb test validates all chains
+  body: |
+    `tests/phase_prompts_cli_resolution.rs` walks every `defaults/phases/*.md`, extracts `ravel-lite <chain...>` invocations via a MAX_CHAIN_DEPTH=3 kebab-case parser, and validates each chain with `--help` against `CARGO_BIN_EXE_ravel-lite`, failing on `unrecognized subcommand` in stderr. MAX_CHAIN_DEPTH=3 is the first breakage point when a fourth-level verb ships; flagged in a test comment. Includes an anchor test asserting the six focus/objections verbs remain present in the prompt set.
