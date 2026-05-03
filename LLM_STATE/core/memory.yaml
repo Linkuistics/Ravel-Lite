@@ -988,9 +988,9 @@ entries:
   body: |
     `<phase>-baseline` filenames appear in both phase prompts (as `$(cat {{PLAN}}/<phase>-baseline ...)` in `phase-summary render` directives) and runner scripts (written files). Renaming to per-worktree YAML maps requires both sides to change atomically; renaming the prompt side before the runner-side rename ships silently breaks `phase-summary render` in all three output-format sections. Deferred. See: `Phase prompts invoke phase-summary render via CLI directive`; `Each <phase>-baseline holds the SHA from the preceding commit`.
 - id: phase-prompt-cli-verb-test-validates-all-chains
-  title: Phase prompt CLI verb test validates all chains
+  title: Phase prompt CLI verb test validates all embedded prompts
   body: |
-    `tests/phase_prompts_cli_resolution.rs` walks every `defaults/phases/*.md`, extracts `ravel-lite <chain...>` invocations via a MAX_CHAIN_DEPTH=3 kebab-case parser, and validates each chain with `--help` against `CARGO_BIN_EXE_ravel-lite`, failing on `unrecognized subcommand` in stderr. MAX_CHAIN_DEPTH=3 is the first breakage point when a fourth-level verb ships; flagged in a test comment. Includes an anchor test asserting the six focus/objections verbs remain present in the prompt set.
+    `tests/phase_prompts_cli_resolution.rs` iterates `embedded_entries_with_prefix("")` — all embedded prompt files, not just `defaults/phases/*.md` — via a MAX_CHAIN_DEPTH=3 kebab-case parser, validates each `ravel-lite <chain...>` invocation with `--help` against `CARGO_BIN_EXE_ravel-lite`, failing on `unrecognized subcommand`. Covers phases, `create-plan.md`, `survey.md`, `discover-stage2.md`, and pi prompt files. Pi prompt files contain zero `ravel-lite` invocations; they pass trivially. MAX_CHAIN_DEPTH=3 is the first breakage point when a fourth-level verb ships; flagged in a test comment. Includes an anchor test asserting the six focus/objections verbs remain present in the prompt set.
 - id: max-chain-depth-3-cap-in-phase-prompts-cli-resolution-tests
   title: MAX_CHAIN_DEPTH = 3 cap in phase_prompts_cli_resolution tests
   body: |
@@ -1003,3 +1003,7 @@ entries:
   title: OutputFormat lives in src/cli/; one canonical enum
   body: |
     `crate::cli::OutputFormat` (variants: Yaml, Json, Markdown) is the single canonical format type; all per-module copies deleted. New verbs import `crate::cli::OutputFormat` and call `OutputFormat::parse()`. Verbs that lack Markdown support compile against the full three-variant enum and return a runtime error naming supported values — they do not reject at parse time.
+- id: kebab-case-verb-parser-false-positives-on-prose-phrases
+  title: Kebab-case verb parser false-positives on prose phrases
+  body: |
+    The `phase_prompts_cli_resolution.rs` parser treats any run of `ravel-lite <k> <k> <k>` (where each `<k>` is a kebab-case token) as a verb chain. Prose phrases of that shape trigger false positives — e.g., "ravel-lite v2 plan at" parsed as a chain. Fix: rephrase prose so the tool name is not followed by three consecutive kebab-case tokens. One confirmed incident fixed in `create-plan.md` line 4. Not frequent enough yet to redesign the parser; note each occurrence if more appear.
