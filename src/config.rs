@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use crate::config_lua;
 use crate::types::{AgentConfig, SharedConfig};
 
@@ -65,7 +67,8 @@ fn select_config_dir(
     } else if let Some(path) = default {
         ("default location (dirs::config_dir()/ravel-lite)".to_string(), path)
     } else {
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::InvalidInput,
             "Could not resolve Ravel-Lite config directory.\n\
              No --config flag, no RAVEL_LITE_CONFIG environment variable, and no user config dir available on this platform.\n\
              Create one with `ravel-lite init --config <dir>` or set RAVEL_LITE_CONFIG=<dir>."
@@ -86,7 +89,8 @@ fn require_existing_dir(source: &str, candidate: &Path) -> Result<()> {
     if candidate.is_dir() {
         return Ok(());
     }
-    anyhow::bail!(
+    bail_with!(
+        ErrorCode::NotFound,
         "Ravel-Lite config directory {} (from {}) does not exist or is not a directory.\n\
          Create it with `ravel-lite init` (path-optional; resolves the same precedence chain).",
         candidate.display(),

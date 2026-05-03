@@ -287,7 +287,7 @@ tasks:
 - id: cli-tag-remaining-untagged-error-sites-in-config-rs-create-rs-git-rs-multi-plan-rs-plan-inspect-rs-config-lua-rs
   title: 'CLI: tag remaining untagged error sites in config.rs, create.rs, git.rs, multi_plan.rs, plan_inspect.rs, config_lua.rs'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Complete the project-wide `ErrorCode` tagging sweep by covering the files deferred from both the parent sweep and the discover/parse_md task.
@@ -323,3 +323,84 @@ tasks:
     - `src/cli/error_context.rs` — `bail_with!` macro and `WithErrorCode` trait.
     - Results of `cli-tag-discover-internals-session-log-parse-md-error-sites-with-errorcode` — establishes the "every macro carries a code" convention.
     - `defaults/fixed-memory/cli-tool-design.md` §3 "Stable error-code vocabulary".
+  results: |
+    Completed the project-wide `ErrorCode` tagging sweep across the six remaining files. All `bail!` / `anyhow!` / `ensure!` macros that lacked an `ErrorCode` are now tagged.
+
+    ## What was done
+
+    22 macro sites tagged across 6 files:
+
+    - **config.rs** (2): `bail!` on missing config dir → `InvalidInput`; `bail!` on non-existent dir → `NotFound`.
+    - **create.rs** (12): 9× `bail!` in `validate_plan_name` → `InvalidInput`; "plan dir already exists" → `Conflict`; "agent != claude-code" → `InvalidInput`; `models.work` lookup → `InvalidInput` via `.with_code()`; "claude exited with status" → `IoError`.
+    - **git.rs** (2): `git diff --name-only` and `git status` non-zero exits → `IoError`.
+    - **multi_plan.rs** (7): `phase.md not found` → `NotFound`; "two plan dirs same key" → `Conflict`; survey-recommended-plan-not-supplied → `NotFound`; "no plans available — programming error" → `Internal`; "N invalid attempts" → `InvalidInput`; "Unknown agent" → `InvalidInput`; "requires at least 2 plan directories" → `InvalidInput`.
+    - **plan_inspect.rs** (4): `parse_intent_status` / `parse_backlog_status` / `parse_memory_status` / `parse_finding_status` — restructured each `.ok_or_else(|| anyhow!())` into a `match` with `bail_with!(InvalidInput, ...)` so the macro sits at statement position and matches the existing in-file style.
+    - **config_lua.rs** (5): `Arc::try_unwrap` and poisoned-mutex anyhow! sites → `Internal` via `.with_code()`; `run_layer` Lua-exec failure → `InvalidInput`; the two `lua_anyhow` callsites in `commit_config_table` chains → `InvalidInput`; the `install_ravel_table` callsite → `Internal`. The `lua_anyhow` helper itself was left as plumbing — each callsite now declares its own code via `.with_code()`, mirroring the discover/* pattern.
+
+    ## Pattern decisions
+
+    - **`bail!`** at statement position → swapped 1:1 to `bail_with!(ErrorCode::X, …)`.
+    - **`anyhow!`** inside `.ok_or_else` / `.map_err` chains → kept the macro and chained `.with_code(ErrorCode::X)` afterwards. Matches the existing convention in `src/discover/tree_sha.rs`, `src/atlas.rs`, `src/discover/cache.rs` etc.
+    - **`anyhow!`** sites in plan_inspect's small status-parser fns → restructured to `match` + `bail_with!` because the function bodies were tiny and the result reads more naturally with the macro at statement position (consistent with the file's own existing `bail_with!` style).
+
+    `with_context` chains were intentionally NOT touched — the task scoped to "every `bail!`/`anyhow!`/`ensure!`". The error-context layer for `with_context` IO failures is a separate concern that would expand scope.
+
+    ## Verification
+
+    - `./scripts/check.sh` clean (cargo clippy --all-targets --workspace -D warnings).
+    - `cargo test --workspace`: all green; the largest crate (ravel-lite) reports 999 tests passing, every other crate also at 0 failures. No regressions.
+
+    ## What this suggests next
+
+    The error-code tagging sweep started in the parent task (`cli-tag-inner-verb-error-sites-state-atlas-repos-discover-sweep`, ~113 sites) and continued through `cli-tag-discover-internals-session-log-parse-md-error-sites-with-errorcode` (17 sites) is now complete for production code paths. With the project-wide sweep done, two follow-ups become attractive:
+
+    1. **A grep-based regression guard** — `scripts/check.sh` could fail on any new `anyhow::bail!` / `anyhow::anyhow!` in `src/**` that isn't paired with an `ErrorCode`. Encoding the convention prevents drift; cheap to add.
+    2. **`with_context` IO chains** — the `Failed to run git X` and `Failed to read Y` chains are systematically `IoError` candidates. Tagging them would close the last gap before the JSON-error-envelope work in the architecture-next backlog. Out of scope here but a natural next sweep.
+
+    Neither blocks the architecture-next migrate task.
+- id: cli-add-errorcode-regression-guard-to-scripts-check-sh
+  title: 'CLI: add ErrorCode regression guard to scripts/check.sh'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Add a grep-based regression guard to `scripts/check.sh` that fails on any new untagged `bail!`/`anyhow!` macro in `src/**` — i.e., any occurrence of `anyhow::bail!`, `anyhow::anyhow!`, or bare `bail!(` / `anyhow!(` that is not preceded by an `ErrorCode` argument.
+
+    **Problem being solved:** The project-wide `ErrorCode` tagging sweep is now complete across all production code paths (~152 sites total across three task cycles). Without a mechanical guard, the next contributor who adds a `bail!` without a code will silently regress the convention.
+
+    **Settled design decisions:**
+    - The check belongs in `scripts/check.sh` alongside `cargo clippy`, not as a separate CI step — it runs in the same "green means ready" pass the work phase already runs.
+    - Pattern to reject: `anyhow::bail!(` or `bail!(` in `src/**/*.rs` where the first argument is not `ErrorCode::`. A ripgrep pattern like `bail!\([^E]` applied after excluding test modules (or scoped to non-`#[cfg(test)]` blocks) covers the common case.
+    - Alternatively: a small Rust integration test using `include_str!` + regex that `cargo test` runs naturally. Simpler than shell; harder to false-positive on multiline calls.
+    - The `lua_anyhow` helper in `config_lua.rs` is intentionally left as plain `anyhow::Error` plumbing; each callsite tags via `.with_code()`. The guard must not flag the helper body itself.
+    - Scope: `src/**` only. `tests/`, `scripts/`, `defaults/` are excluded — test code uses raw `anyhow!` legitimately.
+
+    **Reference examples:**
+    - `scripts/check.sh` — current check script structure; add the new check after the clippy invocation.
+    - `src/cli/error_context.rs` — `bail_with!` macro definition; the guard should allow `bail_with!(` as the replacement form.
+    - `src/config_lua.rs:175` — `lua_anyhow` helper that must NOT be flagged.
+
+    **Dependencies:** None — pure tooling, no wire-shape changes.
+- id: cli-tag-with-context-io-failure-chains-with-errorcode-ioerror
+  title: 'CLI: tag with_context IO-failure chains with ErrorCode::IoError'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Tag `with_context` IO-failure chains in `src/**` with `ErrorCode::IoError` to close the last gap before the JSON-error-envelope work in the architecture-next backlog.
+
+    **Problem being solved:** The three-cycle `ErrorCode` tagging sweep (`cli-tag-inner-verb-error-sites-state-atlas-repos-discover-sweep`, `cli-tag-discover-internals-session-log-parse-md-error-sites-with-errorcode`, and the just-completed session-138 task) tagged all `bail!`/`anyhow!`/`ensure!` macro sites but intentionally left `with_context` chains untouched. The `with_context` chains are the last source of errors that reach callers without an `ErrorCode` on them. Typical form: `.context("Failed to run git X")` or `.with_context(|| format!("Failed to read {}", path.display()))`.
+
+    **Settled design decisions:**
+    - `with_context` wraps `std::io::Error` or subprocess failures → `ErrorCode::IoError` is the correct code for nearly all of them. File-not-found wraps are `NotFound`; malformed-content wraps are `InvalidInput`. Categorise per the existing table.
+    - Apply via `.with_code(ErrorCode::X)` chained after `.context(...)` / `.with_context(...)`. The `ResultExt::with_code` method already exists in `src/cli/error_context.rs`; no new infrastructure needed.
+    - Files most affected (from the earlier sweep): `src/git.rs`, `src/state/`, `src/discover/`, `src/atlas.rs`, `src/phase_loop.rs`. A grep for `\.context(` / `\.with_context(` scoped to `src/**` identifies the full set.
+    - Do NOT touch `tests/` — test helpers use `with_context` legitimately without codes.
+    - This task does NOT change any wire shape; it is a pure diagnostic-metadata improvement.
+
+    **Reference examples:**
+    - `src/git.rs:271` — `output.context("Failed to run git diff --name-only")` — already has a `bail_with!(ErrorCode::IoError, …)` a few lines down; the `context` call above it is the pattern to tag.
+    - `src/cli/error_context.rs` — `ResultExt::with_code` trait; `.with_code(ErrorCode::X)` is the chain to append.
+    - `src/discover/tree_sha.rs` — existing pattern of `.map_err(|e| anyhow!(…)).with_code(ErrorCode::X)` for reference style.
+
+    **Dependencies:** None — the regression guard (`cli-add-errorcode-regression-guard-to-check-sh`) is a peer task, not a prerequisite. Both can land independently.

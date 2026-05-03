@@ -18,6 +18,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use crate::agent::claude_code::ClaudeCodeAgent;
 use crate::agent::pi::PiAgent;
 use crate::agent::Agent;
@@ -53,7 +55,8 @@ pub fn build_plan_dir_map(plan_dirs: &[PathBuf]) -> Result<HashMap<String, PathB
     let mut map = HashMap::with_capacity(plan_dirs.len());
     for plan_dir in plan_dirs {
         if !plan_dir.join(PHASE_FILENAME).exists() {
-            anyhow::bail!(
+            bail_with!(
+                ErrorCode::NotFound,
                 "{}/{PHASE_FILENAME} not found. Is this a valid plan directory?",
                 plan_dir.display()
             );
@@ -62,7 +65,8 @@ pub fn build_plan_dir_map(plan_dirs: &[PathBuf]) -> Result<HashMap<String, PathB
             .with_context(|| format!("Failed to load plan at {}", plan_dir.display()))?;
         let key = plan_key(&snapshot.project, &snapshot.plan);
         if let Some(existing) = map.insert(key.clone(), plan_dir.clone()) {
-            anyhow::bail!(
+            bail_with!(
+                ErrorCode::Conflict,
                 "two plan directories resolve to the same project/plan key '{key}': \
                  {} and {}. Rename or move one so each plan has a unique identifier.",
                 existing.display(),
@@ -102,7 +106,8 @@ pub fn options_from_response(
     let mut options = Vec::with_capacity(response.recommended_invocation_order.len());
     for rec in &response.recommended_invocation_order {
         if !plan_dir_by_key.contains_key(&rec.plan) {
-            anyhow::bail!(
+            bail_with!(
+                ErrorCode::NotFound,
                 "survey recommended plan '{}' but no such plan directory was supplied \
                  on the command line. This is an LLM-drift signal — re-run the survey \
                  (delete the --survey-state file to force a cold start) and, if it \
@@ -139,7 +144,8 @@ pub fn select_plan_from_response<R: BufRead, W: Write>(
 ) -> Result<Option<PathBuf>> {
     let options = options_from_response(response, plan_dir_by_key)?;
     if options.is_empty() {
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::Internal,
             "no plans available for selection — `plan_dir_by_key` is empty. \
              This is a programming error in the multi-plan runner."
         );
@@ -187,7 +193,8 @@ pub fn select_plan_from_response<R: BufRead, W: Write>(
             _ => {
                 attempts += 1;
                 if attempts >= MAX_INVALID_SELECTION_ATTEMPTS {
-                    anyhow::bail!(
+                    bail_with!(
+                        ErrorCode::InvalidInput,
                         "{MAX_INVALID_SELECTION_ATTEMPTS} invalid selection attempts; aborting.",
                     );
                 }
@@ -262,7 +269,7 @@ async fn dispatch_one_cycle(
             agent_config,
             config_root.to_string_lossy().to_string(),
         )),
-        other => anyhow::bail!("Unknown agent: {other}"),
+        other => bail_with!(ErrorCode::InvalidInput, "Unknown agent: {other}"),
     };
 
     let (tx, rx) = mpsc::unbounded_channel();
@@ -301,7 +308,8 @@ pub async fn run_multi_plan(
     dangerous: bool,
 ) -> Result<()> {
     if plan_dirs.len() < 2 {
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::InvalidInput,
             "run_multi_plan requires at least 2 plan directories; got {}",
             plan_dirs.len()
         );

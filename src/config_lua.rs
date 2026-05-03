@@ -28,6 +28,8 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use mlua::{Lua, Table};
 
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
 use crate::init::require_embedded;
 use crate::migrate_v1_to_v2;
 use crate::types::{AgentConfig, SharedConfig};
@@ -94,24 +96,32 @@ pub fn resolve(global_dir: &Path, plan_dir: Option<&Path>) -> Result<ResolvedCon
     let acc = Arc::new(Mutex::new(seed_from_embedded()?));
 
     let lua = Lua::new();
-    install_ravel_table(&lua, acc.clone()).map_err(lua_anyhow("install ravel table"))?;
+    install_ravel_table(&lua, acc.clone())
+        .map_err(lua_anyhow("install ravel table"))
+        .with_code(ErrorCode::Internal)?;
 
     if let Some(layer_path) = lua_path(global_dir) {
         run_layer(&lua, &layer_path, "global")?;
-        commit_config_table(&lua).map_err(lua_anyhow("commit after global layer"))?;
+        commit_config_table(&lua)
+            .map_err(lua_anyhow("commit after global layer"))
+            .with_code(ErrorCode::InvalidInput)?;
     }
     if let Some(plan) = plan_dir {
         if let Some(layer_path) = lua_path(plan) {
             run_layer(&lua, &layer_path, "plan")?;
-            commit_config_table(&lua).map_err(lua_anyhow("commit after plan layer"))?;
+            commit_config_table(&lua)
+                .map_err(lua_anyhow("commit after plan layer"))
+                .with_code(ErrorCode::InvalidInput)?;
         }
     }
 
     drop(lua);
     let final_acc = Arc::try_unwrap(acc)
-        .map_err(|_| anyhow::anyhow!("internal: Lua state held an extra reference to accumulator"))?
+        .map_err(|_| anyhow::anyhow!("internal: Lua state held an extra reference to accumulator"))
+        .with_code(ErrorCode::Internal)?
         .into_inner()
-        .map_err(|e| anyhow::anyhow!("internal: poisoned config accumulator: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("internal: poisoned config accumulator: {e}"))
+        .with_code(ErrorCode::Internal)?;
 
     Ok(ResolvedConfig {
         shared: final_acc.shared,
@@ -165,6 +175,7 @@ fn run_layer(lua: &Lua, path: &Path, label: &str) -> Result<()> {
                 path.display()
             )
         })
+        .with_code(ErrorCode::InvalidInput)
 }
 
 /// Convert an `mlua::Error` plus a contextual label into an

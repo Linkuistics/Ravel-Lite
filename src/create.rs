@@ -19,6 +19,9 @@ use std::process::Stdio;
 use anyhow::{Context, Result};
 use tokio::process::Command as TokioCommand;
 
+use crate::bail_with;
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
 use crate::component_ref::ComponentRef;
 use crate::config::{load_agent_config, load_shared_config};
 use crate::init::require_embedded;
@@ -74,32 +77,32 @@ pub fn compose_create_prompt(
 /// extra footgun-avoidance.
 pub fn validate_plan_name(name: &str) -> Result<()> {
     if name.is_empty() {
-        anyhow::bail!("Plan name cannot be empty.");
+        bail_with!(ErrorCode::InvalidInput, "Plan name cannot be empty.");
     }
     if name == "." || name == ".." {
-        anyhow::bail!("Plan name cannot be `.` or `..`.");
+        bail_with!(ErrorCode::InvalidInput, "Plan name cannot be `.` or `..`.");
     }
     if name.contains("..") {
-        anyhow::bail!("Plan name {name:?} contains `..`.");
+        bail_with!(ErrorCode::InvalidInput, "Plan name {name:?} contains `..`.");
     }
     if name.starts_with('.') {
-        anyhow::bail!("Plan name {name:?} cannot start with `.`.");
+        bail_with!(ErrorCode::InvalidInput, "Plan name {name:?} cannot start with `.`.");
     }
     if name.starts_with('-') {
-        anyhow::bail!("Plan name {name:?} cannot start with `-`.");
+        bail_with!(ErrorCode::InvalidInput, "Plan name {name:?} cannot start with `-`.");
     }
     if name.ends_with(".lock") {
-        anyhow::bail!("Plan name {name:?} cannot end with `.lock`.");
+        bail_with!(ErrorCode::InvalidInput, "Plan name {name:?} cannot end with `.lock`.");
     }
     for c in name.chars() {
         if c.is_whitespace() {
-            anyhow::bail!("Plan name {name:?} contains whitespace.");
+            bail_with!(ErrorCode::InvalidInput, "Plan name {name:?} contains whitespace.");
         }
         if c.is_control() {
-            anyhow::bail!("Plan name {name:?} contains control characters.");
+            bail_with!(ErrorCode::InvalidInput, "Plan name {name:?} contains control characters.");
         }
         if matches!(c, '/' | '\\' | '~' | '^' | ':' | '?' | '*' | '[') {
-            anyhow::bail!("Plan name {name:?} contains invalid character {c:?}.");
+            bail_with!(ErrorCode::InvalidInput, "Plan name {name:?} contains invalid character {c:?}.");
         }
     }
     Ok(())
@@ -113,7 +116,8 @@ pub fn resolve_plan_dir(context_root: &Path, plan_name: &str) -> Result<PathBuf>
     validate_plan_name(plan_name)?;
     let plan_dir = context_root.join("plans").join(plan_name);
     if plan_dir.exists() {
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "Plan directory {} already exists. create will not overwrite an existing plan.",
             plan_dir.display()
         );
@@ -198,7 +202,8 @@ pub async fn run_create(
 ) -> Result<()> {
     let shared = load_shared_config(config_root)?;
     if shared.agent != "claude-code" {
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::InvalidInput,
             "create currently only supports agent 'claude-code' (configured agent: '{}').",
             shared.agent
         );
@@ -225,9 +230,16 @@ pub async fn run_create(
     let agent_config = load_agent_config(config_root, &shared.agent)?;
     // Plan creation is work-phase-like reasoning; reuse the configured
     // work model rather than introducing a separate model axis.
-    let model = agent_config.models.get("work").cloned().ok_or_else(|| {
-        anyhow::anyhow!("Agent config is missing a `models.work` entry; cannot select a model for create.")
-    })?;
+    let model = agent_config
+        .models
+        .get("work")
+        .cloned()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Agent config is missing a `models.work` entry; cannot select a model for create."
+            )
+        })
+        .with_code(ErrorCode::InvalidInput)?;
 
     eprintln!(
         "Launching interactive claude session (model: {}) to create plan at {}...",
@@ -252,7 +264,7 @@ pub async fn run_create(
 
     let status = child.wait().await?;
     if !status.success() {
-        anyhow::bail!("claude exited with status {status}");
+        bail_with!(ErrorCode::IoError, "claude exited with status {status}");
     }
 
     // Post-hoc verification: scaffolding guarantees the YAML shells

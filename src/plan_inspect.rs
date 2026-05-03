@@ -506,39 +506,47 @@ fn findings_file_with(items: Vec<FindingEntry>) -> FindingsFile {
 // -- Status-string parsing with helpful errors -------------------------
 
 fn parse_intent_status(input: &str) -> Result<IntentStatus> {
-    IntentStatus::parse(input).ok_or_else(|| {
-        anyhow::anyhow!(
+    match IntentStatus::parse(input) {
+        Some(s) => Ok(s),
+        None => bail_with!(
+            ErrorCode::InvalidInput,
             "unknown intent status {input:?}; expected one of {:?}",
             intent_status_words(),
-        )
-    })
+        ),
+    }
 }
 
 fn parse_backlog_status(input: &str) -> Result<BacklogStatus> {
-    BacklogStatus::parse(input).ok_or_else(|| {
-        anyhow::anyhow!(
+    match BacklogStatus::parse(input) {
+        Some(s) => Ok(s),
+        None => bail_with!(
+            ErrorCode::InvalidInput,
             "unknown backlog-item status {input:?}; expected one of {:?}",
             backlog_status_words(),
-        )
-    })
+        ),
+    }
 }
 
 fn parse_memory_status(input: &str) -> Result<MemoryStatus> {
-    MemoryStatus::parse(input).ok_or_else(|| {
-        anyhow::anyhow!(
+    match MemoryStatus::parse(input) {
+        Some(s) => Ok(s),
+        None => bail_with!(
+            ErrorCode::InvalidInput,
             "unknown memory-entry status {input:?}; expected one of {:?}",
             memory_status_words(),
-        )
-    })
+        ),
+    }
 }
 
 fn parse_finding_status(input: &str) -> Result<FindingStatus> {
-    FindingStatus::parse(input).ok_or_else(|| {
-        anyhow::anyhow!(
+    match FindingStatus::parse(input) {
+        Some(s) => Ok(s),
+        None => bail_with!(
+            ErrorCode::InvalidInput,
             "unknown finding status {input:?}; expected one of {:?}",
             finding_status_words(),
-        )
-    })
+        ),
+    }
 }
 
 fn any_kind_accepts_status(input: &str) -> bool {

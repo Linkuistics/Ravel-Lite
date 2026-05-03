@@ -5,6 +5,8 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
 #[cfg(test)]
 use crate::state::filenames::BACKLOG_FILENAME;
 #[cfg(test)]
@@ -269,7 +271,8 @@ pub fn paths_changed_since_baseline(
         .output()
         .context("Failed to run git diff --name-only")?;
     if !output.status.success() {
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::IoError,
             "git diff --name-only exited {} in {}",
             output.status,
             project_dir.display()
@@ -303,7 +306,8 @@ pub fn working_tree_status(project_dir: &Path) -> Result<Vec<String>> {
         .output()
         .context("Failed to run git status")?;
     if !output.status.success() {
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::IoError,
             "git status exited {} in {}",
             output.status,
             project_dir.display()

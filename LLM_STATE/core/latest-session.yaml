@@ -1,12 +1,12 @@
-id: session-137
-timestamp: 2026-05-03T14:45:13Z
+id: session-138
+timestamp: 2026-05-03T23:41:34Z
 phase: work
 body: |
-  ### Session 137 (2026-05-03T14:45:13Z) — Tag discover internals and session-log/parse_md error sites with ErrorCode
+  ### Session 138 (2026-05-03T23:41:34Z) — Complete ErrorCode tagging sweep across six remaining source files
 
-  - Completed tagging of every untyped `bail!`/`anyhow!`/`ensure!` and IO/parse `.with_context(...)` propagation in the five deferred files: `discover/{cache,stage1,stage2,tree_sha}.rs` and `state/session_log/parse_md.rs`.
-  - All sites mapped cleanly to existing codes — no new `ErrorCode` variants were needed. `cache.rs` got `Conflict`/`IoError`/`InvalidInput`; `stage1.rs` and `stage2.rs` got `IoError` (subprocess/timeout) and `Internal` (semaphore-closed/dangling-token invariants); `tree_sha.rs` got `IoError` everywhere except the "not a git repo" bail which got `InvalidInput`; `parse_md.rs` got `InvalidInput` everywhere via a module-private `invalid(message)` helper.
-  - Added a unit test in `cli/error_context.rs` confirming `error_code_of` walks the anyhow chain through a `with_context` wrap — load-bearing contract for parse_md callers that add narrative context without losing the typed code.
-  - Added two integration tests in `tests/cli.rs`: one exercising the discover pipeline end-to-end with an empty registry (asserts exit 3 / `NotFound`), one feeding a malformed session-log.md to `state migrate` and asserting exit 2 / `UsageError` with the parser's inner message intact.
-  - `./scripts/check.sh` clean; all tests green.
-  - What this suggests next: the remaining untagged `bail!`/`anyhow!` macros live in `config.rs`, `create.rs`, `git.rs`, `multi_plan.rs`, `plan_inspect.rs`, `config_lua.rs` — a follow-up sweep over those would complete the codebase-wide migration. Also, stage1's per-project errors are swallowed into `Stage1Outcome::Failed { error: format!("{e:#}") }`, losing the typed code; surfacing inner codes through `Stage1Failure` would be a separate follow-up if agents need to branch on per-project failure categories.
+  - Completed the final leg of the project-wide `ErrorCode` tagging sweep, covering the 6 files deferred from prior cycles: `config.rs`, `create.rs`, `git.rs`, `multi_plan.rs`, `plan_inspect.rs`, `config_lua.rs`.
+  - 22 macro sites tagged: 2 in `config.rs`, 12 in `create.rs`, 2 in `git.rs`, 7 in `multi_plan.rs`, 4 in `plan_inspect.rs`, 5 in `config_lua.rs`.
+  - All `bail!`-at-statement-position sites swapped 1:1 to `bail_with!(ErrorCode::X, …)`; `anyhow!` inside `.ok_or_else`/`.map_err` chains kept the macro and chained `.with_code(ErrorCode::X)` afterwards, matching existing convention. `plan_inspect.rs` status-parser fns restructured to `match` + `bail_with!` for readability.
+  - `with_context` chains intentionally left untouched — out of scope; tagged `bail!`/`anyhow!`/`ensure!` only.
+  - `./scripts/check.sh` clean; `cargo test --workspace` all green (999 tests in the main crate, no regressions).
+  - Two natural follow-ups identified: a grep-based regression guard in `scripts/check.sh` to prevent new untagged sites drifting in, and a `with_context` IO-chain sweep to close the last gap before JSON-error-envelope work.
