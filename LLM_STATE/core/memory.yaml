@@ -1007,3 +1007,17 @@ entries:
   title: Kebab-case verb parser false-positives on prose phrases
   body: |
     The `phase_prompts_cli_resolution.rs` parser treats any run of `ravel-lite <k> <k> <k>` (where each `<k>` is a kebab-case token) as a verb chain. Prose phrases of that shape trigger false positives — e.g., "ravel-lite v2 plan at" parsed as a chain. Fix: rephrase prose so the tool name is not followed by three consecutive kebab-case tokens. One confirmed incident fixed in `create-plan.md` line 4. Not frequent enough yet to redesign the parser; note each occurrence if more appear.
+- id: cli-verb-drift-guard-kebab-case-heuristic-false-positive-risk
+  title: 'CLI verb drift guard: kebab-case heuristic false-positive risk'
+  body: |
+    The CLI verb drift guard (`phase_prompts_reference_only_live_cli_verbs`) uses a
+    kebab-case heuristic to detect verb chains. The heuristic will false-positive on
+    any prose pattern of the form `ravel-lite <kebab> <kebab> <kebab>`. One false
+    positive was hit during the broadened scan (session that extended the guard to all
+    embedded prompt files): `"populate a new ravel-lite v2 plan at {{PLAN}}"` tripped
+    the parser. Fixed by rephrasing rather than tightening the parser.
+
+    Tightening approach (e.g. requiring backtick context, blacklisting common
+    prepositions like `at`, `in`, `for`) is worth considering only after a second
+    occurrence. The corpus is small enough that prose rephrasing remains the cheaper
+    fix for now.
