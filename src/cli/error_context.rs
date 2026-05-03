@@ -162,6 +162,27 @@ mod tests {
     }
 
     #[test]
+    fn coded_error_remains_recoverable_after_with_context_wrap() {
+        // Caller wraps a CodedError-bearing Result with .with_context();
+        // error_code_of must still find the inner code by walking the
+        // anyhow chain. This is the contract that lets parser internals
+        // bail with a typed code while their callers add narrative
+        // context without losing the classification.
+        use anyhow::Context;
+
+        let inner: Result<(), anyhow::Error> = Err(anyhow::Error::new(CodedError {
+            code: ErrorCode::InvalidInput,
+            message: "bad heading".to_string(),
+        }));
+        let wrapped = inner.with_context(|| "failed to parse session-log.md");
+        let err = wrapped.unwrap_err();
+        assert_eq!(error_code_of(&err), ErrorCode::InvalidInput);
+        let rendered = format!("{err:#}");
+        assert!(rendered.contains("failed to parse session-log.md"));
+        assert!(rendered.contains("bad heading"));
+    }
+
+    #[test]
     fn every_error_code_round_trips_through_a_coded_error() {
         for code in ErrorCode::all() {
             let err: anyhow::Error = anyhow::Error::new(CodedError {

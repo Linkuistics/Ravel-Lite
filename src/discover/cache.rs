@@ -5,7 +5,11 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
+
+use crate::bail_with;
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
 
 use super::schema::{SurfaceFile, SURFACE_SCHEMA_VERSION};
 
@@ -28,11 +32,14 @@ pub fn load(config_root: &Path, project_name: &str) -> Result<Option<SurfaceFile
         return Ok(None);
     }
     let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+        .with_context(|| format!("failed to read {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
     let file: SurfaceFile = serde_yaml::from_str(&content)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
+        .with_context(|| format!("failed to parse {}", path.display()))
+        .with_code(ErrorCode::InvalidInput)?;
     if file.schema_version != SURFACE_SCHEMA_VERSION {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "{} has schema_version {} but this ravel-lite expects {}; \
              delete the cache file to force re-analysis",
             path.display(),
@@ -46,14 +53,17 @@ pub fn load(config_root: &Path, project_name: &str) -> Result<Option<SurfaceFile
 pub fn save_atomic(config_root: &Path, file: &SurfaceFile) -> Result<()> {
     let dir = cache_dir(config_root);
     std::fs::create_dir_all(&dir)
-        .with_context(|| format!("failed to create cache dir {}", dir.display()))?;
+        .with_context(|| format!("failed to create cache dir {}", dir.display()))
+        .with_code(ErrorCode::IoError)?;
     let path = cache_path(config_root, &file.project);
     let tmp = dir.join(format!(".{}.tmp", file.project));
     let yaml = serde_yaml::to_string(file).context("failed to serialise SurfaceFile")?;
     std::fs::write(&tmp, yaml.as_bytes())
-        .with_context(|| format!("failed to write temp file {}", tmp.display()))?;
+        .with_context(|| format!("failed to write temp file {}", tmp.display()))
+        .with_code(ErrorCode::IoError)?;
     std::fs::rename(&tmp, &path)
-        .with_context(|| format!("failed to rename {} to {}", tmp.display(), path.display()))?;
+        .with_context(|| format!("failed to rename {} to {}", tmp.display(), path.display()))
+        .with_code(ErrorCode::IoError)?;
     Ok(())
 }
 
@@ -68,6 +78,7 @@ pub fn rename(config_root: &Path, old: &str, new: &str) -> Result<()> {
     let to = cache_path(config_root, new);
     std::fs::rename(&from, &to)
         .with_context(|| format!("failed to rename {} to {}", from.display(), to.display()))
+        .with_code(ErrorCode::IoError)
 }
 
 #[cfg(test)]

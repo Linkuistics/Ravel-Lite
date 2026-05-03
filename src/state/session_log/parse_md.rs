@@ -20,11 +20,19 @@
 //! the untyped prose format (the field is required in the new schema).
 //! Post-migration, set-latest callers pass the phase explicitly.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::Result;
 
+use crate::cli::{CodedError, ErrorCode};
 use crate::state::backlog::schema::{allocate_id, slug_from_title};
 
 use super::schema::{SessionLogFile, SessionRecord};
+
+fn invalid(message: String) -> anyhow::Error {
+    anyhow::Error::new(CodedError {
+        code: ErrorCode::InvalidInput,
+        message,
+    })
+}
 
 /// Default phase for records parsed from the legacy prose format, which
 /// does not record the phase. Work-cycle sessions are the only ones
@@ -37,7 +45,7 @@ pub fn parse_session_log_markdown(input: &str) -> Result<SessionLogFile> {
 
     for (block_index, block) in split_into_session_blocks(input).into_iter().enumerate() {
         let record = parse_single_session_block(&block, &existing_ids).map_err(|err| {
-            anyhow!("failed to parse session block #{}: {err:#}", block_index + 1)
+            invalid(format!("failed to parse session block #{}: {err:#}", block_index + 1))
         })?;
         existing_ids.push(record.id.clone());
         sessions.push(record);
@@ -55,11 +63,13 @@ pub fn parse_session_log_markdown(input: &str) -> Result<SessionLogFile> {
 pub fn parse_latest_session_markdown(input: &str) -> Result<SessionRecord> {
     let blocks = split_into_session_blocks(input);
     match blocks.len() {
-        0 => bail!("latest-session.md has no `### Session` heading"),
+        0 => Err(invalid(
+            "latest-session.md has no `### Session` heading".to_string(),
+        )),
         1 => parse_single_session_block(&blocks[0], &[]),
-        n => bail!(
+        n => Err(invalid(format!(
             "latest-session.md has {n} `### Session` headings; expected exactly one"
-        ),
+        ))),
     }
 }
 
@@ -92,7 +102,7 @@ fn parse_single_session_block(block: &str, existing_ids: &[String]) -> Result<Se
     let mut lines = block.lines();
     let heading_line = lines
         .next()
-        .ok_or_else(|| anyhow!("empty session block"))?;
+        .ok_or_else(|| invalid("empty session block".to_string()))?;
     let (timestamp, title) = parse_heading(heading_line)?;
 
     let body_lines: Vec<&str> = lines.collect();
@@ -105,7 +115,7 @@ fn parse_single_session_block(block: &str, existing_ids: &[String]) -> Result<Se
         end -= 1;
     }
     if start == end {
-        bail!("session {title:?} has no body");
+        return Err(invalid(format!("session {title:?} has no body")));
     }
     let body = body_lines[start..end].join("\n") + "\n";
 
@@ -138,15 +148,19 @@ fn parse_single_session_block(block: &str, existing_ids: &[String]) -> Result<Se
 fn parse_heading(line: &str) -> Result<(String, String)> {
     let rest = line
         .strip_prefix("### Session")
-        .ok_or_else(|| anyhow!("session heading does not start with `### Session`: {line:?}"))?
+        .ok_or_else(|| {
+            invalid(format!(
+                "session heading does not start with `### Session`: {line:?}"
+            ))
+        })?
         .trim_start();
     // Skip the session number (digits up to the `(`).
     let paren_open = rest
         .find('(')
-        .ok_or_else(|| anyhow!("session heading missing `(timestamp)`: {line:?}"))?;
+        .ok_or_else(|| invalid(format!("session heading missing `(timestamp)`: {line:?}")))?;
     let paren_close = rest[paren_open..]
         .find(')')
-        .ok_or_else(|| anyhow!("session heading missing closing `)`: {line:?}"))?
+        .ok_or_else(|| invalid(format!("session heading missing closing `)`: {line:?}")))?
         + paren_open;
     let timestamp = rest[paren_open + 1..paren_close].trim().to_string();
     let after_paren = rest[paren_close + 1..].trim_start();
@@ -163,10 +177,12 @@ fn parse_heading(line: &str) -> Result<(String, String)> {
     };
 
     if timestamp.is_empty() {
-        bail!("session heading has empty timestamp: {line:?}");
+        return Err(invalid(format!(
+            "session heading has empty timestamp: {line:?}"
+        )));
     }
     if title.is_empty() {
-        bail!("session heading has empty title: {line:?}");
+        return Err(invalid(format!("session heading has empty title: {line:?}")));
     }
     Ok((timestamp, title))
 }

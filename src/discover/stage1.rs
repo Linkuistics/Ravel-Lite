@@ -18,11 +18,14 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
+
+use crate::bail_with;
+use crate::cli::{CodedError, ErrorCode};
 
 use super::DiscoverTarget;
 use super::cache;
@@ -85,7 +88,10 @@ pub async fn run_stage1(
                     )
                     .await
                 }
-                Err(e) => Err(anyhow::anyhow!("semaphore closed unexpectedly: {e}")),
+                Err(e) => Err(anyhow::Error::new(CodedError {
+                    code: ErrorCode::Internal,
+                    message: format!("semaphore closed unexpectedly: {e}"),
+                })),
             };
             (name, outcome)
         });
@@ -148,10 +154,14 @@ async fn process_project(
 
     let exit_ok = spawn_claude_with_cwd(&prompt, model, path, &cache_dir, timeout).await?;
     if !exit_ok {
-        bail!("Stage 1 subagent for '{name}' exited non-zero");
+        bail_with!(
+            ErrorCode::IoError,
+            "Stage 1 subagent for '{name}' exited non-zero"
+        );
     }
     if !output_path.exists() {
-        bail!(
+        bail_with!(
+            ErrorCode::IoError,
             "Stage 1 subagent for '{name}' did not create {} — claude likely refused the Write \
              (check stderr above for permission/sandbox errors)",
             output_path.display()
@@ -226,7 +236,8 @@ async fn spawn_claude_with_cwd(
         Ok(Err(io_err)) => Err(io_err).context("waiting on claude process"),
         Err(_elapsed) => {
             let _ = child.kill().await;
-            bail!(
+            bail_with!(
+                ErrorCode::IoError,
                 "claude Stage 1 subagent timed out after {}s in {}",
                 timeout.as_secs(),
                 cwd.display()

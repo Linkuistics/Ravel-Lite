@@ -13,9 +13,12 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command as TokioCommand;
+
+use crate::bail_with;
+use crate::cli::ErrorCode;
 
 use super::schema::{ProposalsFile, Stage1Failure, SurfaceFile, PROPOSALS_SCHEMA_VERSION};
 use super::stage1::current_utc_rfc3339;
@@ -76,7 +79,10 @@ pub async fn run_stage2(
 
     let success = spawn_claude_for_stage2(&prompt, &cfg.model, &cfg.config_root, cfg.timeout).await?;
     if !success {
-        bail!("Stage 2 claude subprocess exited non-zero");
+        bail_with!(
+            ErrorCode::IoError,
+            "Stage 2 claude subprocess exited non-zero"
+        );
     }
 
     load_proposals(&cfg.config_root).context(
@@ -110,7 +116,8 @@ fn assert_no_dangling_tokens(prompt: &str) -> Result<()> {
         .iter()
         .map(|n| format!("{{{{{n}}}}}"))
         .collect();
-    bail!(
+    bail_with!(
+        ErrorCode::Internal,
         "Stage 2 prompt has unresolved token(s) after substitution: {}",
         names.join(", ")
     )
@@ -167,7 +174,11 @@ async fn spawn_claude_for_stage2(
         Ok(Err(io_err)) => Err(io_err).context("waiting on claude"),
         Err(_elapsed) => {
             let _ = child.kill().await;
-            bail!("claude Stage 2 timed out after {}s", timeout.as_secs())
+            bail_with!(
+                ErrorCode::IoError,
+                "claude Stage 2 timed out after {}s",
+                timeout.as_secs()
+            )
         }
     }
 }

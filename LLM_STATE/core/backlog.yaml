@@ -287,7 +287,7 @@ tasks:
 - id: cli-tag-discover-internals-session-log-parse-md-error-sites-with-errorcode
   title: 'CLI: tag discover internals + session-log/parse_md error sites with ErrorCode'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Tag the remaining 17 inner-verb error sites that the `cli-tag-inner-verb-error-sites-state-atlas-repos-discover-sweep` task explicitly deferred: `discover/{cache,stage1,stage2,tree_sha}.rs` and `state/session_log/parse_md.rs`.
@@ -319,3 +319,41 @@ tasks:
     - `src/cli/error_context.rs` — foundation module with macro and trait.
     - Results of `cli-tag-inner-verb-error-sites-state-atlas-repos-discover-sweep` — worked examples for all patterns.
     - `defaults/fixed-memory/cli-tool-design.md` §3 "Stable error-code vocabulary".
+  results: |
+    ## What was done
+
+    Tagged every `bail!`/`anyhow!`/`ensure!` macro and every IO/parse `.with_context(...)?` propagation in the five deferred files with a typed `ErrorCode`, completing the `cli-tag-inner-verb-error-sites-state-atlas-repos-discover-sweep` parent sweep. After this change, `discover/{cache,stage1,stage2,tree_sha}.rs` and `state/session_log/parse_md.rs` carry zero remaining untagged macros — the same end-state as the swept files (`atlas.rs`, `repos.rs`, every state-CRUD verb).
+
+    ### Site-by-site map
+
+    | File | Sites tagged | Codes used |
+    |---|---|---|
+    | `discover/cache.rs` | 1 `bail!` + 6 IO/parse contexts | `Conflict` (schema mismatch), `IoError` (read/write/rename), `InvalidInput` (YAML parse) |
+    | `discover/stage1.rs` | 3 `bail!` + 1 `anyhow!` | `IoError` (subagent non-zero, missing output, timeout), `Internal` (semaphore-closed invariant) |
+    | `discover/stage2.rs` | 3 `bail!` | `IoError` (subprocess non-zero, timeout), `Internal` (dangling-token bail — code/prompt-template bug) |
+    | `discover/tree_sha.rs` | 6 `bail!` + ~10 IO contexts | `IoError` (every git/subprocess site), `InvalidInput` (project not in a git repo — user input), `Internal` (path strip-prefix invariant) |
+    | `state/session_log/parse_md.rs` | 4 `bail!` + 6 `anyhow!` | `InvalidInput` everywhere (every site is malformed-prose) |
+
+    ### Implementation choices
+
+    - **`parse_md.rs`** mirrors the existing pattern in `state/memory/parse_md.rs`: a tiny module-private helper `fn invalid(message: String) -> anyhow::Error` constructs an `InvalidInput`-coded error, used both inline in the function body and inside `ok_or_else(|| ...)` closures where `bail_with!` cannot be used. Avoids introducing a new macro for a one-file pattern.
+    - **`stage2.rs` dangling-token bail** is tagged `ErrorCode::Internal` rather than left as the implicit-Internal default. The convention established by the swept files is "every macro carries a code"; explicit tagging makes intent unambiguous in the JSON envelope.
+    - **`stage1.rs` semaphore-closed `anyhow!`** is converted to direct `CodedError` construction with `ErrorCode::Internal` for the same reason — keeps the file's macro count at zero.
+    - **`tree_sha.rs::repo_toplevel`** maps "project at X is not inside a git repository" to `InvalidInput` rather than `IoError`, because the user-visible failure mode is "you registered a directory that isn't a repo" — actionable user input, not subprocess plumbing. Same precedent as `discover/mod.rs`'s "repo not in registry" `with_context`.
+
+    ### Verification
+
+    1. **Confirmed `error_code_of` walks the anyhow chain.** Added a unit test in `cli/error_context.rs::coded_error_remains_recoverable_after_with_context_wrap` that wraps a `CodedError` in `with_context` and asserts the inner code is still recovered. This is load-bearing for the parse_md test path: `state/migrate.rs` wraps parse_md errors with `with_context` (narrative layer), and the test confirms the typed code survives. Without this guarantee, every CodedError-bearing call site would need a matching `.with_code(...)` to preserve the tag through caller context — a much wider sweep.
+    2. **Two integration tests added in `tests/cli.rs`:**
+       - `discover_with_empty_registry_exits_with_not_found_code` — runs `state related-components discover` against a config dir with no `repos.yaml`; asserts exit 3 (`NotFound`). Exercises the discover module's tagged-error pipeline end-to-end.
+       - `state_migrate_with_malformed_session_log_md_exits_with_usage_error_code` — feeds a session-log.md with an empty-body session block to `state migrate`; asserts exit 2 (`UsageError`, mapped from `InvalidInput`) AND that the inner parser message ("no body") survives into the rendered error. Directly tests the `parse_md.rs` `invalid()` helper.
+    3. `./scripts/check.sh` clean (clippy `-D warnings`).
+    4. `cargo test` clean — 999 lib tests + ~115 integration tests, all green; no regressions.
+
+    ### Caveats and what this suggests next
+
+    - **Discover inner codes are masked, not surfaced.** Stage 1's per-project errors are swallowed into `Stage1Outcome::Failed { error: format!("{e:#}") }`, where the `format!` flattens the typed code into a string. The outer `run_discover` then bails with `ErrorCode::Conflict` regardless of inner cause. The integration test covers the typed-error pipeline at the discover-module boundary (the empty-registry `NotFound` bail in `mod.rs`), but per-project inner codes (e.g. `tree_sha::repo_toplevel`'s `InvalidInput`) only appear in failure-record prose, not in the exit category. Surfacing inner codes would require redesigning `Stage1Failure` to carry a typed `code` field — out of scope for tagging work, but worth a follow-up backlog item if agents need to branch on per-project failure categories.
+    - **The "(default)" notation in the parent task's table is ambiguous.** It could mean either "leave as `bail!`" or "tag explicitly with `ErrorCode::Internal`". The swept files (`atlas.rs`, `repos.rs`, etc.) have zero remaining untagged macros, suggesting the convention is "always tag, even if Internal". I followed that convention; if the project preference is the other reading, the four `Internal`-tagged sites I added (1 in stage1, 1 in stage2, 1 in tree_sha, 0 in others) should be reverted to bare `bail!`/`anyhow!`.
+    - **No new ErrorCode variants needed.** Every site mapped cleanly into the existing seven codes. The discover pipeline does not introduce timeouts-as-distinct-from-other-IO or any other category that would warrant extending the vocabulary.
+
+    The remaining untagged `bail!`/`anyhow!` macros project-wide live in files outside this task's scope (`config.rs`, `create.rs`, `git.rs`, `multi_plan.rs`, `plan_inspect.rs`, `config_lua.rs`). A follow-up sweep over those would complete the codebase migration.

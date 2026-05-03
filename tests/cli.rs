@@ -566,3 +566,67 @@ fn invalid_format_in_json_mode_emits_typed_code_envelope() {
         "envelope must carry the typed code: {stderr}"
     );
 }
+
+/// `state related-components discover` against an empty repo registry
+/// must surface the typed `NotFound` code (exit 3) — proving the
+/// discover module's tagged-error pipeline is wired through to the
+/// renderer end-to-end. The exit-category mapping is the contract
+/// agents branch on.
+#[test]
+fn discover_with_empty_registry_exits_with_not_found_code() {
+    let tmp = TempDir::new().unwrap();
+    let cfg = tmp.path().join("cfg");
+    fs::create_dir_all(&cfg).unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["state", "related-components", "discover", "--config"])
+        .arg(&cfg)
+        .output()
+        .expect("binary must spawn");
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "empty registry must exit 3 (NotFound); got {:?}, stderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
+/// `state migrate` against a malformed legacy `session-log.md` must
+/// surface the `InvalidInput` code from `parse_md.rs` (exit 2,
+/// UsageError) through the `with_context` wrap in `state/migrate.rs`.
+/// Confirms that the parser's typed errors survive the caller's
+/// narrative-context layer — `error_code_of` walks the anyhow chain.
+#[test]
+fn state_migrate_with_malformed_session_log_md_exits_with_usage_error_code() {
+    let tmp = TempDir::new().unwrap();
+    let plan = tmp.path();
+    // Malformed: `### Session` heading with no body. The parser bails
+    // with `invalid("session ... has no body")`, which is `InvalidInput`.
+    fs::write(
+        plan.join("session-log.md"),
+        "### Session 1 (2026-01-01T00:00:00Z) — Empty body\n\n\
+         ### Session 2 (2026-01-02T00:00:00Z) — Has body\n\n\
+         real body\n",
+    )
+    .unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["state", "migrate"])
+        .arg(plan)
+        .output()
+        .expect("binary must spawn");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "malformed session-log.md must exit 2 (UsageError, from InvalidInput); \
+         got {:?}, stderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no body"),
+        "inner parser message must survive into the rendered error: {stderr}"
+    );
+}

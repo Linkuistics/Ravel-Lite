@@ -1,11 +1,12 @@
-id: session-136
-timestamp: 2026-05-03T14:13:03Z
+id: session-137
+timestamp: 2026-05-03T14:45:13Z
 phase: work
 body: |
-  ### Session 136 (2026-05-03T14:13:03Z) — Add visible_alias annotations and tag inner-verb error sites
+  ### Session 137 (2026-05-03T14:45:13Z) — Tag discover internals and session-log/parse_md error sites with ErrorCode
 
-  - Attempted and completed two CLI surface hardening tasks: (1) alias annotations across all `list`/`remove`/`show`/`add` variants in `src/main.rs`, and (2) typed `ErrorCode` tagging at all inner-verb error sites across `src/state/`, `src/repos.rs`, `src/atlas.rs`, and survey modules.
-  - Alias task: 36 verbs now carry `visible_alias`/`visible_aliases` attributes (`ls`, `rm`/`delete`, `get`/`cat`, `create`, `add`). Compound-name collisions (e.g. `ListRepos`, `ListComponents`) received qualified aliases (`ls-repos`, `ls-components`) to avoid clap enum-level ambiguity. Integration test `visible_aliases_dispatch_to_canonical_verbs` verifies one alias per category.
-  - Error-tagging task: ~113 sites swept across `state/backlog`, `state/memory`, `state/intents`, `state/findings`, `state/targets`, `state/target_requests`, `state/this_cycle_focus`, `state/focus_objections`, `state/commits`, `state/discover_proposals`, `state/session_log`, `state/migrate`, `state/phase`, `repos.rs`, `atlas.rs`, `plan_inspect.rs`, `related_components.rs`, `component_ref.rs`, `survey/delta.rs`, `discover/mod.rs`. `NotFound`, `Conflict`, `InvalidInput`, and `IoError` applied per the categorisation table from the task description. Private `not_found_in_<file>(id)` helpers lifted where 3+ identical sites existed in a file. Four new integration tests added to `tests/cli.rs`.
-  - Both tasks fully done; no follow-on hand-offs identified.
-  - What's next: remaining untagged sites in `src/init.rs`, `src/create.rs`, `src/git.rs`, `src/phase_loop.rs` if any; or shift to `--limit`/`--all` flags for list verbs.
+  - Completed tagging of every untyped `bail!`/`anyhow!`/`ensure!` and IO/parse `.with_context(...)` propagation in the five deferred files: `discover/{cache,stage1,stage2,tree_sha}.rs` and `state/session_log/parse_md.rs`.
+  - All sites mapped cleanly to existing codes — no new `ErrorCode` variants were needed. `cache.rs` got `Conflict`/`IoError`/`InvalidInput`; `stage1.rs` and `stage2.rs` got `IoError` (subprocess/timeout) and `Internal` (semaphore-closed/dangling-token invariants); `tree_sha.rs` got `IoError` everywhere except the "not a git repo" bail which got `InvalidInput`; `parse_md.rs` got `InvalidInput` everywhere via a module-private `invalid(message)` helper.
+  - Added a unit test in `cli/error_context.rs` confirming `error_code_of` walks the anyhow chain through a `with_context` wrap — load-bearing contract for parse_md callers that add narrative context without losing the typed code.
+  - Added two integration tests in `tests/cli.rs`: one exercising the discover pipeline end-to-end with an empty registry (asserts exit 3 / `NotFound`), one feeding a malformed session-log.md to `state migrate` and asserting exit 2 / `UsageError` with the parser's inner message intact.
+  - `./scripts/check.sh` clean; all tests green.
+  - What this suggests next: the remaining untagged `bail!`/`anyhow!` macros live in `config.rs`, `create.rs`, `git.rs`, `multi_plan.rs`, `plan_inspect.rs`, `config_lua.rs` — a follow-up sweep over those would complete the codebase-wide migration. Also, stage1's per-project errors are swallowed into `Stage1Outcome::Failed { error: format!("{e:#}") }`, losing the typed code; surfacing inner codes through `Stage1Failure` would be a separate follow-up if agents need to branch on per-project failure categories.

@@ -11,8 +11,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+
+use crate::bail_with;
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
 
 /// Combined state of a project subtree: committed content plus any
 /// uncommitted diff/untracked content. `dirty_hash` is the empty
@@ -36,9 +40,11 @@ pub fn compute_project_state(project_path: &Path) -> Result<ProjectState> {
     let toplevel = repo_toplevel(project_path)?;
     // Canonicalise so macOS symlinks like /var -> /private/var match git's
     // `--show-toplevel` output exactly.
-    let canon_project = std::fs::canonicalize(project_path).with_context(|| {
-        format!("failed to canonicalise project path {}", project_path.display())
-    })?;
+    let canon_project = std::fs::canonicalize(project_path)
+        .with_context(|| {
+            format!("failed to canonicalise project path {}", project_path.display())
+        })
+        .with_code(ErrorCode::IoError)?;
     let rel = canon_project
         .strip_prefix(&toplevel)
         .with_context(|| {
@@ -47,7 +53,8 @@ pub fn compute_project_state(project_path: &Path) -> Result<ProjectState> {
                 canon_project.display(),
                 toplevel.display()
             )
-        })?;
+        })
+        .with_code(ErrorCode::Internal)?;
 
     let tree_sha = compute_subtree_tree_sha(&toplevel, rel)?;
     let dirty_hash = compute_subtree_dirty_hash(&toplevel, rel)?;
@@ -67,10 +74,12 @@ fn compute_subtree_tree_sha(toplevel: &Path, rel: &Path) -> Result<String> {
         .arg("rev-parse")
         .arg(&spec)
         .output()
-        .context("failed to spawn `git rev-parse`")?;
+        .context("failed to spawn `git rev-parse`")
+        .with_code(ErrorCode::IoError)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
+        bail_with!(
+            ErrorCode::IoError,
             "git rev-parse {} failed in {}: {}",
             spec,
             toplevel.display(),
@@ -78,11 +87,16 @@ fn compute_subtree_tree_sha(toplevel: &Path, rel: &Path) -> Result<String> {
         );
     }
     let sha = String::from_utf8(output.stdout)
-        .context("git rev-parse output was not valid UTF-8")?
+        .context("git rev-parse output was not valid UTF-8")
+        .with_code(ErrorCode::IoError)?
         .trim()
         .to_string();
     if sha.is_empty() {
-        bail!("git rev-parse {} returned empty output", spec);
+        bail_with!(
+            ErrorCode::IoError,
+            "git rev-parse {} returned empty output",
+            spec
+        );
     }
     Ok(sha)
 }
@@ -119,7 +133,8 @@ fn compute_subtree_dirty_hash(toplevel: &Path, rel: &Path) -> Result<String> {
 
     for path_bytes in untracked_list.split(|b| *b == 0u8).filter(|s| !s.is_empty()) {
         let path_str = std::str::from_utf8(path_bytes)
-            .context("untracked path is not valid UTF-8")?;
+            .context("untracked path is not valid UTF-8")
+            .with_code(ErrorCode::IoError)?;
         let abs = toplevel.join(path_str);
         // Skip directories and unreadable entries — porcelain listing
         // already fingerprints their presence, so silent skip here just
@@ -150,10 +165,12 @@ fn run_git_bytes(toplevel: &Path, args: &[String], description: &str) -> Result<
         .arg(toplevel)
         .args(args)
         .output()
-        .with_context(|| format!("failed to spawn `{description}`"))?;
+        .with_context(|| format!("failed to spawn `{description}`"))
+        .with_code(ErrorCode::IoError)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
+        bail_with!(
+            ErrorCode::IoError,
             "{} failed in {}: {}",
             description,
             toplevel.display(),
@@ -175,28 +192,37 @@ fn hash_payload_via_git(payload: &[u8], toplevel: &Path) -> Result<String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .context("failed to spawn `git hash-object --stdin`")?;
+        .context("failed to spawn `git hash-object --stdin`")
+        .with_code(ErrorCode::IoError)?;
     child
         .stdin
         .as_mut()
-        .context("git hash-object stdin unavailable")?
+        .context("git hash-object stdin unavailable")
+        .with_code(ErrorCode::Internal)?
         .write_all(payload)
-        .context("failed to write payload to git hash-object")?;
+        .context("failed to write payload to git hash-object")
+        .with_code(ErrorCode::IoError)?;
     let out = child
         .wait_with_output()
-        .context("waiting on git hash-object")?;
+        .context("waiting on git hash-object")
+        .with_code(ErrorCode::IoError)?;
     if !out.status.success() {
-        bail!(
+        bail_with!(
+            ErrorCode::IoError,
             "git hash-object --stdin failed: {}",
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
     let sha = String::from_utf8(out.stdout)
-        .context("git hash-object output was not valid UTF-8")?
+        .context("git hash-object output was not valid UTF-8")
+        .with_code(ErrorCode::IoError)?
         .trim()
         .to_string();
     if sha.is_empty() {
-        bail!("git hash-object --stdin returned empty output");
+        bail_with!(
+            ErrorCode::IoError,
+            "git hash-object --stdin returned empty output"
+        );
     }
     Ok(sha)
 }
@@ -208,16 +234,19 @@ fn repo_toplevel(project_path: &Path) -> Result<PathBuf> {
         .arg("rev-parse")
         .arg("--show-toplevel")
         .output()
-        .context("failed to spawn `git rev-parse --show-toplevel`")?;
+        .context("failed to spawn `git rev-parse --show-toplevel`")
+        .with_code(ErrorCode::IoError)?;
     if !output.status.success() {
-        bail!(
+        bail_with!(
+            ErrorCode::InvalidInput,
             "project at {} is not inside a git repository — initialise with \
              `git init` or remove from the catalog",
             project_path.display()
         );
     }
     let s = String::from_utf8(output.stdout)
-        .context("git --show-toplevel output was not valid UTF-8")?
+        .context("git --show-toplevel output was not valid UTF-8")
+        .with_code(ErrorCode::IoError)?
         .trim()
         .to_string();
     Ok(PathBuf::from(s))
