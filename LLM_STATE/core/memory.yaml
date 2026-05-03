@@ -1049,3 +1049,11 @@ entries:
   title: Stage1Outcome::Failed swallows typed ErrorCode; Stage1Failure unblocks it
   body: |
     `Stage1Outcome::Failed { error: format!("{e:#}") }` captures per-project errors as a plain string, discarding the typed `ErrorCode`. Agents cannot branch on per-project failure categories; only human-readable text survives into `discover-proposals.yaml`. Fix: introduce a `Stage1Failure { code: ErrorCode, message: String }` variant and thread it through `run_stage2`. Deferred until a consumer needs per-project failure-category branching.
+- id: bail-with-for-statement-sites-with-code-for-closure-contexts
+  title: bail_with! for statement sites; .with_code() for closure contexts
+  body: |
+    `bail!`-at-statement-position is replaced with `bail_with!(ErrorCode::X, …)`. `anyhow!` inside `.ok_or_else`/`.map_err` closures keeps the original macro and chains `.with_code(ErrorCode::X)` afterwards. Both patterns applied uniformly across all `ErrorCode`-tagged sites in the codebase.
+- id: with-context-chains-excluded-from-errorcode-tagging-scope
+  title: with_context chains excluded from ErrorCode tagging scope
+  body: |
+    The `bail!/anyhow!/ensure!`-site `ErrorCode` tagging sweep is complete across all source files. `with_context` chains wrapping IO operations were intentionally excluded and remain untagged — they are a separate follow-up gap before JSON-error-envelope work can be considered complete.
