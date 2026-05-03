@@ -774,7 +774,7 @@ entries:
 - id: atlas-cli-routes-via-dispatch-atlas-in-src-atlas-rs
   title: Atlas CLI routes via dispatch_atlas in src/atlas.rs
   body: |
-    `src/atlas.rs` implements `dispatch_atlas`; `src/main.rs` routes `Commands::Atlas` to it via `AtlasCommands` enum. `atlas-index` is a workspace path dep in `Cargo.toml`. Core verbs: `atlas list-repos` (delegates to `repos::run_list`), `atlas freshness [--require-fresh]` (four status outcomes: `fresh`, `missing`, `no_local_path`, `unparseable`), `atlas list-components [--repo <slug>]`, `atlas summary [--repo <slug>]` (both load the `Catalog`), `atlas describe <ref>` (resolves qualified `<repo>/<id>` or bare `<id>`, emits `ComponentEntry` YAML with `compute_children` list), `atlas memory <ref> [--search <term>]` (reads `.atlas/memory.yaml`, optional case-insensitive substring filter). `--repo` validates against the fresh-repo set and emits a named-repos error on unknown slug rather than silent empty output. Additional verbs: `atlas edges`, `atlas neighbors`, `atlas roots` (EdgeGraph traversal); `atlas path`, `atlas scc` (DirectedGraph algorithms). See: `atlas edges/neighbors/roots traverse EdgeGraph from catalog`; `atlas path (BFS) and scc (Tarjan) verbs in src/atlas.rs`.
+    `src/atlas.rs` implements `dispatch_atlas`; `src/main.rs` routes `Commands::Atlas` to it via `AtlasCommands` enum. `atlas-index` is a workspace path dep in `Cargo.toml`. Core verbs: `atlas list-repos` (delegates to `repos::run_list`), `atlas freshness [--require-fresh]` (four status outcomes: `fresh`, `missing`, `no_local_path`, `unparseable`), `atlas list-components [--repo <slug>] [--format yaml|json]`, `atlas summary [--repo <slug>] [--format yaml|json]` (both load the `Catalog`; JSON paths emit typed envelopes `AtlasComponentsList`/`AtlasSummary` with `schema_version: 1`), `atlas describe <ref>` (resolves qualified `<repo>/<id>` or bare `<id>`, emits `ComponentEntry` YAML with `compute_children` list), `atlas memory <ref> [--search <term>]` (reads `.atlas/memory.yaml`, optional case-insensitive substring filter). `--repo` validates against the fresh-repo set and emits a named-repos error on unknown slug rather than silent empty output. Additional verbs: `atlas edges`, `atlas neighbors`, `atlas roots` (EdgeGraph traversal); `atlas path`, `atlas scc` (DirectedGraph algorithms). See: `atlas edges/neighbors/roots traverse EdgeGraph from catalog`; `atlas path (BFS) and scc (Tarjan) verbs in src/atlas.rs`.
 - id: catalog-projects-token-is-not-in-phase-prompts-strip-task-is-no-op
   title: '`CATALOG_PROJECTS` absent from phase prompts'
   body: |
@@ -1021,3 +1021,15 @@ entries:
     prepositions like `at`, `in`, `for`) is worth considering only after a second
     occurrence. The corpus is small enough that prose rephrasing remains the cheaper
     fix for now.
+- id: errorcode-and-exitcategory-are-the-typed-cli-error-vocabulary
+  title: ErrorCode and ExitCategory are the typed CLI error vocabulary
+  body: |
+    `ErrorCode` (7 variants: `AuthRequired`, `InvalidInput`, `NotFound`, `Conflict`, `IoError`, `RateLimited`, `Internal`) in `src/cli/error_code.rs` with `as_str()`, `parse_opt()`, and `all()`. `ExitCategory` (7 variants, codes 0–6) in `src/cli/exit_category.rs` with `as_code()`, `label()`, `documented()`, and `From<&ErrorCode>` mapping. `ErrorCode::all()` and `ExitCategory::documented()` enumerate both sets at runtime; `capabilities` sources from them to prevent drift. Exit-code table injected into `--help` via `AFTER_HELP`. See: `capabilities verb sources from ErrorCode::all() and ExitCategory::documented()`.
+- id: capabilities-verb-sources-from-errorcode-all-and-exitcategory-documented
+  title: capabilities verb sources from ErrorCode::all() and ExitCategory::documented()
+  body: |
+    `ravel-lite capabilities` in `src/cli/capabilities.rs` emits a schema_version:1 JSON document with `subcommands`, `output_formats`, `error_codes`, `exit_categories`, and `features`. `error_codes` and `exit_categories` are sourced at runtime from `ErrorCode::all()` and `ExitCategory::documented()` — the capabilities document cannot drift from the runtime vocabulary for these fields. See: `ErrorCode and ExitCategory are the typed CLI error vocabulary`.
+- id: main-run-dispatch-stack-classifies-errors-via-exitcategory
+  title: main→run→dispatch stack classifies errors via ExitCategory
+  body: |
+    `main()` calls `run()` calls `dispatch()`. `run()` classifies `anyhow::Error` via `ExitCategory`, detects `--format json` in raw argv, and routes error output: `JsonErrorEnvelope` (pretty JSON with optional `remediation` field) to stderr for JSON mode, or `Error: {err:#}` for plain mode. `JsonErrorEnvelope` is in `src/cli/error_envelope.rs`; `Display` emits JSON with trailing newline. Replaces the previous `async fn main() -> Result<()>` all-or-nothing exit path.
