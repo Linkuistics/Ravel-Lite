@@ -979,3 +979,30 @@ entries:
   title: drain_target_requests fires at every phase boundary, not just triage→work
   body: |
     `drain_target_requests` fires at every phase boundary — loop-top in `phase_loop::phase_loop` (line ~399), before `read_phase`. Despite the triage-focused wording in the architecture-next doc ("triage→work boundary"), drain is not gated to a single transition. This is intentional per §Phase boundaries ("between phases"), but task descriptions that say "at the triage→work boundary" are technically imprecise. When writing phase-boundary logic, assume drain may have already run before any phase is read; avoid reasoning as if drain is triage-exclusive.
+- id: triage-reads-focus-objections-at-step-3-writes-this-cycle-focus-at-step-8
+  title: Triage reads focus-objections at step 3; writes this-cycle-focus at step 8
+  body: |
+    ---
+    name: Triage reads focus-objections at step 3; writes this-cycle-focus at step 8
+    description: Triage prompt wiring for focus/objections mechanism; work reads this-cycle-focus at step 5
+    type: project
+    ---
+    `defaults/phases/triage.md`: step 3 reads prior-cycle `focus-objections.yaml` (`wrong-target`, `skip-item`, `premature` objections); step 7 acts on them; step 8 writes `this-cycle-focus.yaml` via `state this-cycle-focus set`. `defaults/phases/work.md`: step 5 reads `state this-cycle-focus show` (advisory; v1 fallback: proceed without focus if absent). See: `this-cycle-focus.yaml has set/show/clear verb surface`; `focus-objections.yaml has per-kind add verb surface`.
+- id: cycle-closes-at-reflect-dream-is-out-of-cycle
+  title: Cycle closes at reflect; dream is out-of-cycle
+  body: |
+    ---
+    name: Cycle closes at reflect; dream is out-of-cycle
+    description: Automated cycle is triage→work→analyse-work→reflect; dream runs out-of-cycle
+    type: project
+    ---
+    The automated phase cycle is `triage → work → analyse-work → reflect`. Reflect always sets `git-commit-reflect` as next phase; post-reflect routing (including dream invocation) belongs to the run script. `dream.md` is an out-of-cycle phase; `ravel-lite curate` is the named out-of-cycle mechanism for compaction runs. See: `Reflect phase runs automatically after git-commit-analyse-work`.
+- id: phase-baseline-filename-rename-requires-runner-prompt-to-ship-together
+  title: Phase-baseline filename rename requires runner+prompt to ship together
+  body: |
+    ---
+    name: Phase-baseline filename rename requires runner+prompt to ship together
+    description: Constraint: renaming <phase>-baseline files in prompts before runner-side ships breaks shell substitution
+    type: project
+    ---
+    `<phase>-baseline` filenames appear in both phase prompts (as `$(cat {{PLAN}}/<phase>-baseline ...)` in `phase-summary render` directives) and runner scripts (written files). Renaming to per-worktree YAML maps requires both sides to change atomically; renaming the prompt side before the runner-side rename ships silently breaks `phase-summary render` in all three output-format sections. Deferred. See: `Phase prompts invoke phase-summary render via CLI directive`; `Each <phase>-baseline holds the SHA from the preceding commit`.
