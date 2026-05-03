@@ -238,3 +238,126 @@ fn top_level_help_shows_repo_and_website_urls() {
         "--help must contain the website URL: {stdout}"
     );
 }
+
+/// Invalid `--format` value is a typed `InvalidInput` error: exit 2
+/// (usage error) per `ExitCategory::UsageError`, not the catch-all
+/// exit 1. Asserts the `bail_with!` plumbing reaches the renderer.
+#[test]
+fn invalid_format_exits_with_usage_error_code() {
+    let tmp = TempDir::new().unwrap();
+    let plan = tmp.path();
+    fs::write(plan.join("phase.md"), "work").unwrap();
+    fs::write(plan.join("backlog.yaml"), "schema_version: 1\nitems: []\n").unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["state", "backlog", "list"])
+        .arg(plan)
+        .args(["--format", "xml"])
+        .output()
+        .expect("binary must spawn");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "invalid --format must exit 2 (UsageError); got {:?}, stderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
+/// Unknown `fixed-memory show <slug>` is `NotFound`: exit 3 per
+/// `ExitCategory::NotFound`. Asserts the `bail_with!` at the
+/// `dispatch_fixed_memory` site sets the right code.
+#[test]
+fn unknown_fixed_memory_slug_exits_with_not_found_code() {
+    let tmp = TempDir::new().unwrap();
+    let config_root = tmp.path().join("cfg");
+    ravel_lite::init::run_init(&config_root, false).unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["fixed-memory", "show"])
+        .arg("--config")
+        .arg(&config_root)
+        .arg("no-such-slug")
+        .output()
+        .expect("binary must spawn");
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "unknown fixed-memory slug must exit 3 (NotFound); got {:?}, stderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
+/// Every leaf verb's `--help` must include at least two concrete
+/// invocation examples — the highest-leverage agent-friendliness
+/// affordance per `defaults/fixed-memory/cli-tool-design.md` §2. This
+/// test spot-checks one representative leaf per verb family; the
+/// `after_help` const block in `main.rs` is the source of truth.
+#[test]
+fn leaf_verb_help_carries_invocation_examples() {
+    let cases = [
+        &["init", "--help"][..],
+        &["run", "--help"][..],
+        &["capabilities", "--help"][..],
+        &["repo", "list", "--help"][..],
+        &["repo", "add", "--help"][..],
+        &["fixed-memory", "show", "--help"][..],
+        &["state", "backlog", "list", "--help"][..],
+        &["state", "backlog", "set-status", "--help"][..],
+        &["state", "memory", "add", "--help"][..],
+        &["state", "intents", "set-status", "--help"][..],
+        &["state", "this-cycle-focus", "set", "--help"][..],
+        &["state", "session-log", "append", "--help"][..],
+        &["findings", "add", "--help"][..],
+        &["plan", "list-items", "--help"][..],
+    ];
+    for argv in cases {
+        let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+            .args(argv)
+            .output()
+            .expect("binary must spawn");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("Examples:"),
+            "{:?} --help missing `Examples:` block:\n{stdout}",
+            argv
+        );
+        assert!(
+            stdout.contains("ravel-lite "),
+            "{:?} --help examples must show `ravel-lite ...` invocations:\n{stdout}",
+            argv
+        );
+    }
+}
+
+/// JSON-mode error envelope must carry the typed `code` field
+/// (`INVALID_INPUT`) — agents branch on the wire-form code without
+/// parsing the prose message.
+#[test]
+fn invalid_format_in_json_mode_emits_typed_code_envelope() {
+    let tmp = TempDir::new().unwrap();
+    let plan = tmp.path();
+    fs::write(plan.join("phase.md"), "work").unwrap();
+    fs::write(plan.join("backlog.yaml"), "schema_version: 1\nitems: []\n").unwrap();
+
+    // `--format json` selects JSON mode; `--status bogus` then fails
+    // with the tagged `InvalidInput` error. Together they exercise the
+    // JSON envelope rendering path with a typed code.
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["state", "backlog", "list"])
+        .arg(plan)
+        .args(["--format", "json", "--status", "bogus-status"])
+        .output()
+        .expect("binary must spawn");
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("\"code\""),
+        "stderr must be the JSON envelope: {stderr}"
+    );
+    assert!(
+        stderr.contains("INVALID_INPUT"),
+        "envelope must carry the typed code: {stderr}"
+    );
+}

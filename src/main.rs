@@ -1,14 +1,15 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tokio::sync::mpsc;
 
 use ravel_lite::agent::claude_code::ClaudeCodeAgent;
 use ravel_lite::agent::pi::PiAgent;
 use ravel_lite::agent::Agent;
-use ravel_lite::cli::OutputFormat;
+use ravel_lite::bail_with;
+use ravel_lite::cli::{ErrorCode, OutputFormat};
 use ravel_lite::component_ref::ComponentRef;
 use ravel_lite::config::{load_agent_config, load_shared_config, resolve_config_dir};
 use ravel_lite::git::project_root_for_plan;
@@ -65,6 +66,708 @@ Exit codes:
 
   See `ravel-lite capabilities` for the same vocabulary as JSON.";
 
+// =====================================================================
+// Per-leaf-verb `after_help` examples. LLMs pattern-match on examples
+// far more reliably than on flag listings, so every leaf verb's
+// `--help` ends with two or three real invocations. Conventions:
+//   - The canonical plan-dir placeholder is `LLM_STATE/core`.
+//   - The canonical config-dir placeholder is `<context>` (the user
+//     supplies their own path; we don't fabricate one).
+//   - Comments above each example are short and actionable.
+// =====================================================================
+
+// ---- Top-level lifecycle -------------------------------------------
+const INIT_AFTER_HELP: &str = "\
+Examples:
+  # scaffold a fresh context at the default XDG location
+  ravel-lite init
+
+  # scaffold at a custom path; idempotent on re-run
+  ravel-lite init --config /path/to/context
+
+  # prune retired layout files from an old context (preserves user files)
+  ravel-lite init --config /path/to/context --force
+";
+
+const RUN_AFTER_HELP: &str = "\
+Examples:
+  # single-plan continuous loop
+  ravel-lite run LLM_STATE/core
+
+  # multi-plan: --survey-state holds the survey YAML between cycles
+  ravel-lite run --survey-state survey-state.yaml LLM_STATE/core LLM_STATE/other
+
+  # claude-code only: skip per-phase permission prompts
+  ravel-lite run --dangerous LLM_STATE/core
+";
+
+const CREATE_AFTER_HELP: &str = "\
+Examples:
+  # interactive plan-creation session (claude takes over the terminal)
+  ravel-lite create my-new-plan
+
+  # seed initial worktree mounts from the CLI
+  ravel-lite create my-new-plan --target ravel-lite:core --target atlas:atlas-ontology
+";
+
+const SURVEY_AFTER_HELP: &str = "\
+Examples:
+  # one-shot survey across two plans, YAML to stdout
+  ravel-lite survey LLM_STATE/core LLM_STATE/other > survey.yaml
+
+  # incremental: re-use a prior survey, only changed plans hit the LLM
+  ravel-lite survey --prior survey.yaml LLM_STATE/core LLM_STATE/other
+
+  # force a full re-analysis even with --prior
+  ravel-lite survey --prior survey.yaml --force LLM_STATE/core
+";
+
+const SURVEY_FORMAT_AFTER_HELP: &str = "\
+Examples:
+  # render a saved survey YAML as human-readable markdown
+  ravel-lite survey-format survey.yaml
+
+  # pipe a fresh survey through the renderer
+  ravel-lite survey LLM_STATE/core | ravel-lite survey-format /dev/stdin
+";
+
+const VERSION_AFTER_HELP: &str = "\
+Examples:
+  # equivalent to `ravel-lite --version`
+  ravel-lite version
+";
+
+const CAPABILITIES_AFTER_HELP: &str = "\
+Examples:
+  # machine-readable surface summary, JSON only
+  ravel-lite capabilities
+
+  # check whether a feature flag is set
+  ravel-lite capabilities | jq '.features.json_output'
+";
+
+// ---- Repo registry --------------------------------------------------
+const REPO_LIST_AFTER_HELP: &str = "\
+Examples:
+  # default YAML
+  ravel-lite repo list
+
+  # JSON for agent consumers
+  ravel-lite repo list --format json
+";
+
+const REPO_ADD_AFTER_HELP: &str = "\
+Examples:
+  # register a remote-only repo
+  ravel-lite repo add ravel-lite --url git@github.com:Linkuistics/Ravel-Lite.git
+
+  # register with a local checkout to skip on-demand cloning
+  ravel-lite repo add atlas --url https://github.com/Linkuistics/Atlas --local-path ~/Development/Atlas
+";
+
+const REPO_REMOVE_AFTER_HELP: &str = "\
+Examples:
+  # drop a repo from the registry (errors if absent)
+  ravel-lite repo remove old-repo
+";
+
+// ---- Fixed memory ---------------------------------------------------
+const FIXED_MEMORY_LIST_AFTER_HELP: &str = "\
+Examples:
+  # default YAML listing of every slug + sources
+  ravel-lite fixed-memory list
+
+  # markdown for a human reader
+  ravel-lite fixed-memory list --format markdown
+";
+
+const FIXED_MEMORY_SHOW_AFTER_HELP: &str = "\
+Examples:
+  # emit the embedded body for a slug (with overlay if present)
+  ravel-lite fixed-memory show coding-style
+
+  # the slug used in --help is the same one `list` reports
+  ravel-lite fixed-memory show cli-tool-design
+";
+
+// ---- Atlas (graph-RAG over .atlas/ catalog) ------------------------
+const ATLAS_LIST_REPOS_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite atlas list-repos
+  ravel-lite atlas list-repos --format json
+";
+
+const ATLAS_FRESHNESS_AFTER_HELP: &str = "\
+Examples:
+  # report freshness of every registered repo's .atlas/ catalog
+  ravel-lite atlas freshness
+
+  # exit non-zero if any repo lacks a fresh catalog (pre-flight check)
+  ravel-lite atlas freshness --require-fresh
+";
+
+const ATLAS_LIST_COMPONENTS_AFTER_HELP: &str = "\
+Examples:
+  # default text shape: <repo_slug>/<component_id>  <kind>
+  ravel-lite atlas list-components
+
+  # JSON envelope, restricted to one repo
+  ravel-lite atlas list-components --repo ravel-lite --format json
+
+  # only components of one kind
+  ravel-lite atlas list-components --kind crate
+";
+
+const ATLAS_SUMMARY_AFTER_HELP: &str = "\
+Examples:
+  # per-repo counts grouped by component kind
+  ravel-lite atlas summary
+
+  # JSON for one repo
+  ravel-lite atlas summary --repo ravel-lite --format json
+";
+
+const ATLAS_DESCRIBE_AFTER_HELP: &str = "\
+Examples:
+  # qualified reference
+  ravel-lite atlas describe ravel-lite/core
+
+  # bare id (must be unambiguous across fresh repos)
+  ravel-lite atlas describe atlas-ontology
+";
+
+const ATLAS_MEMORY_AFTER_HELP: &str = "\
+Examples:
+  # full memory for a component
+  ravel-lite atlas memory ravel-lite/core
+
+  # filter to entries whose claim/justifications mention `cascade`
+  ravel-lite atlas memory ravel-lite/core --search cascade
+";
+
+const ATLAS_EDGES_AFTER_HELP: &str = "\
+Examples:
+  # every edge involving the component (default)
+  ravel-lite atlas edges ravel-lite/core
+
+  # only directed edges where this is the destination
+  ravel-lite atlas edges ravel-lite/core --in
+
+  # only directed edges where this is the source
+  ravel-lite atlas edges ravel-lite/core --out
+";
+
+const ATLAS_NEIGHBORS_AFTER_HELP: &str = "\
+Examples:
+  # 1-hop neighbours (default depth)
+  ravel-lite atlas neighbors ravel-lite/core
+
+  # 2-hop BFS
+  ravel-lite atlas neighbors ravel-lite/core --depth 2
+";
+
+const ATLAS_ROOTS_AFTER_HELP: &str = "\
+Examples:
+  # components with no incoming directed edges (graph roots)
+  ravel-lite atlas roots
+";
+
+const ATLAS_PATH_AFTER_HELP: &str = "\
+Examples:
+  # shortest path from one component to another (directed graph)
+  ravel-lite atlas path ravel-lite/core atlas/atlas-ontology
+
+  # cap traversal depth
+  ravel-lite atlas path ravel-lite/core atlas/atlas-ontology --max-hops 5
+";
+
+const ATLAS_SCC_AFTER_HELP: &str = "\
+Examples:
+  # non-trivial strongly-connected components (size > 1)
+  ravel-lite atlas scc
+
+  # include singletons too
+  ravel-lite atlas scc --all
+";
+
+// ---- state set-phase / projects / migrate --------------------------
+const STATE_SET_PHASE_AFTER_HELP: &str = "\
+Examples:
+  # advance to the next phase after work completes
+  ravel-lite state set-phase LLM_STATE/core analyse-work
+";
+
+const STATE_MIGRATE_AFTER_HELP: &str = "\
+Examples:
+  # convert a legacy plan with .md state files to .yaml
+  ravel-lite state migrate LLM_STATE/core
+
+  # preview the rewrite without writing
+  ravel-lite state migrate LLM_STATE/core --dry-run
+
+  # delete the .md originals after a clean migration
+  ravel-lite state migrate LLM_STATE/core --delete-originals
+";
+
+// ---- state phase-summary --------------------------------------------
+const PHASE_SUMMARY_RENDER_AFTER_HELP: &str = "\
+Examples:
+  # text summary of triage's mutations against the prior commit
+  ravel-lite state phase-summary render LLM_STATE/core --phase triage --baseline HEAD~1
+
+  # YAML for downstream consumers
+  ravel-lite state phase-summary render LLM_STATE/core --phase reflect --baseline abc123 --format yaml
+";
+
+// ---- state backlog --------------------------------------------------
+const BACKLOG_LIST_AFTER_HELP: &str = "\
+Examples:
+  # markdown render grouped by category (the canonical work-phase view)
+  ravel-lite state backlog list LLM_STATE/core --format markdown
+
+  # only ready (active + all deps done) tasks, JSON
+  ravel-lite state backlog list LLM_STATE/core --ready --format json
+
+  # done tasks missing a Results block
+  ravel-lite state backlog list LLM_STATE/core --status done --missing-results
+";
+
+const BACKLOG_SHOW_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state backlog show LLM_STATE/core some-task-id
+  ravel-lite state backlog show LLM_STATE/core some-task-id --format json
+";
+
+const BACKLOG_ADD_AFTER_HELP: &str = "\
+Examples:
+  # title and category required, body via file
+  ravel-lite state backlog add LLM_STATE/core --title 'Wire X' --category infra --description-file body.md
+
+  # body inline
+  ravel-lite state backlog add LLM_STATE/core --title 'Y' --category bug --description 'short body'
+
+  # body via stdin
+  echo 'body' | ravel-lite state backlog add LLM_STATE/core --title 'Z' --category infra --description -
+";
+
+const BACKLOG_INIT_AFTER_HELP: &str = "\
+Examples:
+  # bulk-seed a new plan's backlog from a YAML file (refuses non-empty existing backlog)
+  ravel-lite state backlog init LLM_STATE/core --body-file initial-backlog.yaml
+";
+
+const BACKLOG_SET_STATUS_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state backlog set-status LLM_STATE/core some-id done
+  ravel-lite state backlog set-status LLM_STATE/core some-id blocked --reason 'waiting on ABC'
+";
+
+const BACKLOG_SET_RESULTS_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state backlog set-results LLM_STATE/core some-id --body-file results.md
+  echo 'short result' | ravel-lite state backlog set-results LLM_STATE/core some-id --body -
+";
+
+const BACKLOG_SET_DESCRIPTION_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state backlog set-description LLM_STATE/core some-id --body-file new-desc.md
+  ravel-lite state backlog set-description LLM_STATE/core some-id --body 'updated brief'
+";
+
+const BACKLOG_SET_HANDOFF_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state backlog set-handoff LLM_STATE/core some-id --body-file handoff.md
+";
+
+const BACKLOG_CLEAR_HANDOFF_AFTER_HELP: &str = "\
+Examples:
+  # triage uses this after promote/archive
+  ravel-lite state backlog clear-handoff LLM_STATE/core some-id
+";
+
+const BACKLOG_SET_TITLE_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state backlog set-title LLM_STATE/core some-id 'Updated task title'
+";
+
+const BACKLOG_SET_DEPENDENCIES_AFTER_HELP: &str = "\
+Examples:
+  # comma-separated dep list
+  ravel-lite state backlog set-dependencies LLM_STATE/core some-id --deps dep-a,dep-b
+
+  # clear all deps
+  ravel-lite state backlog set-dependencies LLM_STATE/core some-id --deps ''
+";
+
+const BACKLOG_REORDER_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state backlog reorder LLM_STATE/core some-id before other-id
+  ravel-lite state backlog reorder LLM_STATE/core some-id after other-id
+";
+
+const BACKLOG_DELETE_AFTER_HELP: &str = "\
+Examples:
+  # refuses if the task is a dependency of another item
+  ravel-lite state backlog delete LLM_STATE/core some-id
+
+  # override
+  ravel-lite state backlog delete LLM_STATE/core some-id --force
+";
+
+const BACKLOG_LINT_DEPS_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state backlog lint-dependencies LLM_STATE/core
+  ravel-lite state backlog lint-dependencies LLM_STATE/core --format json
+";
+
+const BACKLOG_REPAIR_AFTER_HELP: &str = "\
+Examples:
+  # apply repairs and exit non-zero if any happened
+  ravel-lite state backlog repair-stale-statuses LLM_STATE/core
+
+  # preview what would change
+  ravel-lite state backlog repair-stale-statuses LLM_STATE/core --dry-run --format json
+";
+
+// ---- state memory ---------------------------------------------------
+const MEMORY_LIST_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state memory list LLM_STATE/core
+  ravel-lite state memory list LLM_STATE/core --format json
+";
+
+const MEMORY_SHOW_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state memory show LLM_STATE/core some-entry-id
+";
+
+const MEMORY_ADD_AFTER_HELP: &str = "\
+Examples:
+  # title becomes the TMS claim, body becomes one rationale justification
+  ravel-lite state memory add LLM_STATE/core --title 'Some learning' --body 'longer body'
+
+  # attach a code-anchor justification
+  ravel-lite state memory add LLM_STATE/core --title 'Pattern' --body-file body.md \\
+    --code-anchor 'component=ravel-lite/core,path=src/main.rs,sha=abc123'
+";
+
+const MEMORY_INIT_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state memory init LLM_STATE/core --body-file initial-memory.yaml
+";
+
+const MEMORY_SET_BODY_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state memory set-body LLM_STATE/core some-id --body 'updated rationale'
+  ravel-lite state memory set-body LLM_STATE/core some-id --body-file new-body.md
+";
+
+const MEMORY_SET_TITLE_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state memory set-title LLM_STATE/core some-id 'Refined claim'
+";
+
+const MEMORY_SET_STATUS_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state memory set-status LLM_STATE/core some-id defeated
+  ravel-lite state memory set-status LLM_STATE/core some-id superseded
+";
+
+const MEMORY_DELETE_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state memory delete LLM_STATE/core some-id
+";
+
+const MEMORY_CHECK_ANCHORS_AFTER_HELP: &str = "\
+Examples:
+  # walk every active entry's code-anchors and report drift
+  ravel-lite state memory check-anchors LLM_STATE/core
+
+  # specify the project root explicitly
+  ravel-lite state memory check-anchors LLM_STATE/core --project-root /path/to/repo
+";
+
+// ---- state intents --------------------------------------------------
+const INTENTS_LIST_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state intents list LLM_STATE/core
+";
+
+const INTENTS_SHOW_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state intents show LLM_STATE/core some-intent-id
+";
+
+const INTENTS_ADD_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state intents add LLM_STATE/core --claim 'Make X work' --body 'rationale here'
+";
+
+const INTENTS_SET_STATUS_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state intents set-status LLM_STATE/core some-id satisfied
+  ravel-lite state intents set-status LLM_STATE/core some-id defeated
+";
+
+// ---- state targets --------------------------------------------------
+const TARGETS_LIST_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state targets list LLM_STATE/core
+";
+
+const TARGETS_SHOW_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state targets show LLM_STATE/core ravel-lite:core
+";
+
+const TARGETS_ADD_AFTER_HELP: &str = "\
+Examples:
+  # data-only record; mount via `state targets mount` to actually create the worktree
+  ravel-lite state targets add LLM_STATE/core --repo ravel-lite --component core \\
+    --working-root .worktrees/ravel-lite --branch ravel-lite/core/main \\
+    --path-segment src --path-segment core
+";
+
+const TARGETS_REMOVE_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state targets remove LLM_STATE/core ravel-lite:core
+";
+
+const TARGETS_MOUNT_AFTER_HELP: &str = "\
+Examples:
+  # idempotent: creates the worktree and writes the targets row
+  ravel-lite state targets mount LLM_STATE/core ravel-lite:core
+";
+
+// ---- state target-requests -----------------------------------------
+const TARGET_REQUESTS_LIST_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state target-requests list LLM_STATE/core
+";
+
+const TARGET_REQUESTS_SHOW_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state target-requests show LLM_STATE/core atlas:atlas-ontology
+";
+
+const TARGET_REQUESTS_ADD_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state target-requests add LLM_STATE/core atlas:atlas-ontology \\
+    --reason 'need to inspect ontology evolution'
+";
+
+const TARGET_REQUESTS_REMOVE_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state target-requests remove LLM_STATE/core atlas:atlas-ontology
+";
+
+const TARGET_REQUESTS_DRAIN_AFTER_HELP: &str = "\
+Examples:
+  # mounts every queued request and deletes the file
+  ravel-lite state target-requests drain LLM_STATE/core
+";
+
+// ---- state commits --------------------------------------------------
+const COMMITS_LIST_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state commits list LLM_STATE/core
+  ravel-lite state commits list LLM_STATE/core --format json
+";
+
+const COMMITS_SHOW_AFTER_HELP: &str = "\
+Examples:
+  # 1-based index
+  ravel-lite state commits show LLM_STATE/core 1
+";
+
+// ---- state this-cycle-focus ----------------------------------------
+const FOCUS_SHOW_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state this-cycle-focus show LLM_STATE/core
+";
+
+const FOCUS_SET_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state this-cycle-focus set LLM_STATE/core --target ravel-lite:core --item t-001 --item t-005
+
+  # with notes for the work-phase prompt
+  ravel-lite state this-cycle-focus set LLM_STATE/core --target ravel-lite:core --item t-001 \\
+    --notes 'careful: schema-touching change'
+";
+
+const FOCUS_CLEAR_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state this-cycle-focus clear LLM_STATE/core
+";
+
+// ---- state focus-objections ----------------------------------------
+const OBJ_LIST_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state focus-objections list LLM_STATE/core
+";
+
+const OBJ_ADD_WRONG_TARGET_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state focus-objections add-wrong-target LLM_STATE/core \\
+    --suggested-target ravel-lite:cli --reasoning 'CLI-only change, not core'
+";
+
+const OBJ_ADD_SKIP_ITEM_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state focus-objections add-skip-item LLM_STATE/core \\
+    --item-id t-007 --reasoning 'blocked on upstream not yet merged'
+";
+
+const OBJ_ADD_PREMATURE_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state focus-objections add-premature LLM_STATE/core \\
+    --reasoning 'design not yet settled'
+";
+
+const OBJ_CLEAR_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state focus-objections clear LLM_STATE/core
+";
+
+// ---- findings (top-level) ------------------------------------------
+const FINDINGS_LIST_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite findings list
+  ravel-lite findings list --format json
+";
+
+const FINDINGS_SHOW_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite findings show some-finding-id
+";
+
+const FINDINGS_ADD_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite findings add --claim 'X is broken' --body 'evidence here'
+
+  ravel-lite findings add --claim 'Y' --body-file body.md \\
+    --component atlas:atlas-ontology --raised-in core
+";
+
+const FINDINGS_SET_STATUS_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite findings set-status some-id promoted
+  ravel-lite findings set-status some-id wontfix
+";
+
+// ---- plan (cross-kind queries) -------------------------------------
+const PLAN_LIST_ITEMS_AFTER_HELP: &str = "\
+Examples:
+  # cross-kind union
+  ravel-lite plan list-items LLM_STATE/core
+
+  # restrict to backlog
+  ravel-lite plan list-items LLM_STATE/core --kind backlog-item
+";
+
+const PLAN_SHOW_ITEM_AFTER_HELP: &str = "\
+Examples:
+  # find by id without specifying kind (errors on cross-kind ambiguity)
+  ravel-lite plan show-item LLM_STATE/core some-id
+";
+
+const PLAN_QUERY_BY_STATUS_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite plan query-by-status LLM_STATE/core --kind backlog-item --status active
+  ravel-lite plan query-by-status LLM_STATE/core --status defeated
+";
+
+const PLAN_QUERY_BY_JUSTIFICATION_AFTER_HELP: &str = "\
+Examples:
+  # which backlog items serve an intent?
+  ravel-lite plan query-by-justification LLM_STATE/core --kind backlog-item --justification-kind serves-intent
+
+  # which memory entries cite a code anchor?
+  ravel-lite plan query-by-justification LLM_STATE/core --kind memory-entry --justification-kind code-anchor
+";
+
+// ---- session-log ----------------------------------------------------
+const SESSION_LOG_LIST_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state session-log list LLM_STATE/core
+  ravel-lite state session-log list LLM_STATE/core --limit 10
+";
+
+const SESSION_LOG_SHOW_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state session-log show LLM_STATE/core some-session-id
+";
+
+const SESSION_LOG_APPEND_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state session-log append LLM_STATE/core --id s-042 --timestamp 2026-05-03T10:00:00Z \\
+    --phase work --body-file session-body.md
+";
+
+const SESSION_LOG_SET_LATEST_AFTER_HELP: &str = "\
+Examples:
+  # analyse-work writes latest-session.yaml; git-commit-work reads it
+  ravel-lite state session-log set-latest LLM_STATE/core --id s-042 --timestamp 2026-05-03T10:00:00Z \\
+    --phase work --body-file latest.md
+";
+
+const SESSION_LOG_SHOW_LATEST_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state session-log show-latest LLM_STATE/core
+";
+
+// ---- state related-components --------------------------------------
+const RC_LIST_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state related-components list
+
+  # filter to edges involving the component for this plan
+  ravel-lite state related-components list --plan LLM_STATE/core
+
+  # AND-combine: edges of one kind, restricted to one lifecycle
+  ravel-lite state related-components list --kind generates --lifecycle codegen
+";
+
+const RC_ADD_EDGE_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state related-components add-edge depends-on build ravel-lite atlas \\
+    --evidence-grade strong --evidence-field 'Ravel-Lite.surface.consumes_files' \\
+    --rationale 'ravel-lite reads .atlas/ files produced by atlas indexer'
+";
+
+const RC_REMOVE_EDGE_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state related-components remove-edge depends-on build ravel-lite atlas
+";
+
+const RC_DISCOVER_AFTER_HELP: &str = "\
+Examples:
+  # full discovery pass over every catalogued component
+  ravel-lite state related-components discover
+
+  # restrict Stage 1 to one project; Stage 2 still spans the catalog
+  ravel-lite state related-components discover --project ravel-lite --concurrency 4
+
+  # apply proposals immediately (skip the review gate)
+  ravel-lite state related-components discover --apply
+";
+
+const RC_DISCOVER_APPLY_AFTER_HELP: &str = "\
+Examples:
+  # merge the previously-written discover-proposals.yaml
+  ravel-lite state related-components discover-apply
+";
+
+// ---- state discover-proposals --------------------------------------
+const DP_ADD_PROPOSAL_AFTER_HELP: &str = "\
+Examples:
+  ravel-lite state discover-proposals add-proposal --kind depends-on --lifecycle build \\
+    --participant ravel-lite --participant atlas \\
+    --evidence-grade strong --evidence-field 'Ravel-Lite.surface.consumes_files' \\
+    --rationale 'ravel-lite reads .atlas/ files produced by atlas'
+";
+
+
 #[derive(Parser)]
 #[command(
     name = "ravel-lite",
@@ -86,6 +789,7 @@ enum Commands {
     /// `<dirs::config_dir()>/ravel-lite/`). Idempotent: a re-run on an
     /// existing context preserves user content and only fills in
     /// missing pieces.
+    #[command(after_help = INIT_AFTER_HELP)]
     Init {
         /// Path to the context directory to scaffold. Overrides
         /// `$RAVEL_LITE_CONFIG` and the default location at
@@ -110,6 +814,7 @@ enum Commands {
     /// single-plan; it is read as `--prior` and rewritten at the end
     /// of every survey, so the file is the persistent integration
     /// point with the incremental survey path from item 5b.
+    #[command(after_help = RUN_AFTER_HELP)]
     Run {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and the
         /// default location at <dirs::config_dir()>/ravel-lite/.
@@ -146,6 +851,7 @@ enum Commands {
     /// the conversation directly. Reuses the configured work-phase
     /// model; passes `--add-dir <parent>` to scope claude to the
     /// target parent directory.
+    #[command(after_help = CREATE_AFTER_HELP)]
     Create {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and the
         /// default location at <dirs::config_dir()>/ravel-lite/.
@@ -168,6 +874,7 @@ enum Commands {
     /// a recommended invocation order, emitted as canonical YAML on
     /// stdout. Use `ravel-lite survey-format <file>` to render a saved
     /// YAML survey as human-readable markdown.
+    #[command(after_help = SURVEY_AFTER_HELP)]
     Survey {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and the
         /// default location at <dirs::config_dir()>/ravel-lite/.
@@ -206,12 +913,14 @@ enum Commands {
     /// Render a saved YAML survey file (as produced by `ravel-lite
     /// survey`) as human-readable markdown on stdout. Read-only; no
     /// network, no LLM call.
+    #[command(after_help = SURVEY_FORMAT_AFTER_HELP)]
     SurveyFormat {
         /// Path to a YAML survey file to render.
         file: PathBuf,
     },
     /// Print the installed ravel-lite version. Equivalent to `--version`;
     /// the subcommand form matches the rest of the CLI surface.
+    #[command(after_help = VERSION_AFTER_HELP)]
     Version,
     /// Emit a machine-readable summary of the CLI's surface — version,
     /// top-level subcommands, supported output formats, the stable
@@ -219,6 +928,7 @@ enum Commands {
     /// a feature-flags object. JSON only; the schema is versioned via
     /// the top-level `schema_version` field. Lets agents probe what
     /// the binary supports without parsing `--help` output.
+    #[command(after_help = CAPABILITIES_AFTER_HELP)]
     Capabilities,
     /// Mutate plan state from prompts without the Read+Write tool-call
     /// overhead (and permission prompts) of writing files directly.
@@ -287,6 +997,7 @@ enum RepoCommands {
     /// Default `--format yaml` matches the on-disk wire shape; `json`
     /// emits the same structure with a top-level `schema_version` for
     /// agent consumers.
+    #[command(after_help = REPO_LIST_AFTER_HELP)]
     List {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -303,6 +1014,7 @@ enum RepoCommands {
     /// Rejects duplicate names; the local path, when supplied, is
     /// resolved against the current working directory and stored as an
     /// absolute path.
+    #[command(after_help = REPO_ADD_AFTER_HELP)]
     Add {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -321,6 +1033,7 @@ enum RepoCommands {
         local_path: Option<PathBuf>,
     },
     /// Remove the entry for `<name>`. Errors if no such entry exists.
+    #[command(after_help = REPO_REMOVE_AFTER_HELP)]
     Remove {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -336,6 +1049,7 @@ enum FixedMemoryCommands {
     /// `<config-dir>/fixed-memory/` overlay. Each entry surfaces `slug`,
     /// `description` (the file's first H1, if any), and `sources`
     /// (`embedded`, `user`, or both).
+    #[command(after_help = FIXED_MEMORY_LIST_AFTER_HELP)]
     List {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -349,6 +1063,7 @@ enum FixedMemoryCommands {
     /// Emit the body of one fixed-memory entry. With both layers present,
     /// the embedded body is printed first, then a delimiter, then the
     /// user body — signalling that the user content takes precedence.
+    #[command(after_help = FIXED_MEMORY_SHOW_AFTER_HELP)]
     Show {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -366,6 +1081,7 @@ enum AtlasCommands {
     /// graph) on stdout. Bit-identical to `ravel-lite repo list`;
     /// surfaced under `atlas` to match the graph-RAG mental model
     /// where the registry is the catalog graph's root set.
+    #[command(after_help = ATLAS_LIST_REPOS_AFTER_HELP)]
     ListRepos {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -380,6 +1096,7 @@ enum AtlasCommands {
     /// emits a YAML report on stdout; with `--require-fresh`, errors
     /// non-zero when any repo's catalog is missing, unparseable, or
     /// has no local checkout to read from.
+    #[command(after_help = ATLAS_FRESHNESS_AFTER_HELP)]
     Freshness {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -398,6 +1115,7 @@ enum AtlasCommands {
     /// single repo and/or `--kind` to restrict to a single component
     /// kind. Non-fresh repos are skipped silently; inspect freshness
     /// with `atlas freshness` first if needed.
+    #[command(after_help = ATLAS_LIST_COMPONENTS_AFTER_HELP)]
     ListComponents {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -421,6 +1139,7 @@ enum AtlasCommands {
     /// yaml|json` emits a versioned envelope with one record per repo
     /// carrying `total` and `by_kind`. `--repo` restricts to a single
     /// repo.
+    #[command(after_help = ATLAS_SUMMARY_AFTER_HELP)]
     Summary {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -439,6 +1158,7 @@ enum AtlasCommands {
     /// list of children. `<reference>` accepts the qualified form
     /// `<repo_slug>/<component_id>` or a bare `<component_id>` (the
     /// latter must resolve uniquely across fresh repos).
+    #[command(after_help = ATLAS_DESCRIBE_AFTER_HELP)]
     Describe {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -454,6 +1174,7 @@ enum AtlasCommands {
     /// output to entries whose claim, attribution, or any
     /// justification's string fields contain the term (case-
     /// insensitive substring).
+    #[command(after_help = ATLAS_MEMORY_AFTER_HELP)]
     Memory {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -474,6 +1195,7 @@ enum AtlasCommands {
     /// to directed edges where the component is the destination,
     /// `--out` to directed edges where it is the source. Symmetric
     /// edges always surface regardless of the direction flag.
+    #[command(after_help = ATLAS_EDGES_AFTER_HELP)]
     Edges {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -500,6 +1222,7 @@ enum AtlasCommands {
     /// graph (every edge is traversable in either direction). Output
     /// is one line per reached component as `<hops>  <component>`,
     /// starting with the reference at hop 0. `--depth` defaults to 1.
+    #[command(after_help = ATLAS_NEIGHBORS_AFTER_HELP)]
     Neighbors {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -518,6 +1241,7 @@ enum AtlasCommands {
     /// `co-implements`) do not disqualify either endpoint because peer
     /// relationships do not establish hierarchy. Isolated components
     /// (those that appear in no edge at all) also surface.
+    #[command(after_help = ATLAS_ROOTS_AFTER_HELP)]
     Roots {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -530,6 +1254,7 @@ enum AtlasCommands {
     /// (`depends-on`, `generates`, etc.) participate. Output is one
     /// bare component id per line in traversal order. Exits non-zero
     /// with "no path found" if no path within `--max-hops` exists.
+    #[command(after_help = ATLAS_PATH_AFTER_HELP)]
     Path {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -549,6 +1274,7 @@ enum AtlasCommands {
     /// a comma-separated list of bare component ids. By default only
     /// non-trivial SCCs (size > 1) surface — useful for detecting
     /// circular dependencies — pass `--all` to include singletons.
+    #[command(after_help = ATLAS_SCC_AFTER_HELP)]
     Scc {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -564,6 +1290,7 @@ enum AtlasCommands {
 enum StateCommands {
     /// Rewrite `<plan-dir>/phase.md` to the given phase. Validates the
     /// phase string and requires phase.md to already exist.
+    #[command(after_help = STATE_SET_PHASE_AFTER_HELP)]
     SetPhase {
         /// Path to the plan directory whose phase.md to rewrite.
         plan_dir: PathBuf,
@@ -657,6 +1384,7 @@ enum StateCommands {
     /// Single-plan conversion of legacy .md files into typed .yaml
     /// siblings. Covers backlog.md, memory.md, session-log.md and
     /// latest-session.md (each written when present).
+    #[command(after_help = STATE_MIGRATE_AFTER_HELP)]
     Migrate {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -703,6 +1431,7 @@ enum StateCommands {
 #[derive(Subcommand)]
 enum PhaseSummaryCommands {
     /// Emit the labelled summary for a phase given its baseline SHA.
+    #[command(after_help = PHASE_SUMMARY_RENDER_AFTER_HELP)]
     Render {
         /// Path to the plan directory.
         plan_dir: PathBuf,
@@ -724,6 +1453,7 @@ enum PhaseSummaryCommands {
 #[derive(Subcommand)]
 enum BacklogCommands {
     /// Emit tasks matching the given filters.
+    #[command(after_help = BACKLOG_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -746,6 +1476,7 @@ enum BacklogCommands {
         group_by: String,
     },
     /// Emit a single task by id.
+    #[command(after_help = BACKLOG_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         id: String,
@@ -753,6 +1484,7 @@ enum BacklogCommands {
         format: String,
     },
     /// Append a new task.
+    #[command(after_help = BACKLOG_ADD_AFTER_HELP)]
     Add {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -769,12 +1501,14 @@ enum BacklogCommands {
         description: Option<String>,
     },
     /// One-shot bulk initialisation for create-plan. Refuses a non-empty backlog.
+    #[command(after_help = BACKLOG_INIT_AFTER_HELP)]
     Init {
         plan_dir: PathBuf,
         #[arg(long)]
         body_file: PathBuf,
     },
     /// Update a task's status. `--reason <text>` is required when setting to `blocked`.
+    #[command(after_help = BACKLOG_SET_STATUS_AFTER_HELP)]
     SetStatus {
         plan_dir: PathBuf,
         id: String,
@@ -783,6 +1517,7 @@ enum BacklogCommands {
         reason: Option<String>,
     },
     /// Set a task's Results block from a file or stdin.
+    #[command(after_help = BACKLOG_SET_RESULTS_AFTER_HELP)]
     SetResults {
         plan_dir: PathBuf,
         id: String,
@@ -798,6 +1533,7 @@ enum BacklogCommands {
     /// up. For recording what a completed task produced, use
     /// `set-results` instead; for promote-vs-archive hand-offs use
     /// `set-handoff`.
+    #[command(after_help = BACKLOG_SET_DESCRIPTION_AFTER_HELP)]
     SetDescription {
         plan_dir: PathBuf,
         id: String,
@@ -807,6 +1543,7 @@ enum BacklogCommands {
         body: Option<String>,
     },
     /// Set a task's hand-off block from a file or stdin.
+    #[command(after_help = BACKLOG_SET_HANDOFF_AFTER_HELP)]
     SetHandoff {
         plan_dir: PathBuf,
         id: String,
@@ -816,17 +1553,20 @@ enum BacklogCommands {
         body: Option<String>,
     },
     /// Clear a task's hand-off block (triage uses after promote/archive).
+    #[command(after_help = BACKLOG_CLEAR_HANDOFF_AFTER_HELP)]
     ClearHandoff {
         plan_dir: PathBuf,
         id: String,
     },
     /// Update a task's title. Id is preserved.
+    #[command(after_help = BACKLOG_SET_TITLE_AFTER_HELP)]
     SetTitle {
         plan_dir: PathBuf,
         id: String,
         new_title: String,
     },
     /// Replace a task's dependency list. Validates ids, rejects self-reference and cycles.
+    #[command(after_help = BACKLOG_SET_DEPENDENCIES_AFTER_HELP)]
     SetDependencies {
         plan_dir: PathBuf,
         id: String,
@@ -835,6 +1575,7 @@ enum BacklogCommands {
         deps: Vec<String>,
     },
     /// Move a task before or after another in the backlog list.
+    #[command(after_help = BACKLOG_REORDER_AFTER_HELP)]
     Reorder {
         plan_dir: PathBuf,
         id: String,
@@ -842,6 +1583,7 @@ enum BacklogCommands {
         target_id: String,
     },
     /// Delete a task. Refuses if the task is a dependency of another unless `--force`.
+    #[command(after_help = BACKLOG_DELETE_AFTER_HELP)]
     Delete {
         plan_dir: PathBuf,
         id: String,
@@ -851,6 +1593,7 @@ enum BacklogCommands {
     /// Report drift between prose task-id mentions in task descriptions
     /// and the structured `dependencies:` field. Read-only; reconciliation
     /// is still done via `set-dependencies`.
+    #[command(after_help = BACKLOG_LINT_DEPS_AFTER_HELP)]
     LintDependencies {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
@@ -861,6 +1604,7 @@ enum BacklogCommands {
     /// Emits a report and (unless `--dry-run`) writes the repaired
     /// backlog. Exit code: 0 if no repairs applied, 1 if any repairs
     /// applied (scripting signal).
+    #[command(after_help = BACKLOG_REPAIR_AFTER_HELP)]
     RepairStaleStatuses {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -873,12 +1617,14 @@ enum BacklogCommands {
 #[derive(Subcommand)]
 enum MemoryCommands {
     /// Emit every memory entry.
+    #[command(after_help = MEMORY_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
         format: String,
     },
     /// Emit a single memory entry by id.
+    #[command(after_help = MEMORY_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         id: String,
@@ -887,6 +1633,7 @@ enum MemoryCommands {
     },
     /// Append a new memory entry. `--title` becomes the TMS claim;
     /// `--body` becomes a single rationale justification.
+    #[command(after_help = MEMORY_ADD_AFTER_HELP)]
     Add {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -913,6 +1660,7 @@ enum MemoryCommands {
         code_anchor: Vec<String>,
     },
     /// One-shot bulk initialisation for create-plan. Refuses a non-empty memory.
+    #[command(after_help = MEMORY_INIT_AFTER_HELP)]
     Init {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -921,6 +1669,7 @@ enum MemoryCommands {
     /// Rewrite the rationale justification text from a file or stdin.
     /// Verb name retained for phase-prompt continuity; under the TMS
     /// schema the "body" is the first `Justification::Rationale`.
+    #[command(after_help = MEMORY_SET_BODY_AFTER_HELP)]
     SetBody {
         plan_dir: PathBuf,
         id: String,
@@ -930,6 +1679,7 @@ enum MemoryCommands {
         body: Option<String>,
     },
     /// Update an entry's claim (formerly: title). Id is preserved.
+    #[command(after_help = MEMORY_SET_TITLE_AFTER_HELP)]
     SetTitle {
         plan_dir: PathBuf,
         id: String,
@@ -937,6 +1687,7 @@ enum MemoryCommands {
     },
     /// Set an entry's status. Validates against the typed transition
     /// table (`active` → `defeated` | `superseded`).
+    #[command(after_help = MEMORY_SET_STATUS_AFTER_HELP)]
     SetStatus {
         plan_dir: PathBuf,
         id: String,
@@ -944,6 +1695,7 @@ enum MemoryCommands {
         status: String,
     },
     /// Delete an entry by id.
+    #[command(after_help = MEMORY_DELETE_AFTER_HELP)]
     Delete {
         plan_dir: PathBuf,
         id: String,
@@ -952,6 +1704,7 @@ enum MemoryCommands {
     /// justifications and report those whose path is missing or whose
     /// blob SHA no longer matches `sha_at_assertion`. Output is a YAML
     /// `SuspectReport` for the reflect phase to act on.
+    #[command(after_help = MEMORY_CHECK_ANCHORS_AFTER_HELP)]
     CheckAnchors {
         plan_dir: PathBuf,
         /// Project root the anchor `path` fields resolve against. Defaults
@@ -964,12 +1717,14 @@ enum MemoryCommands {
 #[derive(Subcommand)]
 enum IntentsCommands {
     /// Emit every intent.
+    #[command(after_help = INTENTS_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
         format: String,
     },
     /// Emit a single intent by id.
+    #[command(after_help = INTENTS_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         id: String,
@@ -978,6 +1733,7 @@ enum IntentsCommands {
     },
     /// Append a new intent. `--claim` becomes the TMS claim;
     /// `--body` becomes a single rationale justification.
+    #[command(after_help = INTENTS_ADD_AFTER_HELP)]
     Add {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -997,6 +1753,7 @@ enum IntentsCommands {
     },
     /// Set an intent's status. Validates against the typed transition
     /// table (`active` → `satisfied` | `defeated` | `superseded`).
+    #[command(after_help = INTENTS_SET_STATUS_AFTER_HELP)]
     SetStatus {
         plan_dir: PathBuf,
         id: String,
@@ -1008,12 +1765,14 @@ enum IntentsCommands {
 #[derive(Subcommand)]
 enum TargetsCommands {
     /// Emit every mounted target.
+    #[command(after_help = TARGETS_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
         format: String,
     },
     /// Emit a single target by `<repo_slug>:<component_id>`.
+    #[command(after_help = TARGETS_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         /// `<repo_slug>:<component_id>` reference.
@@ -1024,6 +1783,7 @@ enum TargetsCommands {
     /// Append a new mounted-target record. The git-side worktree
     /// creation is the worktree-mounting task's job; this verb only
     /// writes the cache row.
+    #[command(after_help = TARGETS_ADD_AFTER_HELP)]
     Add {
         plan_dir: PathBuf,
         /// Repo slug, matching a `repos.yaml` registry entry.
@@ -1049,6 +1809,7 @@ enum TargetsCommands {
     /// Drop a mounted-target record by `<repo_slug>:<component_id>`.
     /// Worktree teardown (`git worktree remove`) is the
     /// worktree-mounting task's job.
+    #[command(after_help = TARGETS_REMOVE_AFTER_HELP)]
     Remove {
         plan_dir: PathBuf,
         /// `<repo_slug>:<component_id>` reference.
@@ -1059,6 +1820,7 @@ enum TargetsCommands {
     /// the worktree on the plan-namespaced branch
     /// `ravel-lite/<plan>/main`, and writes the resulting Target row
     /// into `<plan>/targets.yaml`. Idempotent.
+    #[command(after_help = TARGETS_MOUNT_AFTER_HELP)]
     Mount {
         plan_dir: PathBuf,
         /// `<repo_slug>:<component_id>` reference.
@@ -1073,12 +1835,14 @@ enum TargetsCommands {
 #[derive(Subcommand)]
 enum TargetRequestsCommands {
     /// Emit every queued request.
+    #[command(after_help = TARGET_REQUESTS_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
         format: String,
     },
     /// Emit a single request by `<repo_slug>:<component_id>`.
+    #[command(after_help = TARGET_REQUESTS_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         reference: String,
@@ -1088,6 +1852,7 @@ enum TargetRequestsCommands {
     /// Append a new mount request. The runner drains the queue at the
     /// next phase boundary; until then the request is visible to
     /// `list`/`show` but no worktree exists yet.
+    #[command(after_help = TARGET_REQUESTS_ADD_AFTER_HELP)]
     Add {
         plan_dir: PathBuf,
         /// `<repo_slug>:<component_id>` reference.
@@ -1097,6 +1862,7 @@ enum TargetRequestsCommands {
         reason: String,
     },
     /// Drop a queued request before the next drain.
+    #[command(after_help = TARGET_REQUESTS_REMOVE_AFTER_HELP)]
     Remove {
         plan_dir: PathBuf,
         reference: String,
@@ -1104,6 +1870,7 @@ enum TargetRequestsCommands {
     /// Drain the queue now: mount each request via `mount_target` and
     /// delete the file. The runner calls this between phases; this
     /// verb exists so an operator can drain manually too.
+    #[command(after_help = TARGET_REQUESTS_DRAIN_AFTER_HELP)]
     Drain {
         plan_dir: PathBuf,
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
@@ -1117,6 +1884,7 @@ enum TargetRequestsCommands {
 enum CommitsCommands {
     /// Emit the whole commits.yaml. Missing file renders as an empty
     /// list at the current schema version.
+    #[command(after_help = COMMITS_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
@@ -1125,6 +1893,7 @@ enum CommitsCommands {
     /// Emit a single commit entry by 1-based position. Positional
     /// addressing is used because commit specs have no stable identity
     /// field — the message is free-form prose, not a key.
+    #[command(after_help = COMMITS_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         /// 1-based index into the `commits` list.
@@ -1137,6 +1906,7 @@ enum CommitsCommands {
 #[derive(Subcommand)]
 enum ThisCycleFocusCommands {
     /// Emit the current focus record, or error when no focus is set.
+    #[command(after_help = FOCUS_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
@@ -1146,6 +1916,7 @@ enum ThisCycleFocusCommands {
     /// is a `<repo_slug>:<component_id>` ComponentRef. `--item` is a
     /// backlog item id; pass it once per item to attempt this cycle.
     /// `--notes` is free-form prose surfaced in the work-phase prompt.
+    #[command(after_help = FOCUS_SET_AFTER_HELP)]
     Set {
         plan_dir: PathBuf,
         /// `<repo_slug>:<component_id>` reference for the focus target.
@@ -1159,18 +1930,21 @@ enum ThisCycleFocusCommands {
         notes: Option<String>,
     },
     /// Remove the focus file. Idempotent.
+    #[command(after_help = FOCUS_CLEAR_AFTER_HELP)]
     Clear { plan_dir: PathBuf },
 }
 
 #[derive(Subcommand)]
 enum FocusObjectionsCommands {
     /// Emit the queue of objections (empty queue is valid output).
+    #[command(after_help = OBJ_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
         format: String,
     },
     /// Append a `wrong-target` objection.
+    #[command(after_help = OBJ_ADD_WRONG_TARGET_AFTER_HELP)]
     AddWrongTarget {
         plan_dir: PathBuf,
         /// `<repo_slug>:<component_id>` reference proposing a replacement target.
@@ -1181,6 +1955,7 @@ enum FocusObjectionsCommands {
         reasoning: String,
     },
     /// Append a `skip-item` objection.
+    #[command(after_help = OBJ_ADD_SKIP_ITEM_AFTER_HELP)]
     AddSkipItem {
         plan_dir: PathBuf,
         /// Backlog item id that should be skipped this cycle.
@@ -1191,6 +1966,7 @@ enum FocusObjectionsCommands {
         reasoning: String,
     },
     /// Append a `premature` objection (the whole focus is premature).
+    #[command(after_help = OBJ_ADD_PREMATURE_AFTER_HELP)]
     AddPremature {
         plan_dir: PathBuf,
         /// Free-form explanation surfaced verbatim into the next triage prompt.
@@ -1198,12 +1974,14 @@ enum FocusObjectionsCommands {
         reasoning: String,
     },
     /// Drain the queue (delete the file). Idempotent.
+    #[command(after_help = OBJ_CLEAR_AFTER_HELP)]
     Clear { plan_dir: PathBuf },
 }
 
 #[derive(Subcommand)]
 enum FindingsCommands {
     /// Emit every finding as YAML on stdout (an empty inbox is valid output).
+    #[command(after_help = FINDINGS_LIST_AFTER_HELP)]
     List {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -1213,6 +1991,7 @@ enum FindingsCommands {
         format: String,
     },
     /// Emit a single finding by id.
+    #[command(after_help = FINDINGS_SHOW_AFTER_HELP)]
     Show {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -1224,6 +2003,7 @@ enum FindingsCommands {
     /// `--body` becomes a single rationale justification. `--component`
     /// records optional component attribution; `--raised-in` records
     /// the plan that surfaced the finding.
+    #[command(after_help = FINDINGS_ADD_AFTER_HELP)]
     Add {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -1250,6 +2030,7 @@ enum FindingsCommands {
     },
     /// Set a finding's status. Validates against the typed transition
     /// table (`new` → `promoted` | `wontfix` | `superseded`).
+    #[command(after_help = FINDINGS_SET_STATUS_AFTER_HELP)]
     SetStatus {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -1265,6 +2046,7 @@ enum PlanCommands {
     /// emits a unified `items:` list spanning intents + backlog +
     /// memory. With `--kind`, emits the matching kind's full file
     /// (same shape as `state <kind> list`).
+    #[command(after_help = PLAN_LIST_ITEMS_AFTER_HELP)]
     ListItems {
         plan_dir: PathBuf,
         /// One of `intent`, `backlog-item`, `memory-entry`, `finding`.
@@ -1278,6 +2060,7 @@ enum PlanCommands {
     /// intents, backlog, and memory; errors if the id is ambiguous
     /// across kinds (use the per-kind `state <kind> show` verb to
     /// disambiguate).
+    #[command(after_help = PLAN_SHOW_ITEM_AFTER_HELP)]
     ShowItem {
         plan_dir: PathBuf,
         id: String,
@@ -1288,6 +2071,7 @@ enum PlanCommands {
     /// status is parsed against that kind's vocabulary. Without
     /// `--kind`, every kind whose vocabulary includes the status
     /// string contributes to the unified result.
+    #[command(after_help = PLAN_QUERY_BY_STATUS_AFTER_HELP)]
     QueryByStatus {
         plan_dir: PathBuf,
         /// One of `intent`, `backlog-item`, `memory-entry`, `finding`.
@@ -1307,6 +2091,7 @@ enum PlanCommands {
     /// Useful for queries like "which backlog items serve an intent?"
     /// (`--justification-kind serves-intent`) or "which memory
     /// entries cite a code anchor?" (`--justification-kind code-anchor`).
+    #[command(after_help = PLAN_QUERY_BY_JUSTIFICATION_AFTER_HELP)]
     QueryByJustification {
         plan_dir: PathBuf,
         /// One of `intent`, `backlog-item`, `memory-entry`, `finding`.
@@ -1325,6 +2110,7 @@ enum PlanCommands {
 #[derive(Subcommand)]
 enum SessionLogCommands {
     /// List sessions from session-log.yaml (id + timestamp + phase + body).
+    #[command(after_help = SESSION_LOG_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         /// Truncate output to the last N sessions (newest-kept).
@@ -1334,6 +2120,7 @@ enum SessionLogCommands {
         format: String,
     },
     /// Show a single session record by id.
+    #[command(after_help = SESSION_LOG_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         id: String,
@@ -1342,6 +2129,7 @@ enum SessionLogCommands {
     },
     /// Append a session record to session-log.yaml. Idempotent on id:
     /// a record with the same id already present is a no-op.
+    #[command(after_help = SESSION_LOG_APPEND_AFTER_HELP)]
     Append {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -1357,6 +2145,7 @@ enum SessionLogCommands {
     },
     /// Overwrite latest-session.yaml with a new single record. Used by
     /// analyse-work to hand the session to git-commit-work.
+    #[command(after_help = SESSION_LOG_SET_LATEST_AFTER_HELP)]
     SetLatest {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -1371,6 +2160,7 @@ enum SessionLogCommands {
         body: Option<String>,
     },
     /// Emit latest-session.yaml's record.
+    #[command(after_help = SESSION_LOG_SHOW_LATEST_AFTER_HELP)]
     ShowLatest {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
@@ -1383,6 +2173,7 @@ enum RelatedComponentsCommands {
     /// Emit the file as YAML. With `--plan`, filter to edges that
     /// involve the component derived from the plan dir. `--kind` and
     /// `--lifecycle` compose with `--plan` (all filters AND-combine).
+    #[command(after_help = RC_LIST_AFTER_HELP)]
     List {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location.
@@ -1406,6 +2197,7 @@ enum RelatedComponentsCommands {
     /// Symmetric kinds are participant-order-insensitive; directed
     /// kinds use canonical order from docs/component-ontology.md §6.
     /// Refuses unknown component names.
+    #[command(after_help = RC_ADD_EDGE_AFTER_HELP)]
     AddEdge {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -1436,6 +2228,7 @@ enum RelatedComponentsCommands {
     /// Remove the unique edge matching `(kind, lifecycle, canonicalised
     /// participants)`. Errors if no match. A v1-style invocation
     /// omitting `lifecycle` is rejected by clap's required-arg check.
+    #[command(after_help = RC_REMOVE_EDGE_AFTER_HELP)]
     RemoveEdge {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -1447,6 +2240,7 @@ enum RelatedComponentsCommands {
     /// Run the two-stage LLM discovery pipeline over all catalogued
     /// components (or just `--project <name>`). Writes proposals to
     /// `<config-dir>/discover-proposals.yaml` for user review.
+    #[command(after_help = RC_DISCOVER_AFTER_HELP)]
     Discover {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -1465,6 +2259,7 @@ enum RelatedComponentsCommands {
     /// Merge a previously-produced `discover-proposals.yaml` into
     /// `related-components.yaml`. Idempotent; reports and rejects
     /// directional conflicts without aborting.
+    #[command(after_help = RC_DISCOVER_APPLY_AFTER_HELP)]
     DiscoverApply {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -1478,6 +2273,7 @@ enum DiscoverProposalsCommands {
     /// clap rejects an unknown `--kind`/`--lifecycle`/`--evidence-grade`,
     /// `Edge::validate()` rejects self-loops and empty-evidence misuse, and
     /// the catalog check rejects participants not in `repos.yaml`.
+    #[command(after_help = DP_ADD_PROPOSAL_AFTER_HELP)]
     AddProposal {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location.
@@ -1524,15 +2320,12 @@ async fn main() {
 /// JSON envelope when the user passed `--format json` (§3). Returns
 /// the integer exit code to hand to `std::process::exit`.
 async fn run() -> i32 {
-    use ravel_lite::cli::{ErrorCode, ExitCategory, JsonErrorEnvelope};
+    use ravel_lite::cli::{error_code_of, ExitCategory, JsonErrorEnvelope};
 
     match dispatch().await {
         Ok(()) => ExitCategory::Success.as_code(),
         Err(err) => {
-            // Future work (per `cli-stable-error-codes-and-json-error-envelope`):
-            // tag bail!/anyhow! call sites with their ErrorCode so this
-            // default is hit only by genuinely unclassified failures.
-            let code = ErrorCode::Internal;
+            let code = error_code_of(&err);
             let category = ExitCategory::from(&code);
             if json_mode_requested() {
                 let envelope =
@@ -1585,7 +2378,8 @@ async fn dispatch() -> Result<()> {
                 0 => unreachable!("clap requires at least one plan_dir"),
                 1 => {
                     if survey_state.is_some() {
-                        anyhow::bail!(
+                        bail_with!(
+                            ErrorCode::InvalidInput,
                             "--survey-state is only meaningful with multiple plan \
                              directories; remove it or pass two or more plan_dirs."
                         );
@@ -1594,12 +2388,15 @@ async fn dispatch() -> Result<()> {
                 }
                 _ => {
                     let state_path = survey_state.ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "--survey-state <path> is required when more than one \
-                             plan directory is supplied. The file holds the survey \
-                             YAML between cycles and is read as `--prior` on each \
-                             subsequent survey."
-                        )
+                        anyhow::Error::new(ravel_lite::cli::CodedError {
+                            code: ErrorCode::InvalidInput,
+                            message:
+                                "--survey-state <path> is required when more than one \
+                                 plan directory is supplied. The file holds the survey \
+                                 YAML between cycles and is read as `--prior` on each \
+                                 subsequent survey."
+                                    .to_string(),
+                        })
                     })?;
                     multi_plan::run_multi_plan(
                         &config_root,
@@ -1664,10 +2461,10 @@ fn dispatch_fixed_memory(command: FixedMemoryCommands) -> Result<()> {
                     Ok(())
                 }
                 Err(err) => {
-                    // UnknownSlug already names the remediation; surface
-                    // the formatted message as the anyhow error so it
-                    // lands on stderr at exit-1, per cli-tool-design §3.
-                    bail!("{err}")
+                    // `UnknownSlug` already names the remediation; surface
+                    // the formatted message tagged `NotFound` so the
+                    // exit category and JSON envelope land at exit-3.
+                    bail_with!(ErrorCode::NotFound, "{err}")
                 }
             }
         }
@@ -1869,14 +2666,20 @@ fn dispatch_phase_summary(command: PhaseSummaryCommands) -> Result<()> {
             format,
         } => {
             let phase = Phase::parse(&phase).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "invalid --phase value {phase:?}; expected `triage`, `reflect`, or `dream`"
-                )
+                anyhow::Error::new(ravel_lite::cli::CodedError {
+                    code: ErrorCode::InvalidInput,
+                    message: format!(
+                        "invalid --phase value {phase:?}; expected `triage`, `reflect`, or `dream`"
+                    ),
+                })
             })?;
             let format = RenderFormat::parse(&format).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "invalid --format value {format:?}; expected `text` or `yaml`"
-                )
+                anyhow::Error::new(ravel_lite::cli::CodedError {
+                    code: ErrorCode::InvalidInput,
+                    message: format!(
+                        "invalid --format value {format:?}; expected `text` or `yaml`"
+                    ),
+                })
             })?;
             phase_summary::run_render(&plan_dir, phase, &baseline, format)
         }
@@ -2002,9 +2805,12 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
                 .as_deref()
                 .map(|s| {
                     BacklogStatus::parse(s).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "invalid --status value {s:?}; expected one of active, done, blocked, defeated, superseded"
-                        )
+                        anyhow::Error::new(ravel_lite::cli::CodedError {
+                            code: ErrorCode::InvalidInput,
+                            message: format!(
+                                "invalid --status value {s:?}; expected one of active, done, blocked, defeated, superseded"
+                            ),
+                        })
                     })
                 })
                 .transpose()?;
@@ -2017,9 +2823,12 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
             };
             let fmt = OutputFormat::parse(&format)?;
             let grouping = GroupBy::parse(&group_by).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "invalid --group-by value {group_by:?}; expected `category` or `status`"
-                )
+                anyhow::Error::new(ravel_lite::cli::CodedError {
+                    code: ErrorCode::InvalidInput,
+                    message: format!(
+                        "invalid --group-by value {group_by:?}; expected `category` or `status`"
+                    ),
+                })
             })?;
             backlog::run_list(&plan_dir, &filter, fmt, grouping)
         }
@@ -2058,9 +2867,12 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
             reason,
         } => {
             let status = BacklogStatus::parse(&status).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "invalid status {status:?}; expected one of active, done, blocked, defeated, superseded"
-                )
+                anyhow::Error::new(ravel_lite::cli::CodedError {
+                    code: ErrorCode::InvalidInput,
+                    message: format!(
+                        "invalid status {status:?}; expected one of active, done, blocked, defeated, superseded"
+                    ),
+                })
             })?;
             backlog::run_set_status(&plan_dir, &id, status, reason.as_deref())
         }
@@ -2090,9 +2902,12 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
         }
         BacklogCommands::Reorder { plan_dir, id, position, target_id } => {
             let pos = ReorderPosition::parse(&position).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "invalid reorder position {position:?}; expected `before` or `after`"
-                )
+                anyhow::Error::new(ravel_lite::cli::CodedError {
+                    code: ErrorCode::InvalidInput,
+                    message: format!(
+                        "invalid reorder position {position:?}; expected `before` or `after`"
+                    ),
+                })
             })?;
             backlog::run_reorder(&plan_dir, &id, pos, &target_id)
         }
@@ -2281,7 +3096,8 @@ fn parse_target_reference(reference: &str) -> Result<(String, String)> {
         Some((repo, component)) if !repo.is_empty() && !component.is_empty() => {
             Ok((repo.to_string(), component.to_string()))
         }
-        _ => anyhow::bail!(
+        _ => bail_with!(
+            ErrorCode::InvalidInput,
             "target reference {reference:?} must be `<repo_slug>:<component_id>` with both parts non-empty"
         ),
     }
@@ -2486,13 +3302,17 @@ fn resolve_body(body_file: Option<PathBuf>, body: Option<String>) -> Result<Stri
         }
         (None, Some(value)) => Ok(value),
         (None, None) => Ok(String::new()),
-        (Some(_), Some(_)) => bail!("pass only one of --body-file or --body"),
+        (Some(_), Some(_)) => bail_with!(
+            ErrorCode::InvalidInput,
+            "pass only one of --body-file or --body"
+        ),
     }
 }
 
 async fn run_phase_loop(config_root: &Path, plan_dir: &Path, dangerous: bool) -> Result<()> {
     if !plan_dir.join(PHASE_FILENAME).exists() {
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::NotFound,
             "{}/{PHASE_FILENAME} not found. Is this a valid plan directory?",
             plan_dir.display()
         );
@@ -2533,7 +3353,7 @@ async fn run_phase_loop(config_root: &Path, plan_dir: &Path, dangerous: bool) ->
             agent_config,
             config_root.to_string_lossy().to_string(),
         )),
-        other => anyhow::bail!("Unknown agent: {other}"),
+        other => bail_with!(ErrorCode::InvalidInput, "Unknown agent: {other}"),
     };
 
     let (tx, rx) = mpsc::unbounded_channel();

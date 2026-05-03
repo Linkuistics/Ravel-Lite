@@ -200,7 +200,7 @@ tasks:
 - id: cli-tag-bail-anyhow-call-sites-with-typed-errorcode
   title: 'CLI: tag bail!/anyhow! call sites with typed ErrorCode'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Sweep every `bail!`/`anyhow!` call site in `src/` and attach a typed `ErrorCode` variant. Until this lands, the `ErrorCode` enum and `ExitCategory` machinery is exercised only at the clap parse layer (exit 2) and the catch-all default (exit 1 for everything else). Agents and scripts receive no distinction between auth failures, not-found errors, or usage mistakes — the primary value of the typed exit-code system is unrealised.
@@ -233,10 +233,87 @@ tasks:
     - `src/cli/exit_category.rs` — `ExitCategory::from(&ErrorCode)` mapping and `as_code()`.
     - `src/main.rs` — `dispatch()` wrapper; the downcast site lives here.
     - Memory: "Prefer typed APIs over stringly-typed."
+  results: |
+    ## Outcome: foundation shipped + main.rs dispatch sweep complete
+
+    Built the typed-`ErrorCode` carrier (`CodedError`), the `bail_with!` macro, and the `with_code` Result extension as a new `cli::error_context` module. Wired `main()` to recover the code via `error_code_of()` so the `ExitCategory` and JSON-envelope `code` field both land correctly. Tagged all 13 `bail!/anyhow!` call sites in `src/main.rs` plus the `OutputFormat::parse` parser used across every `--format` flag. The 241 sites inside the dispatched verbs (`src/state/`, `src/atlas/`, etc.) remain on the `Internal` fallback and are the natural next slice.
+
+    ## What landed
+
+    ### New module: `src/cli/error_context.rs`
+
+    - `pub struct CodedError { code: ErrorCode, message: String }` — implements `std::error::Error`; `Display` emits only the message so the user sees no code-pollution in stderr.
+    - `pub fn error_code_of(&anyhow::Error) -> ErrorCode` — walks the anyhow chain via `downcast_ref::<CodedError>()`, falling back to `Internal`.
+    - `pub trait ResultExt { fn with_code(self, code) }` — upgrades an existing `Result<T, anyhow::Error>` to carry a code.
+    - `#[macro_export] macro_rules! bail_with` — `bail_with!(code, "fmt", args)` returns a tagged error in one call.
+    - 5 unit tests covering attach/recover, fallback, Display-no-code, every variant round-trip.
+
+    ### Wired `run()` (main.rs)
+
+    `error_code_of(&err)` replaces the hard-coded `ErrorCode::Internal`. The `ExitCategory::from(&code)` + JSON-envelope rendering paths are unchanged structurally — they just see the right code now.
+
+    ### `OutputFormat::parse` upgrade
+
+    The shared `--format` parser (called from ~25 sites) now emits a `CodedError(InvalidInput, ...)`. Every existing `--format X` parse error inherits exit 2 + the `INVALID_INPUT` envelope code without per-site changes.
+
+    ### Sites tagged in `src/main.rs`
+
+    | Verb / context | Code |
+    |---|---|
+    | `--survey-state` with single plan | `InvalidInput` |
+    | `--survey-state` missing for multi-plan | `InvalidInput` |
+    | `fixed-memory show` unknown slug | `NotFound` |
+    | `state phase-summary render` invalid `--phase` | `InvalidInput` |
+    | `state phase-summary render` invalid `--format` | `InvalidInput` |
+    | `state backlog list` invalid `--status` | `InvalidInput` |
+    | `state backlog list` invalid `--group-by` | `InvalidInput` |
+    | `state backlog set-status` invalid status | `InvalidInput` |
+    | `state backlog reorder` invalid position | `InvalidInput` |
+    | `parse_target_reference` malformed reference | `InvalidInput` |
+    | `resolve_body` both `--body-file` and `--body` | `InvalidInput` |
+    | `run_phase_loop` missing `phase.md` | `NotFound` |
+    | `run_phase_loop` unknown agent | `InvalidInput` |
+
+    ### Integration tests added (`tests/cli.rs`)
+
+    - `invalid_format_exits_with_usage_error_code` — `state backlog list --format xml` → exit 2.
+    - `unknown_fixed_memory_slug_exits_with_not_found_code` — `fixed-memory show no-such-slug` → exit 3.
+    - `invalid_format_in_json_mode_emits_typed_code_envelope` — `state backlog list --format json --status bogus` → exit 2 + JSON envelope on stderr containing `INVALID_INPUT`.
+
+    ## What worked
+
+    - The `downcast_ref::<CodedError>()` pattern is the cleanest API I considered for code recovery — anyhow's documented behaviour walks the chain so we don't need explicit iteration.
+    - Upgrading the shared `OutputFormat::parse` was high-leverage: one edit propagates correct `InvalidInput` codes across every `--format` callsite without touching the dispatch surface.
+    - TDD-flavoured: writing the unit tests first surfaced the Display design (return only the message, not the code) before any call sites depended on it.
+
+    ## What didn't work
+
+    - First attempt at the JSON-envelope test used `--format json --format xml` — clap rejects duplicate flags at parse time, so the test never exercised our renderer. Fixed by combining `--format json` with `--status bogus-status` (different flag, our InvalidInput tag).
+    - I considered attaching the code via `.context(CodedTag)` (anyhow context) but rejected it: anyhow's `{:#}` chain renderer joins layers with `": "` unconditionally, so an empty-Display tag would surface as `: real-message`. The newtype approach with explicit downcast avoids this entirely.
+
+    ## What this suggests next
+
+    A follow-up "inner verbs" sweep is the natural next slice: 241 `bail!/anyhow!` sites remain across `src/state/`, `src/atlas/`, `src/repos/`, `src/discover/`, etc. Most are clear-cut by category:
+
+    - "no item with id X in backlog" / "no such target" → `NotFound`
+    - "schema_version mismatch" / "duplicate id" → `Conflict`
+    - "missing required field" / "must not be empty" → `InvalidInput`
+    - IO-failures inside `read_to_string` chains → `IoError` via `with_code`
+
+    Filed as follow-up: `cli-tag-error-code-inner-verbs-sweep`.
+
+    The pattern + macros + tests are now stable enough that the inner sweep is mechanical and can be done incrementally per-module without coordination.
+
+    ## Verification
+
+    - `cargo build` — clean.
+    - `cargo test --lib` — 998 passed, 0 failed.
+    - `cargo test --test cli` — 9 passed, 0 failed (3 new).
+    - `scripts/check.sh` — clean (clippy `-D warnings` passes).
 - id: cli-finish-audit-checklist-sweep-defaults-ids-aliases-hidden-state
   title: 'CLI: finish audit-checklist sweep (defaults, ids, aliases, hidden state)'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     CLI audit scope item #8: walk the remainder of the audit-checklist
@@ -284,10 +361,43 @@ tasks:
 
     - `defaults/fixed-memory/cli-tool-design.md` §"Audit checklist"
       (every line).
+  results: |
+    ## Outcome: walked the remaining audit checklist; filed 2 subtasks for substantive findings
+
+    Walked every "no" finding in `defaults/fixed-memory/cli-tool-design.md` §"Audit checklist" not already covered by sibling tasks. Two items warrant follow-up; the other five are clean or acceptable.
+
+    ## Findings table
+
+    | Item | Status | Action |
+    |---|---|---|
+    | List verbs cap rows (`--limit N` / `--all`) | **gap** — every `list` verb emits unbounded output | filed `cli-add-limit-n-and-all-flags-to-list-verbs` |
+    | Aliases for common synonyms (`rm`/`remove`/`delete`, `ls`/`list`) | **gap** — zero `visible_alias` annotations across `src/main.rs` | filed `cli-add-visible-alias-annotations-ls-rm-delete-etc` |
+    | TTY-detection / no-color in pipes | clean — no `is_terminal`/`atty`/`ColorChoice`/`colored` use anywhere in `src/`, headless verbs use plain `println!` | no action |
+    | Verb/noun ordering consistency | consistent — every multi-resource path is noun-first (`state backlog list`, `state memory show`, `repo add`, `atlas list-components`); top-level imperatives (`init`, `run`, `create`, `survey`) take no resource argument | no action |
+    | Identifier prefix conventions (`b-…`/`m-…`/`i-…`) | unprefixed but disambiguated by verb path — every read/write threads through an explicit kind (`state backlog show`, `state memory show`); a typed prefix would be redundant | no action; original task description's claim that "most ids are b-/m-/i- style" was incorrect |
+    | Hidden state (`RAVEL_LITE_CONFIG`) surfaced in `--help` | extensively documented (~25 `--config` doc-comments mention it explicitly) | no action |
+    | `--dry-run` on mutating verbs | partial — present on `state backlog repair-stale-statuses` and one other site; most CRUD writes a single YAML file with audit-trail commits, so dry-run adds little | no action |
+    | `--yes` / `--force` on destructive verbs | acceptable — `--force` exists on `init` and on `state backlog delete` (refuses without it for dependency-bearing items); CRUD verbs are non-interactive by default | no action |
+
+    ## What was not audited (already covered by sibling tasks)
+
+    Per the original task description these are tracked separately:
+
+    - `--json` parity for repo/atlas verbs — `cli-fmt-json-parity-for-repo-and-atlas-verbs`
+    - Stable JSON schema with `schema_version` — `cli-json-schema-versioning-and-doc`
+    - Help-text examples on every verb — `cli-help-text-examples-on-every-verb`
+    - JSON-mode error envelope with stable `code` field — `cli-error-codes-and-json-error-envelope`
+    - Documented exit codes — `cli-exit-code-categories`
+    - Discoverability verbs (`capabilities`, `schema`, `llm-instructions`) — `cli-discoverability-verbs`
+    - `OutputFormat` consolidation — done
+
+    ## Suggests next
+
+    The list-limits subtask is the higher-leverage follow-up: an unbounded list verb that returns 50k rows can blow out an agent's context window in a single call. Aliases are pure ergonomic upside but have lower bang-for-buck.
 - id: cli-help-text-examples-on-every-verb
   title: 'CLI: help-text examples on every verb'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     CLI audit scope item #3 (cli-tool-design.md §2): every subcommand's
@@ -330,6 +440,91 @@ tasks:
     - `defaults/fixed-memory/cli-tool-design.md` §"Audit checklist" →
       "Help" → "Every subcommand `--help` includes at least two
       concrete examples."
+  results: |
+    ## Outcome: every leaf verb in `src/main.rs` now carries an `after_help` example block
+
+    Walked all 19 `#[derive(Subcommand)]` enums and attached `#[command(after_help = ...)]` to every leaf variant. Each example block has 2-3 concrete invocations using `LLM_STATE/core` as the canonical plan-dir placeholder. Top-level lifecycle verbs already had a project-wide `AFTER_HELP` (exit codes table); the per-verb examples layer on top.
+
+    ## What landed
+
+    ### Centralised example constants
+
+    A single block of `const FOO_AFTER_HELP: &str = "..."` definitions sits near the top of `src/main.rs`, organised by family with section comments. Approximately 75 individual `after_help` constants. Pattern: each starts with `Examples:` then 2-3 `# comment` + `ravel-lite ...` blocks.
+
+    ### Verb families covered (~75 leaves)
+
+    - **Top-level lifecycle**: `init`, `run`, `create`, `survey`, `survey-format`, `version`, `capabilities` (7)
+    - **Repo registry**: `repo {list,add,remove}` (3)
+    - **Fixed memory**: `fixed-memory {list,show}` (2)
+    - **Atlas**: `atlas {list-repos,freshness,list-components,summary,describe,memory,edges,neighbors,roots,path,scc}` (11)
+    - **State (top-level leaves)**: `state set-phase`, `state migrate` (2; `state projects` left unchanged — it's the deprecation alias)
+    - **State phase-summary**: `render` (1)
+    - **State backlog**: 14 verbs from `list` to `repair-stale-statuses`
+    - **State memory**: 9 verbs from `list` to `check-anchors`
+    - **State intents**: 4 verbs (`list`, `show`, `add`, `set-status`)
+    - **State targets**: 5 verbs (`list`, `show`, `add`, `remove`, `mount`)
+    - **State target-requests**: 5 verbs
+    - **State commits**: 2 verbs (`list`, `show`)
+    - **State this-cycle-focus**: 3 verbs (`show`, `set`, `clear`)
+    - **State focus-objections**: 5 verbs
+    - **State session-log**: 5 verbs
+    - **State related-components**: 5 verbs
+    - **State discover-proposals**: 1 verb (`add-proposal`)
+    - **Findings (top-level)**: 4 verbs (`list`, `show`, `add`, `set-status`)
+    - **Plan**: 4 verbs (`list-items`, `show-item`, `query-by-status`, `query-by-justification`)
+
+    ### Pattern — every example block
+
+    ```rust
+    const BACKLOG_LIST_AFTER_HELP: &str = "\
+    Examples:
+      # markdown render grouped by category (the canonical work-phase view)
+      ravel-lite state backlog list LLM_STATE/core --format markdown
+
+      # only ready (active + all deps done) tasks, JSON
+      ravel-lite state backlog list LLM_STATE/core --ready --format json
+
+      # done tasks missing a Results block
+      ravel-lite state backlog list LLM_STATE/core --status done --missing-results
+    ";
+    ```
+
+    Attached via:
+
+    ```rust
+    #[command(after_help = BACKLOG_LIST_AFTER_HELP)]
+    List { ... }
+    ```
+
+    ### Integration test added (`tests/cli.rs`)
+
+    `leaf_verb_help_carries_invocation_examples` spot-checks 14 representative leaf verbs (one per family), asserting that `--help` output contains `Examples:` and at least one `ravel-lite ...` invocation. The const-block organisation means the remaining ~60 leaves follow the same pattern and don't need per-leaf assertions.
+
+    ## What worked
+
+    - **Define-then-attach in two passes.** First a single `Edit` inserted all consts. Then per-enum `Edit`s attached `#[command(after_help = ...)]` attributes. The clippy `-D warnings` gate caught any consts I forgot to attach via `unused_const`.
+    - **`LLM_STATE/core` as the canonical placeholder.** Concrete enough that agents pattern-match cleanly; matches the project's actual primary plan path. Avoids fictional filler like `<plan-dir>` that agents have been observed to type literally.
+    - **Comment-then-invocation per example.** Each example begins with a short `# what-this-does` line. Agents read the comment to pick the right pattern; humans read the comment for context. Two-line cost per example, high informational density.
+
+    ## What didn't work / open issues
+
+    - A few verb families (`focus-objections add-*`, `plan query-by-*`) have intricate flag combinations where 2-3 examples can't cover the full surface. The examples cover the most common case; agents that want comprehensive coverage will read the flag listing above the examples.
+
+    ## What this suggests next
+
+    Optional follow-ups, all low priority:
+
+    1. **Snapshot test on `--help` output.** `assert_cmd` + `insta` would let any `--help` regression land as a single snapshot diff. Skipped for this task because the const-block-in-source approach already makes drift visible in code review; snapshots add maintenance cost.
+    2. **Standalone "cookbook" reference page.** The examples scattered across help text could aggregate into one reference page once doc-generation tooling for clap is wired up. Low priority — the per-verb help is where agents actually look.
+
+    ## Verification
+
+    - `cargo build` — clean.
+    - `scripts/check.sh` (clippy `-D warnings`) — clean.
+    - `cargo test --lib` — 998 passed, 0 failed.
+    - `cargo test --test cli` — 10 passed (1 new), 0 failed.
+    - Spot-check `ravel-lite state backlog list --help` — example block renders correctly.
+    - Spot-check `ravel-lite state backlog set-status --help` — example block renders correctly.
 - id: cli-json-schema-versioning-policy-and-documentation
   title: 'CLI: JSON schema versioning policy and documentation'
   category: architecture-next
@@ -383,7 +578,7 @@ tasks:
 - id: cli-evaluate-and-decide-on-llm-instructions-verb-ship-or-wontfix
   title: 'CLI: evaluate and decide on llm-instructions verb (ship or wontfix)'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Short investigation (timebox: 1 hour): decide whether `ravel-lite llm-instructions` is worth shipping given the existing tutorial and reference documentation, then either ship it or close as wontfix.
@@ -406,3 +601,166 @@ tasks:
 
     - `defaults/fixed-memory/cli-tool-design.md` §"Optional but valuable" — template and examples for `llm-instructions`.
     - `src/cli/capabilities.rs` — `top_level_subcommands()` hand-mirror (must be extended if shipped).
+  results: |
+    ## Outcome: defeated (wontfix)
+
+    **Decision:** Do not ship `ravel-lite llm-instructions`. The existing
+    `docs/tutorial/` (6 chapters) and `docs/reference/` (9 pages) already
+    cover everything the cli-tool-design.md template lists for an
+    `llm-instructions` body, and `cli-tool-design.md` itself is explicit
+    that this command "can supplement [`--help`] but cannot substitute for
+    it. Many agents will never call it." A third documentation surface
+    would decay in parallel with the AsciiDoc.
+
+    ## Coverage check (cli-tool-design.md §"Optional but valuable" template)
+
+    | Section the template lists | Where it lives today |
+    |---|---|
+    | "What this tool is and isn't" | `docs/tutorial/00-overview.adoc` §"What Ravel-Lite is not" |
+    | Mental model of the command tree | `docs/reference/concepts.adoc` + `cli-state.adoc` etc. |
+    | Workflow recipes (real chaining) | `docs/tutorial/04-the-first-cycle.adoc`, `05-further-cycles.adoc` |
+    | Common mistakes | Scattered across reference pages (no concentrated section, but help-text `--help` examples — see sibling task `cli-help-text-examples-on-every-verb` — will collect anti-patterns inline where they bite) |
+    | Auth and state assumptions | `docs/reference/cli-lifecycle.adoc` (RAVEL_LITE_CONFIG, `--config`) |
+    | Pointers to `--json`, exit codes, idempotency | `ravel-lite capabilities` (already shipped) emits the JSON, `output_formats`, `error_codes`, and `exit_categories` an agent would otherwise have to grep from prose |
+
+    ## Why concentrating on `--help` examples is the better investment
+
+    `cli-tool-design.md` ranks help-text examples as #2 in its high-impact
+    checklist (one slot below structured output, which is also done). It
+    ranks `llm-instructions` last under "Optional but valuable". The
+    sibling task `cli-help-text-examples-on-every-verb` extends `--help`
+    with after-help blocks per leaf verb — the surface agents are
+    guaranteed to hit, not the one many will skip.
+
+    ## Follow-up
+
+    None. This task is closed defeated. If a future regression in agent
+    ergonomics suggests a concentrated workflow blob would help, the
+    decision can be revisited; the rationale here is that the work
+    needed to keep three surfaces synchronised is not justified given the
+    existing two cover the same ground.
+- id: cli-add-limit-n-and-all-flags-to-list-verbs
+  title: 'CLI: add --limit N and --all flags to list verbs'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Add `--limit N` and `--all` flags to every `list`-style verb that today emits unbounded output, per `defaults/fixed-memory/cli-tool-design.md` §6 ("Sensible default output limits"). A `list` returning 50,000 rows by default can blow out an agent's context in a single call.
+
+    ## Affected verbs (current unbounded listings)
+
+    - `state backlog list <plan>`
+    - `state memory list <plan>`
+    - `state intents list <plan>`
+    - `state findings list <plan>` (if exists)
+    - `state session-log list <plan>`
+    - `findings list`
+    - `repo list`
+    - `atlas list-components`
+    - `atlas list-repos`
+    - `atlas summary`
+    - `fixed-memory list`
+
+    ## Behaviour
+
+    - Default `--limit N` (suggested: 100). The exact default per verb may differ (e.g. `state backlog list` could default `--all` because most plans have <100 tasks; `atlas list-components` likely warrants a real default).
+    - `--all` (mutually exclusive with `--limit`) opts in to unbounded.
+    - When truncating, append a stderr line in text mode and a `truncated: true` / `total: N` / `returned: M` metadata block in YAML/JSON envelopes (per cli-tool-design.md §6 example).
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` §6 "Sensible default output limits".
+    - Sibling task results from `cli-finish-audit-checklist-sweep-defaults-ids-aliases-hidden-state`.
+
+    ## Gating constraint
+
+    May intersect with the v1→v2 migrator schema bump (`migrate-ravel-lite-migrate-for-v1-to-v2-cutover`) because adding metadata fields to the YAML/JSON envelopes changes the wire shape for list verbs. Coordinate with that task or land after it.
+- id: cli-add-visible-alias-annotations-ls-rm-delete-etc
+  title: 'CLI: add visible_alias annotations (ls, rm, delete, etc.)'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Add clap `visible_alias` entries for common synonyms across the CLI surface, per `defaults/fixed-memory/cli-tool-design.md` §5 ("Add aliases for common synonyms (`rm`/`remove`/`delete`, `ls`/`list`, `mv`/`rename`). These are cheap and meaningfully reduce guess-the-verb failures.")
+
+    ## Audit findings
+
+    The current CLI uses zero `visible_alias` annotations across `src/main.rs`. For an LLM-facing tool, aliases reduce the variance in agent guesses without any design cost; the surface is large enough that "did you guess the right verb" failures are real.
+
+    ## Suggested aliases
+
+    | canonical | aliases |
+    |---|---|
+    | `list` (every variant) | `ls` |
+    | `remove` (Repo, FixedMemory, etc.) | `rm`, `delete` |
+    | `show` | `get`, `cat` |
+    | `add` | `create` (where unambiguous) |
+    | `rename` (where present) | `mv` |
+
+    ## Scope
+
+    1. Walk every `Subcommand`-derived enum in `src/main.rs`.
+    2. Attach `#[command(visible_alias = "ls")]` to every `List` variant, `#[command(visible_aliases = ["rm", "delete"])]` to every `Remove` variant, etc.
+    3. Verify clap surfaces aliases in `--help` so agents can discover them.
+    4. Test: invoking the alias produces the same behaviour as the canonical verb (one integration test per alias category is sufficient).
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` §5 "Consistent verb/noun ordering" (last paragraph on aliases).
+    - Sibling task results from `cli-finish-audit-checklist-sweep-defaults-ids-aliases-hidden-state`.
+- id: cli-tag-inner-verb-error-sites-state-atlas-repos-discover-sweep
+  title: 'CLI: tag inner-verb error sites (state/atlas/repos/discover sweep)'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Follow-up to the foundation laid by `cli-tag-bail-anyhow-call-sites-with-typed-errorcode`: tag the remaining 241 `bail!/anyhow!/ensure!` call sites across `src/state/`, `src/atlas/`, `src/repos/`, `src/discover/`, etc. The dispatch-layer sweep tagged every site in `src/main.rs` plus `OutputFormat::parse`, but the inner verbs (where the actual errors are raised) still fall back to `ErrorCode::Internal`.
+
+    ## Why this is its own task
+
+    The dispatch sweep was 13 sites and ~1 hour of mechanical work. The inner sweep is 241 sites across 8+ modules and benefits from being chunked per-module with focused review. The foundation (`bail_with!`, `with_code`, `error_code_of`) is in place and tested — this task is pure call-site application.
+
+    ## Categorisation rule
+
+    For each site, pick the `ErrorCode` variant by what the user-facing remediation is:
+
+    | Pattern | Code |
+    |---|---|
+    | "no item with id X" / "no such target" / "no such repo" | `NotFound` |
+    | "schema_version mismatch" / "duplicate id" / "task already in status X" | `Conflict` |
+    | "missing required field" / "must not be empty" / "invalid <field> value" | `InvalidInput` |
+    | `std::io::Error` from `read_to_string`, `write`, etc. | `IoError` (via `with_code`) |
+    | Network/peer-process throttling | `RateLimited` |
+    | Auth-required (none yet, but reserve) | `AuthRequired` |
+    | Genuine internal invariant violation (panic-equivalent) | `Internal` (the default) |
+
+    ## Suggested chunking
+
+    Best done one module at a time so reviews stay focused:
+
+    1. `src/state/backlog/verbs.rs` — high traffic, 15+ NotFound and Conflict sites.
+    2. `src/state/memory/verbs.rs` — same shape as backlog.
+    3. `src/state/intents/verbs.rs` — same shape.
+    4. `src/state/targets/`, `src/state/target_requests/`, `src/state/findings/` — smaller surfaces.
+    5. `src/repos.rs`, `src/atlas/` — registry / catalog lookups; mostly NotFound.
+    6. `src/discover/`, `src/related_components/` — survey-related; mixed.
+    7. `src/init.rs`, `src/create.rs`, `src/migrate*` — one-shot lifecycle commands.
+    8. Anything left: `src/agent/`, `src/git.rs`, `src/phase_loop.rs`, etc.
+
+    ## Per-module checklist
+
+    - Walk every `bail!/anyhow!/ensure!` and pick the code.
+    - Replace `bail!(...)` → `bail_with!(ErrorCode::X, ...)` (import macro from `crate::bail_with` or `ravel_lite::bail_with`).
+    - Replace `anyhow!(...)` in `ok_or_else(|| ...)` patterns with `anyhow::Error::new(CodedError { code: X, message: format!(...) })`.
+    - IO-flavoured `?` propagation paths get `.with_code(ErrorCode::IoError)` after the `map_err(anyhow::Error::from)` boundary.
+    - Add at least one integration test asserting non-Internal exit code for each module's representative error.
+
+    ## Reference
+
+    - `src/cli/error_context.rs` — foundation module with macro and trait.
+    - `src/main.rs` — already-tagged dispatch sites are the working examples.
+    - `tests/cli.rs` — 3 example exit-code integration tests:
+      `invalid_format_exits_with_usage_error_code`,
+      `unknown_fixed_memory_slug_exits_with_not_found_code`,
+      `invalid_format_in_json_mode_emits_typed_code_envelope`.
+    - Memory: "Prefer typed APIs over stringly-typed."

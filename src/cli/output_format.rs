@@ -8,7 +8,10 @@
 //! is not supported on `<verb>`; supported: …" instead of the bare
 //! "invalid --format value".
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+
+use crate::cli::error_code::ErrorCode;
+use crate::cli::error_context::CodedError;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum OutputFormat {
@@ -28,10 +31,17 @@ impl OutputFormat {
     }
 
     /// Parse a `--format` argument. Returns an actionable error naming the
-    /// supported set when the input is unrecognised.
+    /// supported set when the input is unrecognised. The error carries
+    /// `ErrorCode::InvalidInput` so the exit category and JSON envelope
+    /// land at the user-fault tier.
     pub fn parse(input: &str) -> Result<OutputFormat> {
         Self::parse_opt(input).ok_or_else(|| {
-            anyhow!("invalid --format value {input:?}; expected `yaml`, `json`, or `markdown`")
+            anyhow::Error::new(CodedError {
+                code: ErrorCode::InvalidInput,
+                message: format!(
+                    "invalid --format value {input:?}; expected `yaml`, `json`, or `markdown`"
+                ),
+            })
         })
     }
 }
@@ -63,5 +73,14 @@ mod tests {
         assert!(msg.contains("yaml"), "{msg}");
         assert!(msg.contains("json"), "{msg}");
         assert!(msg.contains("markdown"), "{msg}");
+    }
+
+    #[test]
+    fn parse_error_carries_invalid_input_code() {
+        let err = OutputFormat::parse("xml").unwrap_err();
+        assert_eq!(
+            crate::cli::error_context::error_code_of(&err),
+            ErrorCode::InvalidInput,
+        );
     }
 }
