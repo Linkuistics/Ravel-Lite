@@ -999,3 +999,7 @@ entries:
   title: Forward-references convention for planned CLI verbs in phase prompts
   body: |
     Phase prompts sometimes carry forward references to planned-but-not-yet-shipped CLI verbs. Convention established in the `integration-smoke-test-phase-prompts-reference-live-cli-verbs` task: use prose form "the planned `<verb>` phase/command" rather than backtick-CLI form `` `ravel-lite <verb>` `` for any verb not yet callable. When the verb ships, revert to the backtick-CLI form. Affected files at establishment: `defaults/phases/reflect.md` and `defaults/phases/dream.md` (both reference the planned `curate` command).
+- id: outputformat-lives-in-src-cli-one-canonical-enum
+  title: OutputFormat lives in src/cli/; one canonical enum
+  body: |
+    `crate::cli::OutputFormat` (variants: Yaml, Json, Markdown) is the single canonical format type; all per-module copies deleted. New verbs import `crate::cli::OutputFormat` and call `OutputFormat::parse()`. Verbs that lack Markdown support compile against the full three-variant enum and return a runtime error naming supported values — they do not reject at parse time.
