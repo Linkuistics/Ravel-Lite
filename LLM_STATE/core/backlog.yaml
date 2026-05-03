@@ -1,123 +1,4 @@
 tasks:
-- id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
-  title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
-  category: infra
-  status: blocked
-  blocked_reason: Not needed yet; defer until pi-side TUI debugging actually requires it
-  dependencies: []
-  description: |
-    Add the same PTY-capture path to `pi.rs::invoke_interactive` that was
-    built for `claude_code.rs` in the PTY-capture task. The mechanism is
-    already implemented in `src/agent/pty_capture.rs`; this task is a
-    small scope wiring job.
-
-    ## Why
-
-    When debug logging is enabled, `claude_code.rs::invoke_interactive` now
-    routes through `pty_capture::run_pty_session`, capturing every byte
-    exchanged with the claude subprocess in the debug log. The `pi.rs`
-    equivalent still uses inherited stdio (`stdio: inherited (no transcript
-    available)` per the Results from the PTY-capture task). A pi TUI hang
-    would have the same diagnostic blind spot the claude hang had before the
-    PTY work shipped.
-
-    ## Scope
-
-    - In `src/agent/pi.rs::invoke_interactive`, add an early branch:
-      when `debug_log::is_enabled()`, call
-      `pty_capture::run_pty_session("pi", &args, &cwd, "pi")` via
-      `spawn_blocking`, matching the pattern in `claude_code.rs`.
-    - Existing argv construction is shared; only the spawn mechanism differs.
-    - Update the log entry text to read `stdio: pty (full byte transcript
-      follows)` on the debug path, matching the claude path.
-
-    ## Verification
-
-    - `cargo test` passes (all PTY-capture unit/integration tests still
-      pass; the pi tests are unaffected because none exercise the debug path).
-    - Non-debug pi invocation: TUI renders identically, no behaviour change.
-    - Debug-enabled pi invocation: TUI renders identically AND debug log
-      captures the pi byte stream.
-- id: phase-prompt-updates-for-triage-first-cycle-shape
-  title: Phase prompt updates for triage-first cycle shape
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Update all four phase prompts for the triage-first cycle shape: triage writes `this-cycle-focus.yaml`, work consumes it, analyse-work writes `commits.yaml` with optional `target:` field, reflect closes the cycle. Remove `dream.md` from the in-cycle path.
-
-    ## Why
-
-    The phase prompts (`defaults/phases/triage.md`, `work.md`, `analyse-work.md`, `reflect.md`) were written for the old end-of-cycle-triage shape. After the cycle-reorder, two-stream-commits, and phase-boundary-mechanics tasks land, the prompts need to instruct the LLM to use the new mechanics:
-
-    - **triage.md**: write `this-cycle-focus.yaml` (via `state this-cycle-focus set`); read and drain `focus-objections.yaml` from the prior cycle; new baseline file names.
-    - **work.md**: read `this-cycle-focus.yaml` at entry; may write `focus-objections.yaml` (via `state focus-objections add-*` verbs) when a target is wrong, skippable, or premature.
-    - **analyse-work.md**: write `commits.yaml` with optional `target: ComponentRef` per commit.
-    - **reflect.md**: close the cycle; no longer triggers dream.
-    - **dream.md**: update to reflect that it is now only invoked by `ravel-lite curate`, not the plan cycle.
-
-    ## Scope
-
-    1. Update `defaults/phases/triage.md` §Output format with new cycle order and `this-cycle-focus` / `focus-objections` verb examples.
-    2. Update `defaults/phases/work.md` to read `this-cycle-focus.yaml` on entry and document `focus-objections` write path.
-    3. Update `defaults/phases/analyse-work.md` step 9: `commits.yaml` now supports optional `target:` field.
-    4. Update `defaults/phases/reflect.md` to reflect no post-reflect dream in the cycle.
-    5. Update `defaults/phases/dream.md` to note standalone-only invocation.
-    6. Run drift-guard test (`every_file_under_defaults_is_registered_in_embedded_files`) to confirm no stale embed registrations.
-    7. `shipped_pi_prompts_have_no_dangling_tokens` must pass.
-
-    ## Dependencies
-
-    Depends on two-stream-commits (the full new mechanics must be in place before the prompts describe them as active). Also depends on cycle-reorder and phase-boundary-mechanics transitively via two-stream-commits.
-
-    ## References
-
-    - `defaults/phases/` — phase prompt files
-    - `src/init.rs` — drift sentinel for `state phase-summary render` substring
-    - `src/prompt.rs` — `substitute_tokens` path all prompts go through
-  results: |
-    ## What was done
-
-    Updated all five files under `defaults/phases/` for the triage-first cycle:
-
-    - **triage.md**
-      - Required reads: added prior-cycle objections via `state focus-objections list`. Documented that the runner mechanically deletes the file at `git-commit-triage`, so the LLM does not call `state focus-objections clear` itself.
-      - Behavior: new step 7 acts on `wrong-target` / `skip-item` / `premature` objections; new step 8 writes `this-cycle-focus.yaml` via `state this-cycle-focus set --target <ref> --item <id>... --notes ...`. Renumbered existing set-phase to step 9 and stop to step 10. Added a v1-fallback note for plans without component targeting.
-      - Output format: added `[OBJECTION] <kind>[: <subject>] → <action>` and `[FOCUS] target=<ref>, items=[...]` to the label list.
-      - Reframed the opening to call out that triage runs at the **start** of the cycle.
-    - **work.md**
-      - Required reads: added `state this-cycle-focus show` at entry; framed it as advisory (user still steers selection) and gave a graceful v1 fallback ("no focus set" → proceed).
-      - Behavior step 3: added an escalation block documenting `state focus-objections add-wrong-target | add-skip-item | add-premature` with a clear contract that an objection-only cycle is a valid cycle.
-    - **analyse-work.md**
-      - commits.yaml shape: added optional `target: <repo_slug>:<component_id>` field to the example.
-      - Added a "`target:` (optional ComponentRef)" subsection explaining when to set it, the worktree routing semantics, and the v1 omission rule.
-      - Added a "Two-stream commits split automatically by `target:`" subsection requiring path grouping by target.
-    - **reflect.md**
-      - Step 4 hand-off: removed the obsolete "decides whether to run dream (compaction) or skip straight to triage" framing. Reflect now closes the cycle; dream is no longer in-cycle and `ravel-lite curate` is the named context-wide successor.
-    - **dream.md**
-      - Added an "Out-of-cycle" disclaimer at the top noting the cycle is `triage → work → analyse-work → reflect` and that this prompt only fires under explicit invocation; future tooling lives in `ravel-lite curate`.
-
-    Confirmed by reading source: `LlmPhase` (`src/types.rs:11`) has no `Dream` variant and `parse` rejects `"dream"` — dream really is gone from the in-cycle path; `consume_focus_objections` is called by `git-commit-triage` (`src/phase_loop.rs:290`); `apply_commits_spec` already routes `target:` to worktrees per `apply_commits_spec_routes_targeted_entry_to_worktree` and friends.
-
-    ## What worked
-
-    - Both named drift-guard tests pass:
-      - `every_file_under_defaults_is_registered_in_embedded_files`
-      - `shipped_pi_prompts_have_no_dangling_tokens`
-    - Full library test suite (`cargo test --lib`): 974 passed, 0 failed.
-    - `scripts/check.sh` (clippy `--all-targets --workspace -D warnings`): clean.
-    - Token audit (`grep -E "\{\{[A-Z_]+\}\}" defaults/phases/*.md`) shows no new tokens introduced beyond the existing five (`{{PLAN}}`, `{{PROJECT}}`, `{{DEV_ROOT}}`, `{{TOOL_READ}}`, `{{RELATED_PLANS}}`, `{{WORK_TREE_STATUS}}`, `{{BACKLOG_TRANSITIONS}}`).
-
-    ## What didn't / was deferred
-
-    - **Baseline filename rename deferred.** The task body listed "new baseline file names" for triage. The current runner (`src/phase_loop.rs:306,321,340,357`) still writes flat single-SHA files (`work-baseline`, `analyse-work-baseline`, `reflect-baseline`, `triage-baseline`). The architecture-next §Phase boundaries target of `<phase>-baseline.yaml` per-worktree maps has not shipped (it's still a TODO at architecture-next.md:933). Renaming the baseline references in prompts would have broken the renderer's `cat {{PLAN}}/triage-baseline 2>/dev/null` shell substitution. Prompts therefore continue to reference the flat names; rename them in the same cycle that lands the per-worktree YAML map.
-    - **Triage step ordering kept conservative.** Prior-cycle objections are arguably best handled before backlog hygiene (they're feedback that should inform the rest of triage), but the existing step 1-6 numbering was preserved so the change stays surgical. The instruction "for each entry returned by `state focus-objections list` in the required reads" is explicit enough to keep the LLM from doing it last.
-
-    ## What this suggests next
-
-    - The `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` task remains the keystone gating downstream work (`state intents render-overview`, the per-worktree baseline YAML map, full curate). Until the migrator ships, prompts that mention v2 mechanics carry "on legacy v1 plans, omit this step" fallbacks — once migration is mandatory for an installed binary, those fallbacks become dead code and can be pruned.
-    - A future task should sweep both prompts and `src/phase_loop.rs` together when baselines move to per-worktree YAML maps: the prompt-side `cat {{PLAN}}/<phase>-baseline` patterns inside the renderer call need updating in lockstep with the runner-side rename, otherwise the renderer's shell-out fails silently (`2>/dev/null` swallows it).
-    - Worth considering: a small integration smoke test that spawns each phase prompt against a synthetic plan with a fully-set focus and confirms the LLM-facing instructions reference live verbs (`state focus-objections list`, `state this-cycle-focus show`, `state this-cycle-focus set`, `state focus-objections add-*`). The drift-guard tests catch dangling `{{tokens}}` and unregistered files but cannot catch a verb name that drifts away from the prompt.
 - id: migrate-ravel-lite-migrate-for-v1-to-v2-cutover
   title: 'Migrate: ravel-lite migrate for v1 to v2 cutover'
   category: architecture-next
@@ -271,3 +152,82 @@ tasks:
 
     - `defaults/fixed-memory/cli-tool-design.md` — the guidance document.
     - `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md` §"Audit posture" and §"Out of scope" — the scoping decision that captured this task.
+- id: rename-phase-baselines-to-per-worktree-yaml-map-shape-prompts-phase-loop-rs
+  title: Rename phase baselines to per-worktree YAML map shape (prompts + phase_loop.rs)
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - migrate-ravel-lite-migrate-for-v1-to-v2-cutover
+  description: |
+    When per-worktree YAML baseline maps land as part of the v2 architecture, sweep
+    `defaults/phases/*.md` and `src/phase_loop.rs` together to rename the flat phase
+    baseline files.
+
+    ## Why
+
+    The completed `phase-prompt-updates-for-triage-first-cycle-shape` task explicitly
+    deferred this: `defaults/phases/triage.md` et al. contain shell-out patterns like
+    `cat {{PLAN}}/<phase>-baseline 2>/dev/null` that must rename in lockstep with the
+    runner-side `git_save_baseline` calls in `phase_loop.rs`. If either side moves
+    alone, the renderer's shell-out fails silently (`2>/dev/null` swallows it).
+
+    ## Scope
+
+    1. Update the four `git_save_baseline` call sites in `src/phase_loop.rs` to use the
+       new per-worktree YAML map shape (exact API TBD when the v2 baseline spec lands).
+    2. Update the corresponding `cat {{PLAN}}/<phase>-baseline` shell fragments in
+       `defaults/phases/triage.md` and the renderer call in
+       `ravel-lite state phase-summary render`.
+    3. Confirm `every_file_under_defaults_is_registered_in_embedded_files` and
+       `shipped_pi_prompts_have_no_dangling_tokens` still pass.
+
+    ## Gating constraint
+
+    Blocked on `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` shipping a new binary
+    and the per-worktree YAML baseline spec being settled in `docs/architecture-next.md`.
+    Do not rename ahead of the spec or the renderer call will break silently.
+- id: integration-smoke-test-phase-prompts-reference-live-cli-verbs
+  title: 'Integration smoke test: phase prompts reference live CLI verbs'
+  category: infra
+  status: not_started
+  dependencies: []
+  description: "Add an integration smoke test that loads each phase prompt against a synthetic\nplan and asserts that every LLM-facing CLI verb reference resolves to a live\n`ravel-lite state` verb.\n\n## Why\n\nThe `phase-prompt-updates-for-triage-first-cycle-shape` Results noted: the\nexisting drift-guard tests catch dangling `{{tokens}}` and unregistered files but\ncannot detect a verb name that drifts away from the prompt. For example, if\n`state this-cycle-focus set` is renamed in the binary, the prompt continues to\nreference the old name silently.\n\nCurrent guards:\n- `every_file_under_defaults_is_registered_in_embedded_files` — guards file\n  registration only.\n- `shipped_pi_prompts_have_no_dangling_tokens` — guards unresolved `{{token}}`\n  fragments only.\n\nNeither catches a stale `ravel-lite state foo bar` reference.\n\n## Scope\n\n1. Write a test in `tests/phase_prompts.rs` (or extend an existing module).\n2. For each file under `defaults/phases/`, parse all `ravel-lite state <verb>` \n   invocations from the prompt text.\n3. Run each verb with `--help` (or `--dry-run` if available) against the live\n   binary; assert exit 0 or a known usage-error exit code (not \"unknown subcommand\").\n4. Specifically exercise the new verbs added by `phase-prompt-updates-for-triage-first-cycle-shape`:\n   - `state focus-objections list`\n   - `state this-cycle-focus show`\n   - `state this-cycle-focus set`\n   - `state focus-objections add-wrong-target`\n   - `state focus-objections add-skip-item`\n   - `state focus-objections add-premature`\n\n## Notes\n\n- Tests must remain hermetic (no network, no installed binary outside of\n  `CARGO_BIN_EXE_ravel-lite`). Use `CARGO_BIN_EXE_ravel-lite` for the\n  subprocess invocations.\n- False positives are acceptable (a verb that returns exit 2 usage-error is\n  fine; only \"unknown subcommand\" exit is a failure).\n"
+- id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
+  title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
+  category: infra
+  status: blocked
+  blocked_reason: Not needed yet; defer until pi-side TUI debugging actually requires it
+  dependencies: []
+  description: |
+    Add the same PTY-capture path to `pi.rs::invoke_interactive` that was
+    built for `claude_code.rs` in the PTY-capture task. The mechanism is
+    already implemented in `src/agent/pty_capture.rs`; this task is a
+    small scope wiring job.
+
+    ## Why
+
+    When debug logging is enabled, `claude_code.rs::invoke_interactive` now
+    routes through `pty_capture::run_pty_session`, capturing every byte
+    exchanged with the claude subprocess in the debug log. The `pi.rs`
+    equivalent still uses inherited stdio (`stdio: inherited (no transcript
+    available)` per the Results from the PTY-capture task). A pi TUI hang
+    would have the same diagnostic blind spot the claude hang had before the
+    PTY work shipped.
+
+    ## Scope
+
+    - In `src/agent/pi.rs::invoke_interactive`, add an early branch:
+      when `debug_log::is_enabled()`, call
+      `pty_capture::run_pty_session("pi", &args, &cwd, "pi")` via
+      `spawn_blocking`, matching the pattern in `claude_code.rs`.
+    - Existing argv construction is shared; only the spawn mechanism differs.
+    - Update the log entry text to read `stdio: pty (full byte transcript
+      follows)` on the debug path, matching the claude path.
+
+    ## Verification
+
+    - `cargo test` passes (all PTY-capture unit/integration tests still
+      pass; the pi tests are unaffected because none exercise the debug path).
+    - Non-debug pi invocation: TUI renders identically, no behaviour change.
+    - Debug-enabled pi invocation: TUI renders identically AND debug log
+      captures the pi byte stream.
