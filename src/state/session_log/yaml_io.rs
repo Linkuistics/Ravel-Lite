@@ -8,9 +8,12 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 
 use super::schema::{SessionLogFile, SessionRecord};
+use crate::bail_with;
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
 use crate::state::filenames::{LATEST_SESSION_FILENAME, SESSION_LOG_FILENAME};
 
 pub fn session_log_path(plan_dir: &Path) -> PathBuf {
@@ -24,15 +27,18 @@ pub fn latest_session_path(plan_dir: &Path) -> PathBuf {
 pub fn read_session_log(plan_dir: &Path) -> Result<SessionLogFile> {
     let path = session_log_path(plan_dir);
     if !path.exists() {
-        bail!(
+        bail_with!(
+            ErrorCode::NotFound,
             "{SESSION_LOG_FILENAME} not found at {}. Run `ravel-lite state migrate` to convert an existing session-log.md.",
             path.display()
         );
     }
     let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+        .with_context(|| format!("Failed to read {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
     let parsed: SessionLogFile = serde_yaml::from_str(&text)
-        .with_context(|| format!("Failed to parse {} as {SESSION_LOG_FILENAME} schema", path.display()))?;
+        .with_context(|| format!("Failed to parse {} as {SESSION_LOG_FILENAME} schema", path.display()))
+        .with_code(ErrorCode::InvalidInput)?;
     Ok(parsed)
 }
 
@@ -46,19 +52,18 @@ pub fn write_session_log(plan_dir: &Path, log: &SessionLogFile) -> Result<()> {
 pub fn read_latest_session(plan_dir: &Path) -> Result<SessionRecord> {
     let path = latest_session_path(plan_dir);
     if !path.exists() {
-        bail!(
+        bail_with!(
+            ErrorCode::NotFound,
             "{LATEST_SESSION_FILENAME} not found at {}. analyse-work is expected to have produced it.",
             path.display()
         );
     }
     let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
-    let parsed: SessionRecord = serde_yaml::from_str(&text).with_context(|| {
-        format!(
-            "Failed to parse {} as a session record",
-            path.display()
-        )
-    })?;
+        .with_context(|| format!("Failed to read {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
+    let parsed: SessionRecord = serde_yaml::from_str(&text)
+        .with_context(|| format!("Failed to parse {} as a session record", path.display()))
+        .with_code(ErrorCode::InvalidInput)?;
     Ok(parsed)
 }
 
@@ -79,9 +84,11 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         .to_string_lossy();
     let tmp = parent.join(format!(".{file_name}.tmp"));
     std::fs::write(&tmp, bytes)
-        .with_context(|| format!("Failed to write temp file {}", tmp.display()))?;
+        .with_context(|| format!("Failed to write temp file {}", tmp.display()))
+        .with_code(ErrorCode::IoError)?;
     std::fs::rename(&tmp, path)
-        .with_context(|| format!("Failed to rename {} to {}", tmp.display(), path.display()))?;
+        .with_context(|| format!("Failed to rename {} to {}", tmp.display(), path.display()))
+        .with_code(ErrorCode::IoError)?;
     Ok(())
 }
 

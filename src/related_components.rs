@@ -18,8 +18,10 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use component_ontology::{self as ontology, Edge, EvidenceGrade, RelatedComponentsFile};
 use crate::repos::{self, ReposRegistry};
 use crate::state::filenames::RELATED_COMPONENTS_FILENAME;
@@ -170,7 +172,8 @@ pub fn run_remove_edge(
         !(e.kind == kind && e.lifecycle == lifecycle && e.participants == want)
     });
     if file.edges.len() == before {
-        bail!(
+        bail_with!(
+            ErrorCode::NotFound,
             "no matching edge to remove (kind={}, lifecycle={}, {} / {})",
             kind.as_str(),
             lifecycle.as_str(),
@@ -191,7 +194,8 @@ fn canonicalise_participants_for_kind(kind: EdgeKind, a: &str, b: &str) -> Vec<S
 
 fn require_component_known(registry: &ReposRegistry, slug: &str) -> Result<()> {
     if registry.get(slug).is_none() {
-        bail!(
+        bail_with!(
+            ErrorCode::NotFound,
             "component '{}' is not in the repo registry; register it with \
              `ravel-lite repo add {} --url <git-url> [--local-path <path>]`",
             slug,
@@ -206,7 +210,8 @@ fn resolve_plan_component_name(registry: &ReposRegistry, plan_dir: &Path) -> Res
     if let Some((slug, _entry)) = repos::find_by_local_path(registry, &project_path) {
         return Ok(slug.to_string());
     }
-    bail!(
+    bail_with!(
+        ErrorCode::NotFound,
         "plan's project {} is not registered as a repo's local_path; \
          register the repo with `ravel-lite repo add <slug> --url <git-url> --local-path {}`",
         project_path.display(),

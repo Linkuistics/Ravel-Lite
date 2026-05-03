@@ -14,9 +14,10 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
-use crate::cli::OutputFormat;
+use crate::bail_with;
+use crate::cli::{CodedError, ErrorCode, OutputFormat};
 use crate::component_ref::ComponentRef;
 
 use super::schema::{TargetRequest, TargetRequestsFile, TARGET_REQUESTS_SCHEMA_VERSION};
@@ -41,11 +42,14 @@ pub fn run_show(plan_dir: &Path, reference: &str, format: OutputFormat) -> Resul
 pub fn run_add(plan_dir: &Path, reference: &str, reason: &str) -> Result<()> {
     let reference: ComponentRef = reference.parse()?;
     if reason.is_empty() {
-        bail!("--reason must be non-empty");
+        bail_with!(ErrorCode::InvalidInput, "--reason must be non-empty");
     }
     let mut file = read_target_requests(plan_dir)?;
     if find_request(&file, &reference).is_ok() {
-        bail!("request for {reference} already queued");
+        bail_with!(
+            ErrorCode::Conflict,
+            "request for {reference} already queued"
+        );
     }
     file.requests.push(TargetRequest {
         component: reference,
@@ -60,7 +64,7 @@ pub fn run_remove(plan_dir: &Path, reference: &str) -> Result<()> {
     let before = file.requests.len();
     file.requests.retain(|r| r.component != reference);
     if file.requests.len() == before {
-        bail!("no request for {reference} to remove");
+        bail_with!(ErrorCode::NotFound, "no request for {reference} to remove");
     }
     write_target_requests(plan_dir, &file)
 }
@@ -72,7 +76,10 @@ pub(crate) fn find_request<'a>(
     file.requests
         .iter()
         .find(|r| &r.component == reference)
-        .ok_or_else(|| anyhow::anyhow!("no request for {reference}"))
+        .ok_or_else(|| anyhow::Error::new(CodedError {
+            code: ErrorCode::NotFound,
+            message: format!("no request for {reference}"),
+        }))
 }
 
 fn emit(file: &TargetRequestsFile, format: OutputFormat) -> Result<()> {
@@ -80,7 +87,10 @@ fn emit(file: &TargetRequestsFile, format: OutputFormat) -> Result<()> {
         OutputFormat::Yaml => serde_yaml::to_string(file)?,
         OutputFormat::Json => serde_json::to_string_pretty(file)? + "\n",
         OutputFormat::Markdown => {
-            bail!("`state target-requests` does not support --format markdown; use yaml or json")
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`state target-requests` does not support --format markdown; use yaml or json"
+            )
         }
     };
     print!("{serialised}");

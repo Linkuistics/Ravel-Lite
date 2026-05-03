@@ -23,12 +23,14 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use indexmap::IndexMap;
 use path_clean::PathClean;
 use serde::{Deserialize, Serialize};
 
-use crate::cli::OutputFormat;
+use crate::bail_with;
+use crate::cli::error_context::ResultExt;
+use crate::cli::{ErrorCode, OutputFormat};
 
 pub const REGISTRY_FILE: &str = "repos.yaml";
 
@@ -83,11 +85,14 @@ pub fn load_or_empty(context_root: &Path) -> Result<ReposRegistry> {
         return Ok(ReposRegistry::default());
     }
     let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+        .with_context(|| format!("Failed to read {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
     let raw: RawReposRegistry = serde_yaml::from_str(&content)
-        .with_context(|| format!("Failed to parse {}", path.display()))?;
+        .with_context(|| format!("Failed to parse {}", path.display()))
+        .with_code(ErrorCode::InvalidInput)?;
     if raw.schema_version != SCHEMA_VERSION {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "{} has schema_version {} but this ravel-lite expects {}; aborting to avoid data loss",
             path.display(),
             raw.schema_version,
@@ -118,9 +123,11 @@ pub fn save_atomic(context_root: &Path, registry: &ReposRegistry) -> Result<()> 
     let yaml = serialise_registry(registry)?;
     let tmp = context_root.join(format!(".{REGISTRY_FILE}.tmp"));
     std::fs::write(&tmp, yaml.as_bytes())
-        .with_context(|| format!("Failed to write temp file {}", tmp.display()))?;
+        .with_context(|| format!("Failed to write temp file {}", tmp.display()))
+        .with_code(ErrorCode::IoError)?;
     std::fs::rename(&tmp, &path)
-        .with_context(|| format!("Failed to rename {} to {}", tmp.display(), path.display()))?;
+        .with_context(|| format!("Failed to rename {} to {}", tmp.display(), path.display()))
+        .with_code(ErrorCode::IoError)?;
     Ok(())
 }
 
@@ -138,7 +145,8 @@ pub fn try_add(
     local_path: Option<&Path>,
 ) -> Result<()> {
     if registry.repos.contains_key(slug) {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "repo slug '{}' is already registered; pick a different name",
             slug
         );
@@ -173,7 +181,8 @@ pub fn run_list(context_root: &Path, format: OutputFormat) -> Result<()> {
         OutputFormat::Json => serde_json::to_string_pretty(&raw)
             .context("Failed to serialise repos registry to JSON")?
             + "\n",
-        OutputFormat::Markdown => bail!(
+        OutputFormat::Markdown => bail_with!(
+            ErrorCode::InvalidInput,
             "format `markdown` is not supported on `repo list`; supported: yaml, json"
         ),
     };
@@ -214,7 +223,8 @@ pub fn run_add(
 pub fn run_remove(context_root: &Path, slug: &str) -> Result<()> {
     let mut registry = load_or_empty(context_root)?;
     if registry.repos.shift_remove(slug).is_none() {
-        bail!(
+        bail_with!(
+            ErrorCode::NotFound,
             "no repo named '{}' in registry at {}",
             slug,
             context_root.join(REGISTRY_FILE).display()

@@ -23,6 +23,9 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::Result;
+
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use serde::{Deserialize, Serialize};
 
 use crate::cli::OutputFormat;
@@ -137,7 +140,10 @@ fn emit(report: &RepairReport, format: OutputFormat) -> Result<()> {
         OutputFormat::Yaml => serde_yaml::to_string(report)?,
         OutputFormat::Json => serde_json::to_string_pretty(report)? + "\n",
         OutputFormat::Markdown => {
-            anyhow::bail!("`backlog repair-stale-statuses` does not support --format markdown; use yaml or json")
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`backlog repair-stale-statuses` does not support --format markdown; use yaml or json"
+            )
         }
     };
     print!("{serialised}");

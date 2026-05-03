@@ -14,14 +14,21 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 use knowledge_graph::{Item, ItemStatus, Justification, KindMarker};
 
+use crate::bail_with;
+use crate::cli::{CodedError, ErrorCode, OutputFormat};
 use crate::plan_kg::MemoryStatus;
 use crate::state::backlog::schema::allocate_id;
 
-use crate::cli::OutputFormat;
+fn not_found_in_memory(id: &str) -> anyhow::Error {
+    anyhow::Error::new(CodedError {
+        code: ErrorCode::NotFound,
+        message: format!("no memory entry with id {id:?}"),
+    })
+}
 
 use super::schema::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
 use super::yaml_io::{read_memory, write_memory};
@@ -46,7 +53,7 @@ pub(crate) fn find_entry<'a>(memory: &'a MemoryFile, id: &str) -> Result<&'a Mem
         .items
         .iter()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no memory entry with id {id:?}"))
+        .ok_or_else(|| not_found_in_memory(id))
 }
 
 fn emit(memory: &MemoryFile, format: OutputFormat) -> Result<()> {
@@ -54,7 +61,10 @@ fn emit(memory: &MemoryFile, format: OutputFormat) -> Result<()> {
         OutputFormat::Yaml => serde_yaml::to_string(memory)?,
         OutputFormat::Json => serde_json::to_string_pretty(memory)? + "\n",
         OutputFormat::Markdown => {
-            bail!("`state memory` does not support --format markdown; use yaml or json")
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`state memory` does not support --format markdown; use yaml or json"
+            )
         }
     };
     print!("{serialised}");
@@ -117,9 +127,12 @@ pub fn parse_code_anchor(input: &str) -> Result<Justification> {
         }
         let (key, value) = part
             .split_once('=')
-            .ok_or_else(|| anyhow::anyhow!(
-                "invalid --code-anchor segment {part:?}: expected `key=value` (keys: component, path, lines, sha)"
-            ))?;
+            .ok_or_else(|| anyhow::Error::new(CodedError {
+                code: ErrorCode::InvalidInput,
+                message: format!(
+                    "invalid --code-anchor segment {part:?}: expected `key=value` (keys: component, path, lines, sha)"
+                ),
+            }))?;
         let key = key.trim();
         let value = value.trim();
         match key {
@@ -127,16 +140,24 @@ pub fn parse_code_anchor(input: &str) -> Result<Justification> {
             "path" => assign_anchor_field(&mut path, key, value)?,
             "sha" => assign_anchor_field(&mut sha, key, value)?,
             "lines" => assign_anchor_field(&mut lines, key, value)?,
-            other => bail!(
+            other => bail_with!(
+                ErrorCode::InvalidInput,
                 "unknown --code-anchor key {other:?}; expected one of `component`, `path`, `lines`, `sha`"
             ),
         }
     }
-    let component = component
-        .ok_or_else(|| anyhow::anyhow!("--code-anchor missing required `component=` field"))?;
-    let path = path.ok_or_else(|| anyhow::anyhow!("--code-anchor missing required `path=` field"))?;
-    let sha_at_assertion =
-        sha.ok_or_else(|| anyhow::anyhow!("--code-anchor missing required `sha=` field"))?;
+    let component = component.ok_or_else(|| anyhow::Error::new(CodedError {
+        code: ErrorCode::InvalidInput,
+        message: "--code-anchor missing required `component=` field".into(),
+    }))?;
+    let path = path.ok_or_else(|| anyhow::Error::new(CodedError {
+        code: ErrorCode::InvalidInput,
+        message: "--code-anchor missing required `path=` field".into(),
+    }))?;
+    let sha_at_assertion = sha.ok_or_else(|| anyhow::Error::new(CodedError {
+        code: ErrorCode::InvalidInput,
+        message: "--code-anchor missing required `sha=` field".into(),
+    }))?;
     Ok(Justification::CodeAnchor {
         component,
         path,
@@ -147,10 +168,16 @@ pub fn parse_code_anchor(input: &str) -> Result<Justification> {
 
 fn assign_anchor_field(slot: &mut Option<String>, key: &str, value: &str) -> Result<()> {
     if value.is_empty() {
-        bail!("--code-anchor `{key}=` has an empty value");
+        bail_with!(
+            ErrorCode::InvalidInput,
+            "--code-anchor `{key}=` has an empty value"
+        );
     }
     if slot.is_some() {
-        bail!("--code-anchor key `{key}` appears more than once in the same flag");
+        bail_with!(
+            ErrorCode::InvalidInput,
+            "--code-anchor key `{key}` appears more than once in the same flag"
+        );
     }
     *slot = Some(value.to_string());
     Ok(())
@@ -159,7 +186,8 @@ fn assign_anchor_field(slot: &mut Option<String>, key: &str, value: &str) -> Res
 pub fn run_init(plan_dir: &Path, seed: &MemoryFile) -> Result<()> {
     let existing = read_memory(plan_dir)?;
     if !existing.items.is_empty() {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "refusing to init: memory.yaml at {} is non-empty ({} entries). Use `add` for incremental inserts.",
             plan_dir.display(),
             existing.items.len()
@@ -174,7 +202,7 @@ pub fn run_set_body(plan_dir: &Path, id: &str, body: &str) -> Result<()> {
         .items
         .iter_mut()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no memory entry with id {id:?}"))?;
+        .ok_or_else(|| not_found_in_memory(id))?;
     let new_text = ensure_trailing_newline(body);
     let rationale_slot = entry
         .item
@@ -198,23 +226,26 @@ pub fn run_set_title(plan_dir: &Path, id: &str, new_title: &str) -> Result<()> {
         .items
         .iter_mut()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no memory entry with id {id:?}"))?;
+        .ok_or_else(|| not_found_in_memory(id))?;
     entry.item.claim = new_title.to_string();
     write_memory(plan_dir, &memory)
 }
 
 pub fn run_set_status(plan_dir: &Path, id: &str, status_str: &str) -> Result<()> {
     let new_status = MemoryStatus::parse(status_str).ok_or_else(|| {
-        anyhow::anyhow!(
-            "unknown memory status {status_str:?}; expected one of `active`, `defeated`, `superseded`"
-        )
+        anyhow::Error::new(CodedError {
+            code: ErrorCode::InvalidInput,
+            message: format!(
+                "unknown memory status {status_str:?}; expected one of `active`, `defeated`, `superseded`"
+            ),
+        })
     })?;
     let mut memory = read_memory(plan_dir)?;
     let entry = memory
         .items
         .iter_mut()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no memory entry with id {id:?}"))?;
+        .ok_or_else(|| not_found_in_memory(id))?;
     let from = entry.item.status;
     if from == new_status {
         return Ok(());
@@ -223,7 +254,8 @@ pub fn run_set_status(plan_dir: &Path, id: &str, status_str: &str) -> Result<()>
         .iter()
         .any(|(f, t)| *f == from && *t == new_status);
     if !legal {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "illegal status transition for memory entry {id:?}: `{}` → `{}` is not in the transition table",
             from.as_str(),
             new_status.as_str()
@@ -238,7 +270,7 @@ pub fn run_delete(plan_dir: &Path, id: &str) -> Result<()> {
     let before = memory.items.len();
     memory.items.retain(|e| e.item.id != id);
     if memory.items.len() == before {
-        bail!("no memory entry with id {id:?}");
+        return Err(not_found_in_memory(id));
     }
     write_memory(plan_dir, &memory)
 }

@@ -10,13 +10,21 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 use knowledge_graph::{Item, ItemStatus, Justification, KindMarker};
 
-use crate::cli::OutputFormat;
+use crate::bail_with;
+use crate::cli::{CodedError, ErrorCode, OutputFormat};
 use crate::plan_kg::FindingStatus;
 use crate::state::backlog::schema::allocate_id;
+
+fn not_found_finding(id: &str) -> anyhow::Error {
+    anyhow::Error::new(CodedError {
+        code: ErrorCode::NotFound,
+        message: format!("no finding with id {id:?}"),
+    })
+}
 
 use super::schema::{FindingEntry, FindingsFile, FINDINGS_SCHEMA_VERSION};
 use super::yaml_io::{read_findings, write_findings};
@@ -41,7 +49,7 @@ pub(crate) fn find_entry<'a>(findings: &'a FindingsFile, id: &str) -> Result<&'a
         .items
         .iter()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no finding with id {id:?}"))
+        .ok_or_else(|| not_found_finding(id))
 }
 
 fn emit(findings: &FindingsFile, format: OutputFormat) -> Result<()> {
@@ -49,7 +57,10 @@ fn emit(findings: &FindingsFile, format: OutputFormat) -> Result<()> {
         OutputFormat::Yaml => serde_yaml::to_string(findings)?,
         OutputFormat::Json => serde_json::to_string_pretty(findings)? + "\n",
         OutputFormat::Markdown => {
-            bail!("`findings` does not support --format markdown; use yaml or json")
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`findings` does not support --format markdown; use yaml or json"
+            )
         }
     };
     print!("{serialised}");
@@ -93,16 +104,19 @@ pub fn run_add(context_root: &Path, req: &AddRequest) -> Result<()> {
 
 pub fn run_set_status(context_root: &Path, id: &str, status_str: &str) -> Result<()> {
     let new_status = FindingStatus::parse(status_str).ok_or_else(|| {
-        anyhow::anyhow!(
-            "unknown finding status {status_str:?}; expected one of `new`, `promoted`, `wontfix`, `superseded`"
-        )
+        anyhow::Error::new(CodedError {
+            code: ErrorCode::InvalidInput,
+            message: format!(
+                "unknown finding status {status_str:?}; expected one of `new`, `promoted`, `wontfix`, `superseded`"
+            ),
+        })
     })?;
     let mut findings = read_findings(context_root)?;
     let entry = findings
         .items
         .iter_mut()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no finding with id {id:?}"))?;
+        .ok_or_else(|| not_found_finding(id))?;
     let from = entry.item.status;
     if from == new_status {
         return Ok(());
@@ -111,7 +125,8 @@ pub fn run_set_status(context_root: &Path, id: &str, status_str: &str) -> Result
         .iter()
         .any(|(f, t)| *f == from && *t == new_status);
     if !legal {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "illegal status transition for finding {id:?}: `{}` → `{}` is not in the transition table",
             from.as_str(),
             new_status.as_str()

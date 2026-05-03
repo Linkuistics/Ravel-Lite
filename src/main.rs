@@ -997,7 +997,7 @@ enum RepoCommands {
     /// Default `--format yaml` matches the on-disk wire shape; `json`
     /// emits the same structure with a top-level `schema_version` for
     /// agent consumers.
-    #[command(after_help = REPO_LIST_AFTER_HELP)]
+    #[command(visible_alias = "ls", after_help = REPO_LIST_AFTER_HELP)]
     List {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -1033,7 +1033,7 @@ enum RepoCommands {
         local_path: Option<PathBuf>,
     },
     /// Remove the entry for `<name>`. Errors if no such entry exists.
-    #[command(after_help = REPO_REMOVE_AFTER_HELP)]
+    #[command(visible_aliases = ["rm", "delete"], after_help = REPO_REMOVE_AFTER_HELP)]
     Remove {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -1049,7 +1049,7 @@ enum FixedMemoryCommands {
     /// `<config-dir>/fixed-memory/` overlay. Each entry surfaces `slug`,
     /// `description` (the file's first H1, if any), and `sources`
     /// (`embedded`, `user`, or both).
-    #[command(after_help = FIXED_MEMORY_LIST_AFTER_HELP)]
+    #[command(visible_alias = "ls", after_help = FIXED_MEMORY_LIST_AFTER_HELP)]
     List {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -1063,7 +1063,7 @@ enum FixedMemoryCommands {
     /// Emit the body of one fixed-memory entry. With both layers present,
     /// the embedded body is printed first, then a delimiter, then the
     /// user body — signalling that the user content takes precedence.
-    #[command(after_help = FIXED_MEMORY_SHOW_AFTER_HELP)]
+    #[command(visible_aliases = ["get", "cat"], after_help = FIXED_MEMORY_SHOW_AFTER_HELP)]
     Show {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -1081,7 +1081,7 @@ enum AtlasCommands {
     /// graph) on stdout. Bit-identical to `ravel-lite repo list`;
     /// surfaced under `atlas` to match the graph-RAG mental model
     /// where the registry is the catalog graph's root set.
-    #[command(after_help = ATLAS_LIST_REPOS_AFTER_HELP)]
+    #[command(visible_alias = "ls-repos", after_help = ATLAS_LIST_REPOS_AFTER_HELP)]
     ListRepos {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -1115,7 +1115,7 @@ enum AtlasCommands {
     /// single repo and/or `--kind` to restrict to a single component
     /// kind. Non-fresh repos are skipped silently; inspect freshness
     /// with `atlas freshness` first if needed.
-    #[command(after_help = ATLAS_LIST_COMPONENTS_AFTER_HELP)]
+    #[command(visible_alias = "ls-components", after_help = ATLAS_LIST_COMPONENTS_AFTER_HELP)]
     ListComponents {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -1453,7 +1453,7 @@ enum PhaseSummaryCommands {
 #[derive(Subcommand)]
 enum BacklogCommands {
     /// Emit tasks matching the given filters.
-    #[command(after_help = BACKLOG_LIST_AFTER_HELP)]
+    #[command(visible_alias = "ls", after_help = BACKLOG_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -1476,7 +1476,7 @@ enum BacklogCommands {
         group_by: String,
     },
     /// Emit a single task by id.
-    #[command(after_help = BACKLOG_SHOW_AFTER_HELP)]
+    #[command(visible_aliases = ["get", "cat"], after_help = BACKLOG_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         id: String,
@@ -1484,7 +1484,7 @@ enum BacklogCommands {
         format: String,
     },
     /// Append a new task.
-    #[command(after_help = BACKLOG_ADD_AFTER_HELP)]
+    #[command(visible_alias = "create", after_help = BACKLOG_ADD_AFTER_HELP)]
     Add {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -1583,7 +1583,7 @@ enum BacklogCommands {
         target_id: String,
     },
     /// Delete a task. Refuses if the task is a dependency of another unless `--force`.
-    #[command(after_help = BACKLOG_DELETE_AFTER_HELP)]
+    #[command(visible_aliases = ["rm", "remove"], after_help = BACKLOG_DELETE_AFTER_HELP)]
     Delete {
         plan_dir: PathBuf,
         id: String,
@@ -1617,14 +1617,14 @@ enum BacklogCommands {
 #[derive(Subcommand)]
 enum MemoryCommands {
     /// Emit every memory entry.
-    #[command(after_help = MEMORY_LIST_AFTER_HELP)]
+    #[command(visible_alias = "ls", after_help = MEMORY_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
         format: String,
     },
     /// Emit a single memory entry by id.
-    #[command(after_help = MEMORY_SHOW_AFTER_HELP)]
+    #[command(visible_aliases = ["get", "cat"], after_help = MEMORY_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         id: String,
@@ -1633,7 +1633,7 @@ enum MemoryCommands {
     },
     /// Append a new memory entry. `--title` becomes the TMS claim;
     /// `--body` becomes a single rationale justification.
-    #[command(after_help = MEMORY_ADD_AFTER_HELP)]
+    #[command(visible_alias = "create", after_help = MEMORY_ADD_AFTER_HELP)]
     Add {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -1695,7 +1695,7 @@ enum MemoryCommands {
         status: String,
     },
     /// Delete an entry by id.
-    #[command(after_help = MEMORY_DELETE_AFTER_HELP)]
+    #[command(visible_aliases = ["rm", "remove"], after_help = MEMORY_DELETE_AFTER_HELP)]
     Delete {
         plan_dir: PathBuf,
         id: String,
@@ -1717,14 +1717,14 @@ enum MemoryCommands {
 #[derive(Subcommand)]
 enum IntentsCommands {
     /// Emit every intent.
-    #[command(after_help = INTENTS_LIST_AFTER_HELP)]
+    #[command(visible_alias = "ls", after_help = INTENTS_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
         format: String,
     },
     /// Emit a single intent by id.
-    #[command(after_help = INTENTS_SHOW_AFTER_HELP)]
+    #[command(visible_aliases = ["get", "cat"], after_help = INTENTS_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         id: String,
@@ -1733,7 +1733,7 @@ enum IntentsCommands {
     },
     /// Append a new intent. `--claim` becomes the TMS claim;
     /// `--body` becomes a single rationale justification.
-    #[command(after_help = INTENTS_ADD_AFTER_HELP)]
+    #[command(visible_alias = "create", after_help = INTENTS_ADD_AFTER_HELP)]
     Add {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -1765,14 +1765,14 @@ enum IntentsCommands {
 #[derive(Subcommand)]
 enum TargetsCommands {
     /// Emit every mounted target.
-    #[command(after_help = TARGETS_LIST_AFTER_HELP)]
+    #[command(visible_alias = "ls", after_help = TARGETS_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
         format: String,
     },
     /// Emit a single target by `<repo_slug>:<component_id>`.
-    #[command(after_help = TARGETS_SHOW_AFTER_HELP)]
+    #[command(visible_aliases = ["get", "cat"], after_help = TARGETS_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         /// `<repo_slug>:<component_id>` reference.
@@ -1809,7 +1809,7 @@ enum TargetsCommands {
     /// Drop a mounted-target record by `<repo_slug>:<component_id>`.
     /// Worktree teardown (`git worktree remove`) is the
     /// worktree-mounting task's job.
-    #[command(after_help = TARGETS_REMOVE_AFTER_HELP)]
+    #[command(visible_aliases = ["rm", "delete"], after_help = TARGETS_REMOVE_AFTER_HELP)]
     Remove {
         plan_dir: PathBuf,
         /// `<repo_slug>:<component_id>` reference.
@@ -1835,14 +1835,14 @@ enum TargetsCommands {
 #[derive(Subcommand)]
 enum TargetRequestsCommands {
     /// Emit every queued request.
-    #[command(after_help = TARGET_REQUESTS_LIST_AFTER_HELP)]
+    #[command(visible_alias = "ls", after_help = TARGET_REQUESTS_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
         format: String,
     },
     /// Emit a single request by `<repo_slug>:<component_id>`.
-    #[command(after_help = TARGET_REQUESTS_SHOW_AFTER_HELP)]
+    #[command(visible_aliases = ["get", "cat"], after_help = TARGET_REQUESTS_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         reference: String,
@@ -1862,7 +1862,7 @@ enum TargetRequestsCommands {
         reason: String,
     },
     /// Drop a queued request before the next drain.
-    #[command(after_help = TARGET_REQUESTS_REMOVE_AFTER_HELP)]
+    #[command(visible_aliases = ["rm", "delete"], after_help = TARGET_REQUESTS_REMOVE_AFTER_HELP)]
     Remove {
         plan_dir: PathBuf,
         reference: String,
@@ -1884,7 +1884,7 @@ enum TargetRequestsCommands {
 enum CommitsCommands {
     /// Emit the whole commits.yaml. Missing file renders as an empty
     /// list at the current schema version.
-    #[command(after_help = COMMITS_LIST_AFTER_HELP)]
+    #[command(visible_alias = "ls", after_help = COMMITS_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
@@ -1893,7 +1893,7 @@ enum CommitsCommands {
     /// Emit a single commit entry by 1-based position. Positional
     /// addressing is used because commit specs have no stable identity
     /// field — the message is free-form prose, not a key.
-    #[command(after_help = COMMITS_SHOW_AFTER_HELP)]
+    #[command(visible_aliases = ["get", "cat"], after_help = COMMITS_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         /// 1-based index into the `commits` list.
@@ -1906,7 +1906,7 @@ enum CommitsCommands {
 #[derive(Subcommand)]
 enum ThisCycleFocusCommands {
     /// Emit the current focus record, or error when no focus is set.
-    #[command(after_help = FOCUS_SHOW_AFTER_HELP)]
+    #[command(visible_aliases = ["get", "cat"], after_help = FOCUS_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
@@ -1937,7 +1937,7 @@ enum ThisCycleFocusCommands {
 #[derive(Subcommand)]
 enum FocusObjectionsCommands {
     /// Emit the queue of objections (empty queue is valid output).
-    #[command(after_help = OBJ_LIST_AFTER_HELP)]
+    #[command(visible_alias = "ls", after_help = OBJ_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
@@ -1981,7 +1981,7 @@ enum FocusObjectionsCommands {
 #[derive(Subcommand)]
 enum FindingsCommands {
     /// Emit every finding as YAML on stdout (an empty inbox is valid output).
-    #[command(after_help = FINDINGS_LIST_AFTER_HELP)]
+    #[command(visible_alias = "ls", after_help = FINDINGS_LIST_AFTER_HELP)]
     List {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -1991,7 +1991,7 @@ enum FindingsCommands {
         format: String,
     },
     /// Emit a single finding by id.
-    #[command(after_help = FINDINGS_SHOW_AFTER_HELP)]
+    #[command(visible_aliases = ["get", "cat"], after_help = FINDINGS_SHOW_AFTER_HELP)]
     Show {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -2003,7 +2003,7 @@ enum FindingsCommands {
     /// `--body` becomes a single rationale justification. `--component`
     /// records optional component attribution; `--raised-in` records
     /// the plan that surfaced the finding.
-    #[command(after_help = FINDINGS_ADD_AFTER_HELP)]
+    #[command(visible_alias = "create", after_help = FINDINGS_ADD_AFTER_HELP)]
     Add {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -2046,7 +2046,7 @@ enum PlanCommands {
     /// emits a unified `items:` list spanning intents + backlog +
     /// memory. With `--kind`, emits the matching kind's full file
     /// (same shape as `state <kind> list`).
-    #[command(after_help = PLAN_LIST_ITEMS_AFTER_HELP)]
+    #[command(visible_alias = "ls-items", after_help = PLAN_LIST_ITEMS_AFTER_HELP)]
     ListItems {
         plan_dir: PathBuf,
         /// One of `intent`, `backlog-item`, `memory-entry`, `finding`.
@@ -2060,7 +2060,7 @@ enum PlanCommands {
     /// intents, backlog, and memory; errors if the id is ambiguous
     /// across kinds (use the per-kind `state <kind> show` verb to
     /// disambiguate).
-    #[command(after_help = PLAN_SHOW_ITEM_AFTER_HELP)]
+    #[command(visible_alias = "get-item", after_help = PLAN_SHOW_ITEM_AFTER_HELP)]
     ShowItem {
         plan_dir: PathBuf,
         id: String,
@@ -2110,7 +2110,7 @@ enum PlanCommands {
 #[derive(Subcommand)]
 enum SessionLogCommands {
     /// List sessions from session-log.yaml (id + timestamp + phase + body).
-    #[command(after_help = SESSION_LOG_LIST_AFTER_HELP)]
+    #[command(visible_alias = "ls", after_help = SESSION_LOG_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
         /// Truncate output to the last N sessions (newest-kept).
@@ -2120,7 +2120,7 @@ enum SessionLogCommands {
         format: String,
     },
     /// Show a single session record by id.
-    #[command(after_help = SESSION_LOG_SHOW_AFTER_HELP)]
+    #[command(visible_aliases = ["get", "cat"], after_help = SESSION_LOG_SHOW_AFTER_HELP)]
     Show {
         plan_dir: PathBuf,
         id: String,
@@ -2129,7 +2129,7 @@ enum SessionLogCommands {
     },
     /// Append a session record to session-log.yaml. Idempotent on id:
     /// a record with the same id already present is a no-op.
-    #[command(after_help = SESSION_LOG_APPEND_AFTER_HELP)]
+    #[command(visible_alias = "add", after_help = SESSION_LOG_APPEND_AFTER_HELP)]
     Append {
         plan_dir: PathBuf,
         #[arg(long)]
@@ -2173,7 +2173,7 @@ enum RelatedComponentsCommands {
     /// Emit the file as YAML. With `--plan`, filter to edges that
     /// involve the component derived from the plan dir. `--kind` and
     /// `--lifecycle` compose with `--plan` (all filters AND-combine).
-    #[command(after_help = RC_LIST_AFTER_HELP)]
+    #[command(visible_alias = "ls", after_help = RC_LIST_AFTER_HELP)]
     List {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location.

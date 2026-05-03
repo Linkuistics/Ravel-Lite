@@ -18,8 +18,10 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use crate::discover::schema::{ProposalRecord, ProposalsFile, PROPOSALS_SCHEMA_VERSION};
 use crate::discover::{load_proposals, proposals_path, save_proposals_atomic};
 use component_ontology::{Edge, EdgeKind, EvidenceGrade, LifecycleScope};
@@ -36,7 +38,8 @@ pub struct AddProposalRequest<'a> {
 
 pub fn run_add_proposal(config_root: &Path, req: &AddProposalRequest<'_>) -> Result<()> {
     if req.participants.len() != 2 {
-        bail!(
+        bail_with!(
+            ErrorCode::InvalidInput,
             "--participant must be supplied exactly twice (got {}); \
              pass two `--participant <NAME>` flags",
             req.participants.len()
@@ -119,7 +122,8 @@ fn canonicalise_participants_for_kind(kind: EdgeKind, a: &str, b: &str) -> Vec<S
 
 fn require_component_known(registry: &ReposRegistry, slug: &str) -> Result<()> {
     if registry.get(slug).is_none() {
-        bail!(
+        bail_with!(
+            ErrorCode::NotFound,
             "component '{}' is not in the repo registry; \
              only registered components may be Stage 2 participants. \
              Known components: {}",

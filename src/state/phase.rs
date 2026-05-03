@@ -7,8 +7,11 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 
+use crate::bail_with;
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
 use crate::dream::seed_dream_word_count_if_missing;
 use crate::state::filenames::PHASE_FILENAME;
 use crate::types::Phase;
@@ -28,14 +31,16 @@ const VALID_PHASES: &[&str] = &[
 
 pub fn run_set_phase(plan_dir: &Path, phase: &str) -> Result<()> {
     if Phase::parse(phase).is_none() {
-        bail!(
+        bail_with!(
+            ErrorCode::InvalidInput,
             "Invalid phase '{phase}'. Accepted values: {}",
             VALID_PHASES.join(", ")
         );
     }
     let target = plan_dir.join(PHASE_FILENAME);
     if !target.exists() {
-        bail!(
+        bail_with!(
+            ErrorCode::NotFound,
             "{PHASE_FILENAME} not found at {}. set-phase refuses to create a new plan dir.",
             target.display()
         );
@@ -66,9 +71,11 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         .to_string_lossy();
     let tmp = parent.join(format!(".{file_name}.tmp"));
     std::fs::write(&tmp, bytes)
-        .with_context(|| format!("Failed to write temp file {}", tmp.display()))?;
+        .with_context(|| format!("Failed to write temp file {}", tmp.display()))
+        .with_code(ErrorCode::IoError)?;
     std::fs::rename(&tmp, path)
-        .with_context(|| format!("Failed to rename {} to {}", tmp.display(), path.display()))?;
+        .with_context(|| format!("Failed to rename {} to {}", tmp.display(), path.display()))
+        .with_code(ErrorCode::IoError)?;
     Ok(())
 }
 

@@ -14,8 +14,17 @@
 use std::fmt;
 use std::str::FromStr;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use crate::cli::{CodedError, ErrorCode};
+
+fn invalid_ref(message: String) -> anyhow::Error {
+    anyhow::Error::new(CodedError {
+        code: ErrorCode::InvalidInput,
+        message,
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ComponentRef {
@@ -43,24 +52,24 @@ impl FromStr for ComponentRef {
 
     fn from_str(s: &str) -> Result<Self> {
         let (repo, id) = s.split_once(':').ok_or_else(|| {
-            anyhow!(
+            invalid_ref(format!(
                 "ComponentRef '{s}' missing ':' separator; expected '<repo_slug>:<component_id>'"
-            )
+            ))
         })?;
         if repo.is_empty() {
-            return Err(anyhow!(
+            return Err(invalid_ref(format!(
                 "ComponentRef '{s}' has empty repo_slug; expected '<repo_slug>:<component_id>'"
-            ));
+            )));
         }
         if id.is_empty() {
-            return Err(anyhow!(
+            return Err(invalid_ref(format!(
                 "ComponentRef '{s}' has empty component_id; expected '<repo_slug>:<component_id>'"
-            ));
+            )));
         }
         if id.contains(':') {
-            return Err(anyhow!(
+            return Err(invalid_ref(format!(
                 "ComponentRef '{s}' contains more than one ':' separator"
-            ));
+            )));
         }
         Ok(ComponentRef {
             repo_slug: repo.to_string(),

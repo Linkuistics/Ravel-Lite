@@ -15,11 +15,12 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 use knowledge_graph::{Item, Justification, KindMarker, Store};
 
-use crate::cli::OutputFormat;
+use crate::bail_with;
+use crate::cli::{CodedError, ErrorCode, OutputFormat};
 use crate::plan_kg::{BacklogItemKind, BacklogStatus};
 
 use super::render::{render_markdown, GroupBy};
@@ -27,6 +28,16 @@ use super::schema::{
     allocate_id, BacklogEntry, BacklogFile, BACKLOG_SCHEMA_VERSION,
 };
 use super::yaml_io::{read_backlog, write_backlog};
+
+/// "no item with id X in backlog" — the recurring NotFound error in
+/// every per-id verb. Lifted to a helper because the inline form is
+/// four lines repeated nine times.
+fn not_found_in_backlog(id: &str) -> anyhow::Error {
+    anyhow::Error::new(CodedError {
+        code: ErrorCode::NotFound,
+        message: format!("no item with id {id:?} in backlog"),
+    })
+}
 
 #[derive(Debug, Default, Clone)]
 pub struct ListFilter {
@@ -116,7 +127,10 @@ fn emit(backlog: &BacklogFile, format: OutputFormat) -> Result<()> {
         OutputFormat::Yaml => serde_yaml::to_string(backlog)?,
         OutputFormat::Json => serde_json::to_string_pretty(backlog)? + "\n",
         OutputFormat::Markdown => {
-            bail!("markdown output is only supported on `backlog list`; got it from a different verb")
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "markdown output is only supported on `backlog list`; got it from a different verb"
+            )
         }
     };
     print!("{serialised}");
@@ -125,7 +139,10 @@ fn emit(backlog: &BacklogFile, format: OutputFormat) -> Result<()> {
 
 pub fn run_show(plan_dir: &Path, id: &str, format: OutputFormat) -> Result<()> {
     if format == OutputFormat::Markdown {
-        bail!("`backlog show` does not support --format markdown; use yaml or json");
+        bail_with!(
+            ErrorCode::InvalidInput,
+            "`backlog show` does not support --format markdown; use yaml or json"
+        );
     }
     let backlog = read_backlog(plan_dir)?;
     let entry = find_entry(&backlog, id)?;
@@ -141,7 +158,7 @@ pub(crate) fn find_entry<'a>(backlog: &'a BacklogFile, id: &str) -> Result<&'a B
         .items
         .iter()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no item with id {id:?} in backlog"))
+        .ok_or_else(|| not_found_in_backlog(id))
 }
 
 #[derive(Debug, Clone)]
@@ -161,7 +178,8 @@ pub fn run_add(plan_dir: &Path, req: &AddRequest) -> Result<()> {
         backlog.items.iter().map(|e| e.item.id.as_str()).collect();
     for dep in &req.dependencies {
         if !existing_ids.contains(dep.as_str()) {
-            bail!(
+            bail_with!(
+                ErrorCode::NotFound,
                 "dependency id {dep:?} does not exist in backlog; known ids: {:?}",
                 existing_ids
             );
@@ -196,7 +214,8 @@ pub fn run_add(plan_dir: &Path, req: &AddRequest) -> Result<()> {
 pub fn run_init(plan_dir: &Path, seed: &BacklogFile) -> Result<()> {
     let existing = read_backlog(plan_dir)?;
     if !existing.items.is_empty() {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "refusing to init: backlog.yaml at {} is non-empty ({} items). Use `add` for incremental inserts.",
             plan_dir.display(),
             existing.items.len()
@@ -227,11 +246,14 @@ pub fn run_set_status(
     reason: Option<&str>,
 ) -> Result<()> {
     if status == BacklogStatus::Blocked && reason.is_none() {
-        bail!("--reason <text> is required when setting status to `blocked`");
+        bail_with!(
+            ErrorCode::InvalidInput,
+            "--reason <text> is required when setting status to `blocked`"
+        );
     }
     let mut backlog = read_backlog(plan_dir)?;
     if !backlog.items.iter().any(|e| e.item.id == id) {
-        bail!("no item with id {id:?} in backlog");
+        return Err(not_found_in_backlog(id));
     }
 
     let mut store: Store<BacklogItemKind> = Store::new();
@@ -264,7 +286,7 @@ pub fn run_set_results(plan_dir: &Path, id: &str, body: &str) -> Result<()> {
         .items
         .iter_mut()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no item with id {id:?} in backlog"))?;
+        .ok_or_else(|| not_found_in_backlog(id))?;
     entry.results = Some(ensure_trailing_newline(body));
     write_backlog(plan_dir, &backlog)
 }
@@ -275,14 +297,17 @@ pub fn run_set_results(plan_dir: &Path, id: &str, body: &str) -> Result<()> {
 /// it would poison the item brief.
 pub fn run_set_description(plan_dir: &Path, id: &str, body: &str) -> Result<()> {
     if body.trim().is_empty() {
-        bail!("description body must not be empty or whitespace-only");
+        bail_with!(
+            ErrorCode::InvalidInput,
+            "description body must not be empty or whitespace-only"
+        );
     }
     let mut backlog = read_backlog(plan_dir)?;
     let entry = backlog
         .items
         .iter_mut()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no item with id {id:?} in backlog"))?;
+        .ok_or_else(|| not_found_in_backlog(id))?;
     let new_text = ensure_trailing_newline(body);
     let rationale_slot = entry
         .item
@@ -306,7 +331,7 @@ pub fn run_set_handoff(plan_dir: &Path, id: &str, body: &str) -> Result<()> {
         .items
         .iter_mut()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no item with id {id:?} in backlog"))?;
+        .ok_or_else(|| not_found_in_backlog(id))?;
     entry.handoff = Some(ensure_trailing_newline(body));
     write_backlog(plan_dir, &backlog)
 }
@@ -317,7 +342,7 @@ pub fn run_clear_handoff(plan_dir: &Path, id: &str) -> Result<()> {
         .items
         .iter_mut()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no item with id {id:?} in backlog"))?;
+        .ok_or_else(|| not_found_in_backlog(id))?;
     entry.handoff = None;
     write_backlog(plan_dir, &backlog)
 }
@@ -344,7 +369,7 @@ pub fn run_set_title(plan_dir: &Path, id: &str, new_title: &str) -> Result<()> {
         .items
         .iter_mut()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no item with id {id:?} in backlog"))?;
+        .ok_or_else(|| not_found_in_backlog(id))?;
     entry.item.claim = new_title.to_string();
     // id is intentionally not recomputed — its stability is the whole
     // point of persisting the slug at creation.
@@ -362,17 +387,21 @@ pub fn run_set_dependencies(plan_dir: &Path, id: &str, deps: &[String]) -> Resul
         .items
         .iter()
         .position(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no item with id {id:?} in backlog"))?;
+        .ok_or_else(|| not_found_in_backlog(id))?;
 
     if deps.iter().any(|d| d == id) {
-        bail!("item {id:?} cannot depend on itself");
+        bail_with!(
+            ErrorCode::InvalidInput,
+            "item {id:?} cannot depend on itself"
+        );
     }
 
     let existing_ids: HashSet<&str> =
         backlog.items.iter().map(|e| e.item.id.as_str()).collect();
     for dep in deps {
         if !existing_ids.contains(dep.as_str()) {
-            bail!(
+            bail_with!(
+                ErrorCode::NotFound,
                 "dependency id {dep:?} does not exist in backlog; known ids: {:?}",
                 existing_ids
             );
@@ -383,7 +412,8 @@ pub fn run_set_dependencies(plan_dir: &Path, id: &str, deps: &[String]) -> Resul
     // existing graph already has a path d → … → id.
     for dep in deps {
         if dependency_path_exists(&backlog, dep, id) {
-            bail!(
+            bail_with!(
+                ErrorCode::InvalidInput,
                 "refusing to set dependencies on {id:?}: would create a cycle through {dep:?}"
             );
         }
@@ -420,21 +450,27 @@ pub fn run_reorder(
     target_id: &str,
 ) -> Result<()> {
     if id == target_id {
-        bail!("cannot reorder an item relative to itself");
+        bail_with!(
+            ErrorCode::InvalidInput,
+            "cannot reorder an item relative to itself"
+        );
     }
     let mut backlog = read_backlog(plan_dir)?;
     let source_index = backlog
         .items
         .iter()
         .position(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no item with id {id:?} in backlog"))?;
+        .ok_or_else(|| not_found_in_backlog(id))?;
     let entry = backlog.items.remove(source_index);
 
     let target_index = backlog
         .items
         .iter()
         .position(|e| e.item.id == target_id)
-        .ok_or_else(|| anyhow::anyhow!("no target item with id {target_id:?} in backlog"))?;
+        .ok_or_else(|| anyhow::Error::new(CodedError {
+            code: ErrorCode::NotFound,
+            message: format!("no target item with id {target_id:?} in backlog"),
+        }))?;
 
     let insert_at = match position {
         ReorderPosition::Before => target_index,
@@ -455,7 +491,8 @@ pub fn run_delete(plan_dir: &Path, id: &str, force: bool) -> Result<()> {
         .collect();
 
     if !dependents.is_empty() && !force {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "refusing to delete {id}: item is a dependency of {:?}. Rerun with --force to cascade-remove the dep references.",
             dependents
         );
@@ -470,7 +507,7 @@ pub fn run_delete(plan_dir: &Path, id: &str, force: bool) -> Result<()> {
     let before = backlog.items.len();
     backlog.items.retain(|e| e.item.id != id);
     if backlog.items.len() == before {
-        bail!("no item with id {id:?} in backlog");
+        return Err(not_found_in_backlog(id));
     }
     write_backlog(plan_dir, &backlog)
 }

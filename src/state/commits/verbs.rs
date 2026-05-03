@@ -14,9 +14,10 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
-use crate::cli::OutputFormat;
+use crate::bail_with;
+use crate::cli::{CodedError, ErrorCode, OutputFormat};
 
 use super::schema::{CommitsSpec, COMMITS_SCHEMA_VERSION};
 use super::yaml_io::read_commits;
@@ -28,15 +29,21 @@ pub fn run_list(plan_dir: &Path, format: OutputFormat) -> Result<()> {
 
 pub fn run_show(plan_dir: &Path, index: usize, format: OutputFormat) -> Result<()> {
     if index == 0 {
-        bail!("commit index must be 1-based; got 0");
+        bail_with!(
+            ErrorCode::InvalidInput,
+            "commit index must be 1-based; got 0"
+        );
     }
     let spec = read_commits(plan_dir)?;
     let entry = spec.commits.get(index - 1).ok_or_else(|| {
-        anyhow::anyhow!(
-            "no commit at index {index}; file holds {} entr{}",
-            spec.commits.len(),
-            if spec.commits.len() == 1 { "y" } else { "ies" }
-        )
+        anyhow::Error::new(CodedError {
+            code: ErrorCode::NotFound,
+            message: format!(
+                "no commit at index {index}; file holds {} entr{}",
+                spec.commits.len(),
+                if spec.commits.len() == 1 { "y" } else { "ies" }
+            ),
+        })
     })?;
     let wrapper = CommitsSpec {
         schema_version: COMMITS_SCHEMA_VERSION,
@@ -50,7 +57,10 @@ fn emit(spec: &CommitsSpec, format: OutputFormat) -> Result<()> {
         OutputFormat::Yaml => serde_yaml::to_string(spec)?,
         OutputFormat::Json => serde_json::to_string_pretty(spec)? + "\n",
         OutputFormat::Markdown => {
-            bail!("`state commits` does not support --format markdown; use yaml or json")
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`state commits` does not support --format markdown; use yaml or json"
+            )
         }
     };
     print!("{serialised}");

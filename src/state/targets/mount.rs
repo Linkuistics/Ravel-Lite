@@ -23,7 +23,14 @@
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result};
+
+use crate::bail_with;
+use crate::cli::{CodedError, ErrorCode};
+
+fn coded(code: ErrorCode, message: String) -> anyhow::Error {
+    anyhow::Error::new(CodedError { code, message })
+}
 
 use atlas_index::{load_or_default_components, ComponentsFile};
 
@@ -45,17 +52,23 @@ pub fn mount_target(
 ) -> Result<Target> {
     let registry = load_for_lookup(context_root)?;
     let repo_entry = registry.get(repo_slug).ok_or_else(|| {
-        anyhow!(
-            "repo slug {repo_slug:?} is not registered in {}/repos.yaml. \
-             Add it with `ravel-lite repo add {repo_slug} --url <url> --local-path <path>`.",
-            context_root.display()
+        coded(
+            ErrorCode::NotFound,
+            format!(
+                "repo slug {repo_slug:?} is not registered in {}/repos.yaml. \
+                 Add it with `ravel-lite repo add {repo_slug} --url <url> --local-path <path>`.",
+                context_root.display()
+            ),
         )
     })?;
     let local_path = repo_entry.local_path.as_deref().ok_or_else(|| {
-        anyhow!(
-            "repo slug {repo_slug:?} has no local_path in {}/repos.yaml. \
-             Re-add it with `--local-path <path>`; clone-on-demand is not yet implemented.",
-            context_root.display()
+        coded(
+            ErrorCode::InvalidInput,
+            format!(
+                "repo slug {repo_slug:?} has no local_path in {}/repos.yaml. \
+                 Re-add it with `--local-path <path>`; clone-on-demand is not yet implemented.",
+                context_root.display()
+            ),
         )
     })?;
 
@@ -96,9 +109,12 @@ fn plan_name_from_dir(plan_dir: &Path) -> Result<String> {
         .and_then(|n| n.to_str())
         .map(|s| s.to_string())
         .ok_or_else(|| {
-            anyhow!(
-                "plan directory {} has no usable file name; cannot derive plan-namespaced branch",
-                plan_dir.display()
+            coded(
+                ErrorCode::InvalidInput,
+                format!(
+                    "plan directory {} has no usable file name; cannot derive plan-namespaced branch",
+                    plan_dir.display()
+                ),
             )
         })
 }
@@ -138,9 +154,12 @@ fn run_git_worktree_add(
     starting_point: &str,
 ) -> Result<()> {
     let working_root_str = working_root.to_str().ok_or_else(|| {
-        anyhow!(
-            "worktree path {} contains non-UTF-8 characters",
-            working_root.display()
+        coded(
+            ErrorCode::InvalidInput,
+            format!(
+                "worktree path {} contains non-UTF-8 characters",
+                working_root.display()
+            ),
         )
     })?;
     let output = run_git(
@@ -156,7 +175,8 @@ fn run_git_worktree_add(
     )?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "git worktree add failed in {}: {}",
             repo.display(),
             stderr.trim()
@@ -173,7 +193,8 @@ fn run_git_worktree_add(
 fn verify_worktree_branch(working_root: &Path, expected_branch: &str) -> Result<()> {
     let output = run_git(working_root, &["symbolic-ref", "--short", "HEAD"])?;
     if !output.status.success() {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "{} exists but is not a git worktree (or HEAD is detached). \
              Remove it manually and retry the mount.",
             working_root.display()
@@ -181,7 +202,8 @@ fn verify_worktree_branch(working_root: &Path, expected_branch: &str) -> Result<
     }
     let actual = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if actual != expected_branch {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "{} is on branch {actual:?} but the mount expected {expected_branch:?}. \
              Remove or rename it manually before retrying.",
             working_root.display()
@@ -197,7 +219,8 @@ fn resolve_path_segments(
 ) -> Result<Vec<String>> {
     let components_path = local_path.join(ATLAS_COMPONENTS_REL);
     if !components_path.exists() {
-        bail!(
+        bail_with!(
+            ErrorCode::NotFound,
             "{} not found. Run `ravel-lite atlas index --repo {repo_slug}` and retry.",
             components_path.display()
         );
@@ -205,10 +228,13 @@ fn resolve_path_segments(
     let file: ComponentsFile = load_or_default_components(&components_path)
         .with_context(|| format!("failed to load {}", components_path.display()))?;
     let entry = file.components.iter().find(|c| c.id == component_id).ok_or_else(|| {
-        anyhow!(
-            "component {repo_slug}:{component_id} not found in {}. \
-             Run `ravel-lite atlas index --repo {repo_slug}` and retry.",
-            components_path.display()
+        coded(
+            ErrorCode::NotFound,
+            format!(
+                "component {repo_slug}:{component_id} not found in {}. \
+                 Run `ravel-lite atlas index --repo {repo_slug}` and retry.",
+                components_path.display()
+            ),
         )
     })?;
     Ok(entry

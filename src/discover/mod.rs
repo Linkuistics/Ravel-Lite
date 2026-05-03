@@ -12,7 +12,11 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
+
+use crate::bail_with;
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
 
 pub mod apply;
 pub mod cache;
@@ -82,7 +86,10 @@ pub struct RunDiscoverOptions {
 pub async fn run_discover(config_root: &Path, options: RunDiscoverOptions) -> Result<()> {
     let registry = repos::load_for_lookup(config_root)?;
     if registry.repos.is_empty() {
-        bail!("repo registry is empty; nothing to discover");
+        bail_with!(
+            ErrorCode::NotFound,
+            "repo registry is empty; nothing to discover"
+        );
     }
 
     let all_targets = targets_from(&registry, config_root);
@@ -230,7 +237,10 @@ pub async fn run_discover(config_root: &Path, options: RunDiscoverOptions) -> Re
     // so the loaded proposals' failure list (whatever it contains) is
     // from history and shouldn't block this run's exit status.
     if !skip_stage2_reuse_existing && !proposals.failures.is_empty() {
-        bail!("discover completed with Stage 1 failures — see the failures section of the proposals file");
+        bail_with!(
+            ErrorCode::Conflict,
+            "discover completed with Stage 1 failures — see the failures section of the proposals file"
+        );
     }
     Ok(())
 }
@@ -251,11 +261,14 @@ pub fn save_proposals_atomic(config_root: &Path, file: &ProposalsFile) -> Result
 pub fn load_proposals(config_root: &Path) -> Result<ProposalsFile> {
     let path = proposals_path(config_root);
     let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+        .with_context(|| format!("failed to read {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
     let file: ProposalsFile = serde_yaml::from_str(&content)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
+        .with_context(|| format!("failed to parse {}", path.display()))
+        .with_code(ErrorCode::InvalidInput)?;
     if file.schema_version != schema::PROPOSALS_SCHEMA_VERSION {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "{} has schema_version {} but this ravel-lite expects {}",
             path.display(),
             file.schema_version,

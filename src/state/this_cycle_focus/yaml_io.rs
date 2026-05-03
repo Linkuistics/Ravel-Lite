@@ -9,9 +9,12 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 
 use super::schema::{ThisCycleFocus, THIS_CYCLE_FOCUS_SCHEMA_VERSION};
+use crate::bail_with;
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
 use crate::state::filenames::THIS_CYCLE_FOCUS_FILENAME;
 
 pub fn this_cycle_focus_path(plan_dir: &Path) -> PathBuf {
@@ -36,15 +39,19 @@ pub fn read_this_cycle_focus(plan_dir: &Path) -> Result<Option<ThisCycleFocus>> 
         return Ok(None);
     }
     let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
-    let parsed: ThisCycleFocus = serde_yaml::from_str(&text).with_context(|| {
-        format!(
-            "Failed to parse {} as {THIS_CYCLE_FOCUS_FILENAME} schema",
-            path.display()
-        )
-    })?;
+        .with_context(|| format!("Failed to read {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
+    let parsed: ThisCycleFocus = serde_yaml::from_str(&text)
+        .with_context(|| {
+            format!(
+                "Failed to parse {} as {THIS_CYCLE_FOCUS_FILENAME} schema",
+                path.display()
+            )
+        })
+        .with_code(ErrorCode::InvalidInput)?;
     if parsed.schema_version != THIS_CYCLE_FOCUS_SCHEMA_VERSION {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "{} declares schema_version {}, expected {}.",
             path.display(),
             parsed.schema_version,
@@ -83,9 +90,11 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         .to_string_lossy();
     let tmp = parent.join(format!(".{file_name}.tmp"));
     std::fs::write(&tmp, bytes)
-        .with_context(|| format!("Failed to write temp file {}", tmp.display()))?;
+        .with_context(|| format!("Failed to write temp file {}", tmp.display()))
+        .with_code(ErrorCode::IoError)?;
     std::fs::rename(&tmp, path)
-        .with_context(|| format!("Failed to rename {} to {}", tmp.display(), path.display()))?;
+        .with_context(|| format!("Failed to rename {} to {}", tmp.display(), path.display()))
+        .with_code(ErrorCode::IoError)?;
     Ok(())
 }
 

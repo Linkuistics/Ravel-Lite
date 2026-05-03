@@ -13,7 +13,17 @@
 //! provenance is `authored_in: migrate`, and `attribution` is left
 //! `None` — legacy entries pre-date the component-attribution model.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::Result;
+
+use crate::bail_with;
+use crate::cli::{CodedError, ErrorCode};
+
+fn invalid(message: String) -> anyhow::Error {
+    anyhow::Error::new(CodedError {
+        code: ErrorCode::InvalidInput,
+        message,
+    })
+}
 
 use knowledge_graph::{Item, Justification, KindMarker};
 
@@ -31,7 +41,7 @@ pub fn parse_memory_markdown(input: &str) -> Result<MemoryFile> {
 
     for (block_index, block) in split_into_entry_blocks(input).into_iter().enumerate() {
         let entry = parse_single_entry_block(&block, &existing_ids).map_err(|err| {
-            anyhow!("failed to parse memory entry #{}: {err:#}", block_index + 1)
+            invalid(format!("failed to parse memory entry #{}: {err:#}", block_index + 1))
         })?;
         existing_ids.push(entry.item.id.clone());
         entries.push(entry);
@@ -70,14 +80,14 @@ fn split_into_entry_blocks(input: &str) -> Vec<String> {
 
 fn parse_single_entry_block(block: &str, existing_ids: &[String]) -> Result<MemoryEntry> {
     let mut lines = block.lines();
-    let title_line = lines.next().ok_or_else(|| anyhow!("empty memory entry block"))?;
+    let title_line = lines.next().ok_or_else(|| invalid("empty memory entry block".into()))?;
     let title = title_line
         .strip_prefix("## ")
-        .ok_or_else(|| anyhow!("entry block does not start with `## <title>`: {title_line:?}"))?
+        .ok_or_else(|| invalid(format!("entry block does not start with `## <title>`: {title_line:?}")))?
         .trim()
         .to_string();
     if title.is_empty() {
-        bail!("memory entry title is empty");
+        bail_with!(ErrorCode::InvalidInput, "memory entry title is empty");
     }
 
     let body_lines: Vec<&str> = lines.collect();
@@ -92,7 +102,7 @@ fn parse_single_entry_block(block: &str, existing_ids: &[String]) -> Result<Memo
         end -= 1;
     }
     if start == end {
-        bail!("memory entry {title:?} has no body");
+        bail_with!(ErrorCode::InvalidInput, "memory entry {title:?} has no body");
     }
     let body = body_lines[start..end].join("\n") + "\n";
 

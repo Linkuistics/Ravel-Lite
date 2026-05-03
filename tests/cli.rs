@@ -331,6 +331,211 @@ fn leaf_verb_help_carries_invocation_examples() {
     }
 }
 
+/// Inner-verb error sites must surface typed exit codes — e.g. asking for a
+/// memory entry by an unknown id is `NotFound` (exit 3), not the catch-all
+/// `Internal` (exit 1). Asserts the `bail_with!`/`CodedError` plumbing
+/// reaches the renderer for the per-kind `state <kind>` modules tagged in
+/// the inner-verb sweep.
+#[test]
+fn state_memory_show_unknown_id_exits_with_not_found_code() {
+    let tmp = TempDir::new().unwrap();
+    let plan = tmp.path();
+    fs::write(plan.join("phase.md"), "work").unwrap();
+    fs::write(plan.join("memory.yaml"), "schema_version: 1\nitems: []\n").unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["state", "memory", "show"])
+        .arg(plan)
+        .arg("no-such-id")
+        .output()
+        .expect("binary must spawn");
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "unknown memory id must exit 3 (NotFound); got {:?}, stderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
+/// Backlog: setting `--status blocked` without `--reason` is `InvalidInput`
+/// (exit 2). Asserts the inner-verb tagging in `state/backlog/verbs.rs`.
+#[test]
+fn state_backlog_set_status_blocked_without_reason_exits_with_usage_error() {
+    let tmp = TempDir::new().unwrap();
+    let plan = tmp.path();
+    fs::write(plan.join("phase.md"), "work").unwrap();
+    // Seed one item so the verb gets past the read.
+    let body = "schema_version: 1\nitems:\n- schema_version: 1\n  id: alpha\n  kind: backlog-item\n  claim: Alpha\n  justifications:\n  - kind: rationale\n    text: |\n      x\n  status: active\n  supersedes: []\n  authored_at: '2026-01-01T00:00:00Z'\n  authored_in: test\n  category: infra\n  dependencies: []\n";
+    fs::write(plan.join("backlog.yaml"), body).unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["state", "backlog", "set-status"])
+        .arg(plan)
+        .args(["alpha", "blocked"])
+        .output()
+        .expect("binary must spawn");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "blocked-without-reason must exit 2 (UsageError); got {:?}, stderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
+/// Schema-version mismatch on a YAML file is `Conflict` (exit 5 per
+/// `ExitCategory::Conflict`). Asserts the typed code on the schema_version
+/// guard in every `state <kind>` yaml_io module.
+#[test]
+fn state_backlog_schema_version_mismatch_exits_with_conflict_code() {
+    let tmp = TempDir::new().unwrap();
+    let plan = tmp.path();
+    fs::write(plan.join("phase.md"), "work").unwrap();
+    fs::write(plan.join("backlog.yaml"), "schema_version: 99\nitems: []\n").unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["state", "backlog", "list"])
+        .arg(plan)
+        .output()
+        .expect("binary must spawn");
+    assert_eq!(
+        out.status.code(),
+        Some(5),
+        "schema_version mismatch must exit 5 (Conflict); got {:?}, stderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
+/// Repo registry: `repo remove <unknown>` is `NotFound` (exit 3). Asserts
+/// the typed tagging in `repos.rs`.
+#[test]
+fn repo_remove_unknown_slug_exits_with_not_found_code() {
+    let tmp = TempDir::new().unwrap();
+    let config_root = tmp.path().join("cfg");
+    ravel_lite::init::run_init(&config_root, false).unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["repo", "remove", "--config"])
+        .arg(&config_root)
+        .arg("no-such-repo")
+        .output()
+        .expect("binary must spawn");
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "unknown repo slug must exit 3 (NotFound); got {:?}, stderr: {}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
+/// `visible_alias` annotations from `defaults/fixed-memory/cli-tool-design.md`
+/// §5: every canonical verb that has a common synonym (`ls` for `list`,
+/// `rm`/`delete` for `remove`, `get`/`cat` for `show`, `create` for `add`)
+/// is reachable via the alias. This test exercises one alias per category
+/// against the binary; success is the alias dispatching to the same code
+/// path as the canonical verb.
+#[test]
+fn visible_aliases_dispatch_to_canonical_verbs() {
+    let tmp = TempDir::new().unwrap();
+    let plan = tmp.path();
+    fs::write(plan.join("phase.md"), "work").unwrap();
+    fs::write(plan.join("backlog.yaml"), "schema_version: 1\nitems: []\n").unwrap();
+    fs::write(plan.join("memory.yaml"), "schema_version: 1\nitems: []\n").unwrap();
+
+    let run = |argv: &[&str]| -> std::process::Output {
+        Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+            .args(argv)
+            .output()
+            .expect("binary must spawn")
+    };
+
+    // `ls` alias for `list` — dispatches to the same handler.
+    let out = run(&[
+        "state",
+        "backlog",
+        "ls",
+        plan.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "`backlog ls` must dispatch like `list`; stderr: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    // `create` alias for `add` — append a backlog item via the alias.
+    let out = run(&[
+        "state",
+        "backlog",
+        "create",
+        plan.to_str().unwrap(),
+        "--title",
+        "Alias Test Task",
+        "--category",
+        "infra",
+        "--description",
+        "test body",
+    ]);
+    assert!(
+        out.status.success(),
+        "`backlog create` must dispatch like `add`; stderr: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    // Recover the generated id from `list` so the next assertions are
+    // independent of the slugifier.
+    let listing = run(&["state", "backlog", "list", plan.to_str().unwrap()]);
+    assert!(listing.status.success());
+    let listing_yaml = String::from_utf8_lossy(&listing.stdout);
+    let id_line = listing_yaml
+        .lines()
+        .find(|l| l.trim_start().starts_with("- id:"))
+        .expect("listing must contain an id line");
+    let id = id_line.split_once("id:").unwrap().1.trim();
+
+    // `get` and `cat` aliases for `show` — both must produce the same
+    // output as the canonical `show` invocation.
+    let canonical = run(&["state", "backlog", "show", plan.to_str().unwrap(), id]);
+    let via_get = run(&["state", "backlog", "get", plan.to_str().unwrap(), id]);
+    let via_cat = run(&["state", "backlog", "cat", plan.to_str().unwrap(), id]);
+    assert!(canonical.status.success() && via_get.status.success() && via_cat.status.success());
+    assert_eq!(canonical.stdout, via_get.stdout, "`get` must match `show`");
+    assert_eq!(canonical.stdout, via_cat.stdout, "`cat` must match `show`");
+
+    // `rm` alias for `delete` (backlog uses `Delete` as the canonical).
+    let out = run(&["state", "backlog", "rm", plan.to_str().unwrap(), id]);
+    assert!(
+        out.status.success(),
+        "`backlog rm` must dispatch like `delete`; stderr: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    // Repo registry: `delete` alias for `remove` (Repo uses `Remove` as
+    // the canonical, with `rm` and `delete` as aliases).
+    let config_root = tmp.path().join("cfg");
+    ravel_lite::init::run_init(&config_root, false).unwrap();
+    let cfg_str = config_root.to_str().unwrap();
+    let out = run(&[
+        "repo", "add", "--config", cfg_str, "alias-repo", "--url", "https://example.com/r.git",
+    ]);
+    assert!(out.status.success(), "repo add must succeed");
+    let out = run(&["repo", "delete", "--config", cfg_str, "alias-repo"]);
+    assert!(
+        out.status.success(),
+        "`repo delete` must dispatch like `remove`; stderr: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    // Help output must surface the aliases so agents discover them.
+    let help = run(&["state", "backlog", "--help"]);
+    assert!(help.status.success());
+    let help_text = String::from_utf8_lossy(&help.stdout);
+    assert!(help_text.contains("ls"), "backlog --help must list `ls` alias: {help_text}");
+    assert!(help_text.contains("create"), "backlog --help must list `create` alias: {help_text}");
+}
+
 /// JSON-mode error envelope must carry the typed `code` field
 /// (`INVALID_INPUT`) — agents branch on the wire-form code without
 /// parsing the prose message.

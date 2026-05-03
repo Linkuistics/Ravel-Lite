@@ -40,7 +40,11 @@ use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
+
+use crate::bail_with;
+use crate::cli::error_context::ResultExt;
+use crate::cli::{CodedError, ErrorCode};
 use component_ontology::{Edge, EdgeKind, LifecycleScope, RelatedComponentsFile};
 use indexmap::IndexMap;
 use serde::Serialize;
@@ -85,7 +89,8 @@ pub fn run_freshness(context_root: &Path, require_fresh: bool) -> Result<()> {
             .map(|f| f.repo.as_str())
             .collect();
         if !stale.is_empty() {
-            bail!(
+            bail_with!(
+                ErrorCode::Conflict,
                 "atlas freshness check failed: {} of {} repo(s) lack a fresh catalog: [{}]",
                 stale.len(),
                 report.len(),
@@ -345,7 +350,8 @@ pub fn run_list_components(
                 OutputFormat::Json => serde_json::to_string_pretty(&envelope)
                     .context("Failed to serialise atlas components list to JSON")?
                     + "\n",
-                OutputFormat::Markdown => bail!(
+                OutputFormat::Markdown => bail_with!(
+                    ErrorCode::InvalidInput,
                     "format `markdown` is not supported on `atlas list-components`; supported: yaml, json"
                 ),
             };
@@ -426,7 +432,8 @@ pub fn run_summary(
                 OutputFormat::Json => serde_json::to_string_pretty(&envelope)
                     .context("Failed to serialise atlas summary to JSON")?
                     + "\n",
-                OutputFormat::Markdown => bail!(
+                OutputFormat::Markdown => bail_with!(
+                    ErrorCode::InvalidInput,
                     "format `markdown` is not supported on `atlas summary`; supported: yaml, json"
                 ),
             };
@@ -506,9 +513,13 @@ fn enforce_repo_filter_known(catalog: &Catalog, repo_filter: Option<&str>) -> Re
     }
     let available: Vec<&str> = catalog.repos.keys().map(String::as_str).collect();
     if available.is_empty() {
-        bail!("--repo {slug:?}: no fresh repos in catalog (registry empty or all repos lack a fresh `.atlas/components.yaml`)");
+        bail_with!(
+            ErrorCode::NotFound,
+            "--repo {slug:?}: no fresh repos in catalog (registry empty or all repos lack a fresh `.atlas/components.yaml`)"
+        );
     }
-    bail!(
+    bail_with!(
+        ErrorCode::NotFound,
         "--repo {slug:?}: not a fresh repo; fresh repos: [{}]",
         available.join(", ")
     );
@@ -543,27 +554,32 @@ fn resolve_qualified<'a>(
 ) -> Result<ResolvedComponent<'a>> {
     let (slug_owned, repo) = catalog.repos.get_key_value(slug).ok_or_else(|| {
         let available: Vec<&str> = catalog.repos.keys().map(String::as_str).collect();
-        if available.is_empty() {
-            anyhow::anyhow!(
+        let message = if available.is_empty() {
+            format!(
                 "ref {slug:?}/{id:?}: no fresh repos in catalog (registry empty or all repos lack a fresh `.atlas/components.yaml`)"
             )
         } else {
-            anyhow::anyhow!(
+            format!(
                 "ref {slug:?}/{id:?}: unknown repo slug; fresh repos: [{}]",
                 available.join(", ")
             )
-        }
+        };
+        anyhow::Error::new(CodedError {
+            code: ErrorCode::NotFound,
+            message,
+        })
     })?;
     let component = repo
         .file
         .components
         .iter()
         .find(|c| !c.deleted && c.id == id)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
+        .ok_or_else(|| anyhow::Error::new(CodedError {
+            code: ErrorCode::NotFound,
+            message: format!(
                 "ref {slug:?}/{id:?}: no component with that id in repo {slug:?}"
-            )
-        })?;
+            ),
+        }))?;
     Ok(ResolvedComponent {
         repo_slug: slug_owned.as_str(),
         repo,
@@ -585,14 +601,18 @@ fn resolve_bare<'a>(catalog: &'a Catalog, id: &str) -> Result<ResolvedComponent<
         }
     }
     match hits.len() {
-        0 => bail!("ref {id:?}: no component with that id in any fresh repo"),
+        0 => bail_with!(
+            ErrorCode::NotFound,
+            "ref {id:?}: no component with that id in any fresh repo"
+        ),
         1 => Ok(hits.into_iter().next().expect("len == 1")),
         _ => {
             let qualified: Vec<String> = hits
                 .iter()
                 .map(|h| format!("{}/{}", h.repo_slug, h.component.id))
                 .collect();
-            bail!(
+            bail_with!(
+                ErrorCode::Conflict,
                 "ref {id:?}: ambiguous; matches multiple repos: [{}]",
                 qualified.join(", ")
             )
@@ -670,12 +690,16 @@ fn read_component_memory(path: &Path) -> Result<MemoryFile> {
         return Ok(MemoryFile::default());
     }
     let text = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
-    let parsed: MemoryFile = serde_yaml::from_str(&text).with_context(|| {
-        format!("Failed to parse {} as component memory.yaml schema", path.display())
-    })?;
+        .with_context(|| format!("Failed to read {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
+    let parsed: MemoryFile = serde_yaml::from_str(&text)
+        .with_context(|| {
+            format!("Failed to parse {} as component memory.yaml schema", path.display())
+        })
+        .with_code(ErrorCode::InvalidInput)?;
     if parsed.schema_version != MEMORY_SCHEMA_VERSION {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "{} declares schema_version {}, expected {}.",
             path.display(),
             parsed.schema_version,
@@ -1008,7 +1032,8 @@ pub fn run_path(context_root: &Path, from: &str, to: &str, max_hops: usize) -> R
             }
             Ok(())
         }
-        None => bail!(
+        None => bail_with!(
+            ErrorCode::NotFound,
             "no path found from {} to {} within {} hops",
             from_resolved.component.id,
             to_resolved.component.id,

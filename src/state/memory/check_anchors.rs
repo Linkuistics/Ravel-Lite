@@ -17,7 +17,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
+
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use knowledge_graph::Justification;
 use serde::{Deserialize, Serialize};
 
@@ -147,7 +150,8 @@ fn git_hash_object(path: &Path) -> Result<String> {
         .with_context(|| format!("failed to invoke `git hash-object -- {}`", path.display()))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
+        bail_with!(
+            ErrorCode::IoError,
             "`git hash-object -- {}` failed: {}",
             path.display(),
             stderr.trim()

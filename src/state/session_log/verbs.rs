@@ -8,9 +8,10 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
-use crate::cli::OutputFormat;
+use crate::bail_with;
+use crate::cli::{CodedError, ErrorCode, OutputFormat};
 
 use super::schema::{SessionLogFile, SessionRecord};
 use super::yaml_io::{read_latest_session, read_session_log, write_latest_session, write_session_log};
@@ -53,7 +54,10 @@ pub(crate) fn find_session<'a>(
     log.sessions
         .iter()
         .find(|s| s.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no session with id {id:?}"))
+        .ok_or_else(|| anyhow::Error::new(CodedError {
+            code: ErrorCode::NotFound,
+            message: format!("no session with id {id:?}"),
+        }))
 }
 
 fn emit_log(log: &SessionLogFile, format: OutputFormat) -> Result<()> {
@@ -61,7 +65,10 @@ fn emit_log(log: &SessionLogFile, format: OutputFormat) -> Result<()> {
         OutputFormat::Yaml => serde_yaml::to_string(log)?,
         OutputFormat::Json => serde_json::to_string_pretty(log)? + "\n",
         OutputFormat::Markdown => {
-            bail!("`state session-log` does not support --format markdown; use yaml or json")
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`state session-log` does not support --format markdown; use yaml or json"
+            )
         }
     };
     print!("{serialised}");
@@ -73,7 +80,10 @@ fn emit_record(record: &SessionRecord, format: OutputFormat) -> Result<()> {
         OutputFormat::Yaml => serde_yaml::to_string(record)?,
         OutputFormat::Json => serde_json::to_string_pretty(record)? + "\n",
         OutputFormat::Markdown => {
-            bail!("`state session-log` does not support --format markdown; use yaml or json")
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`state session-log` does not support --format markdown; use yaml or json"
+            )
         }
     };
     print!("{serialised}");
@@ -141,12 +151,16 @@ pub fn build_record_for_append(
     phase: Option<String>,
     body: &str,
 ) -> Result<SessionRecord> {
-    let id = id.ok_or_else(|| anyhow::anyhow!("--id <value> is required for append"))?;
-    let timestamp = timestamp.ok_or_else(|| {
-        anyhow::anyhow!(
+    let id = id.ok_or_else(|| anyhow::Error::new(CodedError {
+        code: ErrorCode::InvalidInput,
+        message: "--id <value> is required for append".into(),
+    }))?;
+    let timestamp = timestamp.ok_or_else(|| anyhow::Error::new(CodedError {
+        code: ErrorCode::InvalidInput,
+        message:
             "--timestamp <iso8601> is required for append; session id and timestamp are assigned by the writer"
-        )
-    })?;
+                .into(),
+    }))?;
     let phase = phase.unwrap_or_else(|| "work".to_string());
     Ok(SessionRecord {
         id,

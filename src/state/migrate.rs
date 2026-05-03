@@ -12,7 +12,10 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
+
+use crate::bail_with;
+use crate::cli::ErrorCode;
 
 use crate::state::backlog::{
     parse_backlog_markdown, read_backlog, write_backlog, BacklogFile,
@@ -136,7 +139,8 @@ pub fn run_migrate(plan_dir: &Path, options: &MigrateOptions) -> Result<()> {
     }
 
     if pending.is_empty() {
-        bail!(
+        bail_with!(
+            ErrorCode::NotFound,
             "no migratable .md files found at {}. Either the plan has no state to migrate or migration has already run.",
             plan_dir.display()
         );
@@ -167,7 +171,8 @@ pub fn run_migrate(plan_dir: &Path, options: &MigrateOptions) -> Result<()> {
                 let validated = read_backlog(plan_dir)
                     .with_context(|| "validation round-trip read failed after backlog write")?;
                 if !backlogs_equivalent(&validated, parsed) {
-                    bail!(
+                    bail_with!(
+                        ErrorCode::Internal,
                         "validation mismatch: backlog.yaml re-read does not match parse result."
                     );
                 }
@@ -177,7 +182,8 @@ pub fn run_migrate(plan_dir: &Path, options: &MigrateOptions) -> Result<()> {
                 let validated = read_memory(plan_dir)
                     .with_context(|| "validation round-trip read failed after memory write")?;
                 if !memories_equivalent(&validated, parsed) {
-                    bail!(
+                    bail_with!(
+                        ErrorCode::Internal,
                         "validation mismatch: memory.yaml re-read does not match parse result."
                     );
                 }
@@ -188,7 +194,8 @@ pub fn run_migrate(plan_dir: &Path, options: &MigrateOptions) -> Result<()> {
                     "validation round-trip read failed after session-log write"
                 })?;
                 if !session_logs_equivalent(&validated, parsed) {
-                    bail!(
+                    bail_with!(
+                        ErrorCode::Internal,
                         "validation mismatch: session-log.yaml re-read does not match parse result."
                     );
                 }
@@ -199,7 +206,8 @@ pub fn run_migrate(plan_dir: &Path, options: &MigrateOptions) -> Result<()> {
                     "validation round-trip read failed after latest-session write"
                 })?;
                 if !session_records_equivalent(&validated, parsed) {
-                    bail!(
+                    bail_with!(
+                        ErrorCode::Internal,
                         "validation mismatch: latest-session.yaml re-read does not match parse result."
                     );
                 }
@@ -242,7 +250,8 @@ fn plan_backlog_migration(
         } else if options.force {
             true
         } else {
-            bail!(
+            bail_with!(
+                ErrorCode::Conflict,
                 "{} already exists and differs from the re-migration output. Rerun with --force to overwrite.",
                 target.display()
             );
@@ -282,7 +291,8 @@ fn plan_memory_migration(
         } else if options.force {
             true
         } else {
-            bail!(
+            bail_with!(
+                ErrorCode::Conflict,
                 "{} already exists and differs from the re-migration output. Rerun with --force to overwrite.",
                 target.display()
             );
@@ -326,7 +336,8 @@ fn plan_session_log_migration(
         } else if options.force {
             true
         } else {
-            bail!(
+            bail_with!(
+                ErrorCode::Conflict,
                 "{} already exists and differs from the re-migration output. Rerun with --force to overwrite.",
                 target.display()
             );
@@ -371,7 +382,8 @@ fn plan_latest_session_migration(
         } else if options.force {
             true
         } else {
-            bail!(
+            bail_with!(
+                ErrorCode::Conflict,
                 "{} already exists and differs from the re-migration output. Rerun with --force to overwrite.",
                 target.display()
             );

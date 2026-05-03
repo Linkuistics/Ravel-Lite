@@ -13,7 +13,17 @@
 //! - `done`        → `Done`
 //! - `blocked`     → `Blocked`
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result};
+
+use crate::bail_with;
+use crate::cli::{CodedError, ErrorCode};
+
+fn invalid(message: String) -> anyhow::Error {
+    anyhow::Error::new(CodedError {
+        code: ErrorCode::InvalidInput,
+        message,
+    })
+}
 use knowledge_graph::{Item, Justification, KindMarker};
 
 use crate::plan_kg::BacklogStatus;
@@ -92,14 +102,14 @@ fn parse_single_task_block(block: &str, existing_ids: &[String]) -> Result<Backl
     let mut lines = block.lines();
     let title_line = lines
         .next()
-        .ok_or_else(|| anyhow!("empty task block"))?;
+        .ok_or_else(|| invalid("empty task block".into()))?;
     let title = title_line
         .strip_prefix("### ")
-        .ok_or_else(|| anyhow!("task block does not start with `### <title>`: {title_line:?}"))?
+        .ok_or_else(|| invalid(format!("task block does not start with `### <title>`: {title_line:?}")))?
         .trim()
         .to_string();
     if title.is_empty() {
-        bail!("task title is empty");
+        bail_with!(ErrorCode::InvalidInput, "task title is empty");
     }
 
     let id = allocate_id_from(&title, existing_ids);
@@ -129,7 +139,7 @@ fn parse_single_task_block(block: &str, existing_ids: &[String]) -> Result<Backl
             let (status_value, reason) = split_blocked_reason(raw);
             status = Some(
                 parse_legacy_status(status_value)
-                    .ok_or_else(|| anyhow!("invalid status value: {status_value:?}"))?,
+                    .ok_or_else(|| invalid(format!("invalid status value: {status_value:?}")))?,
             );
             if status == Some(BacklogStatus::Blocked) {
                 blocked_reason = Some(reason.unwrap_or_default().to_string());
@@ -174,8 +184,8 @@ fn parse_single_task_block(block: &str, existing_ids: &[String]) -> Result<Backl
         }
     }
 
-    let status = status.ok_or_else(|| anyhow!("missing **Status:** field"))?;
-    let category = category.ok_or_else(|| anyhow!("missing **Category:** field"))?;
+    let status = status.ok_or_else(|| invalid("missing **Status:** field".into()))?;
+    let category = category.ok_or_else(|| invalid("missing **Category:** field".into()))?;
 
     Ok(BacklogEntry {
         item: Item {

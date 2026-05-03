@@ -10,9 +10,12 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result};
 
 use super::schema::{TargetsFile, TARGETS_SCHEMA_VERSION};
+use crate::bail_with;
+use crate::cli::error_context::ResultExt;
+use crate::cli::{CodedError, ErrorCode};
 use crate::component_ref::ComponentRef;
 use crate::state::filenames::TARGETS_FILENAME;
 
@@ -28,11 +31,14 @@ pub fn read_targets(plan_dir: &Path) -> Result<TargetsFile> {
         return Ok(TargetsFile::default());
     }
     let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+        .with_context(|| format!("Failed to read {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
     let parsed: TargetsFile = serde_yaml::from_str(&text)
-        .with_context(|| format!("Failed to parse {} as {TARGETS_FILENAME} schema", path.display()))?;
+        .with_context(|| format!("Failed to parse {} as {TARGETS_FILENAME} schema", path.display()))
+        .with_code(ErrorCode::InvalidInput)?;
     if parsed.schema_version != TARGETS_SCHEMA_VERSION {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "{} declares schema_version {}, expected {}.",
             path.display(),
             parsed.schema_version,
@@ -64,13 +70,14 @@ pub fn resolve_target_worktree(plan_dir: &Path, target: &ComponentRef) -> Result
         .targets
         .iter()
         .find(|t| t.repo_slug == target.repo_slug && t.component_id == target.component_id)
-        .ok_or_else(|| {
-            anyhow!(
+        .ok_or_else(|| anyhow::Error::new(CodedError {
+            code: ErrorCode::NotFound,
+            message: format!(
                 "{target} is not a mounted target in {}; \
                  add it via target-requests.yaml so the next phase boundary mounts it",
                 plan_dir.display()
-            )
-        })?;
+            ),
+        }))?;
     Ok(plan_dir.join(&entry.working_root))
 }
 
@@ -109,9 +116,11 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         .to_string_lossy();
     let tmp = parent.join(format!(".{file_name}.tmp"));
     std::fs::write(&tmp, bytes)
-        .with_context(|| format!("Failed to write temp file {}", tmp.display()))?;
+        .with_context(|| format!("Failed to write temp file {}", tmp.display()))
+        .with_code(ErrorCode::IoError)?;
     std::fs::rename(&tmp, path)
-        .with_context(|| format!("Failed to rename {} to {}", tmp.display(), path.display()))?;
+        .with_context(|| format!("Failed to rename {} to {}", tmp.display(), path.display()))
+        .with_code(ErrorCode::IoError)?;
     Ok(())
 }
 

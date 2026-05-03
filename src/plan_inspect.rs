@@ -24,7 +24,10 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
+
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use serde::Serialize;
 
 use knowledge_graph::{ItemStatus, Justification};
@@ -59,7 +62,8 @@ impl PlanItemKind {
             "backlog-item" => Ok(PlanItemKind::BacklogItem),
             "memory-entry" => Ok(PlanItemKind::MemoryEntry),
             "finding" => Ok(PlanItemKind::Finding),
-            other => bail!(
+            other => bail_with!(
+                ErrorCode::InvalidInput,
                 "unknown --kind {other:?}; expected one of `intent`, `backlog-item`, `memory-entry`, `finding`"
             ),
         }
@@ -90,7 +94,8 @@ impl JustificationKindFilter {
             "defeats" => Ok(JustificationKindFilter::Defeats),
             "supersedes" => Ok(JustificationKindFilter::Supersedes),
             "external" => Ok(JustificationKindFilter::External),
-            other => bail!(
+            other => bail_with!(
+                ErrorCode::InvalidInput,
                 "unknown --justification-kind {other:?}; expected one of `code-anchor`, `rationale`, `serves-intent`, `defeats`, `supersedes`, `external`"
             ),
         }
@@ -189,13 +194,15 @@ pub fn run_show_item(plan_dir: &Path, id: &str, format: OutputFormat) -> Result<
         hits.push(AnyEntry::Finding(e));
     }
     match hits.len() {
-        0 => bail!(
+        0 => bail_with!(
+            ErrorCode::NotFound,
             "no item with id {id:?} in any of intents.yaml, backlog.yaml, memory.yaml, findings.yaml"
         ),
         1 => emit(&hits.into_iter().next().unwrap(), format),
         n => {
             let kinds: Vec<&'static str> = hits.iter().map(|e| e.kind_str()).collect();
-            bail!(
+            bail_with!(
+                ErrorCode::Conflict,
                 "id {id:?} is ambiguous: {n} matches across kinds {kinds:?}. \
                  Use the per-kind verb (`state intents show`, `state backlog show`, \
                  `state memory show`, `state findings show`) to disambiguate."
@@ -274,7 +281,8 @@ pub fn run_query_by_status(
                 );
             }
             if hits.is_empty() && !any_kind_accepts_status(status) {
-                bail!(
+                bail_with!(
+                    ErrorCode::InvalidInput,
                     "status {status:?} is not a member of any kind's vocabulary. \
                      Intent: {:?}; backlog-item: {:?}; memory-entry: {:?}; finding: {:?}.",
                     intent_status_words(),
@@ -595,7 +603,10 @@ fn emit<T: Serialize>(value: &T, format: OutputFormat) -> Result<()> {
         OutputFormat::Yaml => serde_yaml::to_string(value)?,
         OutputFormat::Json => serde_json::to_string_pretty(value)? + "\n",
         OutputFormat::Markdown => {
-            bail!("`plan` inspect verbs do not support --format markdown; use yaml or json")
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`plan` inspect verbs do not support --format markdown; use yaml or json"
+            )
         }
     };
     print!("{serialised}");

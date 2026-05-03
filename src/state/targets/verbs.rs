@@ -16,9 +16,10 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
-use crate::cli::OutputFormat;
+use crate::bail_with;
+use crate::cli::{CodedError, ErrorCode, OutputFormat};
 
 use super::schema::{Target, TargetsFile, TARGETS_SCHEMA_VERSION};
 use super::yaml_io::{read_targets, write_targets};
@@ -50,20 +51,21 @@ pub struct AddRequest {
 
 pub fn run_add(plan_dir: &Path, req: &AddRequest) -> Result<()> {
     if req.repo_slug.is_empty() {
-        bail!("--repo must be non-empty");
+        bail_with!(ErrorCode::InvalidInput, "--repo must be non-empty");
     }
     if req.component_id.is_empty() {
-        bail!("--component must be non-empty");
+        bail_with!(ErrorCode::InvalidInput, "--component must be non-empty");
     }
     if req.working_root.is_empty() {
-        bail!("--working-root must be non-empty");
+        bail_with!(ErrorCode::InvalidInput, "--working-root must be non-empty");
     }
     if req.branch.is_empty() {
-        bail!("--branch must be non-empty");
+        bail_with!(ErrorCode::InvalidInput, "--branch must be non-empty");
     }
     let mut targets = read_targets(plan_dir)?;
     if find_target(&targets, &req.repo_slug, &req.component_id).is_ok() {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "target {}:{} already mounted",
             req.repo_slug,
             req.component_id
@@ -87,7 +89,10 @@ pub fn run_remove(plan_dir: &Path, reference: &str) -> Result<()> {
         .targets
         .retain(|t| !(t.repo_slug == repo_slug && t.component_id == component_id));
     if targets.targets.len() == before {
-        bail!("no target {repo_slug}:{component_id} to remove");
+        bail_with!(
+            ErrorCode::NotFound,
+            "no target {repo_slug}:{component_id} to remove"
+        );
     }
     write_targets(plan_dir, &targets)
 }
@@ -97,7 +102,8 @@ pub(crate) fn parse_reference(reference: &str) -> Result<(String, String)> {
         Some((repo, component)) if !repo.is_empty() && !component.is_empty() => {
             Ok((repo.to_string(), component.to_string()))
         }
-        _ => bail!(
+        _ => bail_with!(
+            ErrorCode::InvalidInput,
             "target reference {reference:?} must be `<repo_slug>:<component_id>` with both parts non-empty"
         ),
     }
@@ -112,7 +118,10 @@ pub(crate) fn find_target<'a>(
         .targets
         .iter()
         .find(|t| t.repo_slug == repo_slug && t.component_id == component_id)
-        .ok_or_else(|| anyhow::anyhow!("no target {repo_slug}:{component_id}"))
+        .ok_or_else(|| anyhow::Error::new(CodedError {
+            code: ErrorCode::NotFound,
+            message: format!("no target {repo_slug}:{component_id}"),
+        }))
 }
 
 fn emit(targets: &TargetsFile, format: OutputFormat) -> Result<()> {
@@ -120,7 +129,10 @@ fn emit(targets: &TargetsFile, format: OutputFormat) -> Result<()> {
         OutputFormat::Yaml => serde_yaml::to_string(targets)?,
         OutputFormat::Json => serde_json::to_string_pretty(targets)? + "\n",
         OutputFormat::Markdown => {
-            bail!("`state targets` does not support --format markdown; use yaml or json")
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`state targets` does not support --format markdown; use yaml or json"
+            )
         }
     };
     print!("{serialised}");

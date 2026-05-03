@@ -16,17 +16,20 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
-use crate::cli::OutputFormat;
+use crate::bail_with;
+use crate::cli::{CodedError, ErrorCode, OutputFormat};
 use crate::component_ref::ComponentRef;
 
 use super::schema::{ThisCycleFocus, THIS_CYCLE_FOCUS_SCHEMA_VERSION};
 use super::yaml_io::{delete_this_cycle_focus, read_this_cycle_focus, write_this_cycle_focus};
 
 pub fn run_show(plan_dir: &Path, format: OutputFormat) -> Result<()> {
-    let focus = read_this_cycle_focus(plan_dir)?
-        .ok_or_else(|| anyhow::anyhow!("no this-cycle focus is set"))?;
+    let focus = read_this_cycle_focus(plan_dir)?.ok_or_else(|| anyhow::Error::new(CodedError {
+        code: ErrorCode::NotFound,
+        message: "no this-cycle focus is set".into(),
+    }))?;
     emit(&focus, format)
 }
 
@@ -39,7 +42,7 @@ pub fn run_set(
     let target: ComponentRef = target.parse()?;
     for id in backlog_items {
         if id.is_empty() {
-            bail!("--item ids must be non-empty");
+            bail_with!(ErrorCode::InvalidInput, "--item ids must be non-empty");
         }
     }
     let focus = ThisCycleFocus {
@@ -60,7 +63,8 @@ fn emit(focus: &ThisCycleFocus, format: OutputFormat) -> Result<()> {
         OutputFormat::Yaml => serde_yaml::to_string(focus)?,
         OutputFormat::Json => serde_json::to_string_pretty(focus)? + "\n",
         OutputFormat::Markdown => {
-            bail!(
+            bail_with!(
+                ErrorCode::InvalidInput,
                 "`state this-cycle-focus` does not support --format markdown; use yaml or json"
             )
         }

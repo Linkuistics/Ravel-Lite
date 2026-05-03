@@ -15,9 +15,10 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
-use crate::cli::OutputFormat;
+use crate::bail_with;
+use crate::cli::{ErrorCode, OutputFormat};
 use crate::component_ref::ComponentRef;
 
 use super::schema::{FocusObjectionsFile, Objection};
@@ -79,7 +80,7 @@ fn append(plan_dir: &Path, objection: Objection) -> Result<()> {
 
 fn require_non_empty(value: &str, flag_name: &str) -> Result<()> {
     if value.is_empty() {
-        bail!("{flag_name} must be non-empty");
+        bail_with!(ErrorCode::InvalidInput, "{flag_name} must be non-empty");
     }
     Ok(())
 }
@@ -89,7 +90,10 @@ fn emit(file: &FocusObjectionsFile, format: OutputFormat) -> Result<()> {
         OutputFormat::Yaml => serde_yaml::to_string(file)?,
         OutputFormat::Json => serde_json::to_string_pretty(file)? + "\n",
         OutputFormat::Markdown => {
-            bail!("`state focus-objections` does not support --format markdown; use yaml or json")
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`state focus-objections` does not support --format markdown; use yaml or json"
+            )
         }
     };
     print!("{serialised}");

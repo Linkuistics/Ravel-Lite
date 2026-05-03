@@ -12,13 +12,21 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 use knowledge_graph::{Item, ItemStatus, Justification, KindMarker};
 
-use crate::cli::OutputFormat;
+use crate::bail_with;
+use crate::cli::{CodedError, ErrorCode, OutputFormat};
 use crate::plan_kg::IntentStatus;
 use crate::state::backlog::schema::allocate_id;
+
+fn not_found_intent(id: &str) -> anyhow::Error {
+    anyhow::Error::new(CodedError {
+        code: ErrorCode::NotFound,
+        message: format!("no intent with id {id:?}"),
+    })
+}
 
 use super::schema::{IntentEntry, IntentsFile, INTENTS_SCHEMA_VERSION};
 use super::yaml_io::{read_intents, write_intents};
@@ -43,7 +51,7 @@ pub(crate) fn find_entry<'a>(intents: &'a IntentsFile, id: &str) -> Result<&'a I
         .items
         .iter()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no intent with id {id:?}"))
+        .ok_or_else(|| not_found_intent(id))
 }
 
 fn emit(intents: &IntentsFile, format: OutputFormat) -> Result<()> {
@@ -51,7 +59,10 @@ fn emit(intents: &IntentsFile, format: OutputFormat) -> Result<()> {
         OutputFormat::Yaml => serde_yaml::to_string(intents)?,
         OutputFormat::Json => serde_json::to_string_pretty(intents)? + "\n",
         OutputFormat::Markdown => {
-            bail!("`state intents` does not support --format markdown; use yaml or json")
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`state intents` does not support --format markdown; use yaml or json"
+            )
         }
     };
     print!("{serialised}");
@@ -91,16 +102,19 @@ pub fn run_add(plan_dir: &Path, req: &AddRequest) -> Result<()> {
 
 pub fn run_set_status(plan_dir: &Path, id: &str, status_str: &str) -> Result<()> {
     let new_status = IntentStatus::parse(status_str).ok_or_else(|| {
-        anyhow::anyhow!(
-            "unknown intent status {status_str:?}; expected one of `active`, `satisfied`, `defeated`, `superseded`"
-        )
+        anyhow::Error::new(CodedError {
+            code: ErrorCode::InvalidInput,
+            message: format!(
+                "unknown intent status {status_str:?}; expected one of `active`, `satisfied`, `defeated`, `superseded`"
+            ),
+        })
     })?;
     let mut intents = read_intents(plan_dir)?;
     let entry = intents
         .items
         .iter_mut()
         .find(|e| e.item.id == id)
-        .ok_or_else(|| anyhow::anyhow!("no intent with id {id:?}"))?;
+        .ok_or_else(|| not_found_intent(id))?;
     let from = entry.item.status;
     if from == new_status {
         return Ok(());
@@ -109,7 +123,8 @@ pub fn run_set_status(plan_dir: &Path, id: &str, status_str: &str) -> Result<()>
         .iter()
         .any(|(f, t)| *f == from && *t == new_status);
     if !legal {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "illegal status transition for intent {id:?}: `{}` → `{}` is not in the transition table",
             from.as_str(),
             new_status.as_str()

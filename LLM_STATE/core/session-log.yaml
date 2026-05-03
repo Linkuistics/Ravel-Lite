@@ -1946,3 +1946,14 @@ sessions:
     - Added 4 integration tests in `tests/cli.rs`: exit-code checks for `InvalidInput` and `NotFound` error paths, example-block presence check across 14 representative leaf verbs, and a JSON envelope test asserting the typed `code` field round-trips.
     - Decided against implementing the `llm-instructions` verb (task: `cli-evaluate-and-decide-on-llm-instructions-verb-ship-or-wontfix`) — the audit determined no implementation was warranted.
     - All four tasks flipped to `done`; three follow-on tasks added: `--limit`/`--all` flags for list verbs, visible alias annotations, and a sweep of inner-verb error sites (state/atlas/repos/discover).
+- id: session-136
+  timestamp: 2026-05-03T14:13:03Z
+  phase: work
+  body: |
+    ### Session 136 (2026-05-03T14:13:03Z) — Add visible_alias annotations and tag inner-verb error sites
+
+    - Attempted and completed two CLI surface hardening tasks: (1) alias annotations across all `list`/`remove`/`show`/`add` variants in `src/main.rs`, and (2) typed `ErrorCode` tagging at all inner-verb error sites across `src/state/`, `src/repos.rs`, `src/atlas.rs`, and survey modules.
+    - Alias task: 36 verbs now carry `visible_alias`/`visible_aliases` attributes (`ls`, `rm`/`delete`, `get`/`cat`, `create`, `add`). Compound-name collisions (e.g. `ListRepos`, `ListComponents`) received qualified aliases (`ls-repos`, `ls-components`) to avoid clap enum-level ambiguity. Integration test `visible_aliases_dispatch_to_canonical_verbs` verifies one alias per category.
+    - Error-tagging task: ~113 sites swept across `state/backlog`, `state/memory`, `state/intents`, `state/findings`, `state/targets`, `state/target_requests`, `state/this_cycle_focus`, `state/focus_objections`, `state/commits`, `state/discover_proposals`, `state/session_log`, `state/migrate`, `state/phase`, `repos.rs`, `atlas.rs`, `plan_inspect.rs`, `related_components.rs`, `component_ref.rs`, `survey/delta.rs`, `discover/mod.rs`. `NotFound`, `Conflict`, `InvalidInput`, and `IoError` applied per the categorisation table from the task description. Private `not_found_in_<file>(id)` helpers lifted where 3+ identical sites existed in a file. Four new integration tests added to `tests/cli.rs`.
+    - Both tasks fully done; no follow-on hand-offs identified.
+    - What's next: remaining untagged sites in `src/init.rs`, `src/create.rs`, `src/git.rs`, `src/phase_loop.rs` if any; or shift to `--limit`/`--all` flags for list verbs.

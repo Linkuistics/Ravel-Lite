@@ -12,7 +12,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{bail, Result};
+use anyhow::Result;
+
+use crate::bail_with;
+use crate::cli::ErrorCode;
 
 use super::discover::PlanSnapshot;
 use super::schema::{plan_key, PlanRow, SurveyResponse};
@@ -125,7 +128,8 @@ pub fn merge_delta(
 
     let extra: Vec<&String> = got.difference(&expected).collect();
     if !extra.is_empty() {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "incremental survey response contains {} plan(s) outside the \
              declared changed+added set — the LLM returned rows for plans it \
              was not asked to analyse. Extra: {:?}",
@@ -135,7 +139,8 @@ pub fn merge_delta(
     }
     let missing: Vec<&String> = expected.difference(&got).collect();
     if !missing.is_empty() {
-        bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "incremental survey response is missing {} of the {} plan(s) the \
              LLM was asked to analyse. Missing: {:?}",
             missing.len(),
