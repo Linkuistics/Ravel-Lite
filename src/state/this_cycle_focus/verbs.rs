@@ -18,25 +18,11 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
-use super::schema::{ThisCycleFocus, THIS_CYCLE_FOCUS_SCHEMA_VERSION};
-use super::yaml_io::{delete_this_cycle_focus, read_this_cycle_focus, write_this_cycle_focus};
+use crate::cli::OutputFormat;
 use crate::component_ref::ComponentRef;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum OutputFormat {
-    Yaml,
-    Json,
-}
-
-impl OutputFormat {
-    pub fn parse(input: &str) -> Option<OutputFormat> {
-        match input {
-            "yaml" => Some(OutputFormat::Yaml),
-            "json" => Some(OutputFormat::Json),
-            _ => None,
-        }
-    }
-}
+use super::schema::{ThisCycleFocus, THIS_CYCLE_FOCUS_SCHEMA_VERSION};
+use super::yaml_io::{delete_this_cycle_focus, read_this_cycle_focus, write_this_cycle_focus};
 
 pub fn run_show(plan_dir: &Path, format: OutputFormat) -> Result<()> {
     let focus = read_this_cycle_focus(plan_dir)?
@@ -73,6 +59,11 @@ fn emit(focus: &ThisCycleFocus, format: OutputFormat) -> Result<()> {
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(focus)?,
         OutputFormat::Json => serde_json::to_string_pretty(focus)? + "\n",
+        OutputFormat::Markdown => {
+            bail!(
+                "`state this-cycle-focus` does not support --format markdown; use yaml or json"
+            )
+        }
     };
     print!("{serialised}");
     Ok(())

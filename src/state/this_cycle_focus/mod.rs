@@ -9,7 +9,7 @@ pub mod verbs;
 pub mod yaml_io;
 
 pub use schema::{ThisCycleFocus, THIS_CYCLE_FOCUS_SCHEMA_VERSION};
-pub use verbs::{run_clear, run_set, run_show, OutputFormat};
+pub use verbs::{run_clear, run_set, run_show};
 pub use yaml_io::{
     delete_this_cycle_focus, read_this_cycle_focus, this_cycle_focus_path, write_this_cycle_focus,
 };

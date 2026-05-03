@@ -16,27 +16,12 @@ use anyhow::{bail, Result};
 
 use knowledge_graph::{Item, ItemStatus, Justification, KindMarker};
 
+use crate::cli::OutputFormat;
 use crate::plan_kg::IntentStatus;
 use crate::state::backlog::schema::allocate_id;
 
 use super::schema::{IntentEntry, IntentsFile, INTENTS_SCHEMA_VERSION};
 use super::yaml_io::{read_intents, write_intents};
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum OutputFormat {
-    Yaml,
-    Json,
-}
-
-impl OutputFormat {
-    pub fn parse(input: &str) -> Option<OutputFormat> {
-        match input {
-            "yaml" => Some(OutputFormat::Yaml),
-            "json" => Some(OutputFormat::Json),
-            _ => None,
-        }
-    }
-}
 
 pub fn run_list(plan_dir: &Path, format: OutputFormat) -> Result<()> {
     let intents = read_intents(plan_dir)?;
@@ -65,6 +50,9 @@ fn emit(intents: &IntentsFile, format: OutputFormat) -> Result<()> {
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(intents)?,
         OutputFormat::Json => serde_json::to_string_pretty(intents)? + "\n",
+        OutputFormat::Markdown => {
+            bail!("`state intents` does not support --format markdown; use yaml or json")
+        }
     };
     print!("{serialised}");
     Ok(())

@@ -16,24 +16,10 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
+use crate::cli::OutputFormat;
+
 use super::schema::{CommitsSpec, COMMITS_SCHEMA_VERSION};
 use super::yaml_io::read_commits;
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum OutputFormat {
-    Yaml,
-    Json,
-}
-
-impl OutputFormat {
-    pub fn parse(input: &str) -> Option<OutputFormat> {
-        match input {
-            "yaml" => Some(OutputFormat::Yaml),
-            "json" => Some(OutputFormat::Json),
-            _ => None,
-        }
-    }
-}
 
 pub fn run_list(plan_dir: &Path, format: OutputFormat) -> Result<()> {
     let spec = read_commits(plan_dir)?;
@@ -63,6 +49,9 @@ fn emit(spec: &CommitsSpec, format: OutputFormat) -> Result<()> {
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(spec)?,
         OutputFormat::Json => serde_json::to_string_pretty(spec)? + "\n",
+        OutputFormat::Markdown => {
+            bail!("`state commits` does not support --format markdown; use yaml or json")
+        }
     };
     print!("{serialised}");
     Ok(())
@@ -131,10 +120,4 @@ mod tests {
         run_show(tmp.path(), 2, OutputFormat::Json).unwrap();
     }
 
-    #[test]
-    fn output_format_parses_known_values() {
-        assert_eq!(OutputFormat::parse("yaml"), Some(OutputFormat::Yaml));
-        assert_eq!(OutputFormat::parse("json"), Some(OutputFormat::Json));
-        assert_eq!(OutputFormat::parse("toml"), None);
-    }
 }

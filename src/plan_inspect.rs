@@ -29,6 +29,7 @@ use serde::Serialize;
 
 use knowledge_graph::{ItemStatus, Justification};
 
+use crate::cli::OutputFormat;
 use crate::plan_kg::{BacklogStatus, FindingStatus, IntentStatus, MemoryStatus};
 use crate::state::backlog::schema::{BacklogEntry, BacklogFile};
 use crate::state::backlog::yaml_io::read_backlog;
@@ -150,27 +151,6 @@ impl AnyEntry {
 #[derive(Debug, Serialize)]
 pub struct AnyItemsFile {
     pub items: Vec<AnyEntry>,
-}
-
-// -- Output format ------------------------------------------------------
-
-/// Mirrors `state::intents::OutputFormat`. The narrower vocabulary is
-/// deliberate: `markdown` is the backlog-list verb's special case, and
-/// the inspect verbs aren't trying to reinvent it.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum OutputFormat {
-    Yaml,
-    Json,
-}
-
-impl OutputFormat {
-    pub fn parse(input: &str) -> Option<OutputFormat> {
-        match input {
-            "yaml" => Some(OutputFormat::Yaml),
-            "json" => Some(OutputFormat::Json),
-            _ => None,
-        }
-    }
 }
 
 // -- Verb: list-items ---------------------------------------------------
@@ -614,6 +594,9 @@ fn emit<T: Serialize>(value: &T, format: OutputFormat) -> Result<()> {
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(value)?,
         OutputFormat::Json => serde_json::to_string_pretty(value)? + "\n",
+        OutputFormat::Markdown => {
+            bail!("`plan` inspect verbs do not support --format markdown; use yaml or json")
+        }
     };
     print!("{serialised}");
     Ok(())
@@ -995,13 +978,6 @@ mod tests {
             JustificationKindFilter::parse(s)
                 .unwrap_or_else(|e| panic!("{s} should parse: {e}"));
         }
-    }
-
-    #[test]
-    fn output_format_parses_yaml_and_json() {
-        assert_eq!(OutputFormat::parse("yaml"), Some(OutputFormat::Yaml));
-        assert_eq!(OutputFormat::parse("json"), Some(OutputFormat::Json));
-        assert_eq!(OutputFormat::parse("toml"), None);
     }
 
     // -- Disk-touching verbs (hermetic via TempDir) --------------------

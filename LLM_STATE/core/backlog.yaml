@@ -156,7 +156,7 @@ tasks:
 - id: cli-audit-and-refactor-against-cli-tool-design-md
   title: CLI audit and refactor against cli-tool-design.md
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Audit and refactor the existing CLI surface against the guidance in `defaults/fixed-memory/cli-tool-design.md`. Each item below maps to an audit-checklist line; the goal is to bring the tree to a uniform standard before the v2 binary deploys.
@@ -181,6 +181,115 @@ tasks:
 
     - `defaults/fixed-memory/cli-tool-design.md` — the guidance document.
     - `docs/superpowers/specs/2026-05-02-fixed-memory-cli.md` §"Audit posture" and §"Out of scope" — the scoping decision that captured this task.
+  results: |
+    ## What was done
+
+    Walked the audit checklist in `defaults/fixed-memory/cli-tool-design.md`
+    and shipped scope item #6 — **`OutputFormat` consolidation** — as the
+    foundation the rest of the audit will build on. The remaining seven
+    scope items (the audit's actual surface-changing work) were captured
+    as focused backlog subtasks so each lands in a dedicated work phase.
+
+    ### Code change: shared `OutputFormat`
+
+    Replaced 12 near-identical per-kind enums + 11 per-kind
+    `parse_*_format` wrappers with a single shared enum at
+    `src/cli/output_format.rs`, re-exported as
+    `ravel_lite::cli::OutputFormat`. The shared enum carries all three
+    variants — `Yaml`, `Json`, `Markdown` — universally at the type
+    level. Renderers that don't support `Markdown` match-exhaust with an
+    actionable `bail!` arm naming the supported set
+    (`"`state memory` does not support --format markdown; use yaml or
+    json"`).
+
+    Files touched:
+
+    - New: `src/cli/mod.rs`, `src/cli/output_format.rs`.
+    - `src/lib.rs` — added `pub mod cli;`.
+    - 10 × `src/state/<kind>/verbs.rs` — dropped local enum, imported
+      the shared one, added the `Markdown =>` arm.
+    - 10 × `src/state/<kind>/mod.rs` — removed `OutputFormat` from
+      `pub use verbs::{...}` re-exports.
+    - `src/state/backlog/lint_dependencies.rs` and
+      `repair_stale_statuses.rs` — switched
+      `use super::verbs::OutputFormat` to `use crate::cli::OutputFormat`.
+    - `src/fixed_memory.rs` and `src/plan_inspect.rs` — same drop +
+      shared import; deleted now-redundant unit tests for the parser
+      (canonical tests live in `cli/output_format.rs`).
+    - `src/main.rs` — deleted 11 `parse_*_format` wrapper fns and a
+      single `use ravel_lite::cli::OutputFormat;` at the top supplies
+      the consolidated parser via `OutputFormat::parse(&format)?` at
+      every call site.
+
+    ### Verification
+
+    - `cargo build --workspace` clean.
+    - `cargo test --workspace` 974 lib + every integration suite green
+      (no failures, no skipped).
+    - `scripts/check.sh` (clippy --all-targets --workspace -D warnings)
+      clean.
+    - End-to-end smoke against a hermetic temp plan: `state backlog list
+      --format {yaml,json,markdown}` all render correctly, `--format
+      toml` errors with `invalid --format value "toml"; expected
+      yaml, json, or markdown`, and `state memory list --format
+      markdown` errors with the per-kind message above.
+
+    ### Subtasks filed for the rest of the audit
+
+    All under `architecture-next`:
+
+    - `cli-format-json-parity-for-repo-and-atlas-verbs` (scope #1).
+    - `cli-stable-error-codes-and-json-error-envelope` (scope #4).
+    - `cli-help-text-examples-on-every-verb` (scope #3).
+    - `cli-exitcategory-enum-and-documented-exit-codes` (scope #5).
+    - `cli-discoverability-verbs-capabilities-schema-llm-instructions`
+      (scope #7).
+    - `cli-json-schema-versioning-policy-and-documentation` (scope #2).
+    - `cli-finish-audit-checklist-sweep-defaults-ids-aliases-hidden-state`
+      (scope #8).
+
+    Order of attack suggested in the subtask bodies: error-codes-json
+    first (defines the typed `ErrorCode` enum that `ExitCategory` reads
+    off), then exit-code-categories on top of it, then `--format json`
+    parity for repo/atlas (now mechanical with the shared enum in
+    place), then help-text examples (broadest sweep, last because the
+    others may reshape examples).
+
+    ## What worked
+
+    - Single shared enum simplified ~80 lines of duplicated
+      `parse_*_format` wrappers to a single import at the top of
+      `main.rs`. Type-system check: every per-kind renderer now must
+      match-exhaust on `Markdown`, so adding markdown support to a new
+      kind is a compiler-driven sweep rather than a grep.
+    - Per-kind error message names the verb path that doesn't support
+      markdown — agents see the actionable form
+      (`"`state memory` does not support --format markdown..."`)
+      rather than a parse-time rejection of the flag.
+
+    ## What didn't / loose ends
+
+    - The `fixed-memory list` doc comment that explained "yaml is the
+      default... markdown produces the table form documented in the
+      spec" was deleted along with its now-shared enum. That info
+      belongs in the verb's clap `after_help` block — captured in the
+      `cli-help-text-examples-on-every-verb` subtask, not refiled
+      here.
+    - The umbrella audit task description previously listed all eight
+      scope items in one place. Closing this task means the
+      consolidated index is gone; future readers must walk the seven
+      subtasks. Acceptable: each subtask is self-contained with its
+      cli-tool-design.md section reference.
+
+    ## What this suggests next
+
+    Pick `cli-stable-error-codes-and-json-error-envelope` as the next
+    audit-thread task — it defines the typed `ErrorCode` vocabulary
+    that the exit-code work depends on, and it's the highest-leverage
+    remaining item by cli-tool-design.md's own ordering ("Errors in
+    JSON mode are also JSON, with a stable `code` field" sits on the
+    audit checklist alongside the JSON-output requirement that this
+    pass groundworked).
 - id: rename-phase-baselines-to-per-worktree-yaml-map-shape-prompts-phase-loop-rs
   title: Rename phase baselines to per-worktree YAML map shape (prompts + phase_loop.rs)
   category: architecture-next
@@ -254,3 +363,285 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
+- id: cli-format-json-parity-for-repo-and-atlas-verbs
+  title: 'CLI: --format json parity for repo and atlas verbs'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    CLI audit scope item #1 (cli-tool-design.md §1, §4): every data-producing
+    verb supports `--format yaml|json`. Current gaps surfaced during the
+    shared-`OutputFormat` consolidation:
+
+    - `ravel-lite repo list` — YAML-only (no `--format` flag).
+    - `ravel-lite atlas list-components` — text-only.
+    - `ravel-lite atlas summary` — text-only.
+
+    For each: add `--format <yaml|json>` (default yaml to preserve
+    backwards compatibility), wire to the shared
+    `ravel_lite::cli::OutputFormat`, and emit a stable JSON shape with a
+    top-level `schema_version` (mirrors every other state verb).
+
+    Out of scope: schema documentation (separate task) and the optional
+    `ravel-lite schema <command>` verb (also separate).
+- id: cli-stable-error-codes-and-json-error-envelope
+  title: 'CLI: stable error codes and JSON error envelope'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    CLI audit scope item #4 (cli-tool-design.md §3): every error names a
+    remediation, and in `--format json` mode errors carry a stable `code`
+    field that agents can branch on without parsing the message.
+
+    ## Required pieces
+
+    1. Define a stable error-code vocabulary as a typed enum (e.g.
+       `AUTH_REQUIRED`, `NOT_FOUND`, `INVALID_INPUT`, `CONFLICT`,
+       `IO_ERROR`, `RATE_LIMITED`). Aligned with the `ExitCategory`
+       work — same enum can drive both the JSON `code` field and the
+       process exit code if convenient.
+    2. JSON-mode error envelope: when the user passed `--format json`,
+       serialise errors as `{"error": {"code": "...", "message": "...",
+       "remediation": "..."}}` to stdout (or stderr — pick one and
+       document) with a non-zero exit. No mixing of prose stderr with
+       structured stdout.
+    3. Audit current bail!/anyhow! call sites and tag each with a code.
+       Ones without an obvious remediation should say so explicitly so
+       agents stop retrying.
+
+    ## Why typed-not-stringly
+
+    Per the project's "Prefer typed APIs over stringly-typed" rule, the
+    error code vocabulary must be a Rust enum with `as_str()`/`Display`,
+    not free-form strings sprinkled through bail! call sites. Otherwise
+    a typo silently breaks agent branching.
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` §3 and §"Anti-patterns
+      to flag" (Vague errors).
+- id: cli-help-text-examples-on-every-verb
+  title: 'CLI: help-text examples on every verb'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    CLI audit scope item #3 (cli-tool-design.md §2): every subcommand's
+    `--help` output includes ≥2 concrete invocation examples at the
+    bottom. LLMs pattern-match on examples far more reliably than on
+    flag listings.
+
+    ## Scope
+
+    Walk every `#[derive(Parser)]` / `#[derive(Subcommand)]` and every
+    subcommand variant in `src/main.rs`. For each leaf verb, add
+    `#[command(after_help = "...")]` with at least two real-world
+    invocations, ideally three. Existing top-level `AFTER_HELP`
+    (repository / docs links) stays in place — leaf verbs get their own
+    example block layered on top.
+
+    ## Pattern to follow
+
+    ```rust
+    const BACKLOG_LIST_AFTER_HELP: &str = "\
+    Examples:
+      # default markdown render of all tasks, grouped by category
+      ravel-lite state backlog list LLM_STATE/core --format markdown
+
+      # only ready tasks, in JSON
+      ravel-lite state backlog list LLM_STATE/core --ready --format json
+    ";
+    ```
+
+    ## Why deferred
+
+    This is mechanical and large-surface (~50 verb leaves). Best done
+    after the OutputFormat consolidation lands so examples reference the
+    canonical `--format` vocabulary.
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` §2 ("Help text
+      structure, top to bottom").
+    - `defaults/fixed-memory/cli-tool-design.md` §"Audit checklist" →
+      "Help" → "Every subcommand `--help` includes at least two
+      concrete examples."
+- id: cli-exitcategory-enum-and-documented-exit-codes
+  title: 'CLI: ExitCategory enum and documented exit codes'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    CLI audit scope item #5 (cli-tool-design.md §8): move from anyhow's
+    implicit 0/1 exit code to documented categories — `0` success, `1`
+    generic failure, `2` usage error, `3` not found, `4` auth/forbidden,
+    `5` conflict/precondition, `6` rate-limited.
+
+    ## Required pieces
+
+    1. Define `ExitCategory` enum (typed, not stringly) with `as_code() ->
+       i32`. Lives in `src/cli/exit_category.rs` next to
+       `output_format.rs`.
+    2. Plumb the category through the error path. anyhow errors that
+       bubble up to `main()` get a category — either via a typed
+       `RavelError` outer wrapper, or via a downcast against a known
+       marker type, or via a side-channel set on a context object.
+    3. `main()` exits with the categorised code instead of letting
+       anyhow's default `Result<(), anyhow::Error>` use exit code 1
+       for everything.
+    4. Document the exit codes in the top-level `--help` after_help
+       block, alongside the source/docs links already there.
+
+    ## Coupling with error-codes-json
+
+    The same enum (or a parallel pair) should drive both the process
+    exit code and the `code` field in JSON-mode error output — agents
+    get the same signal whether they branch on stdout JSON or on
+    `$?`. Recommended: do the typed `ErrorCode` enum first
+    (error-codes-json task) and have `ExitCategory::from(&ErrorCode)`
+    read off it.
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` §8.
+    - Memory: "Prefer typed APIs over stringly-typed" — categories must
+      be a Rust enum, not free integers passed around.
+- id: cli-discoverability-verbs-capabilities-schema-llm-instructions
+  title: 'CLI: discoverability verbs (capabilities, schema, llm-instructions)'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    CLI audit scope item #7 (cli-tool-design.md §"Optional but
+    valuable"): add discoverability surfaces so agents can probe
+    capabilities without parsing help text.
+
+    ## Verbs to ship
+
+    1. `ravel-lite capabilities` — JSON object with `version`,
+       `subcommands`, `output_formats`, and a feature-flags object
+       (e.g. `{"json_output": true, "markdown_output": true,
+       "stable_error_codes": true}`). Cheap; landable independently.
+    2. `ravel-lite schema <command>` — emits the JSON schema for the
+       named command's `--format json` output. Especially valuable for
+       `state backlog list`, `state memory list`, `state intents list`
+       — every kind that ships a typed YAML/JSON shape via the
+       `Per-kind structs wrap Item<K>` pattern.
+    3. `ravel-lite llm-instructions` — optional. Single-shot manual
+       covering things `--help` cannot: workflow recipes, common
+       mistakes ("don't grep `state backlog list`, use `--filter`"),
+       authentication and state assumptions. Skip if the project's
+       tutorials/reference cover the same ground.
+
+    ## Order of attack
+
+    `capabilities` first (smallest, broad signal). Then `schema`
+    (harder — needs each verb to declare a schema; the simplest path
+    is `schemars` derives on the typed YAML structs). Then evaluate
+    whether `llm-instructions` adds enough to justify maintenance.
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` §"Optional but
+      valuable" (full templates and examples).
+- id: cli-json-schema-versioning-policy-and-documentation
+  title: 'CLI: JSON schema versioning policy and documentation'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    CLI audit scope item #2 (cli-tool-design.md §1): every
+    `--format json` output carries a top-level `schema_version`, and
+    each verb's schema is documented and stable.
+
+    ## Status of `schema_version`
+
+    Already present on the typed YAML/JSON envelope structs that
+    underlie state verbs:
+
+    - `BACKLOG_SCHEMA_VERSION`, `MEMORY_SCHEMA_VERSION`,
+      `INTENTS_SCHEMA_VERSION`, `FINDINGS_SCHEMA_VERSION`,
+      `TARGETS_SCHEMA_VERSION`, `TARGET_REQUESTS_SCHEMA_VERSION`,
+      `THIS_CYCLE_FOCUS_SCHEMA_VERSION`,
+      `FOCUS_OBJECTIONS_SCHEMA_VERSION`, `COMMITS_SCHEMA_VERSION`.
+    - `LIST_SCHEMA_VERSION` for `fixed-memory list`.
+
+    What is missing:
+
+    1. Verbs that don't yet emit JSON (atlas, repos — see
+       `cli-fmt-json-parity-for-repo-and-atlas-verbs`) need the same
+       versioned wrapper when they gain JSON.
+    2. `schema_version` needs documentation surfaces — preferably the
+       `ravel-lite schema <command>` verb in `cli-discoverability-verbs`,
+       not freestanding markdown that rots.
+    3. Bump policy must be written down. Cli-tool-design.md §1
+       says "Schema must be stable across patch versions. Breaking
+       changes go in major versions and are documented." — reflect
+       this in the project README or a short ADR-style note.
+
+    ## Why deferred
+
+    The on-disk wire shape is frozen until the v1→v2 migrator exists
+    (see `migrate-ravel-lite-migrate-for-v1-to-v2-cutover`). Writing a
+    formal schema doc now risks codifying a shape that the migration
+    will reshape. Wait until the v2 cutover lands, then snapshot what
+    ships.
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` §1, §"Anti-patterns"
+      ("Unstable JSON").
+    - Memory: "LLM_STATE shape frozen until v1→v2 migrator exists" —
+      pins schema-doc work behind that migrator.
+- id: cli-finish-audit-checklist-sweep-defaults-ids-aliases-hidden-state
+  title: 'CLI: finish audit-checklist sweep (defaults, ids, aliases, hidden state)'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    CLI audit scope item #8: walk the remainder of the audit-checklist
+    in `defaults/fixed-memory/cli-tool-design.md` §"Audit checklist"
+    that the consolidated-OutputFormat pass did not address, capture
+    findings, and split into sub-tasks if substantial.
+
+    ## Already covered by sibling tasks
+
+    - `--json` parity → `cli-fmt-json-parity-for-repo-and-atlas-verbs`.
+    - Stable JSON schema with `schema_version` →
+      `cli-json-schema-versioning-and-doc`.
+    - Examples in every `--help` → `cli-help-examples-on-every-verb`.
+    - Errors in JSON mode are also JSON, with stable `code` field →
+      `cli-error-codes-and-json-error-envelope`.
+    - Documented exit codes → `cli-exit-code-categories`.
+    - `tool capabilities` / `tool schema <cmd>` / `tool
+      llm-instructions` → `cli-discoverability-verbs`.
+    - `OutputFormat` consolidation → done (this cycle).
+
+    ## Likely remaining checklist items
+
+    - **List default limits**. Confirm or add: `state backlog list`,
+      `state memory list`, etc. cap rows by default with `--limit N`
+      and `--all` overrides.
+    - **TTY-detection / no-color in pipes**. Confirm: no ANSI bytes
+      reach JSON/YAML output. Skim helpers in `format.rs` (TUI
+      styling) and confirm they don't leak into headless verb paths.
+    - **Verb/noun ordering consistency**. cli-tool-design.md §5 is
+      agnostic — but pick one and document it. Ravel-lite is largely
+      noun-first (`state backlog list`, `state memory show`); audit
+      for stragglers.
+    - **Aliases for common synonyms** (`rm`/`remove`/`delete`,
+      `ls`/`list`). Currently: not present. Decide whether the
+      surface is small enough that aliases aren't worth the matrix.
+    - **Idempotency / `--dry-run` documentation** on mutating verbs.
+    - **Identifier conventions** — most ids are `b-…`/`m-…`/`i-…`
+      style (typed prefix). Audit for stragglers.
+    - **Hidden state**. `RAVEL_LITE_CONFIG` env var — confirm `--help`
+      surfaces it everywhere it's consulted (init, run, …).
+
+    For each remaining "no" finding, file a focused subtask.
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` §"Audit checklist"
+      (every line).

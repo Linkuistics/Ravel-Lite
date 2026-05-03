@@ -14,6 +14,6 @@ pub use parse_md::parse_memory_markdown;
 pub use schema::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
 pub use verbs::{
     parse_code_anchor, run_add, run_delete, run_init, run_list, run_set_body, run_set_status,
-    run_set_title, run_show, AddRequest, OutputFormat,
+    run_set_title, run_show, AddRequest,
 };
 pub use yaml_io::{read_memory, write_memory};

@@ -9,5 +9,5 @@ pub mod verbs;
 pub mod yaml_io;
 
 pub use schema::{CommitSpec, CommitsSpec, COMMITS_SCHEMA_VERSION};
-pub use verbs::{run_list, run_show, OutputFormat};
+pub use verbs::{run_list, run_show};
 pub use yaml_io::{commits_path, delete_commits, read_commits, write_commits};

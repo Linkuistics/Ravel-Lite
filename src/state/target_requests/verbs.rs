@@ -16,25 +16,11 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
-use super::schema::{TargetRequest, TargetRequestsFile, TARGET_REQUESTS_SCHEMA_VERSION};
-use super::yaml_io::{read_target_requests, write_target_requests};
+use crate::cli::OutputFormat;
 use crate::component_ref::ComponentRef;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum OutputFormat {
-    Yaml,
-    Json,
-}
-
-impl OutputFormat {
-    pub fn parse(input: &str) -> Option<OutputFormat> {
-        match input {
-            "yaml" => Some(OutputFormat::Yaml),
-            "json" => Some(OutputFormat::Json),
-            _ => None,
-        }
-    }
-}
+use super::schema::{TargetRequest, TargetRequestsFile, TARGET_REQUESTS_SCHEMA_VERSION};
+use super::yaml_io::{read_target_requests, write_target_requests};
 
 pub fn run_list(plan_dir: &Path, format: OutputFormat) -> Result<()> {
     let requests = read_target_requests(plan_dir)?;
@@ -93,6 +79,9 @@ fn emit(file: &TargetRequestsFile, format: OutputFormat) -> Result<()> {
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(file)?,
         OutputFormat::Json => serde_json::to_string_pretty(file)? + "\n",
+        OutputFormat::Markdown => {
+            bail!("`state target-requests` does not support --format markdown; use yaml or json")
+        }
     };
     print!("{serialised}");
     Ok(())

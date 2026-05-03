@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod atlas;
 pub mod backlog_transitions;
+pub mod cli;
 pub mod component_ref;
 pub mod config;
 pub mod config_lua;

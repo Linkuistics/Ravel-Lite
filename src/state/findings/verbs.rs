@@ -14,27 +14,12 @@ use anyhow::{bail, Result};
 
 use knowledge_graph::{Item, ItemStatus, Justification, KindMarker};
 
+use crate::cli::OutputFormat;
 use crate::plan_kg::FindingStatus;
 use crate::state::backlog::schema::allocate_id;
 
 use super::schema::{FindingEntry, FindingsFile, FINDINGS_SCHEMA_VERSION};
 use super::yaml_io::{read_findings, write_findings};
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum OutputFormat {
-    Yaml,
-    Json,
-}
-
-impl OutputFormat {
-    pub fn parse(input: &str) -> Option<OutputFormat> {
-        match input {
-            "yaml" => Some(OutputFormat::Yaml),
-            "json" => Some(OutputFormat::Json),
-            _ => None,
-        }
-    }
-}
 
 pub fn run_list(context_root: &Path, format: OutputFormat) -> Result<()> {
     let findings = read_findings(context_root)?;
@@ -63,6 +48,9 @@ fn emit(findings: &FindingsFile, format: OutputFormat) -> Result<()> {
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(findings)?,
         OutputFormat::Json => serde_json::to_string_pretty(findings)? + "\n",
+        OutputFormat::Markdown => {
+            bail!("`findings` does not support --format markdown; use yaml or json")
+        }
     };
     print!("{serialised}");
     Ok(())

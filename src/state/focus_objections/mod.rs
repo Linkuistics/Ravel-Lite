@@ -13,7 +13,7 @@ pub use schema::{
     FocusObjectionsFile, Objection, FOCUS_OBJECTIONS_SCHEMA_VERSION,
 };
 pub use verbs::{
-    run_add_premature, run_add_skip_item, run_add_wrong_target, run_clear, run_list, OutputFormat,
+    run_add_premature, run_add_skip_item, run_add_wrong_target, run_clear, run_list,
 };
 pub use yaml_io::{
     delete_focus_objections, focus_objections_path, read_focus_objections, write_focus_objections,

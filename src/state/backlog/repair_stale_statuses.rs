@@ -25,10 +25,10 @@ use std::path::Path;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::cli::OutputFormat;
 use crate::plan_kg::BacklogStatus;
 
 use super::schema::{BacklogEntry, BacklogFile};
-use super::verbs::OutputFormat;
 use super::yaml_io::{read_backlog, write_backlog};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]

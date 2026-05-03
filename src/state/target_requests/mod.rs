@@ -14,7 +14,7 @@ pub mod yaml_io;
 
 pub use drain::drain_target_requests;
 pub use schema::{TargetRequest, TargetRequestsFile, TARGET_REQUESTS_SCHEMA_VERSION};
-pub use verbs::{run_add, run_list, run_remove, run_show, OutputFormat};
+pub use verbs::{run_add, run_list, run_remove, run_show};
 pub use yaml_io::{
     delete_target_requests, read_target_requests, target_requests_path, write_target_requests,
 };

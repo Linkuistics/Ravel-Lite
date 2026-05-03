@@ -18,24 +18,10 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
+use crate::cli::OutputFormat;
+
 use super::schema::{Target, TargetsFile, TARGETS_SCHEMA_VERSION};
 use super::yaml_io::{read_targets, write_targets};
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum OutputFormat {
-    Yaml,
-    Json,
-}
-
-impl OutputFormat {
-    pub fn parse(input: &str) -> Option<OutputFormat> {
-        match input {
-            "yaml" => Some(OutputFormat::Yaml),
-            "json" => Some(OutputFormat::Json),
-            _ => None,
-        }
-    }
-}
 
 pub fn run_list(plan_dir: &Path, format: OutputFormat) -> Result<()> {
     let targets = read_targets(plan_dir)?;
@@ -133,6 +119,9 @@ fn emit(targets: &TargetsFile, format: OutputFormat) -> Result<()> {
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(targets)?,
         OutputFormat::Json => serde_json::to_string_pretty(targets)? + "\n",
+        OutputFormat::Markdown => {
+            bail!("`state targets` does not support --format markdown; use yaml or json")
+        }
     };
     print!("{serialised}");
     Ok(())

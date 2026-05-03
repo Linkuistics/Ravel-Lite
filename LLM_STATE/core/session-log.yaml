@@ -1891,3 +1891,17 @@ sessions:
     - Drift sanity-check confirmed: injecting `ravel-lite state nonexistent foo {{PLAN}}` into a prompt caused the test to fail with a precise attribution message; restoring the file made it pass again.
 
     What this suggests next: the same scan could extend to `defaults/create-plan.md`, the survey/discover prompts, and agent pi prompts — a near-trivial change from a hardcoded `phases_dir()` to iterating all embedded entries. `MAX_CHAIN_DEPTH=3` is a likely first breakage point when a fourth-level verb ships; flagged in a comment in the test file.
+- id: session-132
+  timestamp: 2026-05-03T11:31:35Z
+  phase: work
+  body: |
+    ### Session 132 (2026-05-03T11:31:35Z) — Unify OutputFormat into shared cli module
+
+    - Audited the CLI surface against `docs/cli-tool-design.md` and identified scattered per-module `OutputFormat` enums as the primary structural issue: twelve separate copies existed across `fixed_memory`, `plan_inspect`, and ten `state::*::verbs` modules, each with slightly different variant sets and parse signatures.
+    - Introduced `src/cli/` as a new top-level library module exporting a single canonical `OutputFormat` enum with all three variants (Yaml, Json, Markdown).
+    - Deleted all twelve per-module `OutputFormat` definitions and replaced with `use crate::cli::OutputFormat`. The `mod.rs` re-exports for each state module no longer include `OutputFormat`.
+    - Removed the eight `parse_*_format()` helper functions in `main.rs`; every call site now calls `OutputFormat::parse()` directly.
+    - Verbs that previously only accepted `yaml`/`json` now compile against the full enum; unsupported `Markdown` arms return an actionable runtime error naming supported values rather than rejecting at parse time.
+    - `src/state/backlog/lint_dependencies.rs` and `repair_stale_statuses.rs` updated their import to `crate::cli::OutputFormat` (they were already using the backlog-local type).
+    - Seven follow-up tasks added to the backlog covering JSON parity for remaining verbs, stable exit codes, help-text examples, discoverability verbs, and schema versioning — the audit checklist items that were not in scope for this structural refactor.
+    - No accidental edits found; tree is clean.

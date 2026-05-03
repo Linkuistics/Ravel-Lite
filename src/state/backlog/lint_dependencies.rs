@@ -20,8 +20,9 @@ use anyhow::Result;
 use knowledge_graph::Justification;
 use serde::{Deserialize, Serialize};
 
+use crate::cli::OutputFormat;
+
 use super::schema::{BacklogEntry, BacklogFile};
-use super::verbs::OutputFormat;
 use super::yaml_io::read_backlog;
 
 /// Drift record for a single item whose rationale text mentions ids

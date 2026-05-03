@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use ravel_lite::agent::claude_code::ClaudeCodeAgent;
 use ravel_lite::agent::pi::PiAgent;
 use ravel_lite::agent::Agent;
+use ravel_lite::cli::OutputFormat;
 use ravel_lite::component_ref::ComponentRef;
 use ravel_lite::config::{load_agent_config, load_shared_config, resolve_config_dir};
 use ravel_lite::git::project_root_for_plan;
@@ -1545,21 +1546,13 @@ async fn main() -> Result<()> {
     }
 }
 
-fn parse_fixed_memory_format(input: &str) -> Result<ravel_lite::fixed_memory::OutputFormat> {
-    ravel_lite::fixed_memory::OutputFormat::parse(input).ok_or_else(|| {
-        anyhow::anyhow!(
-            "invalid --format value {input:?}; expected `yaml`, `json`, or `markdown`"
-        )
-    })
-}
-
 fn dispatch_fixed_memory(command: FixedMemoryCommands) -> Result<()> {
     use ravel_lite::fixed_memory;
 
     match command {
         FixedMemoryCommands::List { config, format } => {
             let config_root = resolve_config_dir(config)?;
-            let fmt = parse_fixed_memory_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             let map = fixed_memory::discover(&config_root)?;
             let rendered = fixed_memory::render_list(&map, fmt)?;
             print!("{rendered}");
@@ -1662,11 +1655,6 @@ fn dispatch_atlas(command: AtlasCommands) -> Result<()> {
     }
 }
 
-fn parse_plan_format(input: &str) -> Result<ravel_lite::plan_inspect::OutputFormat> {
-    ravel_lite::plan_inspect::OutputFormat::parse(input)
-        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
-}
-
 fn dispatch_plan(command: PlanCommands) -> Result<()> {
     use ravel_lite::plan_inspect::{
         run_list_items, run_query_by_justification, run_query_by_status, run_show_item,
@@ -1676,11 +1664,11 @@ fn dispatch_plan(command: PlanCommands) -> Result<()> {
     match command {
         PlanCommands::ListItems { plan_dir, kind, format } => {
             let kind = kind.map(|s| PlanItemKind::parse(&s)).transpose()?;
-            let fmt = parse_plan_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             run_list_items(&plan_dir, kind, fmt)
         }
         PlanCommands::ShowItem { plan_dir, id, format } => {
-            let fmt = parse_plan_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             run_show_item(&plan_dir, &id, fmt)
         }
         PlanCommands::QueryByStatus {
@@ -1690,7 +1678,7 @@ fn dispatch_plan(command: PlanCommands) -> Result<()> {
             format,
         } => {
             let kind = kind.map(|s| PlanItemKind::parse(&s)).transpose()?;
-            let fmt = parse_plan_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             run_query_by_status(&plan_dir, kind, &status, fmt)
         }
         PlanCommands::QueryByJustification {
@@ -1701,7 +1689,7 @@ fn dispatch_plan(command: PlanCommands) -> Result<()> {
         } => {
             let kind = kind.map(|s| PlanItemKind::parse(&s)).transpose()?;
             let jk = JustificationKindFilter::parse(&justification_kind)?;
-            let fmt = parse_plan_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             run_query_by_justification(&plan_dir, kind, jk, fmt)
         }
     }
@@ -1925,7 +1913,7 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
                 has_handoff,
                 missing_results,
             };
-            let fmt = parse_output_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             let grouping = GroupBy::parse(&group_by).ok_or_else(|| {
                 anyhow::anyhow!(
                     "invalid --group-by value {group_by:?}; expected `category` or `status`"
@@ -1934,7 +1922,7 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
             backlog::run_list(&plan_dir, &filter, fmt, grouping)
         }
         BacklogCommands::Show { plan_dir, id, format } => {
-            let fmt = parse_output_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             backlog::run_show(&plan_dir, &id, fmt)
         }
         BacklogCommands::Add {
@@ -2007,11 +1995,11 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
             backlog::run_reorder(&plan_dir, &id, pos, &target_id)
         }
         BacklogCommands::LintDependencies { plan_dir, format } => {
-            let fmt = parse_output_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             backlog::run_lint_dependencies(&plan_dir, fmt)
         }
         BacklogCommands::RepairStaleStatuses { plan_dir, dry_run, format } => {
-            let fmt = parse_output_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             let count = backlog::run_repair_stale_statuses(&plan_dir, dry_run, fmt)?;
             // Non-zero exit iff any repair would apply — scripts poll
             // this verb before a mutating run to detect status drift
@@ -2027,28 +2015,16 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
     }
 }
 
-fn parse_output_format(input: &str) -> Result<ravel_lite::state::backlog::OutputFormat> {
-    ravel_lite::state::backlog::OutputFormat::parse(input)
-        .ok_or_else(|| {
-            anyhow::anyhow!("invalid --format value {input:?}; expected `yaml`, `json`, or `markdown`")
-        })
-}
-
-fn parse_memory_format(input: &str) -> Result<ravel_lite::state::memory::OutputFormat> {
-    ravel_lite::state::memory::OutputFormat::parse(input)
-        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
-}
-
 fn dispatch_memory(command: MemoryCommands) -> Result<()> {
     use ravel_lite::state::memory;
 
     match command {
         MemoryCommands::List { plan_dir, format } => {
-            let fmt = parse_memory_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             memory::run_list(&plan_dir, fmt)
         }
         MemoryCommands::Show { plan_dir, id, format } => {
-            let fmt = parse_memory_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             memory::run_show(&plan_dir, &id, fmt)
         }
         MemoryCommands::Add {
@@ -2110,21 +2086,16 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
     }
 }
 
-fn parse_intents_format(input: &str) -> Result<ravel_lite::state::intents::OutputFormat> {
-    ravel_lite::state::intents::OutputFormat::parse(input)
-        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
-}
-
 fn dispatch_intents(command: IntentsCommands) -> Result<()> {
     use ravel_lite::state::intents;
 
     match command {
         IntentsCommands::List { plan_dir, format } => {
-            let fmt = parse_intents_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             intents::run_list(&plan_dir, fmt)
         }
         IntentsCommands::Show { plan_dir, id, format } => {
-            let fmt = parse_intents_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             intents::run_show(&plan_dir, &id, fmt)
         }
         IntentsCommands::Add {
@@ -2150,21 +2121,16 @@ fn dispatch_intents(command: IntentsCommands) -> Result<()> {
     }
 }
 
-fn parse_targets_format(input: &str) -> Result<ravel_lite::state::targets::OutputFormat> {
-    ravel_lite::state::targets::OutputFormat::parse(input)
-        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
-}
-
 fn dispatch_targets(command: TargetsCommands) -> Result<()> {
     use ravel_lite::state::targets;
 
     match command {
         TargetsCommands::List { plan_dir, format } => {
-            let fmt = parse_targets_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             targets::run_list(&plan_dir, fmt)
         }
         TargetsCommands::Show { plan_dir, reference, format } => {
-            let fmt = parse_targets_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             targets::run_show(&plan_dir, &reference, fmt)
         }
         TargetsCommands::Add {
@@ -2219,23 +2185,16 @@ fn parse_target_reference(reference: &str) -> Result<(String, String)> {
     }
 }
 
-fn parse_target_requests_format(
-    input: &str,
-) -> Result<ravel_lite::state::target_requests::OutputFormat> {
-    ravel_lite::state::target_requests::OutputFormat::parse(input)
-        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
-}
-
 fn dispatch_target_requests(command: TargetRequestsCommands) -> Result<()> {
     use ravel_lite::state::target_requests;
 
     match command {
         TargetRequestsCommands::List { plan_dir, format } => {
-            let fmt = parse_target_requests_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             target_requests::run_list(&plan_dir, fmt)
         }
         TargetRequestsCommands::Show { plan_dir, reference, format } => {
-            let fmt = parse_target_requests_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             target_requests::run_show(&plan_dir, &reference, fmt)
         }
         TargetRequestsCommands::Add { plan_dir, reference, reason } => {
@@ -2253,33 +2212,19 @@ fn dispatch_target_requests(command: TargetRequestsCommands) -> Result<()> {
     }
 }
 
-fn parse_commits_format(
-    input: &str,
-) -> Result<ravel_lite::state::commits::OutputFormat> {
-    ravel_lite::state::commits::OutputFormat::parse(input)
-        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
-}
-
 fn dispatch_commits(command: CommitsCommands) -> Result<()> {
     use ravel_lite::state::commits;
 
     match command {
         CommitsCommands::List { plan_dir, format } => {
-            let fmt = parse_commits_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             commits::run_list(&plan_dir, fmt)
         }
         CommitsCommands::Show { plan_dir, index, format } => {
-            let fmt = parse_commits_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             commits::run_show(&plan_dir, index, fmt)
         }
     }
-}
-
-fn parse_this_cycle_focus_format(
-    input: &str,
-) -> Result<ravel_lite::state::this_cycle_focus::OutputFormat> {
-    ravel_lite::state::this_cycle_focus::OutputFormat::parse(input)
-        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
 }
 
 fn dispatch_this_cycle_focus(command: ThisCycleFocusCommands) -> Result<()> {
@@ -2287,7 +2232,7 @@ fn dispatch_this_cycle_focus(command: ThisCycleFocusCommands) -> Result<()> {
 
     match command {
         ThisCycleFocusCommands::Show { plan_dir, format } => {
-            let fmt = parse_this_cycle_focus_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             this_cycle_focus::run_show(&plan_dir, fmt)
         }
         ThisCycleFocusCommands::Set {
@@ -2300,19 +2245,12 @@ fn dispatch_this_cycle_focus(command: ThisCycleFocusCommands) -> Result<()> {
     }
 }
 
-fn parse_focus_objections_format(
-    input: &str,
-) -> Result<ravel_lite::state::focus_objections::OutputFormat> {
-    ravel_lite::state::focus_objections::OutputFormat::parse(input)
-        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
-}
-
 fn dispatch_focus_objections(command: FocusObjectionsCommands) -> Result<()> {
     use ravel_lite::state::focus_objections;
 
     match command {
         FocusObjectionsCommands::List { plan_dir, format } => {
-            let fmt = parse_focus_objections_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             focus_objections::run_list(&plan_dir, fmt)
         }
         FocusObjectionsCommands::AddWrongTarget {
@@ -2332,23 +2270,18 @@ fn dispatch_focus_objections(command: FocusObjectionsCommands) -> Result<()> {
     }
 }
 
-fn parse_findings_format(input: &str) -> Result<ravel_lite::state::findings::OutputFormat> {
-    ravel_lite::state::findings::OutputFormat::parse(input)
-        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
-}
-
 fn dispatch_findings(command: FindingsCommands) -> Result<()> {
     use ravel_lite::state::findings;
 
     match command {
         FindingsCommands::List { config, format } => {
             let context_root = resolve_config_dir(config)?;
-            let fmt = parse_findings_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             findings::run_list(&context_root, fmt)
         }
         FindingsCommands::Show { config, id, format } => {
             let context_root = resolve_config_dir(config)?;
-            let fmt = parse_findings_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             findings::run_show(&context_root, &id, fmt)
         }
         FindingsCommands::Add {
@@ -2380,21 +2313,16 @@ fn dispatch_findings(command: FindingsCommands) -> Result<()> {
     }
 }
 
-fn parse_session_log_format(input: &str) -> Result<ravel_lite::state::session_log::OutputFormat> {
-    ravel_lite::state::session_log::OutputFormat::parse(input)
-        .ok_or_else(|| anyhow::anyhow!("invalid --format value {input:?}; expected `yaml` or `json`"))
-}
-
 fn dispatch_session_log(command: SessionLogCommands) -> Result<()> {
     use ravel_lite::state::session_log;
 
     match command {
         SessionLogCommands::List { plan_dir, limit, format } => {
-            let fmt = parse_session_log_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             session_log::run_list(&plan_dir, limit, fmt)
         }
         SessionLogCommands::Show { plan_dir, id, format } => {
-            let fmt = parse_session_log_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             session_log::run_show(&plan_dir, &id, fmt)
         }
         SessionLogCommands::Append {
@@ -2432,7 +2360,7 @@ fn dispatch_session_log(command: SessionLogCommands) -> Result<()> {
             session_log::run_set_latest(&plan_dir, &record)
         }
         SessionLogCommands::ShowLatest { plan_dir, format } => {
-            let fmt = parse_session_log_format(&format)?;
+            let fmt = OutputFormat::parse(&format)?;
             session_log::run_show_latest(&plan_dir, fmt)
         }
     }

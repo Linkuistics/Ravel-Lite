@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
+use crate::cli::OutputFormat;
 use crate::init::{embedded_content, embedded_entries_with_prefix};
 
 const FIXED_MEMORY_DIR: &str = "fixed-memory";
@@ -42,27 +43,6 @@ const LIST_SCHEMA_VERSION: u32 = 1;
 pub struct EntrySources {
     pub embedded: Option<&'static str>,
     pub user_path: Option<PathBuf>,
-}
-
-/// `--format` values for `fixed-memory list`. Yaml is the default to
-/// match existing `state <kind> list` verbs; markdown produces the table
-/// form documented in the spec; json mirrors the yaml shape.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum OutputFormat {
-    Yaml,
-    Json,
-    Markdown,
-}
-
-impl OutputFormat {
-    pub fn parse(input: &str) -> Option<OutputFormat> {
-        match input {
-            "yaml" => Some(OutputFormat::Yaml),
-            "json" => Some(OutputFormat::Json),
-            "markdown" => Some(OutputFormat::Markdown),
-            _ => None,
-        }
-    }
 }
 
 /// Failure modes for `compose`. `UnknownSlug` carries the available slug
@@ -493,17 +473,6 @@ mod tests {
             untitled.get("description").is_none(),
             "description must be omitted when no H1 in either source"
         );
-    }
-
-    #[test]
-    fn output_format_parse_accepts_known_values() {
-        assert_eq!(OutputFormat::parse("yaml"), Some(OutputFormat::Yaml));
-        assert_eq!(OutputFormat::parse("json"), Some(OutputFormat::Json));
-        assert_eq!(
-            OutputFormat::parse("markdown"),
-            Some(OutputFormat::Markdown)
-        );
-        assert_eq!(OutputFormat::parse("toml"), None);
     }
 
     #[test]

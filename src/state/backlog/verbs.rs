@@ -19,6 +19,7 @@ use anyhow::{bail, Result};
 
 use knowledge_graph::{Item, Justification, KindMarker, Store};
 
+use crate::cli::OutputFormat;
 use crate::plan_kg::{BacklogItemKind, BacklogStatus};
 
 use super::render::{render_markdown, GroupBy};
@@ -26,24 +27,6 @@ use super::schema::{
     allocate_id, BacklogEntry, BacklogFile, BACKLOG_SCHEMA_VERSION,
 };
 use super::yaml_io::{read_backlog, write_backlog};
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum OutputFormat {
-    Yaml,
-    Json,
-    Markdown,
-}
-
-impl OutputFormat {
-    pub fn parse(input: &str) -> Option<OutputFormat> {
-        match input {
-            "yaml" => Some(OutputFormat::Yaml),
-            "json" => Some(OutputFormat::Json),
-            "markdown" => Some(OutputFormat::Markdown),
-            _ => None,
-        }
-    }
-}
 
 #[derive(Debug, Default, Clone)]
 pub struct ListFilter {

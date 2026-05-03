@@ -8,26 +8,12 @@
 
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
+
+use crate::cli::OutputFormat;
 
 use super::schema::{SessionLogFile, SessionRecord};
 use super::yaml_io::{read_latest_session, read_session_log, write_latest_session, write_session_log};
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum OutputFormat {
-    Yaml,
-    Json,
-}
-
-impl OutputFormat {
-    pub fn parse(input: &str) -> Option<OutputFormat> {
-        match input {
-            "yaml" => Some(OutputFormat::Yaml),
-            "json" => Some(OutputFormat::Json),
-            _ => None,
-        }
-    }
-}
 
 pub fn run_list(plan_dir: &Path, limit: Option<usize>, format: OutputFormat) -> Result<()> {
     let log = read_session_log(plan_dir)?;
@@ -74,6 +60,9 @@ fn emit_log(log: &SessionLogFile, format: OutputFormat) -> Result<()> {
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(log)?,
         OutputFormat::Json => serde_json::to_string_pretty(log)? + "\n",
+        OutputFormat::Markdown => {
+            bail!("`state session-log` does not support --format markdown; use yaml or json")
+        }
     };
     print!("{serialised}");
     Ok(())
@@ -83,6 +72,9 @@ fn emit_record(record: &SessionRecord, format: OutputFormat) -> Result<()> {
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(record)?,
         OutputFormat::Json => serde_json::to_string_pretty(record)? + "\n",
+        OutputFormat::Markdown => {
+            bail!("`state session-log` does not support --format markdown; use yaml or json")
+        }
     };
     print!("{serialised}");
     Ok(())

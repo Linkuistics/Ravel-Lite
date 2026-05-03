@@ -21,24 +21,10 @@ use knowledge_graph::{Item, ItemStatus, Justification, KindMarker};
 use crate::plan_kg::MemoryStatus;
 use crate::state::backlog::schema::allocate_id;
 
+use crate::cli::OutputFormat;
+
 use super::schema::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
 use super::yaml_io::{read_memory, write_memory};
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum OutputFormat {
-    Yaml,
-    Json,
-}
-
-impl OutputFormat {
-    pub fn parse(input: &str) -> Option<OutputFormat> {
-        match input {
-            "yaml" => Some(OutputFormat::Yaml),
-            "json" => Some(OutputFormat::Json),
-            _ => None,
-        }
-    }
-}
 
 pub fn run_list(plan_dir: &Path, format: OutputFormat) -> Result<()> {
     let memory = read_memory(plan_dir)?;
@@ -67,6 +53,9 @@ fn emit(memory: &MemoryFile, format: OutputFormat) -> Result<()> {
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(memory)?,
         OutputFormat::Json => serde_json::to_string_pretty(memory)? + "\n",
+        OutputFormat::Markdown => {
+            bail!("`state memory` does not support --format markdown; use yaml or json")
+        }
     };
     print!("{serialised}");
     Ok(())
