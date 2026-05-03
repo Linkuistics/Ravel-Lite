@@ -197,501 +197,42 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
-- id: cli-stable-error-codes-and-json-error-envelope
-  title: 'CLI: stable error codes and JSON error envelope'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    CLI audit scope item #4 (cli-tool-design.md §3): every error names a
-    remediation, and in `--format json` mode errors carry a stable `code`
-    field that agents can branch on without parsing the message.
-
-    ## Required pieces
-
-    1. Define a stable error-code vocabulary as a typed enum (e.g.
-       `AUTH_REQUIRED`, `NOT_FOUND`, `INVALID_INPUT`, `CONFLICT`,
-       `IO_ERROR`, `RATE_LIMITED`). Aligned with the `ExitCategory`
-       work — same enum can drive both the JSON `code` field and the
-       process exit code if convenient.
-    2. JSON-mode error envelope: when the user passed `--format json`,
-       serialise errors as `{"error": {"code": "...", "message": "...",
-       "remediation": "..."}}` to stdout (or stderr — pick one and
-       document) with a non-zero exit. No mixing of prose stderr with
-       structured stdout.
-    3. Audit current bail!/anyhow! call sites and tag each with a code.
-       Ones without an obvious remediation should say so explicitly so
-       agents stop retrying.
-
-    ## Why typed-not-stringly
-
-    Per the project's "Prefer typed APIs over stringly-typed" rule, the
-    error code vocabulary must be a Rust enum with `as_str()`/`Display`,
-    not free-form strings sprinkled through bail! call sites. Otherwise
-    a typo silently breaks agent branching.
-
-    ## Reference
-
-    - `defaults/fixed-memory/cli-tool-design.md` §3 and §"Anti-patterns
-      to flag" (Vague errors).
-  results: |
-    ## What shipped
-
-    Three new `src/cli/` modules:
-
-    - `cli/error_code.rs`: `ErrorCode` enum with seven variants
-      (`AuthRequired`, `InvalidInput`, `NotFound`, `Conflict`, `IoError`,
-      `RateLimited`, `Internal`), `as_str()` → wire-form
-      `"AUTH_REQUIRED"` etc., `parse_opt(&str)` round-trip, and `all()` for
-      enumerating the vocabulary. Typed-not-stringly per the
-      "Prefer typed APIs over stringly-typed" memory entry.
-    - `cli/error_envelope.rs`: `JsonErrorEnvelope { error: { code, message,
-      remediation } }` with optional remediation skipped when absent
-      (`#[serde(skip_serializing_if = "Option::is_none")]`). `Display` impl
-      emits pretty JSON with a trailing newline, matching every other
-      JSON-emitting verb.
-    - `cli/exit_category.rs`: see the sibling `cli-exit-code-categories`
-      task results.
-
-    `main()` was refactored from `async fn main() -> Result<()>` to a
-    thin wrapper that calls `dispatch()` (the original body), classifies
-    any error against `ExitCategory`, and:
-
-    - Detects `--format json` / `--format=json` in argv (heuristic but
-      robust enough; documented in the helper comment).
-    - In JSON mode, emits a `JsonErrorEnvelope` to stderr.
-    - In non-JSON mode, emits `Error: {err:#}` to stderr (preserving the
-      prior anyhow rendering).
-    - Exits with the categorised code.
-
-    Default category for un-tagged errors is `ErrorCode::Internal` →
-    `ExitCategory::GenericFailure` → exit 1, identical to the prior
-    anyhow default. The typed surface is in place; tagging is opt-in
-    incremental.
-
-    ## Deferred (per task description "Audit current bail!/anyhow! call
-    sites and tag each with a code")
-
-    - The mechanical sweep across every `bail!`/`anyhow!` call site to
-      attach an `ErrorCode` is a follow-up. Until that lands, the typed
-      enum is exposed via `capabilities` and `JsonErrorEnvelope` only.
-    - A possible vehicle for the sweep: introduce a `RavelError` wrapper
-      with `kind: ErrorCode` and a `bail_with!(code, fmt)` macro that
-      attaches the code via a downcast marker. Then per-bail tagging is
-      string-replace-friendly.
-
-    ## Verification
-
-    - `cargo test --lib cli::` → 23 tests pass (ErrorCode round-trip,
-      unique-codes invariant, JsonErrorEnvelope JSON well-formedness for
-      every code, escaping of double-quoted user input).
-    - `./scripts/check.sh` clippy clean.
-    - End-to-end smoke: `repo list --format markdown` (unsupported)
-      exits 1 with an actionable error message. Clap's own usage errors
-      (e.g. unknown flag) exit 2 unchanged because clap handles its own
-      surface before our wrapper sees the result — that's the contract,
-      not a bug.
-
-    ## Suggests next
-
-    - Tag each `bail!` site (sweep referenced above).
-    - Wire the JSON-error-envelope path through state verbs that already
-      honour `--format json`, so failures during `state backlog list
-      --format json` (e.g. plan dir missing) are JSON instead of plain
-      prose. Currently the wrapper handles top-level `Err`; per-verb
-      `bail!` calls inside the dispatch path also benefit when each is
-      tagged.
-- id: cli-format-json-parity-for-repo-and-atlas-verbs
-  title: 'CLI: --format json parity for repo and atlas verbs'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    CLI audit scope item #1 (cli-tool-design.md §1, §4): every data-producing
-    verb supports `--format yaml|json`. Current gaps surfaced during the
-    shared-`OutputFormat` consolidation:
-
-    - `ravel-lite repo list` — YAML-only (no `--format` flag).
-    - `ravel-lite atlas list-components` — text-only.
-    - `ravel-lite atlas summary` — text-only.
-
-    For each: add `--format <yaml|json>` (default yaml to preserve
-    backwards compatibility), wire to the shared
-    `ravel_lite::cli::OutputFormat`, and emit a stable JSON shape with a
-    top-level `schema_version` (mirrors every other state verb).
-
-    Out of scope: schema documentation (separate task) and the optional
-    `ravel-lite schema <command>` verb (also separate).
-  results: |
-    ## What shipped
-
-    - `ravel-lite repo list` now takes `--format <yaml|json>` (default
-      `yaml`, preserving prior behaviour). Both shapes carry the existing
-      `schema_version` (`repos.rs::SCHEMA_VERSION = 1`); JSON is
-      pretty-printed with a trailing newline matching every other
-      JSON-emitting state verb. `OutputFormat::Markdown` errors with
-      "format `markdown` is not supported on `repo list`; supported: yaml,
-      json".
-    - `ravel-lite atlas list-repos` mirrors `repo list` — same flag, same
-      shape, same delegation to `repos::run_list`.
-    - `ravel-lite atlas list-components` and `ravel-lite atlas summary` now
-      take `--format <yaml|json>` as **opt-in**: when omitted, the
-      documented text shape is preserved; when supplied, a versioned
-      envelope is emitted.
-    - New schema_version constants: `ATLAS_COMPONENTS_LIST_SCHEMA_VERSION`
-      and `ATLAS_SUMMARY_SCHEMA_VERSION` (both `1`).
-
-    ## Deviation from task description
-
-    The task body says "default yaml to preserve backwards compatibility"
-    for all three verbs. For `repo list` that is the correct read (it
-    already defaulted to yaml). For `atlas list-components` and
-    `atlas summary` the existing default was a documented text shape
-    (`<repo_slug>/<component_id>  <kind>`, etc.), so a default-yaml change
-    would have been an *incompatible* output break for any caller piping
-    the text into a downstream tool.
-
-    I kept the text shape as the no-flag default and made `--format` opt-
-    in (via `Option<String>`). Effect: agents that want structured output
-    opt in explicitly; humans piping the existing `atlas list-components`
-    into `awk`/`grep`-style tooling are unaffected. If the original intent
-    was to deprecate the text shape entirely, this can be tightened in a
-    follow-up by making `--format` required-with-default-yaml.
-
-    ## Verification
-
-    - `cargo test` — 992 lib tests + every integration suite green.
-    - `./scripts/check.sh` — clippy `-D warnings` clean.
-    - Smoke run on an empty registry:
-      - `repo list --format yaml` → `schema_version: 1\nrepos: {}`.
-      - `repo list --format json` → `{"schema_version":1,"repos":{}}`
-        pretty-printed.
-      - `repo list --format markdown` → exits 1 with the actionable
-        "supported: yaml, json" message.
-      - `atlas list-components` (no --format) → empty output (existing
-        behaviour preserved).
-
-    ## Suggests next
-
-    - The "tag every bail!/anyhow! with an ErrorCode" sweep called out by
-      `cli-stable-error-codes-and-json-error-envelope` — at present, the
-      unsupported-format error returns the default `Internal` ErrorCode →
-      exit 1, when `InvalidInput` → exit 2 would be more accurate. The
-      typed enum is already in place; per-call-site tagging is mechanical.
-    - Schema documentation for the new `atlas list-components` /
-      `atlas summary` envelopes via the deferred
-      `cli-json-schema-versioning-policy-and-documentation` task (gated on
-      the v1→v2 migrator) or via the partly-done `capabilities` /
-      `schema` discoverability work.
-- id: cli-help-text-examples-on-every-verb
-  title: 'CLI: help-text examples on every verb'
+- id: cli-tag-bail-anyhow-call-sites-with-typed-errorcode
+  title: 'CLI: tag bail!/anyhow! call sites with typed ErrorCode'
   category: architecture-next
   status: not_started
   dependencies: []
   description: |
-    CLI audit scope item #3 (cli-tool-design.md §2): every subcommand's
-    `--help` output includes ≥2 concrete invocation examples at the
-    bottom. LLMs pattern-match on examples far more reliably than on
-    flag listings.
+    Sweep every `bail!`/`anyhow!` call site in `src/` and attach a typed `ErrorCode` variant. Until this lands, the `ErrorCode` enum and `ExitCategory` machinery is exercised only at the clap parse layer (exit 2) and the catch-all default (exit 1 for everything else). Agents and scripts receive no distinction between auth failures, not-found errors, or usage mistakes — the primary value of the typed exit-code system is unrealised.
 
-    ## Scope
+    ## Suggested vehicle
 
-    Walk every `#[derive(Parser)]` / `#[derive(Subcommand)]` and every
-    subcommand variant in `src/main.rs`. For each leaf verb, add
-    `#[command(after_help = "...")]` with at least two real-world
-    invocations, ideally three. Existing top-level `AFTER_HELP`
-    (repository / docs links) stays in place — leaf verbs get their own
-    example block layered on top.
-
-    ## Pattern to follow
+    Introduce a `bail_with!(code, fmt, ...)` macro that attaches `ErrorCode` as an anyhow context value via a typed newtype, then downcast in `main()` ahead of the default `Internal` fallback:
 
     ```rust
-    const BACKLOG_LIST_AFTER_HELP: &str = "\
-    Examples:
-      # default markdown render of all tasks, grouped by category
-      ravel-lite state backlog list LLM_STATE/core --format markdown
-
-      # only ready tasks, in JSON
-      ravel-lite state backlog list LLM_STATE/core --ready --format json
-    ";
-    ```
-
-    ## Why deferred
-
-    This is mechanical and large-surface (~50 verb leaves). Best done
-    after the OutputFormat consolidation lands so examples reference the
-    canonical `--format` vocabulary.
-
-    ## Reference
-
-    - `defaults/fixed-memory/cli-tool-design.md` §2 ("Help text
-      structure, top to bottom").
-    - `defaults/fixed-memory/cli-tool-design.md` §"Audit checklist" →
-      "Help" → "Every subcommand `--help` includes at least two
-      concrete examples."
-- id: cli-exitcategory-enum-and-documented-exit-codes
-  title: 'CLI: ExitCategory enum and documented exit codes'
-  category: architecture-next
-  status: done
-  dependencies:
-  - cli-stable-error-codes-and-json-error-envelope
-  description: |
-    CLI audit scope item #5 (cli-tool-design.md §8): move from anyhow's
-    implicit 0/1 exit code to documented categories — `0` success, `1`
-    generic failure, `2` usage error, `3` not found, `4` auth/forbidden,
-    `5` conflict/precondition, `6` rate-limited.
-
-    ## Required pieces
-
-    1. Define `ExitCategory` enum (typed, not stringly) with `as_code() ->
-       i32`. Lives in `src/cli/exit_category.rs` next to
-       `output_format.rs`.
-    2. Plumb the category through the error path. anyhow errors that
-       bubble up to `main()` get a category — either via a typed
-       `RavelError` outer wrapper, or via a downcast against a known
-       marker type, or via a side-channel set on a context object.
-    3. `main()` exits with the categorised code instead of letting
-       anyhow's default `Result<(), anyhow::Error>` use exit code 1
-       for everything.
-    4. Document the exit codes in the top-level `--help` after_help
-       block, alongside the source/docs links already there.
-
-    ## Coupling with error-codes-json
-
-    The same enum (or a parallel pair) should drive both the process
-    exit code and the `code` field in JSON-mode error output — agents
-    get the same signal whether they branch on stdout JSON or on
-    `$?`. Recommended: do the typed `ErrorCode` enum first
-    (error-codes-json task) and have `ExitCategory::from(&ErrorCode)`
-    read off it.
-
-    ## Reference
-
-    - `defaults/fixed-memory/cli-tool-design.md` §8.
-    - Memory: "Prefer typed APIs over stringly-typed" — categories must
-      be a Rust enum, not free integers passed around.
-  results: |
-    ## What shipped
-
-    - `src/cli/exit_category.rs`: `ExitCategory` enum with seven
-      variants (`Success`/`GenericFailure`/`UsageError`/`NotFound`/
-      `AuthRequired`/`Conflict`/`RateLimited`), `as_code() -> i32` per
-      cli-tool-design.md §8, `label() -> &'static str` for help-text
-      rendering, and `documented()` returning the dense `0..=6` table for
-      the help-text builder.
-    - `From<&ErrorCode> for ExitCategory` with the canonical mapping:
-      `AuthRequired → AuthRequired (4)`, `InvalidInput → UsageError (2)`,
-      `NotFound → NotFound (3)`, `Conflict → Conflict (5)`, `RateLimited
-      → RateLimited (6)`, `IoError | Internal → GenericFailure (1)`.
-    - `main()` now exits with the categorised code instead of letting
-      anyhow's default `Result<(), anyhow::Error>` collapse everything to
-      exit 1. See the sibling `cli-error-codes-and-json-error-envelope`
-      results for the wrapper architecture.
-    - Top-level `--help` after_help block now lists the exit-code table
-      with one-line labels, plus a pointer to `ravel-lite capabilities`
-      for the same vocabulary as JSON.
-
-    ## Verification
-
-    - `cargo test --lib cli::exit_category::` — 4 tests pass: stable
-      integers (0..=6), every `ErrorCode` maps to a non-Success category,
-      specific-mapping table matches the documented contract,
-      `documented()` is dense from 0 (so the help-text table is
-      contiguous).
-    - `./scripts/check.sh` clippy clean.
-    - `ravel-lite --help | tail` shows the "Exit codes:" block.
-    - Clap's built-in usage errors (unknown flag, missing arg) exit 2
-      unchanged — clap exits before our wrapper sees the error, which
-      matches the documented `UsageError → 2` mapping by coincidence-
-      but-also-design.
-
-    ## Coupling honoured
-
-    The task body called out: "do the typed `ErrorCode` enum first
-    (error-codes-json task) and have `ExitCategory::from(&ErrorCode)`
-    read off it." Done — the From impl is the single source of truth
-    for the code mapping. Adding a new ErrorCode requires extending the
-    match, which keeps the typed coverage honest.
-
-    ## Suggests next
-
-    - Per-bail-site tagging (sweep deferred from the sibling
-      error-codes-json task) is what unlocks the user-facing benefit:
-      agents see exit 2/3/4/5/6 distinctions on real failures instead of
-      the default exit 1 for everything except clap parse errors.
-- id: cli-discoverability-verbs-capabilities-schema-llm-instructions
-  title: 'CLI: discoverability verbs (capabilities, schema, llm-instructions)'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    CLI audit scope item #7 (cli-tool-design.md §"Optional but
-    valuable"): add discoverability surfaces so agents can probe
-    capabilities without parsing help text.
-
-    ## Verbs to ship
-
-    1. `ravel-lite capabilities` — JSON object with `version`,
-       `subcommands`, `output_formats`, and a feature-flags object
-       (e.g. `{"json_output": true, "markdown_output": true,
-       "stable_error_codes": true}`). Cheap; landable independently.
-    2. `ravel-lite schema <command>` — emits the JSON schema for the
-       named command's `--format json` output. Especially valuable for
-       `state backlog list`, `state memory list`, `state intents list`
-       — every kind that ships a typed YAML/JSON shape via the
-       `Per-kind structs wrap Item<K>` pattern.
-    3. `ravel-lite llm-instructions` — optional. Single-shot manual
-       covering things `--help` cannot: workflow recipes, common
-       mistakes ("don't grep `state backlog list`, use `--filter`"),
-       authentication and state assumptions. Skip if the project's
-       tutorials/reference cover the same ground.
-
-    ## Order of attack
-
-    `capabilities` first (smallest, broad signal). Then `schema`
-    (harder — needs each verb to declare a schema; the simplest path
-    is `schemars` derives on the typed YAML structs). Then evaluate
-    whether `llm-instructions` adds enough to justify maintenance.
-
-    ## Reference
-
-    - `defaults/fixed-memory/cli-tool-design.md` §"Optional but
-      valuable" (full templates and examples).
-  results: |
-    ## What shipped (`capabilities` only)
-
-    `ravel-lite capabilities` emits a JSON document on stdout describing
-    what this binary supports:
-
-    ```json
-    {
-      "schema_version": 1,
-      "version": "<git describe + build timestamp>",
-      "subcommands": ["init","run","create","survey","survey-format",
-                      "version","capabilities","state","repo","plan",
-                      "findings","atlas","fixed-memory"],
-      "output_formats": ["yaml","json","markdown"],
-      "error_codes": ["AUTH_REQUIRED","INVALID_INPUT","NOT_FOUND",
-                      "CONFLICT","IO_ERROR","RATE_LIMITED","INTERNAL"],
-      "exit_categories": [{"code":0,"label":"success"}, ...],
-      "features": {
-        "json_output": true, "yaml_output": true, "markdown_output": true,
-        "stable_error_codes": true, "documented_exit_codes": true,
-        "schema_versioning": true
-      }
+    macro_rules! bail_with {
+        ($code:expr, $fmt:literal $(, $arg:expr)*) => {
+            return Err(anyhow::anyhow!($fmt $(, $arg)*).context(RavelErrorCode($code)))
+        }
     }
     ```
 
-    - `error_codes` and `exit_categories` are sourced from the typed
-      `ErrorCode::all()` and `ExitCategory::documented()` so the document
-      cannot drift from the runtime — extending either enum auto-extends
-      the document.
-    - `schema_version` on the document itself is `CAPABILITIES_SCHEMA_VERSION = 1`.
+    `main()` already calls `ExitCategory::from(&ErrorCode)` to map to an exit integer; extending the downcast path is mechanical.
 
-    ## Deferred (per task's explicit "Order of attack")
+    ## Scope
 
-    The task body spells out: `capabilities` first; *then* `schema <command>`;
-    *then* evaluate `llm-instructions`. Both deferred pieces remain.
-
-    - **`schema <command>`**: documented path is "the simplest path is
-      `schemars` derives on the typed YAML structs." Deferring this is
-      defensible because it touches every typed envelope struct
-      (`BacklogFile`, `MemoryFile`, `IntentsFile`, `TargetsFile`,
-      `FindingsFile`, plus the new `AtlasComponentsList`,
-      `AtlasSummary`, `Capabilities`) — a separate focused task.
-    - **`llm-instructions`**: per the task body, this is conditional on
-      whether existing tutorials/reference cover the same ground. Project
-      has both `docs/tutorial/` and `docs/reference/`; the answer may be
-      "no, not worth maintaining a third surface." Recommended: triage
-      this as its own micro-task with a 1-hour box on "decide and either
-      ship or close as wontfix."
-
-    ## Verification
-
-    - `cargo test --lib cli::capabilities::` — 4 tests pass, including
-      invariants that "every error_code from `ErrorCode::all()` appears
-      in capabilities.error_codes" and "every documented exit category
-      appears in capabilities.exit_categories" (catches drift
-      automatically).
-    - `./scripts/check.sh` clippy clean.
-    - `ravel-lite capabilities | jq .` parses cleanly; `subcommands` array
-      contains every top-level Commands variant by hand-mirror.
-
-    ## Hand-mirror caveat
-
-    `top_level_subcommands()` is hand-maintained against `Commands` in
-    `src/main.rs`. Adding a top-level subcommand requires extending both.
-    Acceptable because:
-
-    1. The list changes rarely (top-level surface is mostly stable).
-    2. A clap derive macro to enumerate variants by name would couple
-       `cli/capabilities.rs` to clap internals that may shift between
-       versions.
-    3. The capabilities-test gives us a smoke check the mirror is
-       non-empty and contains expected anchors (`state`, `json`).
-
-    If the surface starts churning, a `strum::EnumIter` derive on
-    `Commands` would automate the mirror — deferred until the cost of
-    hand-maintenance exceeds the cost of the dependency.
-
-    ## Suggests next
-
-    - File a sub-task for the `schema <command>` work (touches every
-      typed envelope; pairs naturally with the
-      `cli-json-schema-versioning-policy-and-documentation` task once
-      the migrator unfreezes the wire shapes).
-    - Decide-and-close on `llm-instructions` — short investigation,
-      binary outcome.
-- id: cli-json-schema-versioning-policy-and-documentation
-  title: 'CLI: JSON schema versioning policy and documentation'
-  category: architecture-next
-  status: not_started
-  dependencies:
-  - migrate-ravel-lite-migrate-for-v1-to-v2-cutover
-  description: |
-    CLI audit scope item #2 (cli-tool-design.md §1): every
-    `--format json` output carries a top-level `schema_version`, and
-    each verb's schema is documented and stable.
-
-    ## Status of `schema_version`
-
-    Already present on the typed YAML/JSON envelope structs that
-    underlie state verbs:
-
-    - `BACKLOG_SCHEMA_VERSION`, `MEMORY_SCHEMA_VERSION`,
-      `INTENTS_SCHEMA_VERSION`, `FINDINGS_SCHEMA_VERSION`,
-      `TARGETS_SCHEMA_VERSION`, `TARGET_REQUESTS_SCHEMA_VERSION`,
-      `THIS_CYCLE_FOCUS_SCHEMA_VERSION`,
-      `FOCUS_OBJECTIONS_SCHEMA_VERSION`, `COMMITS_SCHEMA_VERSION`.
-    - `LIST_SCHEMA_VERSION` for `fixed-memory list`.
-
-    What is missing:
-
-    1. Verbs that don't yet emit JSON (atlas, repos — see
-       `cli-fmt-json-parity-for-repo-and-atlas-verbs`) need the same
-       versioned wrapper when they gain JSON.
-    2. `schema_version` needs documentation surfaces — preferably the
-       `ravel-lite schema <command>` verb in `cli-discoverability-verbs`,
-       not freestanding markdown that rots.
-    3. Bump policy must be written down. Cli-tool-design.md §1
-       says "Schema must be stable across patch versions. Breaking
-       changes go in major versions and are documented." — reflect
-       this in the project README or a short ADR-style note.
-
-    ## Why deferred
-
-    The on-disk wire shape is frozen until the v1→v2 migrator exists
-    (see `migrate-ravel-lite-migrate-for-v1-to-v2-cutover`). Writing a
-    formal schema doc now risks codifying a shape that the migration
-    will reshape. Wait until the v2 cutover lands, then snapshot what
-    ships.
+    1. Audit every `bail!`/`ensure!`/`anyhow!` in `src/` (exclude `tests/`).
+    2. For each, assign the most appropriate `ErrorCode` variant from the existing seven (`AuthRequired`, `InvalidInput`, `NotFound`, `Conflict`, `IoError`, `RateLimited`, `Internal`).
+    3. Attach via the chosen macro / context mechanism.
+    4. Update `main()` to downcast and prefer the attached code over the default `Internal`.
+    5. Extend CLI integration tests to assert correct exit codes for a representative sample (at least one per non-Internal category).
 
     ## Reference
 
-    - `defaults/fixed-memory/cli-tool-design.md` §1, §"Anti-patterns"
-      ("Unstable JSON").
-    - Memory: "LLM_STATE shape frozen until v1→v2 migrator exists" —
-      pins schema-doc work behind that migrator.
+    - `src/cli/error_code.rs` — seven-variant typed `ErrorCode` enum with `as_str()` and `all()`.
+    - `src/cli/exit_category.rs` — `ExitCategory::from(&ErrorCode)` mapping and `as_code()`.
+    - `src/main.rs` — `dispatch()` wrapper; the downcast site lives here.
+    - Memory: "Prefer typed APIs over stringly-typed."
 - id: cli-finish-audit-checklist-sweep-defaults-ids-aliases-hidden-state
   title: 'CLI: finish audit-checklist sweep (defaults, ids, aliases, hidden state)'
   category: architecture-next
@@ -743,3 +284,125 @@ tasks:
 
     - `defaults/fixed-memory/cli-tool-design.md` §"Audit checklist"
       (every line).
+- id: cli-help-text-examples-on-every-verb
+  title: 'CLI: help-text examples on every verb'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    CLI audit scope item #3 (cli-tool-design.md §2): every subcommand's
+    `--help` output includes ≥2 concrete invocation examples at the
+    bottom. LLMs pattern-match on examples far more reliably than on
+    flag listings.
+
+    ## Scope
+
+    Walk every `#[derive(Parser)]` / `#[derive(Subcommand)]` and every
+    subcommand variant in `src/main.rs`. For each leaf verb, add
+    `#[command(after_help = "...")]` with at least two real-world
+    invocations, ideally three. Existing top-level `AFTER_HELP`
+    (repository / docs links) stays in place — leaf verbs get their own
+    example block layered on top.
+
+    ## Pattern to follow
+
+    ```rust
+    const BACKLOG_LIST_AFTER_HELP: &str = "\
+    Examples:
+      # default markdown render of all tasks, grouped by category
+      ravel-lite state backlog list LLM_STATE/core --format markdown
+
+      # only ready tasks, in JSON
+      ravel-lite state backlog list LLM_STATE/core --ready --format json
+    ";
+    ```
+
+    ## Why deferred
+
+    This is mechanical and large-surface (~50 verb leaves). Best done
+    after the OutputFormat consolidation lands so examples reference the
+    canonical `--format` vocabulary.
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` §2 ("Help text
+      structure, top to bottom").
+    - `defaults/fixed-memory/cli-tool-design.md` §"Audit checklist" →
+      "Help" → "Every subcommand `--help` includes at least two
+      concrete examples."
+- id: cli-json-schema-versioning-policy-and-documentation
+  title: 'CLI: JSON schema versioning policy and documentation'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - migrate-ravel-lite-migrate-for-v1-to-v2-cutover
+  description: |
+    CLI audit scope item #2 (cli-tool-design.md §1): every
+    `--format json` output carries a top-level `schema_version`, and
+    each verb's schema is documented and stable.
+
+    ## Status of `schema_version`
+
+    Already present on the typed YAML/JSON envelope structs that
+    underlie state verbs:
+
+    - `BACKLOG_SCHEMA_VERSION`, `MEMORY_SCHEMA_VERSION`,
+      `INTENTS_SCHEMA_VERSION`, `FINDINGS_SCHEMA_VERSION`,
+      `TARGETS_SCHEMA_VERSION`, `TARGET_REQUESTS_SCHEMA_VERSION`,
+      `THIS_CYCLE_FOCUS_SCHEMA_VERSION`,
+      `FOCUS_OBJECTIONS_SCHEMA_VERSION`, `COMMITS_SCHEMA_VERSION`.
+    - `LIST_SCHEMA_VERSION` for `fixed-memory list`.
+
+    What is missing:
+
+    1. Verbs that don't yet emit JSON (atlas, repos — see
+       `cli-fmt-json-parity-for-repo-and-atlas-verbs`) need the same
+       versioned wrapper when they gain JSON.
+    2. `schema_version` needs documentation surfaces — preferably the
+       `ravel-lite schema <command>` verb in `cli-discoverability-verbs`,
+       not freestanding markdown that rots.
+    3. Bump policy must be written down. Cli-tool-design.md §1
+       says "Schema must be stable across patch versions. Breaking
+       changes go in major versions and are documented." — reflect
+       this in the project README or a short ADR-style note.
+
+    ## Why deferred
+
+    The on-disk wire shape is frozen until the v1→v2 migrator exists
+    (see `migrate-ravel-lite-migrate-for-v1-to-v2-cutover`). Writing a
+    formal schema doc now risks codifying a shape that the migration
+    will reshape. Wait until the v2 cutover lands, then snapshot what
+    ships.
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` §1, §"Anti-patterns"
+      ("Unstable JSON").
+    - Memory: "LLM_STATE shape frozen until v1→v2 migrator exists" —
+      pins schema-doc work behind that migrator.
+- id: cli-evaluate-and-decide-on-llm-instructions-verb-ship-or-wontfix
+  title: 'CLI: evaluate and decide on llm-instructions verb (ship or wontfix)'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Short investigation (timebox: 1 hour): decide whether `ravel-lite llm-instructions` is worth shipping given the existing tutorial and reference documentation, then either ship it or close as wontfix.
+
+    ## Context
+
+    `cli-discoverability-verbs-capabilities-schema-llm-instructions` shipped `capabilities` only and explicitly deferred this: "conditional on whether existing tutorials/reference cover the same ground. Project has both `docs/tutorial/` and `docs/reference/`; the answer may be 'no, not worth maintaining a third surface.'"
+
+    ## Investigation questions
+
+    1. Do `docs/tutorial/` and `docs/reference/` already cover workflow recipes, common mistakes, and authentication / state assumptions well enough that an agent querying `ravel-lite llm-instructions` would get nothing new?
+    2. Is there LLM-specific guidance (anti-patterns, sequencing rules, verb ordering) that belongs in a machine-readable form but does not fit in human-oriented docs?
+
+    ## Outcome
+
+    - **Ship**: define the output format (single-shot Markdown or YAML envelope), implement `ravel-lite llm-instructions`, add to `top_level_subcommands()` in `src/cli/capabilities.rs`.
+    - **Close as wontfix**: mark this task `defeated` with the rationale recorded here. No follow-up needed.
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` §"Optional but valuable" — template and examples for `llm-instructions`.
+    - `src/cli/capabilities.rs` — `top_level_subcommands()` hand-mirror (must be extended if shipped).
