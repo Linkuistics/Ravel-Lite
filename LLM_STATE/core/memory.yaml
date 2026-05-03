@@ -991,3 +991,11 @@ entries:
   title: Phase prompt CLI verb test validates all chains
   body: |
     `tests/phase_prompts_cli_resolution.rs` walks every `defaults/phases/*.md`, extracts `ravel-lite <chain...>` invocations via a MAX_CHAIN_DEPTH=3 kebab-case parser, and validates each chain with `--help` against `CARGO_BIN_EXE_ravel-lite`, failing on `unrecognized subcommand` in stderr. MAX_CHAIN_DEPTH=3 is the first breakage point when a fourth-level verb ships; flagged in a test comment. Includes an anchor test asserting the six focus/objections verbs remain present in the prompt set.
+- id: max-chain-depth-3-cap-in-phase-prompts-cli-resolution-tests
+  title: MAX_CHAIN_DEPTH = 3 cap in phase_prompts_cli_resolution tests
+  body: |
+    `MAX_CHAIN_DEPTH = 3` in `tests/phase_prompts_cli_resolution.rs` is the cap on verb-chain length parsed from phase prompts. It matches the deepest current chain (`state focus-objections add-wrong-target`). If a fourth-level verb ships, the parser silently truncates longer chains without failing — a false pass. When a fourth-level verb is added to the CLI, bump `MAX_CHAIN_DEPTH` to 4 in the test and verify the test catches chains of that depth.
+- id: forward-references-convention-for-planned-cli-verbs-in-phase-prompts
+  title: Forward-references convention for planned CLI verbs in phase prompts
+  body: |
+    Phase prompts sometimes carry forward references to planned-but-not-yet-shipped CLI verbs. Convention established in the `integration-smoke-test-phase-prompts-reference-live-cli-verbs` task: use prose form "the planned `<verb>` phase/command" rather than backtick-CLI form `` `ravel-lite <verb>` `` for any verb not yet callable. When the verb ships, revert to the backtick-CLI form. Affected files at establishment: `defaults/phases/reflect.md` and `defaults/phases/dream.md` (both reference the planned `curate` command).

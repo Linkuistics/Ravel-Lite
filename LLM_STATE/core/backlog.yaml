@@ -100,6 +100,35 @@ tasks:
     1. Update prose in `docs/tutorial/` and `docs/reference/` to use `repo add/list/remove` vocabulary.
     2. Re-run `scripts/capture/ravel-lite-tutorial.sh` against a VM and replace the three stale transcript files.
     3. Verify no remaining references to `state projects` in docs (grep: `state projects`).
+- id: extend-cli-verb-scan-to-all-embedded-prompt-files
+  title: Extend CLI verb scan to all embedded prompt files
+  category: infra
+  status: not_started
+  dependencies: []
+  description: |
+    Extend `phase_prompts_reference_only_live_cli_verbs` to scan all embedded prompt files, not just `defaults/phases/*.md`.
+
+    ## Why
+
+    The test currently only walks `phases_dir()`. Other embedded prompt files also carry `ravel-lite` CLI invocations subject to the same verb-drift:
+    - `defaults/create-plan.md`
+    - `defaults/survey.md`
+    - `defaults/survey-incremental.md`
+    - `defaults/discover-stage1.md`
+    - `defaults/discover-stage2.md`
+    - `defaults/agents/pi/prompts/*.md`
+
+    Any one of these could reference a stale or renamed verb and the current test would not catch it.
+
+    ## Scope
+
+    Replace the hardcoded `phases_dir()` iterator in `tests/phase_prompts_cli_resolution.rs` with an iterator over `init::embedded_entries_with_prefix("")` filtered to files containing the string `ravel-lite `. The test brief from the done `integration-smoke-test` task noted this is "a near-trivial extension" requiring roughly one iterator swap.
+
+    ## Verification
+
+    - `cargo test --test phase_prompts_cli_resolution` still passes.
+    - Manually verify the test discovers invocations in at least `create-plan.md` and one pi prompt file.
+    - `cargo test --workspace` passes clean.
 - id: state-intents-render-overview-regenerate-phase-md-from-intents-task-counts
   title: 'state intents render-overview: regenerate phase.md from intents + task counts'
   category: architecture-next
@@ -186,43 +215,6 @@ tasks:
     Blocked on `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` shipping a new binary
     and the per-worktree YAML baseline spec being settled in `docs/architecture-next.md`.
     Do not rename ahead of the spec or the renderer call will break silently.
-- id: integration-smoke-test-phase-prompts-reference-live-cli-verbs
-  title: 'Integration smoke test: phase prompts reference live CLI verbs'
-  category: infra
-  status: done
-  dependencies: []
-  description: "Add an integration smoke test that loads each phase prompt against a synthetic\nplan and asserts that every LLM-facing CLI verb reference resolves to a live\n`ravel-lite state` verb.\n\n## Why\n\nThe `phase-prompt-updates-for-triage-first-cycle-shape` Results noted: the\nexisting drift-guard tests catch dangling `{{tokens}}` and unregistered files but\ncannot detect a verb name that drifts away from the prompt. For example, if\n`state this-cycle-focus set` is renamed in the binary, the prompt continues to\nreference the old name silently.\n\nCurrent guards:\n- `every_file_under_defaults_is_registered_in_embedded_files` — guards file\n  registration only.\n- `shipped_pi_prompts_have_no_dangling_tokens` — guards unresolved `{{token}}`\n  fragments only.\n\nNeither catches a stale `ravel-lite state foo bar` reference.\n\n## Scope\n\n1. Write a test in `tests/phase_prompts.rs` (or extend an existing module).\n2. For each file under `defaults/phases/`, parse all `ravel-lite state <verb>` \n   invocations from the prompt text.\n3. Run each verb with `--help` (or `--dry-run` if available) against the live\n   binary; assert exit 0 or a known usage-error exit code (not \"unknown subcommand\").\n4. Specifically exercise the new verbs added by `phase-prompt-updates-for-triage-first-cycle-shape`:\n   - `state focus-objections list`\n   - `state this-cycle-focus show`\n   - `state this-cycle-focus set`\n   - `state focus-objections add-wrong-target`\n   - `state focus-objections add-skip-item`\n   - `state focus-objections add-premature`\n\n## Notes\n\n- Tests must remain hermetic (no network, no installed binary outside of\n  `CARGO_BIN_EXE_ravel-lite`). Use `CARGO_BIN_EXE_ravel-lite` for the\n  subprocess invocations.\n- False positives are acceptable (a verb that returns exit 2 usage-error is\n  fine; only \"unknown subcommand\" exit is a failure).\n"
-  results: |
-    **Done.** Added `tests/phase_prompts_cli_resolution.rs` (10 tests, all pass) plus a two-line prose fix in `defaults/phases/dream.md` and `defaults/phases/reflect.md`.
-
-    ## What landed
-
-    - **`phase_prompts_reference_only_live_cli_verbs`** — walks every `defaults/phases/*.md`, parses each `ravel-lite <chain...>` invocation into a kebab-case verb chain, runs `<bin> <chain> --help` against `CARGO_BIN_EXE_ravel-lite`, and fails on `unrecognized subcommand` in stderr. Diagnostics name the offending chain *and* the prompt file(s) referencing it.
-    - **`triage_first_cycle_verbs_are_referenced_in_phase_prompts`** — anchor test asserting that the six verbs introduced by `phase-prompt-updates-for-triage-first-cycle-shape` (`state focus-objections {list,add-wrong-target,add-skip-item,add-premature}`, `state this-cycle-focus {show,set}`) still appear somewhere in the prompt set. Without this, deleting a prompt reference would silently drop those verbs from the broader resolution test's coverage.
-    - **8 inline parser unit tests** — `extract_verb_chains` covered against backtick padding, `{{PLAN}}` termination, three-token chains, depth-cap, flag-termination, line-continuation, multi-invocation, and non-kebab guard. Lets the (mechanical) parser logic be verified independently of the (slow) subprocess test.
-
-    ## Drift the test caught on first run
-
-    `reflect.md` and `dream.md` carried prose mentions of `` `ravel-lite curate` `` — a verb that doesn't exist yet (it's the `curate-standalone-truth-maintenance-replaces-dream-phase` backlog task). An LLM following those prompts could be misled into trying to invoke it. Both edits drop the `ravel-lite` prefix and reword to "the planned `curate` phase", preserving the architectural pointer without claiming the CLI verb is callable.
-
-    ## Design choices worth flagging
-
-    - **`MAX_CHAIN_DEPTH = 3`** matches the deepest current verb path (`state focus-objections add-wrong-target`). Single touchpoint to bump if a fourth-level verb ships.
-    - **Exit-code 0 isn't enough** — `--help` short-circuits before arg validation, so `<bin> fixed-memory show coding-style-rust --help` exits 0 even though `coding-style-rust` is a positional. The actual signal is `stderr.contains("unrecognized subcommand")`. Same approach as the test brief recommends.
-    - **Parser uses `is_kebab_case` as the chain terminator** rather than trying to perfectly tokenize bash. Every legitimate verb chain in current prompts consists of consecutive kebab-case tokens followed by a non-kebab token (`{{PLAN}}`, `--flag`, `<id>`, a quoted string), so the heuristic is exact in practice. Verified by deliberately injecting a stale `state nonexistent foo` reference and watching the test fail with the correct attribution.
-
-    ## Verification
-
-    - `cargo test --test phase_prompts_cli_resolution` — 10/10 pass
-    - `cargo test --workspace` — 1111 tests across 23 binaries, 0 failures, 0 ignored
-    - `./scripts/check.sh` (clippy `-D warnings`) — clean
-    - Drift sanity-check: injected `ravel-lite state nonexistent foo {{PLAN}}` into work.md → test failed with `ravel-lite state nonexistent foo → error: unrecognized subcommand 'nonexistent' (referenced by: work.md)`. Restored, test passes.
-
-    ## What this suggests next
-
-    - Same scan style would profitably extend to `defaults/create-plan.md`, `defaults/survey.md`, `defaults/survey-incremental.md`, `defaults/discover-stage1.md`, `defaults/discover-stage2.md`, and the pi prompts under `defaults/agents/pi/prompts/` — they all carry CLI invocations subject to the same drift. Out of scope for this task but a near-trivial extension: replace the hardcoded `phases_dir()` with an iterator over `init::embedded_entries_with_prefix("")`, and filter for any file containing `ravel-lite `.
-    - The `MAX_CHAIN_DEPTH = 3` cap is a likely first thing to break once a fourth-level verb ships. The constant has a one-line comment explaining the trade-off; the parser would silently truncate longer chains without complaint, which would manifest as a false pass for the truncated tail. A stronger version would assert the chain wasn't truncated mid-stream — defer until a fourth-level verb is on the roadmap.
-    - The two prose edits exposed a subtler pattern: prompts sometimes carry **forward references** to planned verbs (e.g. `ravel-lite curate`, possibly `ravel-lite finish`, `ravel-lite sync`). When those land, the prose mentions can revert to backtick-CLI form; until then, "the planned `<verb>` phase/command" is the convention this task established.
 - id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
   title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
   category: infra
