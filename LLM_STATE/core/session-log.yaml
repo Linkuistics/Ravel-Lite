@@ -1878,3 +1878,16 @@ sessions:
     - Both drift-guard tests (`every_file_under_defaults_is_registered_in_embedded_files`, `shipped_pi_prompts_have_no_dangling_tokens`) passed; full library suite: 974 passed, 0 failed; clippy clean.
     - Baseline filename rename (to per-worktree YAML maps) was deferred — renaming prompt references now would break the renderer's shell substitution before the runner-side rename ships.
     - The `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` task remains the keystone gating downstream v2 mechanics; v1-fallback notes in the prompts become dead code once migration is mandatory.
+- id: session-131
+  timestamp: 2026-05-03T10:50:50Z
+  phase: work
+  body: |
+    ### Session 131 (2026-05-03T10:50:50Z) — Add CLI verb resolution test for phase prompts
+
+    - Added `tests/phase_prompts_cli_resolution.rs` implementing two integration tests plus 8 parser unit tests. The primary test walks every `defaults/phases/*.md`, extracts `ravel-lite <chain...>` invocations with a `MAX_CHAIN_DEPTH=3` kebab-case parser, and runs each chain with `--help` against `CARGO_BIN_EXE_ravel-lite`, failing on `unrecognized subcommand` in stderr.
+    - Added anchor test asserting the six focus/objections verbs from the prior cycle's phase prompt updates still appear in the prompt set, preventing silent regression if a reference is deleted.
+    - On first run the test detected that `dream.md` and `reflect.md` carried prose references to `` `ravel-lite curate` `` — a verb that does not yet exist. Both were rewired to "the planned `curate` phase" to remove the false CLI implication while preserving the architectural pointer.
+    - `cargo test --workspace` green (1111 tests, 23 binaries); clippy `-D warnings` clean.
+    - Drift sanity-check confirmed: injecting `ravel-lite state nonexistent foo {{PLAN}}` into a prompt caused the test to fail with a precise attribution message; restoring the file made it pass again.
+
+    What this suggests next: the same scan could extend to `defaults/create-plan.md`, the survey/discover prompts, and agent pi prompts — a near-trivial change from a hardcoded `phases_dir()` to iterating all embedded entries. `MAX_CHAIN_DEPTH=3` is a likely first breakage point when a fourth-level verb ships; flagged in a comment in the test file.

@@ -1,15 +1,13 @@
-id: session-130
-timestamp: 2026-05-03T10:06:00Z
+id: session-131
+timestamp: 2026-05-03T10:50:50Z
 phase: work
 body: |
-  ### Session 130 (2026-05-03T10:06:00Z) — Update phase prompts for triage-first cycle shape
+  ### Session 131 (2026-05-03T10:50:50Z) — Add CLI verb resolution test for phase prompts
 
-  - Updated all five files under `defaults/phases/` to reflect the triage-first cycle (`triage → work → analyse-work → reflect`) and the focus/objections mechanism.
-  - `triage.md`: added prior-cycle objections read (step 3), new step 7 acting on `wrong-target`/`skip-item`/`premature` objections, new step 8 writing `this-cycle-focus.yaml`, renumbered set-phase and stop; added `[OBJECTION]` and `[FOCUS]` labels to output format.
-  - `work.md`: added `state this-cycle-focus show` as required read (step 5, advisory with v1 fallback); added escalation block documenting `focus-objections add-*` verbs for when the focus cannot proceed.
-  - `analyse-work.md`: added optional `target: <repo_slug>:<component_id>` field to commits.yaml shape; added `target:` explanation subsection and "two-stream commits" subsection for multi-target cycles.
-  - `reflect.md`: replaced obsolete "run script decides dream-or-triage" framing with accurate close-cycle description; named `ravel-lite curate` as the out-of-cycle successor.
-  - `dream.md`: added out-of-cycle disclaimer at top; retained body for manual invocation.
-  - Both drift-guard tests (`every_file_under_defaults_is_registered_in_embedded_files`, `shipped_pi_prompts_have_no_dangling_tokens`) passed; full library suite: 974 passed, 0 failed; clippy clean.
-  - Baseline filename rename (to per-worktree YAML maps) was deferred — renaming prompt references now would break the renderer's shell substitution before the runner-side rename ships.
-  - The `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` task remains the keystone gating downstream v2 mechanics; v1-fallback notes in the prompts become dead code once migration is mandatory.
+  - Added `tests/phase_prompts_cli_resolution.rs` implementing two integration tests plus 8 parser unit tests. The primary test walks every `defaults/phases/*.md`, extracts `ravel-lite <chain...>` invocations with a `MAX_CHAIN_DEPTH=3` kebab-case parser, and runs each chain with `--help` against `CARGO_BIN_EXE_ravel-lite`, failing on `unrecognized subcommand` in stderr.
+  - Added anchor test asserting the six focus/objections verbs from the prior cycle's phase prompt updates still appear in the prompt set, preventing silent regression if a reference is deleted.
+  - On first run the test detected that `dream.md` and `reflect.md` carried prose references to `` `ravel-lite curate` `` — a verb that does not yet exist. Both were rewired to "the planned `curate` phase" to remove the false CLI implication while preserving the architectural pointer.
+  - `cargo test --workspace` green (1111 tests, 23 binaries); clippy `-D warnings` clean.
+  - Drift sanity-check confirmed: injecting `ravel-lite state nonexistent foo {{PLAN}}` into a prompt caused the test to fail with a precise attribution message; restoring the file made it pass again.
+
+  What this suggests next: the same scan could extend to `defaults/create-plan.md`, the survey/discover prompts, and agent pi prompts — a near-trivial change from a hardcoded `phases_dir()` to iterating all embedded entries. `MAX_CHAIN_DEPTH=3` is a likely first breakage point when a fourth-level verb ships; flagged in a comment in the test file.

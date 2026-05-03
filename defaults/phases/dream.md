@@ -3,8 +3,9 @@ You are running the DREAM phase of a multi-session backlog plan.
 **Out-of-cycle.** Dream is no longer part of the in-cycle execution
 (the cycle is `triage → work → analyse-work → reflect`). The phase
 prompt is retained for manual or future-tooling invocation; the
-context-wide successor is `ravel-lite curate`, which subsumes lossless
-memory rewriting alongside cross-component truth maintenance. When
+context-wide successor is the planned `curate` phase, which will
+subsume lossless memory rewriting alongside cross-component truth
+maintenance. When
 this prompt fires it is because someone explicitly invoked the dream
 phase against a single plan's memory.
 

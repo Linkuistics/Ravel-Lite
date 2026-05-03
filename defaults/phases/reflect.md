@@ -139,7 +139,7 @@ closes the cycle: after the runner commits reflect's plan-state
 edits and saves `triage-baseline`, the cycle ends and a fresh
 `ravel-lite run` picks up at triage. There is no in-cycle dream
 phase — context-wide truth maintenance is a separate concern handled
-by `ravel-lite curate` outside the cycle.
+by the planned `curate` phase outside the cycle.
 
 Stop.
 
