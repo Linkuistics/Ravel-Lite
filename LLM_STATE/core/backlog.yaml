@@ -103,7 +103,7 @@ tasks:
 - id: extend-cli-verb-scan-to-all-embedded-prompt-files
   title: Extend CLI verb scan to all embedded prompt files
   category: infra
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Extend `phase_prompts_reference_only_live_cli_verbs` to scan all embedded prompt files, not just `defaults/phases/*.md`.
@@ -129,6 +129,87 @@ tasks:
     - `cargo test --test phase_prompts_cli_resolution` still passes.
     - Manually verify the test discovers invocations in at least `create-plan.md` and one pi prompt file.
     - `cargo test --workspace` passes clean.
+  results: |
+    ## What was done
+
+    `tests/phase_prompts_cli_resolution.rs::phase_prompts_reference_only_live_cli_verbs`
+    no longer iterates `defaults/phases/` from disk. It now iterates
+    `ravel_lite::init::embedded_entries_with_prefix("")` — every shipped
+    prompt file, filtered to those containing the literal string
+    `ravel-lite ` for cheap perf gating.
+
+    Concrete edits:
+
+    - Replaced the `fs::read_dir(phases_dir())` walk with the embedded
+      iterator. Attribution now records the full embedded path
+      (e.g. `phases/triage.md`, `create-plan.md`) instead of just the
+      filename — necessary because two `.md` files in different directories
+      could otherwise collide.
+    - Added `use ravel_lite::init::embedded_entries_with_prefix;`. The
+      `phases_dir()` helper stays put because the second test
+      (`triage_first_cycle_verbs_are_referenced_in_phase_prompts`) anchors
+      to phases-only by design.
+    - Updated the file-level doc comment and the failure-assertion message
+      to say "embedded prompts" instead of "phase prompts".
+
+    ## What the expansion immediately caught
+
+    The first run of the broadened test failed on a parser false-positive
+    in `defaults/create-plan.md` line 4:
+
+    > "populate a new ravel-lite v2 plan at `{{PLAN}}`"
+
+    The parser greedily matched `v2 plan at` as a verb chain because every
+    token is incidentally kebab-case. Two ways to fix: tighten the parser
+    or rephrase the prose. I picked rephrase — it is local, semantically
+    defensible (the next sentence already says `\`ravel-lite create\``, so
+    the tool name is established), and avoids any risk of under-counting
+    real chains. New text: "populate a new plan at `{{PLAN}}`". Test then
+    passed clean.
+
+    ## Verification
+
+    - `cargo test --test phase_prompts_cli_resolution` — 10/10 pass.
+    - `cargo test --workspace` — full suite green.
+    - `./scripts/check.sh` (`cargo clippy --all-targets --workspace -- -D
+      warnings`) — clean.
+    - Coverage proof: the only reason the test caught a false-positive in
+      `create-plan.md` is that the iterator now reaches it. That file's 16
+      `ravel-lite` references are now under the drift guard.
+
+    ## What didn't work / surprises
+
+    The task brief asked to verify discovery in "at least `create-plan.md`
+    and one pi prompt file". Pi prompts under
+    `defaults/agents/pi/prompts/` and `defaults/agents/pi/subagents/`
+    contain zero `ravel-lite` invocations today (`grep -c` returned 0 for
+    all four files). That is a coverage *fact*, not a test gap — there is
+    nothing in those files for the drift guard to validate. The hopeful
+    sanity check from the brief was simply wrong about pi prompts having
+    shell-out content.
+
+    Files whose invocations the broadened scan now covers (non-zero
+    `ravel-lite ` matches outside `phases/`):
+
+    - `create-plan.md` — 16
+    - `survey.md` — 2
+    - `discover-stage2.md` — 1
+
+    ## What this suggests next
+
+    - **Parser fragility.** The kebab-case heuristic will false-positive on
+      any prose pattern of the form `ravel-lite <kebab> <kebab> <kebab>`.
+      We got lucky that only one prose line tripped it. If the prompt
+      corpus grows to mention version qualifiers (`v3`, `v4`), repo slugs,
+      component ids, etc. in prose, more rephrases will be needed.
+      Tightening the parser (e.g. requiring backtick-context, or
+      blacklisting common prepositions like `at`, `in`, `for`) is a
+      follow-up worth considering — but only after we observe a second
+      occurrence. One data point isn't enough to design against.
+    - **Anchor test.** `triage_first_cycle_verbs_are_referenced_in_phase_prompts`
+      still iterates the phases directory on disk via `phases_dir()`. That
+      is fine — its purpose is narrower (specific verbs in phase prompts
+      only). No reason to refactor it now.
 - id: state-intents-render-overview-regenerate-phase-md-from-intents-task-counts
   title: 'state intents render-overview: regenerate phase.md from intents + task counts'
   category: architecture-next

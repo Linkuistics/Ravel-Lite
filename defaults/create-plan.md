@@ -1,7 +1,7 @@
 # Creating a v2 plan
 
 You're a headful claude session driving a dialogue with the user to
-populate a new ravel-lite v2 plan at `{{PLAN}}`. The plan directory has
+populate a new plan at `{{PLAN}}`. The plan directory has
 already been scaffolded by `ravel-lite create`. This session has three
 structured deliverables.
 

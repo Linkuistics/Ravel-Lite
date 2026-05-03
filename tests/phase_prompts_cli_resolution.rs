@@ -1,20 +1,25 @@
 //! Drift guard: every `ravel-lite <chain...>` invocation referenced in
-//! `defaults/phases/*.md` must resolve against the live CLI surface.
+//! any embedded prompt file (phase prompts, `create-plan.md`, the survey
+//! and discover prompts, pi system/memory prompts, etc.) must resolve
+//! against the live CLI surface.
 //!
 //! Existing drift guards cover registration
 //! (`every_file_under_defaults_is_registered_in_embedded_files`) and unresolved
 //! `{{tokens}}` (`shipped_pi_prompts_have_no_dangling_tokens`). Neither catches a
-//! phase prompt that references a renamed or typo'd verb — clap surfaces the
+//! prompt that references a renamed or typo'd verb — clap surfaces the
 //! mismatch only at agent invocation time, which is too late.
 //!
-//! Strategy: for each `defaults/phases/*.md`, parse all `ravel-lite <chain...>`
-//! invocations into kebab-case verb chains, shell out to `<bin> <chain> --help`,
-//! and fail the test on `unrecognized subcommand` in stderr.
+//! Strategy: walk every entry returned by `init::embedded_entries_with_prefix("")`,
+//! parse all `ravel-lite <chain...>` invocations into kebab-case verb chains,
+//! shell out to `<bin> <chain> --help`, and fail the test on `unrecognized
+//! subcommand` in stderr.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use ravel_lite::init::embedded_entries_with_prefix;
 
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_ravel-lite"))
@@ -73,40 +78,26 @@ fn extract_verb_chains(body: &str) -> Vec<Vec<String>> {
 
 #[test]
 fn phase_prompts_reference_only_live_cli_verbs() {
-    let phases = phases_dir();
-    assert!(
-        phases.is_dir(),
-        "expected {} to exist",
-        phases.display()
-    );
-
     let mut chains: BTreeSet<Vec<String>> = BTreeSet::new();
     let mut attribution: BTreeMap<Vec<String>, BTreeSet<String>> = BTreeMap::new();
 
-    for entry in fs::read_dir(&phases).expect("readable phases dir").flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+    for (rel, body) in embedded_entries_with_prefix("") {
+        if !body.contains("ravel-lite ") {
             continue;
         }
-        let body = fs::read_to_string(&path).expect("readable phase prompt");
-        let rel = path
-            .file_name()
-            .expect("phase file has a name")
-            .to_string_lossy()
-            .into_owned();
-        for chain in extract_verb_chains(&body) {
+        for chain in extract_verb_chains(body) {
             attribution
                 .entry(chain.clone())
                 .or_default()
-                .insert(rel.clone());
+                .insert(rel.to_string());
             chains.insert(chain);
         }
     }
 
     assert!(
         !chains.is_empty(),
-        "no `ravel-lite ...` invocations parsed from phase prompts; \
-         the regex or the prompts have changed shape"
+        "no `ravel-lite ...` invocations parsed from embedded prompts; \
+         the parser or the prompts have changed shape"
     );
 
     let mut offences: Vec<String> = Vec::new();
@@ -135,7 +126,7 @@ fn phase_prompts_reference_only_live_cli_verbs() {
 
     assert!(
         offences.is_empty(),
-        "phase prompts reference stale `ravel-lite` verbs:\n  {}\n\n\
+        "embedded prompts reference stale `ravel-lite` verbs:\n  {}\n\n\
          A verb has been renamed or removed from the binary, but a prompt \
          still references the old name. Either restore the verb or update \
          the prompt.",
