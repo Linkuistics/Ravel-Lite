@@ -284,158 +284,38 @@ tasks:
     ## Gating constraint
 
     May intersect with the v1→v2 migrator schema bump (`migrate-ravel-lite-migrate-for-v1-to-v2-cutover`) because adding metadata fields to the YAML/JSON envelopes changes the wire shape for list verbs. Coordinate with that task or land after it.
-- id: cli-add-visible-alias-annotations-ls-rm-delete-etc
-  title: 'CLI: add visible_alias annotations (ls, rm, delete, etc.)'
+- id: cli-tag-discover-internals-session-log-parse-md-error-sites-with-errorcode
+  title: 'CLI: tag discover internals + session-log/parse_md error sites with ErrorCode'
   category: architecture-next
-  status: done
+  status: not_started
   dependencies: []
   description: |
-    Add clap `visible_alias` entries for common synonyms across the CLI surface, per `defaults/fixed-memory/cli-tool-design.md` §5 ("Add aliases for common synonyms (`rm`/`remove`/`delete`, `ls`/`list`, `mv`/`rename`). These are cheap and meaningfully reduce guess-the-verb failures.")
+    Tag the remaining 17 inner-verb error sites that the `cli-tag-inner-verb-error-sites-state-atlas-repos-discover-sweep` task explicitly deferred: `discover/{cache,stage1,stage2,tree_sha}.rs` and `state/session_log/parse_md.rs`.
 
-    ## Audit findings
+    ## Context
 
-    The current CLI uses zero `visible_alias` annotations across `src/main.rs`. For an LLM-facing tool, aliases reduce the variance in agent guesses without any design cost; the surface is large enough that "did you guess the right verb" failures are real.
+    The sweep task tagged ~113 of ~130 sites across all CRUD verbs, `repos.rs`, `atlas.rs`, `plan_inspect.rs`, `related_components.rs`, and `survey/delta.rs`. The 17 remaining sites were left because they involve:
+    - `discover/{cache,stage1,stage2,tree_sha}.rs` — subprocess invocation and git plumbing for the `discover` pipeline; errors here involve subprocess timeouts, git command failures, and cache misses that need distinct ErrorCode categories.
+    - `state/session_log/parse_md.rs` — parse internals invoked through `state migrate`; malformed legacy-md parsing sites that are harder to categorise without running the migration path.
 
-    ## Suggested aliases
-
-    | canonical | aliases |
-    |---|---|
-    | `list` (every variant) | `ls` |
-    | `remove` (Repo, FixedMemory, etc.) | `rm`, `delete` |
-    | `show` | `get`, `cat` |
-    | `add` | `create` (where unambiguous) |
-    | `rename` (where present) | `mv` |
-
-    ## Scope
-
-    1. Walk every `Subcommand`-derived enum in `src/main.rs`.
-    2. Attach `#[command(visible_alias = "ls")]` to every `List` variant, `#[command(visible_aliases = ["rm", "delete"])]` to every `Remove` variant, etc.
-    3. Verify clap surfaces aliases in `--help` so agents can discover them.
-    4. Test: invoking the alias produces the same behaviour as the canonical verb (one integration test per alias category is sufficient).
-
-    ## Reference
-
-    - `defaults/fixed-memory/cli-tool-design.md` §5 "Consistent verb/noun ordering" (last paragraph on aliases).
-    - Sibling task results from `cli-finish-audit-checklist-sweep-defaults-ids-aliases-hidden-state`.
-  results: |
-    ## What was done
-
-    Added `visible_alias` / `visible_aliases` annotations across every `Subcommand`-derived enum in `src/main.rs`. 36 verbs now expose synonyms per `defaults/fixed-memory/cli-tool-design.md` §5:
-
-    - `list` → `ls` (every variant where exactly one List sits at that level)
-    - `remove`, `delete` → `rm`, `delete` (cross-aliased so each canonical reaches the other)
-    - `show` → `get`, `cat`
-    - `add` → `create` (only on pure CRUD adds: backlog, memory, intents, findings — skipped for `targets add` to avoid confusion with `targets mount`)
-    - `session-log append` → `add`
-    - Compound names (`ListRepos`, `ListComponents`, `ListItems`, `ShowItem`) get qualified aliases (`ls-repos`, `ls-components`, `ls-items`, `get-item`) because plain `ls` would collide with siblings in the same enum
-
-    Annotations sit alongside existing `after_help = X` keys in the same `#[command(...)]` attribute — minimal surface diff per call site.
-
-    ## Verification
-
-    Added `visible_aliases_dispatch_to_canonical_verbs` integration test in `tests/cli.rs` that exercises one alias per category against the binary:
-    - `state backlog ls` → same handler as `list`
-    - `state backlog create` → same handler as `add`
-    - `state backlog get` and `state backlog cat` produce byte-identical stdout to `show`
-    - `state backlog rm` → same handler as `delete`
-    - `repo delete` → same handler as `remove`
-    - `state backlog --help` surfaces the alias names so agents can discover them
-
-    `./scripts/check.sh` clean. `cargo test --test cli` passes (15 tests).
-
-    ## What this suggests next
-
-    Aliases are a one-way investment — agents that learn `ls` keep working forever. No follow-up work needed in this area unless the CLI grows new verb families that warrant their own synonyms.
-- id: cli-tag-inner-verb-error-sites-state-atlas-repos-discover-sweep
-  title: 'CLI: tag inner-verb error sites (state/atlas/repos/discover sweep)'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Follow-up to the foundation laid by `cli-tag-bail-anyhow-call-sites-with-typed-errorcode`: tag the remaining 241 `bail!/anyhow!/ensure!` call sites across `src/state/`, `src/atlas/`, `src/repos/`, `src/discover/`, etc. The dispatch-layer sweep tagged every site in `src/main.rs` plus `OutputFormat::parse`, but the inner verbs (where the actual errors are raised) still fall back to `ErrorCode::Internal`.
-
-    ## Why this is its own task
-
-    The dispatch sweep was 13 sites and ~1 hour of mechanical work. The inner sweep is 241 sites across 8+ modules and benefits from being chunked per-module with focused review. The foundation (`bail_with!`, `with_code`, `error_code_of`) is in place and tested — this task is pure call-site application.
-
-    ## Categorisation rule
-
-    For each site, pick the `ErrorCode` variant by what the user-facing remediation is:
+    ## Categorisation rule (inherited from parent task)
 
     | Pattern | Code |
     |---|---|
-    | "no item with id X" / "no such target" / "no such repo" | `NotFound` |
-    | "schema_version mismatch" / "duplicate id" / "task already in status X" | `Conflict` |
-    | "missing required field" / "must not be empty" / "invalid <field> value" | `InvalidInput` |
-    | `std::io::Error` from `read_to_string`, `write`, etc. | `IoError` (via `with_code`) |
-    | Network/peer-process throttling | `RateLimited` |
-    | Auth-required (none yet, but reserve) | `AuthRequired` |
-    | Genuine internal invariant violation (panic-equivalent) | `Internal` (the default) |
+    | "no item with id X" / cache miss / no such entry | `NotFound` |
+    | subprocess non-zero exit / git command failure | `IoError` (via `.with_code`) |
+    | malformed markdown / unexpected parse structure | `InvalidInput` |
+    | genuine invariant violation | `Internal` (default) |
 
-    ## Suggested chunking
+    ## Scope
 
-    Best done one module at a time so reviews stay focused:
-
-    1. `src/state/backlog/verbs.rs` — high traffic, 15+ NotFound and Conflict sites.
-    2. `src/state/memory/verbs.rs` — same shape as backlog.
-    3. `src/state/intents/verbs.rs` — same shape.
-    4. `src/state/targets/`, `src/state/target_requests/`, `src/state/findings/` — smaller surfaces.
-    5. `src/repos.rs`, `src/atlas/` — registry / catalog lookups; mostly NotFound.
-    6. `src/discover/`, `src/related_components/` — survey-related; mixed.
-    7. `src/init.rs`, `src/create.rs`, `src/migrate*` — one-shot lifecycle commands.
-    8. Anything left: `src/agent/`, `src/git.rs`, `src/phase_loop.rs`, etc.
-
-    ## Per-module checklist
-
-    - Walk every `bail!/anyhow!/ensure!` and pick the code.
-    - Replace `bail!(...)` → `bail_with!(ErrorCode::X, ...)` (import macro from `crate::bail_with` or `ravel_lite::bail_with`).
-    - Replace `anyhow!(...)` in `ok_or_else(|| ...)` patterns with `anyhow::Error::new(CodedError { code: X, message: format!(...) })`.
-    - IO-flavoured `?` propagation paths get `.with_code(ErrorCode::IoError)` after the `map_err(anyhow::Error::from)` boundary.
-    - Add at least one integration test asserting non-Internal exit code for each module's representative error.
+    1. Walk every `bail!/anyhow!/ensure!` in the five files above.
+    2. Apply `bail_with!(ErrorCode::X, ...)` or `.with_code(ErrorCode::X)` per the pattern table.
+    3. Add at least one integration test asserting a typed exit code for `discover` errors and one for `session_log parse_md` errors (if exercisable via CLI).
+    4. `./scripts/check.sh` clean after changes.
 
     ## Reference
 
     - `src/cli/error_context.rs` — foundation module with macro and trait.
-    - `src/main.rs` — already-tagged dispatch sites are the working examples.
-    - `tests/cli.rs` — 3 example exit-code integration tests:
-      `invalid_format_exits_with_usage_error_code`,
-      `unknown_fixed_memory_slug_exits_with_not_found_code`,
-      `invalid_format_in_json_mode_emits_typed_code_envelope`.
-    - Memory: "Prefer typed APIs over stringly-typed."
-  results: |
-    ## What was done
-
-    Tagged ~113 of the original ~120 inner-verb error sites with typed `ErrorCode` variants, replacing `bail!`/`anyhow!`/`ensure!` with `bail_with!(ErrorCode::X, ...)` and `anyhow::Error::new(CodedError { code, message })` per the foundation set up in `src/cli/error_context.rs`.
-
-    ### Modules swept
-
-    CRUD verbs + yaml_io for: `state/backlog/{verbs,yaml_io,parse_md,repair_stale_statuses,lint_dependencies}.rs`, `state/memory/{verbs,yaml_io,parse_md,check_anchors}.rs`, `state/intents/{verbs,yaml_io}.rs`, `state/findings/{verbs,yaml_io}.rs`, `state/targets/{verbs,yaml_io,mount}.rs`, `state/target_requests/{verbs,yaml_io}.rs`, `state/this_cycle_focus/{verbs,yaml_io}.rs`, `state/focus_objections/{verbs,yaml_io}.rs`, `state/commits/verbs.rs`, `state/discover_proposals/verbs.rs`, `state/session_log/{verbs,yaml_io}.rs`, `state/migrate.rs`, `state/phase.rs`. Plus `repos.rs`, `atlas.rs`, `plan_inspect.rs`, `related_components.rs`, `component_ref.rs`, `survey/delta.rs`, `discover/mod.rs`.
-
-    ### Categorisation applied
-
-    - `NotFound` for "no item with id X", "no such target/repo/finding/intent", "missing file", "no fresh repo with slug X"
-    - `Conflict` for `schema_version` mismatch, "already mounted", "already queued", "already registered", illegal status transitions, "would create a cycle" via dep clobber, "refusing to delete X: dependency of Y", validation-mismatch round-trip failures, ambiguous component-id resolution
-    - `InvalidInput` for `--format markdown` rejections, missing required flags (`--reason` for blocked, `--id`/`--timestamp` for append, empty `--reason`/`--item-id`), bad enum strings, malformed `--code-anchor` segments, "cannot depend on itself"
-    - `IoError` for `fs::read_to_string`/`fs::write`/`fs::rename` failures (chained via `.with_code(ErrorCode::IoError)` after `.with_context(...)`)
-
-    ### Helper pattern
-
-    Where 3+ identical "no X with id ..." sites collapsed cleanly, lifted a private `not_found_in_<file>(id)` helper. Files with one or two NotFound sites use the inline `anyhow::Error::new(CodedError { ... })` form per the architect's guidance. The duplicate-helper trade-off was scored per file rather than globally to avoid a premature shared abstraction.
-
-    ## Verification
-
-    Added 4 new integration tests in `tests/cli.rs` covering one representative error per category:
-    - `state_memory_show_unknown_id_exits_with_not_found_code` — exit 3 for a missing id
-    - `state_backlog_set_status_blocked_without_reason_exits_with_usage_error` — exit 2 for missing required flag
-    - `state_backlog_schema_version_mismatch_exits_with_conflict_code` — exit 5 for schema-version mismatch
-    - `repo_remove_unknown_slug_exits_with_not_found_code` — exit 3 for unknown registry slug
-
-    `./scripts/check.sh` clean (clippy with `-D warnings` over the whole workspace). `cargo test --quiet` passes 1111+ tests across all suites.
-
-    ## What's left
-
-    17 sites in 5 deeper-internal files remain untagged: `discover/{cache,stage1,stage2,tree_sha}.rs` (subprocess invocation + git plumbing for the `discover` pipeline) and `state/session_log/parse_md.rs` (parse internals invoked through `state migrate`). These are items 6–7 in the architect's suggested chunking (lower-traffic, harder-to-categorise — subprocess timeouts, git command failures, malformed legacy-md parsing). They can land in a focused follow-up task without disrupting the user-facing surface that this sweep covered.
-
-    ## What this suggests next
-
-    The remaining-17 sites should land in a follow-up titled something like "Tag discover internals + session-log/parse_md error sites with ErrorCode" — chunk size ~1 hour. Meanwhile, every JSON-mode error envelope from the verbs covered here now carries its typed `code` field, which downstream agent branching can rely on without parsing prose messages. The next time `cli-tool-design.md §3` ("Stable error-code vocabulary") is reviewed, the documented coverage should expand from "dispatch-layer + foundation" to "dispatch + foundation + every state CRUD + atlas + repos + plan + related-components + survey".
+    - Results of `cli-tag-inner-verb-error-sites-state-atlas-repos-discover-sweep` — worked examples for all patterns.
+    - `defaults/fixed-memory/cli-tool-design.md` §3 "Stable error-code vocabulary".
