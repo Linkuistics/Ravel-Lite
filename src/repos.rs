@@ -28,6 +28,8 @@ use indexmap::IndexMap;
 use path_clean::PathClean;
 use serde::{Deserialize, Serialize};
 
+use crate::cli::OutputFormat;
+
 pub const REGISTRY_FILE: &str = "repos.yaml";
 
 /// Only schema version in circulation; bump when the on-disk shape
@@ -123,23 +125,7 @@ pub fn save_atomic(context_root: &Path, registry: &ReposRegistry) -> Result<()> 
 }
 
 fn serialise_registry(registry: &ReposRegistry) -> Result<String> {
-    let repos = registry
-        .repos
-        .iter()
-        .map(|(slug, entry)| {
-            (
-                slug.clone(),
-                RawRepoEntry {
-                    url: entry.url.clone(),
-                    local_path: entry.local_path.clone(),
-                },
-            )
-        })
-        .collect();
-    let raw = RawReposRegistry {
-        schema_version: registry.schema_version,
-        repos,
-    };
+    let raw = to_raw_registry(registry);
     serde_yaml::to_string(&raw).context("Failed to serialise repos registry to YAML")
 }
 
@@ -178,11 +164,40 @@ pub fn try_add(
 
 // ---------- CLI handlers ----------
 
-pub fn run_list(context_root: &Path) -> Result<()> {
+pub fn run_list(context_root: &Path, format: OutputFormat) -> Result<()> {
     let registry = load_or_empty(context_root)?;
-    let yaml = serialise_registry(&registry)?;
-    print!("{yaml}");
+    let raw = to_raw_registry(&registry);
+    let serialised = match format {
+        OutputFormat::Yaml => serde_yaml::to_string(&raw)
+            .context("Failed to serialise repos registry to YAML")?,
+        OutputFormat::Json => serde_json::to_string_pretty(&raw)
+            .context("Failed to serialise repos registry to JSON")?
+            + "\n",
+        OutputFormat::Markdown => bail!(
+            "format `markdown` is not supported on `repo list`; supported: yaml, json"
+        ),
+    };
+    print!("{serialised}");
     Ok(())
+}
+
+fn to_raw_registry(registry: &ReposRegistry) -> RawReposRegistry {
+    RawReposRegistry {
+        schema_version: registry.schema_version,
+        repos: registry
+            .repos
+            .iter()
+            .map(|(slug, entry)| {
+                (
+                    slug.clone(),
+                    RawRepoEntry {
+                        url: entry.url.clone(),
+                        local_path: entry.local_path.clone(),
+                    },
+                )
+            })
+            .collect(),
+    }
 }
 
 pub fn run_add(

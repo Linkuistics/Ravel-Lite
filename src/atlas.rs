@@ -48,6 +48,7 @@ use serde::Serialize;
 use atlas_index::{load_components, ComponentEntry, ComponentsFile};
 use knowledge_graph::Justification;
 
+use crate::cli::OutputFormat;
 use crate::directed_graph::DirectedGraph;
 use crate::repos::{self, RepoEntry, ReposRegistry};
 use crate::state::filenames::RELATED_COMPONENTS_FILENAME;
@@ -62,8 +63,8 @@ const MEMORY_FILENAME: &str = "memory.yaml";
 /// (docs/architecture-next.md §"Catalog as graph") treats the repo
 /// registry as the entry point to the catalog graph, separate from
 /// the `repo` registry-management surface.
-pub fn run_list_repos(context_root: &Path) -> Result<()> {
-    repos::run_list(context_root)
+pub fn run_list_repos(context_root: &Path, format: OutputFormat) -> Result<()> {
+    repos::run_list(context_root, format)
 }
 
 /// Per-repo `.atlas/components.yaml` presence + age check. Always
@@ -299,32 +300,82 @@ impl Catalog {
 
 // ---------- list-components / summary verbs ----------
 
-/// `atlas list-components [--repo R] [--kind K]` — print one line per
-/// component as `<repo_slug>/<component_id>  <kind>`. Exits 0 with no
-/// output when the catalog is empty (e.g. no registered repos, or every
-/// repo non-fresh).
+/// `atlas list-components [--repo R] [--kind K] [--format F]` — list
+/// every component in every fresh repo. With no `--format`, emits the
+/// human-readable text shape (one line per component as
+/// `<repo_slug>/<component_id>  <kind>`); with `--format yaml|json`,
+/// emits a versioned envelope with one record per component.
 ///
-/// `--repo` errors when the slug is not a fresh repo so the user does
-/// not silently get an empty listing for a typo'd slug.
+/// Exits 0 with no output (or an empty `components: []` list) when
+/// the catalog is empty. `--repo` errors when the slug is not a fresh
+/// repo so the user does not silently get an empty listing for a
+/// typo'd slug.
 pub fn run_list_components(
     context_root: &Path,
     repo_filter: Option<&str>,
     kind_filter: Option<&str>,
+    format: Option<OutputFormat>,
 ) -> Result<()> {
     let registry = repos::load_or_empty(context_root)?;
     let catalog = Catalog::load(&registry, SystemTime::now());
     enforce_repo_filter_known(&catalog, repo_filter)?;
-    for (slug, comp) in catalog.iter_components() {
-        if !matches_filters(slug, comp, repo_filter, kind_filter) {
-            continue;
+    let records: Vec<AtlasComponentRecord> = catalog
+        .iter_components()
+        .filter(|(slug, comp)| matches_filters(slug, comp, repo_filter, kind_filter))
+        .map(|(slug, comp)| AtlasComponentRecord {
+            repo: slug.to_string(),
+            id: comp.id.clone(),
+            kind: comp.kind.clone(),
+        })
+        .collect();
+    match format {
+        None => {
+            for r in &records {
+                println!("{repo}/{id}  {kind}", repo = r.repo, id = r.id, kind = r.kind);
+            }
         }
-        println!("{slug}/{id}  {kind}", id = comp.id, kind = comp.kind);
+        Some(fmt) => {
+            let envelope = AtlasComponentsList {
+                schema_version: ATLAS_COMPONENTS_LIST_SCHEMA_VERSION,
+                components: records,
+            };
+            let serialised = match fmt {
+                OutputFormat::Yaml => serde_yaml::to_string(&envelope)
+                    .context("Failed to serialise atlas components list to YAML")?,
+                OutputFormat::Json => serde_json::to_string_pretty(&envelope)
+                    .context("Failed to serialise atlas components list to JSON")?
+                    + "\n",
+                OutputFormat::Markdown => bail!(
+                    "format `markdown` is not supported on `atlas list-components`; supported: yaml, json"
+                ),
+            };
+            print!("{serialised}");
+        }
     }
     Ok(())
 }
 
-/// `atlas summary [--repo R]` — per-repo component counts grouped by
-/// kind. Output:
+/// Schema version for the `atlas list-components --format json|yaml`
+/// envelope. Bump on incompatible field changes; new optional fields
+/// are non-breaking.
+pub const ATLAS_COMPONENTS_LIST_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Serialize)]
+struct AtlasComponentsList {
+    schema_version: u32,
+    components: Vec<AtlasComponentRecord>,
+}
+
+#[derive(Debug, Serialize)]
+struct AtlasComponentRecord {
+    repo: String,
+    id: String,
+    kind: String,
+}
+
+/// `atlas summary [--repo R] [--format F]` — per-repo component
+/// counts grouped by kind. Without `--format`, emits the human-
+/// readable text shape:
 ///
 /// ```text
 /// <repo_slug>  (<total> total)
@@ -332,21 +383,74 @@ pub fn run_list_components(
 ///   ...
 /// ```
 ///
-/// Repos with no components (or filtered out) are omitted. `--repo`
-/// errors when the slug is not a fresh repo.
-pub fn run_summary(context_root: &Path, repo_filter: Option<&str>) -> Result<()> {
+/// With `--format yaml|json`, emits a versioned envelope with one
+/// record per repo carrying `total` and `by_kind` (a map of kind name
+/// → count). Repos with no components (or filtered out) are omitted
+/// from both shapes. `--repo` errors when the slug is not a fresh
+/// repo.
+pub fn run_summary(
+    context_root: &Path,
+    repo_filter: Option<&str>,
+    format: Option<OutputFormat>,
+) -> Result<()> {
     let registry = repos::load_or_empty(context_root)?;
     let catalog = Catalog::load(&registry, SystemTime::now());
     enforce_repo_filter_known(&catalog, repo_filter)?;
     let by_repo = aggregate_summary(&catalog, repo_filter);
-    for (slug, kinds) in &by_repo {
-        let total: usize = kinds.values().sum();
-        println!("{slug}  ({total} total)");
-        for (kind, count) in kinds {
-            println!("  {count:>4}  {kind}");
+    match format {
+        None => {
+            for (slug, kinds) in &by_repo {
+                let total: usize = kinds.values().sum();
+                println!("{slug}  ({total} total)");
+                for (kind, count) in kinds {
+                    println!("  {count:>4}  {kind}");
+                }
+            }
+        }
+        Some(fmt) => {
+            let repos: Vec<AtlasRepoSummary> = by_repo
+                .iter()
+                .map(|(slug, kinds)| AtlasRepoSummary {
+                    repo: slug.clone(),
+                    total: kinds.values().sum(),
+                    by_kind: kinds.clone(),
+                })
+                .collect();
+            let envelope = AtlasSummary {
+                schema_version: ATLAS_SUMMARY_SCHEMA_VERSION,
+                repos,
+            };
+            let serialised = match fmt {
+                OutputFormat::Yaml => serde_yaml::to_string(&envelope)
+                    .context("Failed to serialise atlas summary to YAML")?,
+                OutputFormat::Json => serde_json::to_string_pretty(&envelope)
+                    .context("Failed to serialise atlas summary to JSON")?
+                    + "\n",
+                OutputFormat::Markdown => bail!(
+                    "format `markdown` is not supported on `atlas summary`; supported: yaml, json"
+                ),
+            };
+            print!("{serialised}");
         }
     }
     Ok(())
+}
+
+/// Schema version for the `atlas summary --format json|yaml`
+/// envelope. Bump on incompatible field changes.
+pub const ATLAS_SUMMARY_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Serialize)]
+struct AtlasSummary {
+    schema_version: u32,
+    repos: Vec<AtlasRepoSummary>,
+}
+
+#[derive(Debug, Serialize)]
+struct AtlasRepoSummary {
+    repo: String,
+    total: usize,
+    by_kind: BTreeMap<String, usize>,
 }
 
 /// Pure aggregation: group component counts by repo, then by kind.
@@ -1347,13 +1451,57 @@ mod tests {
         // there's nothing to list. stdout output is tested through the
         // catalog/iter/aggregate helpers above.
         let tmp = TempDir::new().unwrap();
-        run_list_components(tmp.path(), None, None).unwrap();
+        run_list_components(tmp.path(), None, None, None).unwrap();
+    }
+
+    #[test]
+    fn run_list_components_yaml_envelope_carries_schema_version() {
+        let tmp = TempDir::new().unwrap();
+        run_list_components(tmp.path(), None, None, Some(OutputFormat::Yaml)).unwrap();
+        // Smoke: an empty catalog still produces a serialisable envelope.
+        // Round-trip: an envelope containing one component renders both
+        // schema_version and the component fields.
+        let envelope = AtlasComponentsList {
+            schema_version: ATLAS_COMPONENTS_LIST_SCHEMA_VERSION,
+            components: vec![AtlasComponentRecord {
+                repo: "atlas".into(),
+                id: "core".into(),
+                kind: "service".into(),
+            }],
+        };
+        let yaml = serde_yaml::to_string(&envelope).unwrap();
+        assert!(yaml.contains("schema_version: 1"), "yaml:\n{yaml}");
+        assert!(yaml.contains("repo: atlas"), "yaml:\n{yaml}");
+        let json = serde_json::to_string(&envelope).unwrap();
+        assert!(json.contains("\"schema_version\":1"), "json: {json}");
+        assert!(json.contains("\"repo\":\"atlas\""), "json: {json}");
     }
 
     #[test]
     fn run_summary_with_empty_registry_succeeds_silently() {
         let tmp = TempDir::new().unwrap();
-        run_summary(tmp.path(), None).unwrap();
+        run_summary(tmp.path(), None, None).unwrap();
+    }
+
+    #[test]
+    fn run_summary_envelope_carries_schema_version_and_by_kind_map() {
+        let mut by_kind = BTreeMap::new();
+        by_kind.insert("service".to_string(), 3);
+        by_kind.insert("library".to_string(), 5);
+        let envelope = AtlasSummary {
+            schema_version: ATLAS_SUMMARY_SCHEMA_VERSION,
+            repos: vec![AtlasRepoSummary {
+                repo: "atlas".into(),
+                total: 8,
+                by_kind,
+            }],
+        };
+        let json = serde_json::to_string(&envelope).unwrap();
+        assert!(json.contains("\"schema_version\":1"), "json: {json}");
+        assert!(json.contains("\"total\":8"), "json: {json}");
+        assert!(json.contains("\"by_kind\""), "json: {json}");
+        assert!(json.contains("\"library\":5"), "json: {json}");
+        assert!(json.contains("\"service\":3"), "json: {json}");
     }
 
     // ---------- describe / memory tests ----------

@@ -52,7 +52,18 @@ const VERSION: &str = concat!(
 
 const AFTER_HELP: &str = "\
 Source:  https://github.com/Linkuistics/Ravel-Lite
-Docs:    https://www.linkuistics.com/projects/ravel-lite/";
+Docs:    https://www.linkuistics.com/projects/ravel-lite/
+
+Exit codes:
+  0  success
+  1  generic failure
+  2  usage error (bad flags, missing args)
+  3  not found
+  4  auth required / forbidden
+  5  conflict / precondition failed
+  6  rate limited / try again later
+
+  See `ravel-lite capabilities` for the same vocabulary as JSON.";
 
 #[derive(Parser)]
 #[command(
@@ -202,6 +213,13 @@ enum Commands {
     /// Print the installed ravel-lite version. Equivalent to `--version`;
     /// the subcommand form matches the rest of the CLI surface.
     Version,
+    /// Emit a machine-readable summary of the CLI's surface — version,
+    /// top-level subcommands, supported output formats, the stable
+    /// error-code vocabulary, the documented exit-category table, and
+    /// a feature-flags object. JSON only; the schema is versioned via
+    /// the top-level `schema_version` field. Lets agents probe what
+    /// the binary supports without parsing `--help` output.
+    Capabilities,
     /// Mutate plan state from prompts without the Read+Write tool-call
     /// overhead (and permission prompts) of writing files directly.
     /// Expose via a single `Bash(ravel-lite state *)` allowlist entry.
@@ -265,12 +283,20 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum RepoCommands {
-    /// Emit the registry as YAML on stdout (empty registry is valid output).
+    /// Emit the registry on stdout (empty registry is valid output).
+    /// Default `--format yaml` matches the on-disk wire shape; `json`
+    /// emits the same structure with a top-level `schema_version` for
+    /// agent consumers.
     List {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Output format: `yaml` (default) or `json`. Both shapes carry
+        /// the same `schema_version` field; the JSON form is the
+        /// structured-output target for agent callers.
+        #[arg(long, default_value = "yaml")]
+        format: String,
     },
     /// Register a repo under `<name>` with `--url <u>` and an optional
     /// `--local-path <p>` pointing at the user's regular checkout.
@@ -337,14 +363,18 @@ enum FixedMemoryCommands {
 #[derive(Subcommand)]
 enum AtlasCommands {
     /// Emit the registered repos (the entry points to the catalog
-    /// graph) as YAML on stdout. Bit-identical to `ravel-lite repo
-    /// list`; surfaced under `atlas` to match the graph-RAG mental
-    /// model where the registry is the catalog graph's root set.
+    /// graph) on stdout. Bit-identical to `ravel-lite repo list`;
+    /// surfaced under `atlas` to match the graph-RAG mental model
+    /// where the registry is the catalog graph's root set.
     ListRepos {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Output format: `yaml` (default) or `json`. Both shapes carry
+        /// the same `schema_version` field.
+        #[arg(long, default_value = "yaml")]
+        format: String,
     },
     /// Per-repo `.atlas/components.yaml` presence + age check. Always
     /// emits a YAML report on stdout; with `--require-fresh`, errors
@@ -361,11 +391,13 @@ enum AtlasCommands {
         #[arg(long)]
         require_fresh: bool,
     },
-    /// List every component in every fresh repo as
-    /// `<repo_slug>/<component_id>  <kind>`, one per line. Use `--repo`
-    /// to restrict to a single repo and/or `--kind` to restrict to a
-    /// single component kind. Non-fresh repos are skipped silently;
-    /// inspect freshness with `atlas freshness` first if needed.
+    /// List every component in every fresh repo. By default emits the
+    /// human-readable text shape (`<repo_slug>/<component_id>  <kind>`,
+    /// one per line); `--format yaml|json` emits a versioned envelope
+    /// with one record per component. Use `--repo` to restrict to a
+    /// single repo and/or `--kind` to restrict to a single component
+    /// kind. Non-fresh repos are skipped silently; inspect freshness
+    /// with `atlas freshness` first if needed.
     ListComponents {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -378,10 +410,17 @@ enum AtlasCommands {
         /// Restrict output to components whose `kind` matches exactly.
         #[arg(long)]
         kind: Option<String>,
+        /// Output format: `yaml` or `json`. When omitted, the legacy
+        /// human-readable text shape is emitted instead.
+        #[arg(long)]
+        format: Option<String>,
     },
-    /// Per-repo component counts grouped by kind. Lists each fresh repo
-    /// followed by `<count>  <kind>` rows in alphabetical kind order.
-    /// `--repo` restricts to a single repo.
+    /// Per-repo component counts grouped by kind. By default emits a
+    /// human-readable text shape (each fresh repo followed by
+    /// `<count>  <kind>` rows in alphabetical kind order); `--format
+    /// yaml|json` emits a versioned envelope with one record per repo
+    /// carrying `total` and `by_kind`. `--repo` restricts to a single
+    /// repo.
     Summary {
         /// Path to the config directory. Overrides $RAVEL_LITE_CONFIG and
         /// the default location at <dirs::config_dir()>/ravel-lite/.
@@ -391,6 +430,10 @@ enum AtlasCommands {
         /// fresh repos if the slug is unknown.
         #[arg(long)]
         repo: Option<String>,
+        /// Output format: `yaml` or `json`. When omitted, the legacy
+        /// human-readable text shape is emitted instead.
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Emit one component's full record as YAML, including a computed
     /// list of children. `<reference>` accepts the qualified form
@@ -1471,7 +1514,61 @@ enum DiscoverProposalsCommands {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    let exit_code = run().await;
+    std::process::exit(exit_code);
+}
+
+/// Driver wrapped around `dispatch` so that errors are categorised
+/// against `ExitCategory` (cli-tool-design.md §8) and rendered as a
+/// JSON envelope when the user passed `--format json` (§3). Returns
+/// the integer exit code to hand to `std::process::exit`.
+async fn run() -> i32 {
+    use ravel_lite::cli::{ErrorCode, ExitCategory, JsonErrorEnvelope};
+
+    match dispatch().await {
+        Ok(()) => ExitCategory::Success.as_code(),
+        Err(err) => {
+            // Future work (per `cli-stable-error-codes-and-json-error-envelope`):
+            // tag bail!/anyhow! call sites with their ErrorCode so this
+            // default is hit only by genuinely unclassified failures.
+            let code = ErrorCode::Internal;
+            let category = ExitCategory::from(&code);
+            if json_mode_requested() {
+                let envelope =
+                    JsonErrorEnvelope::new(code, format!("{err:#}"));
+                eprint!("{envelope}");
+            } else {
+                eprintln!("Error: {err:#}");
+            }
+            category.as_code()
+        }
+    }
+}
+
+/// Heuristic: true when argv contains `--format json` (or
+/// `--format=json`). Lets the JSON-error-envelope path activate even
+/// though the per-subcommand `--format` flag is not surfaced as a
+/// global. Limited to one false positive — a positional argument with
+/// the literal value `json` immediately after a `--format` token —
+/// which is acceptable because an error already happened: a JSON
+/// envelope on a non-JSON-mode call is a mild over-rendering, not a
+/// silent loss of signal.
+fn json_mode_requested() -> bool {
+    let mut prev_was_format = false;
+    for arg in std::env::args().skip(1) {
+        if arg == "--format=json" {
+            return true;
+        }
+        if prev_was_format && arg == "json" {
+            return true;
+        }
+        prev_was_format = arg == "--format";
+    }
+    false
+}
+
+async fn dispatch() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -1537,6 +1634,7 @@ async fn main() -> Result<()> {
             println!("ravel-lite {VERSION}");
             Ok(())
         }
+        Commands::Capabilities => ravel_lite::cli::capabilities::run(VERSION),
         Commands::State { command } => dispatch_state(command).await,
         Commands::Repo { command } => dispatch_repo(command),
         Commands::Plan { command } => dispatch_plan(command),
@@ -1579,21 +1677,24 @@ fn dispatch_fixed_memory(command: FixedMemoryCommands) -> Result<()> {
 fn dispatch_atlas(command: AtlasCommands) -> Result<()> {
     use ravel_lite::atlas;
     match command {
-        AtlasCommands::ListRepos { config } => {
+        AtlasCommands::ListRepos { config, format } => {
             let context_root = resolve_config_dir(config)?;
-            atlas::run_list_repos(&context_root)
+            let fmt = OutputFormat::parse(&format)?;
+            atlas::run_list_repos(&context_root, fmt)
         }
         AtlasCommands::Freshness { config, require_fresh } => {
             let context_root = resolve_config_dir(config)?;
             atlas::run_freshness(&context_root, require_fresh)
         }
-        AtlasCommands::ListComponents { config, repo, kind } => {
+        AtlasCommands::ListComponents { config, repo, kind, format } => {
             let context_root = resolve_config_dir(config)?;
-            atlas::run_list_components(&context_root, repo.as_deref(), kind.as_deref())
+            let fmt = format.map(|s| OutputFormat::parse(&s)).transpose()?;
+            atlas::run_list_components(&context_root, repo.as_deref(), kind.as_deref(), fmt)
         }
-        AtlasCommands::Summary { config, repo } => {
+        AtlasCommands::Summary { config, repo, format } => {
             let context_root = resolve_config_dir(config)?;
-            atlas::run_summary(&context_root, repo.as_deref())
+            let fmt = format.map(|s| OutputFormat::parse(&s)).transpose()?;
+            atlas::run_summary(&context_root, repo.as_deref(), fmt)
         }
         AtlasCommands::Describe { config, reference } => {
             let context_root = resolve_config_dir(config)?;
@@ -1697,9 +1798,10 @@ fn dispatch_plan(command: PlanCommands) -> Result<()> {
 
 fn dispatch_repo(command: RepoCommands) -> Result<()> {
     match command {
-        RepoCommands::List { config } => {
+        RepoCommands::List { config, format } => {
             let context_root = resolve_config_dir(config)?;
-            repos::run_list(&context_root)
+            let fmt = OutputFormat::parse(&format)?;
+            repos::run_list(&context_root, fmt)
         }
         RepoCommands::Add {
             config,

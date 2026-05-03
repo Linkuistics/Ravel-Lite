@@ -1,11 +1,17 @@
-id: session-133
-timestamp: 2026-05-03T11:50:21Z
+id: session-134
+timestamp: 2026-05-03T12:17:27Z
 phase: work
 body: |
-  ### Session 133 (2026-05-03T11:50:21Z) — Extend CLI verb drift guard to all embedded prompts
+  ### Session 134 (2026-05-03T12:17:27Z) — Wire stable error codes, exit categories, JSON format parity, and capabilities verb
 
-  - Expanded `phase_prompts_reference_only_live_cli_verbs` in `tests/phase_prompts_cli_resolution.rs` to iterate `embedded_entries_with_prefix("")` instead of walking `defaults/phases/` from disk. The broader scan now covers `create-plan.md`, `survey.md`, `discover-stage2.md`, and all pi prompt files in addition to phase prompts.
-  - The expansion immediately caught a parser false-positive in `defaults/create-plan.md` line 4: the phrase "ravel-lite v2 plan at" was parsed as a verb chain because all tokens are kebab-case. Fixed by rephrasing to "populate a new plan at `{{PLAN}}`" — semantically equivalent since the next sentence establishes the tool name explicitly.
-  - Pi prompt files (`defaults/agents/pi/prompts/`, `defaults/agents/pi/subagents/`) contain zero `ravel-lite` invocations, so they pass trivially; the task brief's expectation that they would have content was wrong.
-  - `cargo test --workspace`, `cargo test --test phase_prompts_cli_resolution`, and `./scripts/check.sh` (clippy) all passed clean.
-  - The kebab-case parser remains fragile: any prose containing `ravel-lite <kebab> <kebab> <kebab>` will trigger a false-positive. One incident is not enough to design against; this is noted as a follow-up concern if more occurrences appear.
+  - Completed four CLI-audit tasks in a single session, all in the `architecture-next` category.
+  - `src/cli/error_code.rs`: Added `ErrorCode` enum (7 variants: `AuthRequired`, `InvalidInput`, `NotFound`, `Conflict`, `IoError`, `RateLimited`, `Internal`) with typed `as_str()`, `parse_opt()`, and `all()` — no stringly-typed error vocabulary.
+  - `src/cli/exit_category.rs`: Added `ExitCategory` enum (7 variants, codes 0–6) with `as_code()`, `label()`, `documented()`, and `From<&ErrorCode>` mapping. Exit-code table added to `--help` after_help block.
+  - `src/cli/error_envelope.rs`: Added `JsonErrorEnvelope` with optional `remediation` field; `Display` emits pretty JSON with trailing newline.
+  - `src/main.rs`: Refactored `async fn main() -> Result<()>` into a thin `main()` → `run()` → `dispatch()` stack. `run()` classifies errors via `ExitCategory`, detects `--format json` in argv, and emits either `JsonErrorEnvelope` to stderr or plain `Error: {err:#}`.
+  - `src/cli/capabilities.rs`: New `ravel-lite capabilities` verb emitting a versioned JSON document (`schema_version: 1`) with `subcommands`, `output_formats`, `error_codes`, `exit_categories`, and `features`. `error_codes` and `exit_categories` are sourced from `ErrorCode::all()` and `ExitCategory::documented()` so they cannot drift from the runtime.
+  - `src/repos.rs`: `run_list` now accepts `OutputFormat`; JSON path emits same `RawReposRegistry` envelope with `schema_version` pretty-printed + trailing newline. `serialise_registry` refactored to share `to_raw_registry` helper.
+  - `src/atlas.rs`: `run_list_repos` delegates format down to `repos::run_list`. `run_list_components` and `run_summary` got opt-in `--format yaml|json` (no-flag preserves existing text shape); new typed envelopes `AtlasComponentsList` / `AtlasSummary` with `ATLAS_COMPONENTS_LIST_SCHEMA_VERSION = 1` and `ATLAS_SUMMARY_SCHEMA_VERSION = 1`.
+  - Deferred (per task descriptions): per-`bail!`-site `ErrorCode` tagging sweep; `schema <command>` verb; `llm-instructions` verb.
+  - 992 lib tests + integration suite green; clippy `-D warnings` clean.
+  - Suggests next: tag `bail!` call sites with typed `ErrorCode` (mechanical sweep); file sub-task for `schema <command>` work; decide-and-close on `llm-instructions`.
