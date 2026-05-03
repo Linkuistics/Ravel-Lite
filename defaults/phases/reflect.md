@@ -135,11 +135,11 @@ something concrete is worth recording.
 ### 4. Hand off
 
 Run `ravel-lite state set-phase {{PLAN}} git-commit-reflect`. Reflect
-**always** sets `git-commit-reflect` as its next phase. The run
-script, after committing, decides whether to run dream (compaction)
-or skip straight to triage based on the compaction trigger. Your
-job is simply to always set `git-commit-reflect` — do not try to
-decide whether compaction is "needed".
+closes the cycle: after the runner commits reflect's plan-state
+edits and saves `triage-baseline`, the cycle ends and a fresh
+`ravel-lite run` picks up at triage. There is no in-cycle dream
+phase — context-wide truth maintenance is a separate concern handled
+by `ravel-lite curate` outside the cycle.
 
 Stop.
 

@@ -41,7 +41,7 @@ tasks:
 - id: phase-prompt-updates-for-triage-first-cycle-shape
   title: Phase prompt updates for triage-first cycle shape
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Update all four phase prompts for the triage-first cycle shape: triage writes `this-cycle-focus.yaml`, work consumes it, analyse-work writes `commits.yaml` with optional `target:` field, reflect closes the cycle. Remove `dream.md` from the in-cycle path.
@@ -75,6 +75,49 @@ tasks:
     - `defaults/phases/` — phase prompt files
     - `src/init.rs` — drift sentinel for `state phase-summary render` substring
     - `src/prompt.rs` — `substitute_tokens` path all prompts go through
+  results: |
+    ## What was done
+
+    Updated all five files under `defaults/phases/` for the triage-first cycle:
+
+    - **triage.md**
+      - Required reads: added prior-cycle objections via `state focus-objections list`. Documented that the runner mechanically deletes the file at `git-commit-triage`, so the LLM does not call `state focus-objections clear` itself.
+      - Behavior: new step 7 acts on `wrong-target` / `skip-item` / `premature` objections; new step 8 writes `this-cycle-focus.yaml` via `state this-cycle-focus set --target <ref> --item <id>... --notes ...`. Renumbered existing set-phase to step 9 and stop to step 10. Added a v1-fallback note for plans without component targeting.
+      - Output format: added `[OBJECTION] <kind>[: <subject>] → <action>` and `[FOCUS] target=<ref>, items=[...]` to the label list.
+      - Reframed the opening to call out that triage runs at the **start** of the cycle.
+    - **work.md**
+      - Required reads: added `state this-cycle-focus show` at entry; framed it as advisory (user still steers selection) and gave a graceful v1 fallback ("no focus set" → proceed).
+      - Behavior step 3: added an escalation block documenting `state focus-objections add-wrong-target | add-skip-item | add-premature` with a clear contract that an objection-only cycle is a valid cycle.
+    - **analyse-work.md**
+      - commits.yaml shape: added optional `target: <repo_slug>:<component_id>` field to the example.
+      - Added a "`target:` (optional ComponentRef)" subsection explaining when to set it, the worktree routing semantics, and the v1 omission rule.
+      - Added a "Two-stream commits split automatically by `target:`" subsection requiring path grouping by target.
+    - **reflect.md**
+      - Step 4 hand-off: removed the obsolete "decides whether to run dream (compaction) or skip straight to triage" framing. Reflect now closes the cycle; dream is no longer in-cycle and `ravel-lite curate` is the named context-wide successor.
+    - **dream.md**
+      - Added an "Out-of-cycle" disclaimer at the top noting the cycle is `triage → work → analyse-work → reflect` and that this prompt only fires under explicit invocation; future tooling lives in `ravel-lite curate`.
+
+    Confirmed by reading source: `LlmPhase` (`src/types.rs:11`) has no `Dream` variant and `parse` rejects `"dream"` — dream really is gone from the in-cycle path; `consume_focus_objections` is called by `git-commit-triage` (`src/phase_loop.rs:290`); `apply_commits_spec` already routes `target:` to worktrees per `apply_commits_spec_routes_targeted_entry_to_worktree` and friends.
+
+    ## What worked
+
+    - Both named drift-guard tests pass:
+      - `every_file_under_defaults_is_registered_in_embedded_files`
+      - `shipped_pi_prompts_have_no_dangling_tokens`
+    - Full library test suite (`cargo test --lib`): 974 passed, 0 failed.
+    - `scripts/check.sh` (clippy `--all-targets --workspace -D warnings`): clean.
+    - Token audit (`grep -E "\{\{[A-Z_]+\}\}" defaults/phases/*.md`) shows no new tokens introduced beyond the existing five (`{{PLAN}}`, `{{PROJECT}}`, `{{DEV_ROOT}}`, `{{TOOL_READ}}`, `{{RELATED_PLANS}}`, `{{WORK_TREE_STATUS}}`, `{{BACKLOG_TRANSITIONS}}`).
+
+    ## What didn't / was deferred
+
+    - **Baseline filename rename deferred.** The task body listed "new baseline file names" for triage. The current runner (`src/phase_loop.rs:306,321,340,357`) still writes flat single-SHA files (`work-baseline`, `analyse-work-baseline`, `reflect-baseline`, `triage-baseline`). The architecture-next §Phase boundaries target of `<phase>-baseline.yaml` per-worktree maps has not shipped (it's still a TODO at architecture-next.md:933). Renaming the baseline references in prompts would have broken the renderer's `cat {{PLAN}}/triage-baseline 2>/dev/null` shell substitution. Prompts therefore continue to reference the flat names; rename them in the same cycle that lands the per-worktree YAML map.
+    - **Triage step ordering kept conservative.** Prior-cycle objections are arguably best handled before backlog hygiene (they're feedback that should inform the rest of triage), but the existing step 1-6 numbering was preserved so the change stays surgical. The instruction "for each entry returned by `state focus-objections list` in the required reads" is explicit enough to keep the LLM from doing it last.
+
+    ## What this suggests next
+
+    - The `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` task remains the keystone gating downstream work (`state intents render-overview`, the per-worktree baseline YAML map, full curate). Until the migrator ships, prompts that mention v2 mechanics carry "on legacy v1 plans, omit this step" fallbacks — once migration is mandatory for an installed binary, those fallbacks become dead code and can be pruned.
+    - A future task should sweep both prompts and `src/phase_loop.rs` together when baselines move to per-worktree YAML maps: the prompt-side `cat {{PLAN}}/<phase>-baseline` patterns inside the renderer call need updating in lockstep with the runner-side rename, otherwise the renderer's shell-out fails silently (`2>/dev/null` swallows it).
+    - Worth considering: a small integration smoke test that spawns each phase prompt against a synthetic plan with a fully-set focus and confirms the LLM-facing instructions reference live verbs (`state focus-objections list`, `state this-cycle-focus show`, `state this-cycle-focus set`, `state focus-objections add-*`). The drift-guard tests catch dangling `{{tokens}}` and unregistered files but cannot catch a verb name that drifts away from the prompt.
 - id: migrate-ravel-lite-migrate-for-v1-to-v2-cutover
   title: 'Migrate: ravel-lite migrate for v1 to v2 cutover'
   category: architecture-next

@@ -1,12 +1,22 @@
 You are running the TRIAGE phase of a multi-session backlog plan. The
-triage phase runs headlessly at the end of each cycle. Its job is to
-review and adjust the task backlog based on what the cycle learned, and
-to propagate learnings to related plans when warranted.
+triage phase runs headlessly at the **start** of each cycle (cycle order:
+`triage → work → analyse-work → reflect`). Its job is to review and
+adjust the task backlog based on the previous cycle's learnings, choose
+what this cycle should attempt, and propagate learnings to related plans
+when warranted.
 
 ## Required reads
 
 1. The task backlog — run `ravel-lite state backlog list {{PLAN}}`.
 2. Distilled memory — run `ravel-lite state memory list {{PLAN}}`.
+3. Prior-cycle objections — run
+   `ravel-lite state focus-objections list {{PLAN}}`. The previous work
+   phase may have escalated `wrong-target`, `skip-item`, or `premature`
+   objections against the focus triage selected last cycle. Empty output
+   is the steady-state — act only when there are entries. The runner
+   mechanically deletes `focus-objections.yaml` during `git-commit-triage`
+   after this phase exits, so do not call `state focus-objections clear`
+   yourself.
 
 ## Related plans
 
@@ -102,6 +112,49 @@ dependency — treat the report as advisory, not authoritative.
    `[BLOCKER] <new task title> — extracted from <parent task title>`
    line in your narrative preamble.
 
+7. **Act on prior-cycle objections.** For each entry returned by
+   `state focus-objections list` in the required reads, decide and act:
+
+   - `kind: wrong-target` — the previous work phase argued the focus
+     should have been a different component. Weigh the objection's
+     `reasoning` against current intents and, if persuasive, fold the
+     `suggested_target` into your focus selection (step 8). Include a
+     `[OBJECTION] wrong-target → <action>` line in your narrative
+     preamble.
+   - `kind: skip-item` — a specific backlog item was deemed unready.
+     Confirm via code reading; if the objection holds, mark the item
+     `blocked` with `state backlog set-status … blocked --reason "<reason>"`
+     and exclude it from this cycle's focus. Include a
+     `[OBJECTION] skip-item: <item-id> → <action>` line.
+   - `kind: premature` — the whole focus was rejected as premature.
+     Choose a different focus this cycle (or rework the original at a
+     finer scope) per the reasoning. Include a
+     `[OBJECTION] premature → <action>` line.
+
+   The runner deletes `focus-objections.yaml` at the next
+   `git-commit-triage`; you do not clear the file yourself.
+
+8. **Select this cycle's focus.** Write `this-cycle-focus.yaml` with the
+   target component and the backlog items to attempt:
+
+       ravel-lite state this-cycle-focus set {{PLAN}} \
+         --target <repo_slug>:<component_id> \
+         --item <task-id> [--item <task-id> ...] \
+         --notes "<optional cycle-specific guidance>"
+
+   The work phase reads this file at entry. The user steers task
+   selection at work time, so `--item` values are advisory — list the
+   items you judge most appropriate, given dependencies and intent
+   priority. `--notes` flows verbatim into the work prompt; use it for
+   ordering hints or context the LLM can't recover from the backlog
+   alone. Include a
+   `[FOCUS] target=<ref>, items=[<id>, <id>]` line in your narrative
+   preamble.
+
+   On legacy v1 plans without component targeting wired up, omit this
+   step — `state this-cycle-focus set` requires a `<repo>:<component>`
+   reference and there is no useful default for a single-root plan.
+
 ## Cross-plan subagent dispatch
 
 For each related plan where learnings warrant propagation, **write**
@@ -126,9 +179,13 @@ Rules:
   `[DISPATCH] <kind>: <target plan name> — <one-line summary>` line in
   your narrative preamble.
 
-7. Run `ravel-lite state set-phase {{PLAN}} git-commit-triage`.
+9. Run `ravel-lite state set-phase {{PLAN}} git-commit-triage`. The
+   runner consumes `focus-objections.yaml`, runs the serves-intent
+   defeat cascade (v2 plans only), commits triage's plan-state edits,
+   and saves `work-baseline` so the next analyse-work has a baseline
+   SHA to diff against.
 
-8. Stop.
+10. Stop.
 
 ## Output format
 
@@ -143,6 +200,8 @@ Your output has two parts, in order:
    - `[ARCHIVED] <hand-off title> — <reason>` (step 3)
    - `[REPRIORITISED] <task title> — <reason>` (step 5)
    - `[BLOCKER] <new task title> — extracted from <parent task title>` (step 6)
+   - `[OBJECTION] <kind>[: <subject>] → <action>` (step 7)
+   - `[FOCUS] target=<ref>, items=[<id>, ...]` (step 8)
    - `[DISPATCH] <kind>: <target plan name> — <summary>` (cross-plan dispatch)
 
    These complement — they do not replace — the renderer's structural

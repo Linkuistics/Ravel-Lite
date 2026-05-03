@@ -169,12 +169,27 @@ bookkeeping that framed it — see step 9 for the full rule.
          <title — imperative mood, max 72 chars>
 
          <optional body, 2-5 lines>
+       target: <repo_slug>:<component_id>   # optional; see below
    ```
 
    Pathspecs are passed straight to `git add`, so standard git
    features work: literal paths, globs (`src/**`), and exclusions
    (`:!src/generated/`). Use `"."` to mean "everything in the
    subtree".
+
+   **`target:` (optional ComponentRef).** When the work edited code
+   inside a mounted target's worktree (the focus's target, or any
+   other mounted target the cycle touched), set `target:` to the
+   `<repo_slug>:<component_id>` reference and use pathspecs relative
+   to that component's subtree. The applier resolves `target` to the
+   matching worktree via `targets.yaml` and runs `git add` /
+   `git commit` inside that working root. Omit `target` for
+   plan-state-only commits and for plain plan-root commits — they
+   land in the plan's git history with the same behaviour as v1. A
+   cycle may mix routed and unrouted entries in one spec.
+
+   On legacy v1 plans (no mounted targets, no `targets.yaml`), omit
+   `target:` from every entry.
 
    **One commit per cycle is the default.** Unless the session
    genuinely spanned two independent concerns, write a single entry
@@ -206,6 +221,13 @@ bookkeeping that framed it — see step 9 for the full rule.
    mixes independent concerns, that is a cue the work was scoped
    wrong; bundle it into one commit with an honest message and
    split along semantic lines next cycle.
+
+   **Two-stream commits split automatically by `target:`.** Edits in
+   different mounted targets must go in separate entries — each
+   entry resolves to one worktree, and pathspecs in one entry are
+   `git add`-ed inside one working root. Group every path by the
+   target whose worktree contains it; plan-state edits and plain
+   plan-root edits go in entries with no `target:`.
 
    **Plan-state-only cycles.** If the only changed paths are under
    `{{PLAN}}/`, frame the title around the *shape* of the plan-state

@@ -13,6 +13,14 @@ Read the following in order:
 4. Declared peer-project relationships — run
    `ravel-lite state related-components list --plan {{PLAN}}` (empty output
    is fine — it means this plan has no declared peers).
+5. This cycle's focus — run
+   `ravel-lite state this-cycle-focus show {{PLAN}}`. The triage phase
+   that opened this cycle wrote the focus record naming the target
+   component, the backlog items proposed for this cycle, and any
+   cycle-specific notes. The focus is **advisory**: the user still
+   steers task selection in step 2 below. If the verb errors with "no
+   focus set", the plan is a legacy v1 plan that does not use the
+   focus mechanism — proceed without it.
 
 **Placeholder note:** any file you {{TOOL_READ}} inside this project
 (READMEs, etc.) may contain literal `{{PROJECT}}`, `{{DEV_ROOT}}`, or
@@ -65,9 +73,26 @@ code you are about to change and pick from the `list` output yourself.
    it; otherwise I'll pick the best next task." Wait for their response.
 
 3. If the user named a task, work on that task. Otherwise pick the best
-   next task — consider dependencies, priority, momentum, and fresh
-   learnings from memory. Consider cross-plan awareness from the Related
-   plans block above when judging relevance.
+   next task — consider dependencies, priority, momentum, fresh
+   learnings from memory, and the items proposed in
+   `this-cycle-focus.yaml`. Consider cross-plan awareness from the
+   Related plans block above when judging relevance.
+
+   **Escalation when the focus is wrong.** If reading the focus and the
+   relevant code reveals that triage's selection cannot proceed — the
+   target component is wrong, a specific item is not yet ready, or the
+   whole focus is premature — record that as an objection rather than
+   forcing the work through:
+
+   - `ravel-lite state focus-objections add-wrong-target {{PLAN}} --suggested-target <repo>:<component> --reasoning "<why>"`
+   - `ravel-lite state focus-objections add-skip-item {{PLAN}} --item-id <task-id> --reasoning "<why>"`
+   - `ravel-lite state focus-objections add-premature {{PLAN}} --reasoning "<why>"`
+
+   A cycle that produces only objections (and any memory entries
+   captured during investigation) is a valid cycle — the next triage
+   reads the objections and acts. Where partial progress is possible
+   (one item ready, another not), record the `skip-item` objection and
+   work on the item that is ready.
 
 4. Implement the task. Respect any plan-specific commands, constraints,
    or conventions that appear AFTER this shared instructions block (added

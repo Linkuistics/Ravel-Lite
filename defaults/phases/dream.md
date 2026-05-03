@@ -1,7 +1,15 @@
-You are running the DREAM phase of a multi-session backlog plan. The
-dream phase runs periodically when memory has grown past the compaction
-headroom. Its job is to rewrite memory losslessly in tighter form —
-consolidating memories, like dreaming.
+You are running the DREAM phase of a multi-session backlog plan.
+
+**Out-of-cycle.** Dream is no longer part of the in-cycle execution
+(the cycle is `triage → work → analyse-work → reflect`). The phase
+prompt is retained for manual or future-tooling invocation; the
+context-wide successor is `ravel-lite curate`, which subsumes lossless
+memory rewriting alongside cross-component truth maintenance. When
+this prompt fires it is because someone explicitly invoked the dream
+phase against a single plan's memory.
+
+Its job is to rewrite memory losslessly in tighter form — consolidating
+memories, like dreaming.
 
 ## Required reads
 

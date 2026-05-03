@@ -1,13 +1,15 @@
-id: session-129
-timestamp: 2026-05-02T14:08:31Z
+id: session-130
+timestamp: 2026-05-03T10:06:00Z
 phase: work
 body: |
-  ### Session 129 (2026-05-02T14:08:31Z) — Two-stream commit routing in apply_commits_spec
+  ### Session 130 (2026-05-03T10:06:00Z) — Update phase prompts for triage-first cycle shape
 
-  - Implemented per-entry target routing in `apply_commits_spec` (`src/git.rs`): each `CommitSpec` entry's optional `target: ComponentRef` now resolves to a mounted worktree via `targets.yaml`; entries without a target fall back to `project_dir` (v1 behaviour preserved).
-  - Updated `apply_parsed_spec` signature to accept `plan_dir` alongside `project_dir`; routing cwd is selected per entry before `unstage_subtree`, `git add`, `diff --cached`, and `git commit` calls.
-  - Updated the doc comment on `apply_commits_spec` to replace the old "ignores target" note with the two-stream contract and the failure-atomicity guarantee.
-  - Added 4 new tests covering: single routed entry, mixed routed+unrouted entries preserving spec order, two distinct targets routing independently, and partial-failure bail leaving context unchanged.
-  - All 19 pre-existing `git::tests` pass unchanged; `cargo test --workspace` green (974 lib + integration tests); clippy `-D warnings` clean.
-  - The `target` field's wire shape was already supported in the YAML schema and reader, so v1 prompts (no `target:`) continue to work as before.
-  - `phase-prompt-updates-for-triage-first-cycle-shape` is now unblocked (its dependency `two-stream-commits-target-worktrees-first-context-record-last` is done).
+  - Updated all five files under `defaults/phases/` to reflect the triage-first cycle (`triage → work → analyse-work → reflect`) and the focus/objections mechanism.
+  - `triage.md`: added prior-cycle objections read (step 3), new step 7 acting on `wrong-target`/`skip-item`/`premature` objections, new step 8 writing `this-cycle-focus.yaml`, renumbered set-phase and stop; added `[OBJECTION]` and `[FOCUS]` labels to output format.
+  - `work.md`: added `state this-cycle-focus show` as required read (step 5, advisory with v1 fallback); added escalation block documenting `focus-objections add-*` verbs for when the focus cannot proceed.
+  - `analyse-work.md`: added optional `target: <repo_slug>:<component_id>` field to commits.yaml shape; added `target:` explanation subsection and "two-stream commits" subsection for multi-target cycles.
+  - `reflect.md`: replaced obsolete "run script decides dream-or-triage" framing with accurate close-cycle description; named `ravel-lite curate` as the out-of-cycle successor.
+  - `dream.md`: added out-of-cycle disclaimer at top; retained body for manual invocation.
+  - Both drift-guard tests (`every_file_under_defaults_is_registered_in_embedded_files`, `shipped_pi_prompts_have_no_dangling_tokens`) passed; full library suite: 974 passed, 0 failed; clippy clean.
+  - Baseline filename rename (to per-worktree YAML maps) was deferred — renaming prompt references now would break the renderer's shell substitution before the runner-side rename ships.
+  - The `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` task remains the keystone gating downstream v2 mechanics; v1-fallback notes in the prompts become dead code once migration is mandatory.
