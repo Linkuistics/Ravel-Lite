@@ -138,6 +138,14 @@ Examples:
   ravel-lite version
 ";
 
+const SYNC_AFTER_HELP: &str = "\
+Examples:
+  # pull every shared target's commits from `other` into `mine`
+  ravel-lite sync ~/.ravel/plans/mine --from ~/.ravel/plans/other
+
+  # targets `other` has and `mine` doesn't are auto-mounted into `mine` first
+";
+
 const CAPABILITIES_AFTER_HELP: &str = "\
 Examples:
   # machine-readable surface summary, JSON only
@@ -918,6 +926,23 @@ enum Commands {
     SurveyFormat {
         /// Path to a YAML survey file to render.
         file: PathBuf,
+    },
+    /// Pull commits from another plan's per-target branches into this
+    /// plan's worktrees on its own per-target branches. Targets unique
+    /// to `--from` are auto-mounted into the destination plan first;
+    /// every shared target is then merged. Conflicts are reported per
+    /// target and left in the worktree for the user to resolve. See
+    /// `docs/architecture-next.md` §`ravel-lite sync`.
+    #[command(after_help = SYNC_AFTER_HELP)]
+    Sync {
+        /// Destination plan directory (worktrees and branches receive
+        /// the merge). Layout: `<context>/plans/<plan>/`.
+        plan: PathBuf,
+        /// Source plan directory whose per-target branches are merged
+        /// into the destination. Must live under the same context root
+        /// as `<plan>`.
+        #[arg(long)]
+        from: PathBuf,
     },
     /// Print the installed ravel-lite version. Equivalent to `--version`;
     /// the subcommand form matches the rest of the CLI surface.
@@ -2427,6 +2452,18 @@ async fn dispatch() -> Result<()> {
         }
         Commands::SurveyFormat { file } => {
             survey::run_survey_format(&file)
+        }
+        Commands::Sync { plan, from } => {
+            let report = ravel_lite::sync::run_sync(&plan, &from)?;
+            print!("{}", ravel_lite::sync::render_report(&report));
+            if report.has_conflicts() {
+                bail_with!(
+                    ErrorCode::Conflict,
+                    "one or more shared targets had merge conflicts; \
+                     resolve in their worktrees and re-run sync"
+                );
+            }
+            Ok(())
         }
         Commands::Version => {
             println!("ravel-lite {VERSION}");

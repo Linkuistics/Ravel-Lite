@@ -62,7 +62,7 @@ tasks:
 - id: sync-ravel-lite-sync-plan-from-other-plan
   title: 'Sync: ravel-lite sync plan from other-plan'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Add explicit cross-plan visibility for solo devs running multiple plans in parallel. Replaces the v1 "direct mode" target types from earlier drafts.
@@ -78,6 +78,47 @@ tasks:
     - Remove the "direct mode" target types entirely from the v1 codebase.
 
     Out of scope: any auto-sync or rebase-on-main semantics — plan branches stay isolated against main per design.
+  results: |
+    ## What landed
+
+    New top-level verb `ravel-lite sync <plan> --from <other-plan>` and supporting module `src/sync.rs` (~410 LoC including 13 unit tests). Wires through `src/lib.rs` (one-line `pub mod sync;`) and `src/main.rs` (after-help constant, `Sync` variant on `Commands`, dispatch arm).
+
+    ## Behaviour
+
+    For each `(repo_slug, component_id)` shared between the two plans' `targets.yaml` files:
+
+    1. If the target is in `--from` but not in the destination, `mount_target` is called against the destination plan first — reusing the existing worktree-mount path verbatim, no new mount logic.
+    2. Then `git merge --no-edit ravel-lite/<other-plan>/main` runs in the destination's `<plan>/.worktrees/<repo_slug>/` worktree, on the destination's own `ravel-lite/<plan>/main` branch.
+    3. Each per-target outcome is captured as `MergeKind::{Clean, AlreadyUpToDate, Conflict { stderr }}` — the conflict variant carries git's stderr verbatim. Conflicts do NOT abort the run; every shared target is attempted, conflicts left in their worktrees for manual resolution.
+    4. The CLI dispatch prints a markdown report (mounts, per-target merge labels, conflict details with worktree paths and remediation prose) and exits with `ErrorCode::Conflict` if any target conflicted.
+
+    ## Design choices worth flagging
+
+    - **Same-context guard.** Both plans must share a `<context>/plans/<x>/` parent. Different contexts could in principle still merge if the underlying source repos resolve identically, but I rejected that as a smell: cross-context coupling shouldn't be silent. Error message names both context paths.
+    - **Shared-source-repo trick.** No special branch-lookup machinery: both plans' worktrees share the source repo's `.git`, so `ravel-lite/<other-plan>/main` is visible from any worktree mounted off the same source. `git rev-parse --verify` confirms tip equality before invoking merge (the `AlreadyUpToDate` short-circuit skips noise from same-tip cases like just-mounted-then-immediately-synced).
+    - **`--no-ff` not used.** Architecture-next.md spec literally says "run `git merge`"; default fast-forward when possible. Audit trail comes from the destination branch's commit graph, not from forced merge commits. Easy to add `--no-ff` later if the audit requirement tightens.
+    - **Pre-merge branch check.** `verify_on_branch` refuses to merge when the worktree HEAD is anything other than the destination plan branch — guards against the user manually checking out something else.
+    - **`MergeOutcome` carries paths and stderr** so the report rendering and downstream programmatic consumers (future `--format json`?) have everything they need without a second git call.
+
+    ## What was already done
+
+    The "remove the direct mode target types entirely from the v1 codebase" scope item from the task description was a no-op: `rg "direct[-_ ]mode|directmode|DirectMode" --type rust` returned only the backlog entry itself and `docs/architecture-next.md`. The source has already shed direct mode (presumably during the targets-and-worktrees rewrite). No source deletion was needed.
+
+    ## Verification
+
+    - `cargo build` — clean.
+    - `cargo test --lib` — 1012/1012 pass (999 prior + 13 new sync tests).
+    - `./scripts/check.sh` (clippy `-D warnings`) — clean after tagging two `with_context` chains as `// errorcode-exempt:` (mount_target and verify_on_branch already produce typed `CodedError`s that survive the wrap, per `error_context.rs:165`).
+    - `./target/debug/ravel-lite sync --help` and `--help` top-level — verb appears with description, examples, and `--from` flag wired correctly.
+
+    Tests cover: derive_context_root happy/sad paths, unique-to-other set computation, same-dir guard, cross-context guard, empty-targets noop, auto-mount-then-up-to-date when other has unique targets, clean merge when destination behind, conflict reported (not raised) when both diverged on same file, skip-when-only-destination-has-target, and report rendering for both populated and empty reports.
+
+    ## What this suggests next
+
+    - **Findings inbox is the next obvious leaf.** `architecture-next.md` §"Findings inbox" already specifies the data shape and the v2 dispatch lifecycle. Implementing it removes the v1 subagent-dispatch fan-out with a much cleaner mediation model. Findings + sync are both pieces that complete the cross-plan visibility story; with both shipped the keystone migrator has fewer cross-plan unknowns to coordinate against.
+    - **`--format json` for sync.** The current report is markdown-only. The other CLI verbs (`atlas`, `state targets`, etc.) standardise on `--format yaml|json` envelopes with `schema_version`. A `SyncReport` JSON envelope would let agents consume sync outcomes programmatically without parsing markdown. Modest scope, ~50 LoC.
+    - **`--no-ff` as an opt-in flag.** If during dogfooding the audit-trail-from-git-graph proves insufficient, add `--no-ff` (or `--audit-merge-commits`) so every sync produces a merge commit even on fast-forward. Don't add speculatively — wait for a concrete need.
+    - **Sync-time hygiene.** Sync currently doesn't update `targets.yaml` for the destination beyond the auto-mount step. If `<other>`'s `Target` rows carry richer metadata in v2 (e.g., per-target intent attribution from the catalog), sync may need to merge that metadata too. Defer until that metadata exists.
 - id: update-tutorial-and-reference-docs-for-repos-yaml-cutover
   title: Update tutorial and reference docs for repos.yaml cutover
   category: architecture-next
