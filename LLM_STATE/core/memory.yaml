@@ -1104,3 +1104,19 @@ entries:
   title: build_headless_agent() for one-shot workflows
   body: |
     `build_headless_agent()` in `src/main.rs` (introduced for `migrate-v1-v2`) constructs a headless agent for workflows that run outside the TUI phase loop. Use this for any future top-level command that needs a single LLM call without the cycle state machine. Contrasts with the `phase_loop` path used for interactive/cycle phases.
+- id: list-limits-rs-exposes-listlimits-and-listenvelope-t
+  title: list_limits.rs exposes ListLimits and ListEnvelope<T>
+  body: |
+    `src/cli/list_limits.rs` exposes `ListLimits` (parsed from `--limit N`/`--all` flags), `ListEnvelope<T>`, `apply()`, and `truncation_summary_line()`. `ListEnvelope<T>` uses `#[serde(skip_serializing_if = "Option::is_none")]` on its three truncation fields (`total_count`, `limit`, `truncated`); untruncated output serialises identically to the source `*File` shape so no existing consumers need updating for the common case.
+- id: four-list-verbs-have-limit-n-all-pagination-flags
+  title: Four list verbs have --limit N / --all pagination flags
+  body: |
+    `state memory list`, `state backlog list`, `state intents list`, and `findings list` accept `--limit N` (show first N entries) and `--all` (no truncation). Exception: `state backlog list --format markdown` ignores both flags — the full grouped table is always emitted; pinned by an integration test. `state session-log list` uses `--keep N` semantics; wiring `--all` and `ListEnvelope<T>` there requires a separate per-verb decision. See: `list_limits.rs exposes ListLimits and ListEnvelope<T>`.
+- id: atlas-and-repo-list-verbs-still-emit-unbounded-output
+  title: Atlas and repo list verbs still emit unbounded output
+  body: |
+    `atlas list-components`, `atlas list-repos`, `atlas summary`, and `repo list` do not use `ListEnvelope<T>`; their output shapes differ from plan-state list verbs and need per-verb default decisions before the `ListLimits` pagination pattern can be applied.
+- id: dream-is-out-of-cycle-curate-is-the-cross-context-replacement
+  title: dream is out-of-cycle; curate is the cross-context replacement
+  body: |
+    The `dream` phase is not an automatic in-cycle phase. `curate` is the cross-context replacement. Reference docs still carry in-cycle prose drift from the old design — this is a known follow-on to fix.
