@@ -2,7 +2,7 @@ tasks:
 - id: migrate-ravel-lite-migrate-for-v1-to-v2-cutover
   title: 'Migrate: ravel-lite migrate for v1 to v2 cutover'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Implement the `ravel-lite migrate <old-plan-path>` verb that cuts a v1 `<project>/LLM_STATE/<plan>` plan over to v2's `<context>/plans/<plan>` model. Hard cutover: the v2 binary refuses to run on unmigrated v1 plans.
@@ -19,6 +19,60 @@ tasks:
     7. Backfill memory (one-shot LLM): pass over `legacy_memory.md` produces a `memory.yaml` with `status: legacy` entries. User curates in their own time.
 
     Verification: dogfood by migrating `LLM_STATE/core` (this very plan) as the canonical test case before the v2.0 release.
+  results: |
+    ## What was done
+
+    This work cycle delivered the design and decomposition of the migrator. The original task — "implement `ravel-lite migrate <old-plan-path>` for the v1 → v2 cutover" — has been split into a written design spec, an implementation plan, and 8 phase-level backlog items. Each phase item is sized to be picked up by a separate work cycle and driven via subagent-driven-development.
+
+    ## Artefacts
+
+    - **Design spec:** `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` — verb shape, two-half flow, gate detection, module layout, test plan, settled defaults.
+    - **Implementation plan:** `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` — 21 TDD-shaped tasks across 8 phases, each task with explicit code blocks, file paths, and verification commands.
+
+    ## Decomposition into 8 backlog items
+
+    | Phase | ID | Deps |
+    |---|---|---|
+    | P1 | `migrate-v1-v2-p1-schema-and-llmphase-variants` | — |
+    | P2 | `migrate-v1-v2-p2-v2-path-shape-gate` | — |
+    | P3 | `migrate-v1-v2-p3-mechanical-half-validate-copy-cli-surface` | — |
+    | P4 | `migrate-v1-v2-p4-apply-layers-intent-targets-memory` | P1, P3 |
+    | P5 | `migrate-v1-v2-p5-three-headless-prompt-files` | P1 |
+    | P6 | `migrate-v1-v2-p6-orchestrator-and-end-to-end-test` | P4, P5 |
+    | P7 | `migrate-v1-v2-p7-remove-legacy-state-migrate-verb` | — |
+    | P8 | `migrate-v1-v2-p8-cross-repo-md-sibling-cleanup` | — |
+
+    P1, P2, P3, P7, P8 can run in parallel from the start. P4 unblocks once P1 and P3 are done. P5 unblocks once P1 is done. P6 (the gate after which the migrator is feature-complete) needs P4 + P5.
+
+    ## Downstream rewires
+
+    The four backlog items that previously depended on this umbrella now depend on P6 instead (the more accurate dependency, since "migrator feature-complete" is what unblocks them):
+
+    - `state-intents-render-overview-regenerate-phase-md-from-intents-task-counts`
+    - `rename-phase-baselines-to-per-worktree-yaml-map-shape-prompts-phase-loop-rs`
+    - `cli-json-schema-versioning-policy-and-documentation`
+    - `cli-add-limit-n-and-all-flags-to-list-verbs`
+
+    ## Settled design decisions worth carrying forward in memory
+
+    - Verb name `migrate-v1-v2` (top-level), not `state migrate-v1-v2`. Aligns with the v2.x release framing and disambiguates from the legacy `state migrate` (.md → .yaml) verb that P7 deletes.
+    - Plan rename via `--as <new-name>` is required — most projects have a `core` plan, so collisions are expected.
+    - "Context dir" and "config dir" are the same path; the verb reuses the existing `--config` flag and `config::resolve_config_dir`.
+    - The "v2 refuses v1" gate is path-shape based (no marker file): a v2 plan dir is `<X>/plans/<Y>/` where `<X>/repos.yaml` exists.
+    - Three separate LLM phases (intent, targets, memory) — not folded — gives early-abort signal on a clearly-wrong intent extraction without wasting downstream LLM time.
+    - Backlog items the LLM cannot attribute get a new `legacy: bool` extension field on `BacklogEntry` (default false, omitted on serialise unless true).
+    - Memory entries the LLM cannot attribute get `status: legacy` (a new `MemoryStatus` variant P11 verifies/adds).
+    - Cross-repo `.md` sibling cleanup is in scope (P8); 5 sibling repos identified.
+    - `state migrate` (.md → .yaml) is deleted in P7 — verified all 13 LLM_STATE dirs already YAML-shaped on 2026-05-04.
+
+    ## What this cycle did NOT do
+
+    - No Rust source code changed. The migrator implementation is the work of P1–P8.
+    - The `LLM_STATE-shape-frozen` constraint remains in force until P6 lands and the user installs a new binary against a migrated `LLM_STATE/core`.
+
+    ## Suggested next pickups
+
+    P1, P2, P3 are all dep-free and small — natural first cycles. P3 in particular pulls a lot of the mechanical scaffolding into place; P4 unblocks once both P1 and P3 are done.
 - id: plan-finish-pr-merge-with-memory-promotion-and-archive
   title: 'Plan finish: pr/merge with memory promotion and archive'
   category: architecture-next
@@ -119,7 +173,7 @@ tasks:
   category: architecture-next
   status: not_started
   dependencies:
-  - migrate-ravel-lite-migrate-for-v1-to-v2-cutover
+  - migrate-v1-v2-p6-orchestrator-and-end-to-end-test
   description: |
     Add `state intents render-overview` verb that reads `intents.yaml` + active task counts from `backlog.yaml` and writes a structured overview to `phase.md`. Wire into `run_set_phase` so phase.md regenerates on every phase transition.
 
@@ -143,7 +197,7 @@ tasks:
   category: architecture-next
   status: not_started
   dependencies:
-  - migrate-ravel-lite-migrate-for-v1-to-v2-cutover
+  - migrate-v1-v2-p6-orchestrator-and-end-to-end-test
   description: |
     When per-worktree YAML baseline maps land as part of the v2 architecture, sweep
     `defaults/phases/*.md` and `src/phase_loop.rs` together to rename the flat phase
@@ -216,7 +270,7 @@ tasks:
   category: architecture-next
   status: not_started
   dependencies:
-  - migrate-ravel-lite-migrate-for-v1-to-v2-cutover
+  - migrate-v1-v2-p6-orchestrator-and-end-to-end-test
   description: |
     CLI audit scope item #2 (cli-tool-design.md §1): every
     `--format json` output carries a top-level `schema_version`, and
@@ -266,7 +320,7 @@ tasks:
   category: architecture-next
   status: not_started
   dependencies:
-  - migrate-ravel-lite-migrate-for-v1-to-v2-cutover
+  - migrate-v1-v2-p6-orchestrator-and-end-to-end-test
   description: |
     Add `--limit N` and `--all` flags to every `list`-style verb that today emits unbounded output, per `defaults/fixed-memory/cli-tool-design.md` §6 ("Sensible default output limits"). A `list` returning 50,000 rows by default can blow out an agent's context in a single call.
 
@@ -298,3 +352,299 @@ tasks:
     ## Gating constraint
 
     May intersect with the v1→v2 migrator schema bump (`migrate-ravel-lite-migrate-for-v1-to-v2-cutover`) because adding metadata fields to the YAML/JSON envelopes changes the wire shape for list verbs. Coordinate with that task or land after it.
+- id: migrate-v1-v2-p1-schema-and-llmphase-variants
+  title: 'migrate-v1-v2 P1: schema and LlmPhase variants'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Implement Phase 1 of the `migrate-v1-v2` plan: extend `BacklogEntry` with a `legacy: bool` extension field, and add three new `LlmPhase` variants (`MigrateIntent`, `MigrateTargets`, `MigrateMemoryBackfill`).
+
+    ## Reference
+
+    - Plan: `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` §Phase 1 (Tasks 1–2).
+    - Spec: `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md`.
+
+    ## Scope
+
+    1. **Task 1** — Add `legacy: bool` field to `BacklogEntry` in `src/state/backlog/schema.rs`. `#[serde(default, skip_serializing_if = "std::ops::Not::not")]` so the field is omitted in YAML when false. Add a round-trip test. Fix any downstream `BacklogEntry { ... }` literal call sites (test helpers, etc.) flagged by clippy.
+
+    2. **Task 2** — Extend `LlmPhase` in `src/types.rs` with three new variants. Update `as_str` and `parse` to handle `migrate-intent`, `migrate-targets`, `migrate-memory-backfill`. Tests for parse/display. Then chase down non-exhaustive `match LlmPhase` sites — at minimum `src/prompt.rs::load_phase_file` and `src/phase_loop.rs`. The migrate variants are NOT part of the cycle; in `phase_loop`, treat them as `unreachable!()` or panic with "not part of the cycle — invoke directly via migrate-v1-v2". In `prompt::load_phase_file`, return a placeholder `Ok(String::new())` for the migrate variants (Phase 5 fills these in) — leave a TODO comment marking the temporary state.
+
+    ## Use the subagent-driven-development skill
+
+    Dispatch one subagent per task. Each subagent should follow the TDD shape in the plan doc (write failing test, run it, implement, run it, commit).
+
+    ## Verification
+
+    `./scripts/check.sh` passes after each commit. `cargo test --package ravel-lite --lib state::backlog` and `cargo test --package ravel-lite --lib types` both green.
+- id: migrate-v1-v2-p2-v2-path-shape-gate
+  title: 'migrate-v1-v2 P2: v2 path-shape gate'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Implement Phase 2 of the `migrate-v1-v2` plan: the v2 path-shape gate that blocks ravel-lite 2.x cycle-shaped verbs against unmigrated v1 plan paths.
+
+    ## Reference
+
+    - Plan: `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` §Phase 2 (Tasks 3–4).
+    - Spec: `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` §The "v2 refuses v1" gate.
+
+    ## Scope
+
+    1. **Task 3** — Create `src/v2_gate.rs` with `pub fn validate_v2_plan_dir(plan_dir: &Path) -> Result<()>`. A v2 plan dir is `<X>/plans/<Y>/` where `<X>/repos.yaml` exists. Path-shape only — no marker file. Error message must include the actionable migrate-v1-v2 invocation. Add `pub mod v2_gate;` to `src/lib.rs`. Hermetic tests cover: accepts v2; rejects v1; rejects `plans/` without `repos.yaml`; rejects `/` (no grandparent).
+
+    2. **Task 4** — Wire the gate into the cycle-shaped verbs at the top of each handler in `src/main.rs`: `Run`, `Triage`, `Reflect`, `AnalyseWork`, `Dream`, `StateCommands::SetPhase`. NOT on other state verbs, NOT on survey/init/create/repo/atlas/findings/migrate-v1-v2. Add `tests/v2_gate_integration.rs` exercising the binary against a v1 path and asserting on stderr.
+
+    ## Use the subagent-driven-development skill
+
+    Dispatch one subagent per task.
+
+    ## Verification
+
+    `./scripts/check.sh` passes. `cargo test --package ravel-lite --lib v2_gate` and `cargo test --package ravel-lite --test v2_gate_integration` both green.
+
+    ## Note
+
+    This phase has no hard dependency on Phase 1 — they can be done in parallel by separate subagents if desired.
+- id: migrate-v1-v2-p3-mechanical-half-validate-copy-cli-surface
+  title: 'migrate-v1-v2 P3: mechanical half (validate, copy, CLI surface)'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Implement Phase 3 of the `migrate-v1-v2` plan: the mechanical half — module skeleton, CLI surface, input validation, and the file-copy step.
+
+    ## Reference
+
+    - Plan: `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` §Phase 3 (Tasks 5–7).
+    - Spec: `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` §Two-half flow / Half A.
+
+    ## Scope
+
+    1. **Task 5** — Module skeleton + main.rs CLI surface. Create `src/migrate_v1_v2/{mod.rs,validate.rs,copy.rs,apply_intent.rs,apply_targets.rs,apply_memory.rs}` with `unimplemented!()` stubs for the four apply/validate/copy functions and a `Validated` struct shell. Add `pub mod migrate_v1_v2;` to `src/lib.rs`. Add the `MigrateV1V2 { old_plan_path, --as, --config, --yes }` top-level Commands variant in `src/main.rs` and its dispatch arm.
+
+    2. **Task 6** — Implement `validate.rs::validate_inputs` returning the `Validated { old_plan_path, new_plan_dir, source_repo_slug, source_repo_path, config_dir }` struct. Validate the seven failure modes per the spec: not a v1 plan dir, only-md plan, already-v2, missing repos.yaml, name collision, unregistered source repo, missing Atlas index. Hermetic tests for all paths. May need to make `crate::create::validate_plan_name` `pub`.
+
+    3. **Task 7** — Implement `copy.rs::copy_plan_state` copying `phase.md` + the four `.yaml` state files when present. Skip stale `.md` siblings. Test missing files are skipped gracefully.
+
+    ## Use the subagent-driven-development skill
+
+    Dispatch one subagent per task.
+
+    ## Verification
+
+    `./scripts/check.sh` passes. `cargo build --package ravel-lite` and `cargo test --package ravel-lite --lib migrate_v1_v2` both green.
+
+    ## Note
+
+    Independent of Phases 1, 2 — can run in parallel.
+- id: migrate-v1-v2-p4-apply-layers-intent-targets-memory
+  title: 'migrate-v1-v2 P4: apply layers (intent, targets, memory)'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - migrate-v1-v2-p1-schema-and-llmphase-variants
+  - migrate-v1-v2-p3-mechanical-half-validate-copy-cli-surface
+  description: |
+    Implement Phase 4 of the `migrate-v1-v2` plan: the three apply layers (intent, targets, memory) + the proposal scratch schemas they consume.
+
+    ## Reference
+
+    - Plan: `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` §Phase 4 (Tasks 8–11).
+    - Spec: `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` §Two-half flow / Half B.
+
+    ## Scope
+
+    1. **Task 8** — Define proposal scratch schemas in `src/migrate_v1_v2/proposals.rs`: `IntentProposal`, `ItemAttribution`, `TargetsProposal`, `TargetProposal`, `MemoryProposal`, `MemoryAttribution`. Constants `INTENT_PROPOSAL_FILENAME`, `TARGETS_PROPOSAL_FILENAME`, `MEMORY_PROPOSAL_FILENAME`. Round-trip serde tests.
+
+    2. **Task 9** — Implement `apply_intent.rs::apply_proposal`: parse scratch YAML → write `intents.yaml` → walk `backlog.yaml` adding either `Justification::ServesIntent { intent_id }` or stamping `legacy: true`. Hermetic tests with a synthetic proposal. Verify `Justification::ServesIntent` exists in the knowledge-graph crate; add it if not.
+
+    3. **Task 10** — Implement `apply_targets.rs::apply_proposal`: parse scratch → call `mount_target` for each target, which writes `targets.yaml` and creates the worktree. Hermetic tests use a real `git init`'d source repo with a stub `.atlas/components.yaml`.
+
+    4. **Task 11** — Implement `apply_memory.rs::apply_proposal`: parse scratch → set `attribution` per entry; null attribution also sets `status: legacy`. Verify `MemoryStatus::Legacy` variant exists in `src/plan_kg.rs`; add it if not.
+
+    The `pub async fn run(...)` orchestrator-facing function can stay as a stub that just calls `apply_proposal` for now (Phase 6 wires the orchestrator).
+
+    ## Dependencies
+
+    - Phase 1 (uses `BacklogEntry.legacy` field).
+    - Phase 3 (uses `Validated` struct + module skeleton).
+
+    ## Use the subagent-driven-development skill
+
+    Dispatch one subagent per task. Tasks 9/10/11 are independent and can run in parallel.
+
+    ## Verification
+
+    `./scripts/check.sh` passes. `cargo test --package ravel-lite --lib migrate_v1_v2::{proposals,apply_intent,apply_targets,apply_memory}` all green.
+- id: migrate-v1-v2-p5-three-headless-prompt-files
+  title: 'migrate-v1-v2 P5: three headless prompt files'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - migrate-v1-v2-p1-schema-and-llmphase-variants
+  description: |
+    Implement Phase 5 of the `migrate-v1-v2` plan: the three headless prompt files for the migrate-* phases.
+
+    ## Reference
+
+    - Plan: `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` §Phase 5 (Tasks 12–14).
+    - Spec: `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` §Three new LlmPhase variants and prompts.
+
+    ## Scope
+
+    For each of three phases, produce:
+    - The prompt file under `defaults/phases/<phase>.md`.
+    - A new `EmbeddedFile { ... }` entry in `EMBEDDED_FILES` in `src/init.rs`.
+    - A real `EMBEDDED_FILES`-backed return in the corresponding `match` arm of `src/prompt.rs::load_phase_file` (replacing the placeholder `Ok(String::new())` left by Phase 1).
+
+    The three prompts:
+
+    1. **Task 12** — `defaults/phases/migrate-intent.md`. Inputs: `phase.md`, `backlog.yaml`, the catalog via `ravel-lite atlas`. Output: `migrate-intent-proposal.yaml` with `intents` + `item_attributions`.
+
+    2. **Task 13** — `defaults/phases/migrate-targets.md`. Inputs: source repo slug, components catalog. Output: `migrate-targets-proposal.yaml` with `targets`.
+
+    3. **Task 14** — `defaults/phases/migrate-memory-backfill.md`. Inputs: existing `memory.yaml`, components catalog. Output: `migrate-memory-proposal.yaml` with `attributions`.
+
+    Token substitutions referenced in prompts: `{{OLD_PLAN_PATH}}`, `{{NEW_PLAN_DIR}}`, `{{NEW_PLAN_NAME}}`, `{{SOURCE_REPO_SLUG}}`, `{{SOURCE_REPO_PATH}}`. Phase 6 wires these from the Validated struct.
+
+    ## Dependencies
+
+    - Phase 1 (needs the `LlmPhase` variants for the prompt loader).
+
+    ## Use the subagent-driven-development skill
+
+    Dispatch one subagent per task. The three are independent and can run in parallel.
+
+    ## Verification
+
+    `cargo test --package ravel-lite --lib init::tests::every_file_under_defaults_is_registered_in_embedded_files` passes after each. `./scripts/check.sh` passes.
+- id: migrate-v1-v2-p6-orchestrator-and-end-to-end-test
+  title: 'migrate-v1-v2 P6: orchestrator and end-to-end test'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - migrate-v1-v2-p4-apply-layers-intent-targets-memory
+  - migrate-v1-v2-p5-three-headless-prompt-files
+  description: |
+    Implement Phase 6 of the `migrate-v1-v2` plan: the test-only `Agent` stub, the orchestrator helpers (`invoke_phase`, `confirm`), and the end-to-end integration test.
+
+    ## Reference
+
+    - Plan: `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` §Phase 6 (Tasks 15–17).
+    - Spec: `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` §Test plan / (α) test seam.
+
+    ## Scope
+
+    1. **Task 15** — Create `src/agent/test_stub.rs` with `pub struct StubAgent` impl `Agent`. The stub's `invoke_headless`, when given a `Migrate*` phase, writes a pre-baked YAML (passed in at construction) to the corresponding scratch filename. `unreachable!()` for `invoke_interactive` and non-migrate phases. `#[cfg(test)] pub mod test_stub;` in `src/agent/mod.rs`.
+
+    2. **Task 16** — Create `src/migrate_v1_v2/orchestrator.rs` with `pub async fn invoke_phase(agent, validated, phase)` (renders prompt with all five tokens, calls `agent.invoke_headless`) and `pub fn confirm(message)` (stdin Y/N prompt, errors with `ErrorCode::Cancelled` on no). Wire `pub mod orchestrator;` in `src/migrate_v1_v2/mod.rs`. Update the `pub async fn run(...)` in each apply_*.rs to call `super::orchestrator::invoke_phase` then `apply_proposal`.
+
+    3. **Task 17** — Create `tests/migrate_v1_v2_e2e.rs` exercising the full `run_migrate_v1_v2` orchestrator with the StubAgent. Set up a real `git init`'d source repo with `.atlas/components.yaml`, a v1 plan inside it, and a config dir with `repos.yaml`. Pre-bake three proposal YAMLs and pass them to `stub()`. After running the orchestrator, assert: all v2 files present, worktree mounted, scratch files removed, `serves-intent` justification on the backlog item, `attribution` on the memory entry.
+
+    ## Dependencies
+
+    - Phase 4 (uses `apply_proposal` + `Validated`).
+    - Phase 5 (orchestrator uses `compose_prompt` which loads the prompt files).
+
+    ## Use the subagent-driven-development skill
+
+    Dispatch one subagent per task. Tasks 15 and 16 are independent; Task 17 needs both.
+
+    ## Verification
+
+    `./scripts/check.sh` passes. `cargo test --package ravel-lite --test migrate_v1_v2_e2e` green. This is the gate after which the migrator is feature-complete.
+- id: migrate-v1-v2-p7-remove-legacy-state-migrate-verb
+  title: 'migrate-v1-v2 P7: remove legacy state migrate verb'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Implement Phase 7 of the `migrate-v1-v2` plan: delete the legacy `state migrate` (.md → .yaml) verb and its `parse_*_markdown` parsers.
+
+    ## Reference
+
+    - Plan: `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` §Phase 7 (Tasks 18–20).
+    - Spec: `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` §Companion scope: remove the state migrate verb.
+
+    ## Why
+
+    Verified across all 13 LLM_STATE dirs / 23 plans on 2026-05-04: every plan has the YAML form. No plan exists in pure-`.md` form. The legacy converter is dead code path.
+
+    ## Scope
+
+    1. **Task 18** — Verify with grep that `parse_*_markdown` is referenced ONLY by `src/state/migrate.rs` and the parser modules themselves. Confirmed during plan authoring; re-confirm to catch any drift.
+
+    2. **Task 19** — Remove the `StateCommands::Migrate { ... }` variant in `src/main.rs` and its match arm.
+
+    3. **Task 20** — Delete `src/state/migrate.rs`, `src/state/backlog/parse_md.rs`, `src/state/memory/parse_md.rs`. Find and delete `parse_session_log_markdown` and `parse_latest_session_markdown` functions in `src/state/session_log/`. Update mod declarations in `src/state/mod.rs`, `src/state/backlog/mod.rs`, `src/state/memory/mod.rs`.
+
+    Final commit message: refactor the deletion as one atomic change citing the verification result.
+
+    ## Dependencies
+
+    None — independent of all other phases. Can run in parallel with anything.
+
+    ## Use the subagent-driven-development skill
+
+    One subagent for Task 18 (read-only verification), then one subagent for Tasks 19+20 combined (the deletion lands as one logical change).
+
+    ## Verification
+
+    `cargo build --package ravel-lite` passes. `cargo test --package ravel-lite` full suite green. `./scripts/check.sh` passes.
+- id: migrate-v1-v2-p8-cross-repo-md-sibling-cleanup
+  title: 'migrate-v1-v2 P8: cross-repo md sibling cleanup'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Implement Phase 8 of the `migrate-v1-v2` plan: cross-repo cleanup of stale `.md` siblings in 5 sibling repos.
+
+    ## Reference
+
+    - Plan: `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` §Phase 8 (Task 21).
+    - Spec: `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` §Companion scope: cross-repo cleanup of stale .md siblings.
+
+    ## Why
+
+    Once Phase 7 deletes the `state migrate` verb, the `.md` siblings in each project's LLM_STATE are pure noise — they were leftover artefacts of the keep-originals migration policy. Removing them keeps each project tidy.
+
+    ## Scope
+
+    For each of these 5 sibling repos:
+
+    - `/Users/antony/Development/AppSpec`
+    - `/Users/antony/Development/Ravel`
+    - `/Users/antony/Development/APIAnyware-MacOS`
+    - `/Users/antony/Development/TestAnyware`
+    - `/Users/antony/Development/IDEs/RacketPro`
+
+    The procedure per repo:
+
+    1. `cd` into the repo.
+    2. `git status --short`. If non-empty: STOP for this repo, add it to a "skipped" report, move to the next repo.
+    3. Find files matching `LLM_STATE/**/{backlog,memory,session-log,latest-session}.md` AND where a `.yaml` sibling exists in the same dir.
+    4. `git rm <files>`; `git commit -m "chore: remove stale legacy .md state siblings"`.
+    5. Do NOT push — leave that to the user.
+
+    After all five repos: report which were cleaned vs skipped (with each skipped repo's dirty-tree contents).
+
+    ## Files explicitly NOT to delete
+
+    - `phase.md` (universal, hand-authored)
+    - `prompt-*.md` (per-plan agent overrides)
+    - `decisions.md`, `research-notes.md`, `related-plans.md`, `new-language-guide.md`, `overview.md`, `project-workflow.md`, `targets/template.md` (user-authored content)
+
+    ## Dependencies
+
+    None — independent of all other phases.
+
+    ## Use the subagent-driven-development skill
+
+    One subagent per repo (5 dispatches). Each subagent operates strictly within its assigned repo and reports back.
+
+    ## Verification
+
+    After each repo's commit, `git status --short` in that repo is empty. After all five, no repo has untracked or partially-staged content.

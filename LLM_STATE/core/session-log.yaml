@@ -2046,3 +2046,13 @@ sessions:
     What this suggests trying next:
     - The seven AsciiDoc website docs still describe `subagent-dispatch.yaml`; a docs-reconciliation pass is the natural follow-up.
     - Reflect's `state memory check-anchors` run should surface the now-stale `pi_dispatch_subagent` memory entry next cycle.
+- id: session-144
+  timestamp: 2026-05-04T07:21:39Z
+  phase: work
+  body: |
+    ### Session 144 (2026-05-04T07:21:39Z) — Design v1→v2 migrator: spec, plan, and backlog decomposition
+
+    - **What was attempted:** Design and decompose the `ravel-lite migrate` v1→v2 cutover verb. The original task described implementation of the migrator; the session instead produced the design artefacts needed before implementation begins.
+    - **What worked:** Delivered two design documents — `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` (verb shape, two-half flow, gate detection, module layout, test plan, settled defaults) and `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` (21 TDD-shaped tasks across 8 phases). The umbrella backlog task is now `done`. Eight phase-level tasks (P1–P8) were added with explicit dependency edges. Four downstream tasks were rewired from the umbrella to P6 (the more accurate unblocking point: "migrator feature-complete"). No Rust source changed.
+    - **What to try next:** P1 (`schema-and-llmphase-variants`), P2 (`v2-path-shape-gate`), P3 (`mechanical-half-validate-copy-cli-surface`), P7 (`remove-legacy-state-migrate-verb`), and P8 (`cross-repo-md-sibling-cleanup`) are all dep-free and can run in parallel. P3 is highest leverage — it pulls most of the scaffolding into place and unblocks P4.
+    - **Key learnings:** The LLM_STATE-shape-frozen constraint remains in force until P6 lands and the user installs a new binary. Three separate LLM phases (intent, targets, memory) are preferred over a folded pass — early abort on bad intent extraction avoids wasting downstream LLM time.
