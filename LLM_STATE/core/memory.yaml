@@ -1078,3 +1078,11 @@ entries:
   title: '''sync'' merges plan branches; same-context guard blocks cross-repo'
   body: |
     `src/sync.rs` (~631 LoC, 13 unit tests). `ravel-lite sync <plan> --from <other-plan>` merges each shared target's plan branch from `--from` into the destination plan's worktrees; targets unique to `--from` are auto-mounted first. Branch visibility is automatic: both plans' worktrees share the source repo's `.git`, so `ravel-lite/<other-plan>/main` is reachable with no special lookup machinery. Same-context guard rejects merges across plans whose source repos resolve differently — cross-context merges that "happen to work" via coincidence would be silent coupling that's hard to audit.
+- id: sync-format-json-output-deferred-until-concrete-consumer-exists
+  title: 'sync --format json output: deferred until concrete consumer exists'
+  body: |
+    `ravel-lite sync` currently outputs a markdown report. A `--format json` flag (producing a `SyncReport` JSON/YAML envelope with `schema_version`) would let agents consume sync outcomes programmatically without parsing markdown.
+
+    Estimated scope: ~50 LoC. The `SyncReport` struct already exists in `src/sync.rs`; it carries mounts, per-target merge labels, and conflict details. Adding `--format json` follows the same envelope pattern as other state verbs.
+
+    Defer until: a concrete agent consumer of sync output exists, or the `cli-json-schema-versioning-policy-and-documentation` task lands and establishes the standard envelope shape. Don't add speculatively.
