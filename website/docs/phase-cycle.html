@@ -1,7 +1,7 @@
 <div id="preamble">
 <div class="sectionbody">
 <div class="paragraph">
-<p>The phase cycle is the contract Ravel-Lite enforces against every plan it runs. Each cycle is the same fixed sequence — four reasoning phases interleaved with audit-trail commit phases — and each phase has a precise contract for what it reads, what it writes, what it decides, and how it transitions. Once you understand the cycle, the rest of Ravel-Lite is bookkeeping around it.</p>
+<p>The phase cycle is the contract Ravel-Lite enforces against every plan it runs. Each cycle is the same fixed sequence — four reasoning phases interleaved with four audit-trail commit phases — and each phase has a precise contract for what it reads, what it writes, what it decides, and how it transitions. Once you understand the cycle, the rest of Ravel-Lite is bookkeeping around it.</p>
 </div>
 <div class="paragraph">
 <p>This page documents each phase one by one, then covers the two cross-cutting mechanisms a reader needs to reason about a cycle holistically: the cross-plan findings inbox and the out-of-cycle truth-maintenance pass (planned <code>ravel-lite curate</code>, not yet shipped). Schemas for the files referenced live on the <a href="state-files.html">State files</a> and <a href="cross-plan-files.html">Cross-plan files</a> reference pages — this page links rather than re-narrates.</p>
@@ -14,7 +14,8 @@
 <div class="listingblock">
 <div class="content">
 <pre>triage → git-commit-triage →
-work → analyse-work → git-commit-work →
+work → git-commit-work →
+analyse-work → git-commit-analyse-work →
 reflect → git-commit-reflect → [continue?] → triage</pre>
 </div>
 </div>
@@ -30,7 +31,36 @@ reflect → git-commit-reflect → [continue?] → triage</pre>
 <h2 id="_reasoning_phases">Reasoning phases</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>The four reasoning phases each spawn the configured agent against a prompt file in <code>defaults/phases/</code>. Prompts are templated — <code>{{PLAN}}</code>, <code>{{PROJECT}}</code>, <code>{{ORCHESTRATOR}}</code>, and similar tokens are substituted before invocation. Customisation goes through <code>ravel.append_prompt</code> in <code>config.lua</code>; see the <a href="config-and-prompts.html">Configuration and prompts</a> reference.</p>
+<p>The four reasoning phases each spawn the configured agent against a prompt file in <code>defaults/phases/</code>. They are documented below in cycle order — Triage opens, Reflect closes. Prompts are templated — <code>{{PLAN}}</code>, <code>{{PROJECT}}</code>, <code>{{ORCHESTRATOR}}</code>, and similar tokens are substituted before invocation. Customisation goes through <code>ravel.append_prompt</code> in <code>config.lua</code>; see the <a href="config-and-prompts.html">Configuration and prompts</a> reference.</p>
+</div>
+<div class="sect2">
+<h3 id="_triage">Triage</h3>
+<div class="paragraph">
+<p>The cycle-opening phase. Reviews the backlog, mines completed tasks for hand-offs, reprioritises, and writes findings to the context-level inbox if any cross-plan observation surfaced.</p>
+</div>
+<div class="dlist">
+<dl>
+<dt class="hdlist1">Reads</dt>
+<dd>
+<p>The backlog and current memory. Triage explicitly does <strong>not</strong> read sibling, parent, or child plan content — cross-plan awareness comes from the <code>Related plans</code> block in its prompt (paths only), never from direct foreign reads. No subagent is dispatched against a peer plan.</p>
+</dd>
+<dt class="hdlist1">Writes</dt>
+<dd>
+<p>Backlog mutations (<code>set-status</code>, <code>set-title</code>, <code>reorder</code>, <code>add</code>, <code>delete</code>, <code>set-dependencies</code>, <code>clear-handoff</code>); occasionally memory adds when archiving a hand-off. Cross-plan observations are written to the context-level findings inbox via <code>ravel-lite findings add</code> — a user-mediated queue the operator processes out of band.</p>
+</dd>
+<dt class="hdlist1">Decisions</dt>
+<dd>
+<p>Which tasks are still relevant; what to reprioritise and why; whether each completed task&#8217;s hand-off warrants a new top-level task or a memory archive; whether any observation belongs in the findings inbox.</p>
+</dd>
+<dt class="hdlist1">Transition</dt>
+<dd>
+<p><code>ravel-lite state set-phase {{PLAN}} git-commit-triage</code>.</p>
+</dd>
+</dl>
+</div>
+<div class="paragraph">
+<p>Triage reprioritisations require a stated reason naming the cycle learning that drove the change — "felt better here" is not a reason. The narrative preamble carries <code>[REPRIORITISED]</code>, <code>[PROMOTED]</code>, <code>[ARCHIVED]</code>, <code>[BLOCKER]</code>, and <code>[FINDING]</code> intent labels alongside the renderer&#8217;s structural diff. The <a href="cross-plan-files.html">Cross-plan files</a> reference covers <code>findings.yaml</code> in detail.</p>
+</div>
 </div>
 <div class="sect2">
 <h3 id="_work">Work</h3>
@@ -53,7 +83,7 @@ reflect → git-commit-reflect → [continue?] → triage</pre>
 </dd>
 <dt class="hdlist1">Transition</dt>
 <dd>
-<p><code>ravel-lite state set-phase {{PLAN}} analyse-work</code>.</p>
+<p><code>ravel-lite state set-phase {{PLAN}} git-commit-work</code>.</p>
 </dd>
 </dl>
 </div>
@@ -85,12 +115,12 @@ reflect → git-commit-reflect → [continue?] → triage</pre>
 </dd>
 <dt class="hdlist1">Transition</dt>
 <dd>
-<p><code>ravel-lite state set-phase {{PLAN}} git-commit-work</code>.</p>
+<p><code>ravel-lite state set-phase {{PLAN}} git-commit-analyse-work</code>.</p>
 </dd>
 </dl>
 </div>
 <div class="paragraph">
-<p>The <code>commits.yaml</code> shape is a list of <code>{paths: […], message: &lt;title + body&gt;}</code> entries. Pathspecs use git&#8217;s standard syntax — globs (<code>src/**</code>) and exclusions (<code>:!src/generated/</code>) both work. If the file is missing or malformed, <code>git-commit-work</code> falls back to a single catch-all commit; that fallback is a safety net, not the intended path.</p>
+<p>The <code>commits.yaml</code> shape is a list of <code>{paths: […], message: &lt;title + body&gt;}</code> entries. Pathspecs use git&#8217;s standard syntax — globs (<code>src/**</code>) and exclusions (<code>:!src/generated/</code>) both work. If the file is missing or malformed, <code>git-commit-analyse-work</code> falls back to a single catch-all commit; that fallback is a safety net, not the intended path.</p>
 </div>
 </div>
 <div class="sect2">
@@ -125,53 +155,58 @@ reflect → git-commit-reflect → [continue?] → triage</pre>
 <p>Truth maintenance — consolidating overlapping memory entries and tightening verbose prose — is now an <strong>out-of-cycle</strong> operation. The planned <code>ravel-lite curate</code> command (not yet shipped) is the user-invoked compaction pass; it has no role inside the in-cycle phase loop. The earlier <code>dream</code> phase, which ran conditionally inside the cycle, has been removed entirely.</p>
 </div>
 </div>
-<div class="sect2">
-<h3 id="_triage">Triage</h3>
-<div class="paragraph">
-<p>The cycle-opening phase. Reviews the backlog, mines completed tasks for hand-offs, reprioritises, and writes findings to the context-level inbox if any cross-plan observation surfaced.</p>
-</div>
-<div class="dlist">
-<dl>
-<dt class="hdlist1">Reads</dt>
-<dd>
-<p>The backlog and current memory. Triage explicitly does <strong>not</strong> read sibling, parent, or child plan content — cross-plan awareness comes from the <code>Related plans</code> block in its prompt (paths only), never from direct foreign reads. No subagent is dispatched against a peer plan.</p>
-</dd>
-<dt class="hdlist1">Writes</dt>
-<dd>
-<p>Backlog mutations (<code>set-status</code>, <code>set-title</code>, <code>reorder</code>, <code>add</code>, <code>delete</code>, <code>set-dependencies</code>, <code>clear-handoff</code>); occasionally memory adds when archiving a hand-off. Cross-plan observations are written to the context-level findings inbox via <code>ravel-lite findings add</code> — a user-mediated queue the operator processes out of band.</p>
-</dd>
-<dt class="hdlist1">Decisions</dt>
-<dd>
-<p>Which tasks are still relevant; what to reprioritise and why; whether each completed task&#8217;s hand-off warrants a new top-level task or a memory archive; whether any observation belongs in the findings inbox.</p>
-</dd>
-<dt class="hdlist1">Transition</dt>
-<dd>
-<p><code>ravel-lite state set-phase {{PLAN}} git-commit-triage</code>.</p>
-</dd>
-</dl>
-</div>
-<div class="paragraph">
-<p>Triage reprioritisations require a stated reason naming the cycle learning that drove the change — "felt better here" is not a reason. The narrative preamble carries <code>[REPRIORITISED]</code>, <code>[PROMOTED]</code>, <code>[ARCHIVED]</code>, <code>[BLOCKER]</code>, and <code>[FINDING]</code> intent labels alongside the renderer&#8217;s structural diff. The <a href="cross-plan-files.html">Cross-plan files</a> reference covers <code>findings.yaml</code> in detail.</p>
-</div>
-</div>
 </div>
 </div>
 <div class="sect1">
 <h2 id="_audit_trail_phases">Audit-trail phases</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>The <code>git-commit-*</code> phases are Rust handlers, not agent invocations. Each commits the prior reasoning phase&#8217;s mutations and prepares the baseline file the next reasoning phase will diff against. They exist so every state transition lands in its own commit, producing the per-cycle audit trail visible in <code>git log</code>.</p>
+<p>The <code>git-commit-*</code> phases are Rust handlers, not agent invocations. Each commits the prior reasoning phase&#8217;s mutations and prepares the baseline file the next reasoning phase will diff against. They exist so every state transition lands in its own commit, producing the per-cycle audit trail visible in <code>git log</code>. The four handlers are documented below in cycle order.</p>
+</div>
+<div class="sect2">
+<h3 id="_git_commit_triage">git-commit-triage</h3>
+<div class="paragraph">
+<p>Opens the cycle. Commits the triage phase&#8217;s plan-state mutations, captures <code>work-baseline</code>, and writes <code>work</code> to <code>phase.md</code> so the cycle proceeds to the user-interactive work phase.</p>
+</div>
+<div class="paragraph">
+<p>The order of operations is load-bearing. The triage commit lands first, advancing HEAD; <strong>then</strong> <code>work-baseline</code> is captured, so analyse-work later in this cycle diffs against post-triage state rather than conflating triage&#8217;s edits into <code>{{BACKLOG_TRANSITIONS}}</code>. The baseline lands as a separate <code>save-work-baseline</code> commit so the working tree stays clean at the user prompt that follows.</p>
+</div>
+<div class="dlist">
+<dl>
+<dt class="hdlist1">Transition</dt>
+<dd>
+<p><code>phase.md</code> ← <code>work</code>. The handler returns <code>true</code> to the inner phase loop, which continues into the work phase.</p>
+</dd>
+</dl>
+</div>
 </div>
 <div class="sect2">
 <h3 id="_git_commit_work">git-commit-work</h3>
 <div class="paragraph">
-<p>Applies <code>commits.yaml</code> to the project subtree, then captures <code>reflect-baseline</code>.</p>
+<p>Sits between work and analyse-work. Commits any plan-state changes the work agent made in-flight (memory entries, <code>focus-objections.yaml</code>, in-line backlog status flips). Source-tree changes from work remain <strong>deliberately dirty</strong> for analyse-work to inspect via the work-tree snapshot — they are not committed here, only at git-commit-analyse-work after <code>commits.yaml</code> has been authored.</p>
 </div>
 <div class="paragraph">
-<p>The work commit is the only audit-trail phase that may produce more than one commit. It reads <code>commits.yaml</code> and applies each entry in order — <code>git reset HEAD&#8201;&#8212;&#8201;.</code>, <code>git add&#8201;&#8212;&#8201;&lt;paths&gt;</code>, <code>git commit -m &lt;message&gt;</code> — producing one commit per entry with content. If <code>commits.yaml</code> is missing or malformed, a single catch-all commit covers the whole subtree under <code>run-plan: work ({{PLAN}})</code>.</p>
+<p>After the plan-state commit lands, the handler captures <code>analyse-work-baseline</code> (the post-commit HEAD) so analyse-work has a stable diff anchor, then writes the baseline as a separate <code>save-analyse-work-baseline</code> commit.</p>
+</div>
+<div class="dlist">
+<dl>
+<dt class="hdlist1">Transition</dt>
+<dd>
+<p><code>phase.md</code> ← <code>analyse-work</code>.</p>
+</dd>
+</dl>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_git_commit_analyse_work">git-commit-analyse-work</h3>
+<div class="paragraph">
+<p>Sits between analyse-work and reflect. Applies <code>commits.yaml</code> to the project subtree, then captures <code>reflect-baseline</code>. This is the only audit-trail phase that may produce more than one commit.</p>
 </div>
 <div class="paragraph">
-<p>After the work commits land, the handler appends <code>latest-session.yaml</code> to <code>session-log.yaml</code> (mechanical mirror write — kept in code so a phase prompt cannot forget it) and writes <code>reflect-baseline</code> capturing the post-commit HEAD. A follow-on commit lands the baseline file. Then it warns if the project tree is still dirty: anything left uncommitted means the work agent edited paths that no <code>commits.yaml</code> entry covered, which is the silent failure mode the design exists to surface.</p>
+<p>It reads <code>commits.yaml</code> and applies each entry in order — <code>git reset HEAD&#8201;&#8212;&#8201;.</code>, <code>git add&#8201;&#8212;&#8201;&lt;paths&gt;</code>, <code>git commit -m &lt;message&gt;</code> — producing one commit per entry with content. If <code>commits.yaml</code> is missing or malformed, a single catch-all commit covers the whole subtree under <code>run-plan: analyse-work ({{PLAN}})</code>.</p>
+</div>
+<div class="paragraph">
+<p>Once the work-commits land, the handler appends <code>latest-session.yaml</code> to <code>session-log.yaml</code> (mechanical mirror write — kept in code so a phase prompt cannot forget it), commits any plan-state edits analyse-work itself produced (<code>latest-session.yaml</code>, backlog status repairs), and writes <code>reflect-baseline</code> capturing the post-commit HEAD. A follow-on <code>save-reflect-baseline</code> commit lands the baseline file. Then it warns if the project tree is still dirty: anything left uncommitted means the work agent edited paths that no <code>commits.yaml</code> entry covered, which is the silent failure mode the design exists to surface.</p>
 </div>
 <div class="dlist">
 <dl>
@@ -198,23 +233,6 @@ reflect → git-commit-reflect → [continue?] → triage</pre>
 <dt class="hdlist1">Transition</dt>
 <dd>
 <p><code>phase.md</code> ← <code>triage</code>. Then the handler returns <code>false</code> to the inner phase loop, which exits. The outer driver decides whether to run another cycle (single-plan mode prompts "Proceed to next work phase?"; multi-plan mode returns to its survey-based selection loop).</p>
-</dd>
-</dl>
-</div>
-</div>
-<div class="sect2">
-<h3 id="_git_commit_triage">git-commit-triage</h3>
-<div class="paragraph">
-<p>Opens the cycle. Commits the triage phase&#8217;s plan-state mutations, captures <code>work-baseline</code>, and writes <code>work</code> to <code>phase.md</code> so the cycle proceeds to the user-interactive work phase.</p>
-</div>
-<div class="paragraph">
-<p>The order of operations is load-bearing. The triage commit lands first, advancing HEAD; <strong>then</strong> <code>work-baseline</code> is captured, so analyse-work later in this cycle diffs against post-triage state rather than conflating triage&#8217;s edits into <code>{{BACKLOG_TRANSITIONS}}</code>. The baseline lands as a separate <code>save-work-baseline</code> commit so the working tree stays clean at the user prompt that follows.</p>
-</div>
-<div class="dlist">
-<dl>
-<dt class="hdlist1">Transition</dt>
-<dd>
-<p><code>phase.md</code> ← <code>work</code>. The handler returns <code>true</code> to the inner phase loop, which continues into the work phase.</p>
 </dd>
 </dl>
 </div>
@@ -269,7 +287,7 @@ reflect → git-commit-reflect → [continue?] → triage</pre>
 <h2 id="_baselines">Baselines</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Three <code>&lt;phase&gt;-baseline</code> files thread the cycle. Each captures the HEAD SHA at a specific point so the next reasoning phase can diff against it:</p>
+<p>Four <code>&lt;phase&gt;-baseline</code> files thread the cycle. Each captures the HEAD SHA at a specific point so the next reasoning phase can diff against it:</p>
 </div>
 <div class="dlist">
 <dl>
@@ -277,9 +295,13 @@ reflect → git-commit-reflect → [continue?] → triage</pre>
 <dd>
 <p>Captured by <code>git-commit-triage</code>. The diff anchor analyse-work uses to compute <code>{{BACKLOG_TRANSITIONS}}</code> and <code>{{WORK_TREE_STATUS}}</code>. On a brand-new plan with no prior cycle, it is seeded from the first work phase&#8217;s pre-invocation HEAD so analyse-work always has something to diff against.</p>
 </dd>
+<dt class="hdlist1">analyse-work-baseline</dt>
+<dd>
+<p>Captured by <code>git-commit-work</code>. Anchors the post-work-commit HEAD so analyse-work and downstream tooling can locate the boundary between work&#8217;s plan-state edits and the source-tree changes still pending in <code>commits.yaml</code>.</p>
+</dd>
 <dt class="hdlist1">reflect-baseline</dt>
 <dd>
-<p>Captured by <code>git-commit-work</code>. Read by reflect&#8217;s <code>state phase-summary render --baseline</code> invocation to produce its structural memory diff.</p>
+<p>Captured by <code>git-commit-analyse-work</code>. Read by reflect&#8217;s <code>state phase-summary render --baseline</code> invocation to produce its structural memory diff.</p>
 </dd>
 <dt class="hdlist1">triage-baseline</dt>
 <dd>

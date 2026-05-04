@@ -2109,3 +2109,16 @@ sessions:
     - The session-log list verb now emits a `ListEnvelope<SessionRecord>` shape consistent with all other state list verbs; the phase-cycle.adoc doc now accurately reflects the four-phase (no dream) cycle with triage as the cycle-opening phase.
     - Key learning: the `select_records` helper needed explicit tail-keep semantics (newest-N from end, not first-N from head) — a deliberate departure from the head-keeping convention of memory/backlog/intents/findings. The `--limit` doc comment and `SESSION_LOG_LIST_AFTER_HELP` both now call out this distinction explicitly.
     - The docs task surfaced residual drift in phase-cycle.adoc (missing `git-commit-analyse-work` subsection, subsection ordering, `reflect-baseline` capture attribution) that was deliberately left out of scope; the results block records the specific gaps for triage to file if warranted.
+- id: session-149
+  timestamp: 2026-05-04T12:43:36Z
+  phase: work
+  body: |
+    ### Session 149 (2026-05-04T12:43:36Z) — cross-repo md cleanup and phase-cycle.adoc overhaul
+
+    - Ran two tasks: (1) cross-repo `.md` sibling cleanup across 5 sibling repos, and (2) full overhaul of `docs/reference/phase-cycle.adoc` to document the four-commit-phase cycle accurately.
+    - Task 1 (P8 cleanup): cleaned 4 of 5 repos (AppSpec: 2 files, APIAnyware-MacOS: 11, TestAnyware: 11, IDEs/RacketPro: 3). Ravel skipped — `README.md` was modified. 27 stale `.md` siblings removed, ~11,500 lines deleted. No pushes performed. No tree changes in Ravel-Lite itself.
+    - Task 2 (phase-cycle.adoc): Added `=== git-commit-analyse-work` subsection documenting its actual role; rewrote `=== git-commit-work` to correctly describe the plan-state-only commit leaving source-tree dirty; reordered reasoning phase subsections from (Work/Analyse-work/Reflect/Triage) to execution order (Triage → Work → Analyse-work → Reflect); corrected cycle diagram; added `analyse-work-baseline` to the Baselines section; fixed `reflect-baseline` attribution from `git-commit-work` to `git-commit-analyse-work`; regenerated `website/docs/phase-cycle.html`.
+    - Both tasks completed and marked done. The phase-cycle.adoc now accurately matches the Rust implementation (`phase_loop.rs` lines 318–353).
+    - Work surfaced a follow-on: `defaults/phases/*.md` prompt files still emit stale transitions (e.g. `work.md` sets `analyse-work` instead of `git-commit-work`). Promoted to a new backlog task.
+
+    ## Hand-offs (omit this section entirely when there are none)

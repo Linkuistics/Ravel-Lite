@@ -29,7 +29,7 @@ tasks:
 - id: migrate-v1-v2-p8-cross-repo-md-sibling-cleanup
   title: 'migrate-v1-v2 P8: cross-repo md sibling cleanup'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies:
   - migrate-v1-v2-cutover-deploy-binary-and-migrate-llm-state-core
   description: |
@@ -81,6 +81,52 @@ tasks:
     ## Verification
 
     After each repo's commit, `git status --short` in that repo is empty. After all five, no repo has untracked or partially-staged content.
+  results: |
+    Cleaned 4 of 5 sibling repos. One repo (Ravel) skipped per the task's dirty-tree protocol.
+
+    ## Per-repo report
+
+    | Repo | Status | Files removed | Commit |
+    |---|---|---|---|
+    | AppSpec | cleaned | 2 | `62a7dd1 chore: remove stale legacy .md state siblings` |
+    | Ravel | **skipped** (dirty) | — | — |
+    | APIAnyware-MacOS | cleaned | 11 | `6226330 chore: remove stale legacy .md state siblings` |
+    | TestAnyware | cleaned | 11 | `196a157 chore: remove stale legacy .md state siblings` |
+    | IDEs/RacketPro | cleaned | 3 | `4318550 chore: remove stale legacy .md state siblings` |
+
+    **Total: 27 stale `.md` siblings removed across 4 repos / ~11,500 deleted lines.** No pushes performed (per task spec).
+
+    ### Ravel skip reason
+
+    `git -C /Users/antony/Development/Ravel status --short` → ` M README.md` at the start of the cleanup pass. Per the task spec ("If non-empty: STOP for this repo, add it to a 'skipped' report"), the repo was left untouched. The `.md` siblings still present:
+
+    ```
+    LLM_STATE/{ravel-orchestrator,sub-A-global-store,sub-B-phase-cycle,sub-C-adapters,
+               sub-D-coordination,sub-E-ingestion,sub-G-migration,sub-H-skills,
+               sub-I-obsidian-coverage,sub-M-observability,sub-N-domain-experts,
+               sub-R-knowledge-ontology}/{backlog,memory,session-log,latest-session}.md
+    ```
+
+    A separate cleanup pass will be needed once the dirty README.md is committed or stashed.
+
+    ## Procedure used
+
+    For each repo:
+
+    1. `git -C <repo> status --short` — proceed only if empty.
+    2. `find LLM_STATE -type f -name '{backlog,memory,session-log,latest-session}.md'` and filter to those with a `.yaml` sibling in the same directory (so user-authored docs like `decisions.md`, `overview.md`, `phase.md`, `prompt-*.md`, etc. are never touched).
+    3. `git rm <files>` then `git commit -m "chore: remove stale legacy .md state siblings"`.
+
+    The "yaml-sibling-required" filter is what made this safe: `phase.md`, `prompt-*.md`, `decisions.md`, `research-notes.md`, `related-plans.md`, `new-language-guide.md`, `overview.md`, `project-workflow.md`, `targets/template.md` all have no yaml sibling and were therefore preserved automatically — no per-file allowlist needed.
+
+    ## Verification
+
+    Post-cleanup `git status --short` is empty across all 4 cleaned repos. Ravel still shows ` M README.md` (its pre-existing state, untouched).
+
+    ## What this suggests next
+
+    - A follow-up cleanup pass on Ravel once its README.md edit is resolved. Single-repo task, mechanical — could be appended to a future triage cycle in this plan or handed to the user directly.
+    - The task's stated motivation (P7 deleted `state migrate`, making the `.md` siblings pure noise) is still load-bearing: the `state migrate` verb is gone in the new binary, so these `.md` files cannot be regenerated even if a future migration script tries.
 - id: state-intents-render-overview-regenerate-phase-md-from-intents-task-counts
   title: 'state intents render-overview: regenerate phase.md from intents + task counts'
   category: architecture-next
@@ -214,7 +260,7 @@ tasks:
 - id: update-phase-cycle-adoc-add-git-commit-analyse-work-audit-section-and-reorder-reasoning-phases
   title: 'Update phase-cycle.adoc: add git-commit-analyse-work audit section and reorder reasoning phases'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies:
   - migrate-v1-v2-cutover-deploy-binary-and-migrate-llm-state-core
   description: |
@@ -245,6 +291,36 @@ tasks:
     - The four subsections appear in doc order: `git-commit-triage`, `git-commit-work`, `git-commit-analyse-work`, `git-commit-reflect`.
     - `reflect-baseline` is attributed to `git-commit-analyse-work` throughout.
     - `./scripts/check.sh` passes.
+  results: |
+    All six scope items completed.
+
+    ## Changes to `docs/reference/phase-cycle.adoc`
+
+    1. **Intro count restored.** "four reasoning phases interleaved with audit-trail commit phases" → "four reasoning phases interleaved with **four** audit-trail commit phases".
+    2. **Cycle diagram updated.** The top-of-doc shape now shows all eight phases in execution order: `triage → git-commit-triage → work → git-commit-work → analyse-work → git-commit-analyse-work → reflect → git-commit-reflect → [continue?] → triage`.
+    3. **Reasoning phase subsections reordered** from Work/Analyse-work/Reflect/Triage to **Triage → Work → Analyse-work → Reflect** (matches cycle execution order). Intro paragraph rewritten to flag the in-cycle ordering ("Triage opens, Reflect closes").
+    4. **`=== git-commit-analyse-work` subsection added** (between git-commit-work and git-commit-reflect). Documents: applies `commits.yaml`, appends `latest-session.yaml`, captures `reflect-baseline`, dirty-tree warning. Matches `phase_loop.rs` lines 334–353.
+    5. **`=== git-commit-work` subsection rewritten.** Now correctly describes its actual scope: commits work's plan-state mutations (memory, focus-objections, in-line backlog flips), captures `analyse-work-baseline`, leaves source-tree changes deliberately dirty for analyse-work to inspect. Matches `phase_loop.rs` lines 318–332.
+    6. **`=== git-commit-triage` and `=== git-commit-reflect` reordered** to bracket the new pair (cycle-opening / cycle-closing).
+    7. **`reflect-baseline` attribution corrected** in the Baselines section: now attributed to `git-commit-analyse-work` (was wrongly `git-commit-work`).
+    8. **`analyse-work-baseline` added** to the Baselines section (4 baselines, not 3) — captured by `git-commit-work`, anchors the post-work-commit HEAD.
+    9. **Cross-references in reasoning phases updated** so analyse-work's transition target now points to `git-commit-analyse-work` and the description of `commits.yaml` fallback names the right handler.
+
+    ## Verification
+
+    - `grep -c '=== git-commit' docs/reference/phase-cycle.adoc` returns **4** ✓
+    - Subsections appear in cycle order: `git-commit-triage` (88), `git-commit-work` (96), `git-commit-analyse-work` (104), `git-commit-reflect` (114) ✓
+    - `reflect-baseline` is attributed to `git-commit-analyse-work` everywhere it appears ✓
+    - `./scripts/check.sh` passes ✓
+    - `./scripts/render-docs.sh` regenerated `website/docs/phase-cycle.html` (committed alongside the .adoc source per project convention)
+
+    ## Drift surfaced (not in scope of this task)
+
+    While working through this, I noticed the prompt files in `defaults/phases/` still emit the old transitions (e.g. `defaults/phases/work.md:134` writes `analyse-work` not `git-commit-work`; `defaults/phases/analyse-work.md:265` writes `git-commit-work` not `git-commit-analyse-work`). The doc now describes the architecturally-correct flow that the Rust handlers implement; the prompt files are stale and would be a natural follow-on cleanup task. Suggest a backlog entry to align the four cycle prompts with the four runtime handlers.
+
+    ## What this suggests next
+
+    - Promote a follow-on task: "Align defaults/phases/*.md set-phase transitions with the actual runtime audit-trail wiring." It's a small mechanical sweep but lives outside this docs-only task and risks behavioural change, so it deserves its own ticket.
 - id: plan-finish-pr-merge-with-memory-promotion-and-archive
   title: 'Plan finish: pr/merge with memory promotion and archive'
   category: architecture-next
@@ -324,3 +400,34 @@ tasks:
     - Non-debug pi invocation: TUI renders identically, no behaviour change.
     - Debug-enabled pi invocation: TUI renders identically AND debug log
       captures the pi byte stream.
+- id: align-defaults-phases-md-set-phase-transitions-with-runtime-handlers
+  title: Align defaults/phases/*.md set-phase transitions with runtime handlers
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Align the four `defaults/phases/*.md` prompt files with the actual runtime phase-loop transitions.
+
+    ## Problem being solved
+
+    `docs/reference/phase-cycle.adoc` now correctly documents the eight-phase cycle, including the two new handlers `git-commit-work` and `git-commit-analyse-work`. However, the prompt files that instruct the agent phases to advance the cycle still emit stale transition targets:
+
+    - `defaults/phases/work.md` (line ~134): writes `ravel-lite state set-phase {{PLAN}} analyse-work` — should be `git-commit-work`.
+    - `defaults/phases/analyse-work.md` (line ~265): writes `ravel-lite state set-phase {{PLAN}} git-commit-work` — should be `git-commit-analyse-work`.
+
+    The other two (`triage.md`, `reflect.md`) may also be stale — verify and correct all four.
+
+    ## Settled decisions
+
+    - The correct targets are the Rust handler names, not the old direct-to-reasoning-phase names. The Rust side (`phase_loop.rs` lines 318–353) is the authority; the prompts follow it.
+    - This is a mechanical text replacement, not a behavioural redesign. Don't scope-creep into prompt logic.
+    - `triage.md` and `reflect.md` transitions may already be correct (they target `git-commit-triage` / `git-commit-reflect` respectively) — verify before editing.
+
+    ## Reference examples
+
+    - `docs/reference/phase-cycle.adoc` §Work Transition, §Analyse-work Transition: authoritative text showing correct targets.
+    - `src/agent/phase_loop.rs` lines 318–332 (git-commit-work handler) and 334–353 (git-commit-analyse-work handler): runtime authority.
+
+    ## Dependencies
+
+    None — independent of all other open tasks.
