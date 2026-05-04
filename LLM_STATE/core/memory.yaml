@@ -1061,3 +1061,11 @@ entries:
   title: check.sh regex guard rejects untagged bail!/anyhow!/ensure! macros
   body: |
     `scripts/check.sh` contains an `rg --pcre2` guard (pattern `\b(anyhow|bail|ensure)!\(`) that fails if any matching line in `src/**` lacks the `// errorcode-exempt: <reason>` exemption marker. `bail_with!(` is safe — the `_` breaks the word boundary. Exemption marker format: `// errorcode-exempt: <reason>` on the offending line; use for closure `.map_err`/`.ok_or_else` sites and test assertions of the untagged-fallback path that cannot be converted to `bail_with!`. See: `bail_with! for statement sites; .with_code() for closure contexts`.
+- id: sweep-completion-claims-require-mechanical-guards-not-social-declarations
+  title: Sweep completion claims require mechanical guards, not social declarations
+  body: |
+    The `cli-add-errorcode-regression-guard-to-scripts-check-sh` task surfaced 22 untagged sites the prior three-cycle "complete" sweep had missed — the guard found them in seconds. The pattern: "sweep declared complete" is a social claim, not a mechanical one. Mechanical guards (ripgrep patterns, Rust integration tests, drift sentinels) are the only reliable enforcement.
+
+    **Why:** Three consecutive task cycles each declared the ErrorCode tagging sweep complete with zero exceptions noted; none ran a mechanical check. The guard disproved all three claims on first run.
+
+    **How to apply:** When a "sweep task" is marked done without a mechanical guard, treat the completion claim as advisory. Where feasible, add a guard that would fail on regression before declaring the sweep done.
