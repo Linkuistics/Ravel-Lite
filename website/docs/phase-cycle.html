@@ -1,10 +1,10 @@
 <div id="preamble">
 <div class="sectionbody">
 <div class="paragraph">
-<p>The phase cycle is the contract Ravel-Lite enforces against every plan it runs. Each cycle is the same fixed sequence — five reasoning phases interleaved with four audit-trail commit phases — and each phase has a precise contract for what it reads, what it writes, what it decides, and how it transitions. Once you understand the cycle, the rest of Ravel-Lite is bookkeeping around it.</p>
+<p>The phase cycle is the contract Ravel-Lite enforces against every plan it runs. Each cycle is the same fixed sequence — four reasoning phases interleaved with audit-trail commit phases — and each phase has a precise contract for what it reads, what it writes, what it decides, and how it transitions. Once you understand the cycle, the rest of Ravel-Lite is bookkeeping around it.</p>
 </div>
 <div class="paragraph">
-<p>This page documents each phase one by one, then covers the two cross-cutting mechanisms a reader needs to reason about a cycle holistically: the dream trigger and the cross-plan findings inbox. Schemas for the files referenced live on the <a href="state-files.html">State files</a> and <a href="cross-plan-files.html">Cross-plan files</a> reference pages — this page links rather than re-narrates.</p>
+<p>This page documents each phase one by one, then covers the two cross-cutting mechanisms a reader needs to reason about a cycle holistically: the cross-plan findings inbox and the out-of-cycle truth-maintenance pass (planned <code>ravel-lite curate</code>, not yet shipped). Schemas for the files referenced live on the <a href="state-files.html">State files</a> and <a href="cross-plan-files.html">Cross-plan files</a> reference pages — this page links rather than re-narrates.</p>
 </div>
 </div>
 </div>
@@ -13,14 +13,13 @@
 <div class="sectionbody">
 <div class="listingblock">
 <div class="content">
-<pre>work → analyse-work → git-commit-work →
-reflect → git-commit-reflect → [dream?] →
-dream → git-commit-dream →
-triage → git-commit-triage → [continue?] → work</pre>
+<pre>triage → git-commit-triage →
+work → analyse-work → git-commit-work →
+reflect → git-commit-reflect → [continue?] → triage</pre>
 </div>
 </div>
 <div class="paragraph">
-<p>Every phase is a separate process invocation. Reasoning phases are agent processes (Claude Code or Pi, depending on the project&#8217;s <code>agent:</code> setting) reading a prompt file under <code>defaults/phases/</code>. Audit-trail phases — the four <code>git-commit-*</code> entries — are pure Rust handlers inside the orchestrator. They do no LLM work; they exist so each reasoning phase&#8217;s mutations land in their own commit before the next one starts.</p>
+<p>Every phase is a separate process invocation. Reasoning phases are agent processes (Claude Code or Pi, depending on the project&#8217;s <code>agent:</code> setting) reading a prompt file under <code>defaults/phases/</code>. Audit-trail phases — the <code>git-commit-*</code> entries — are pure Rust handlers inside the orchestrator. They do no LLM work; they exist so each reasoning phase&#8217;s mutations land in their own commit before the next one starts.</p>
 </div>
 <div class="paragraph">
 <p>The cycle is driven by <code>&lt;plan&gt;/phase.md</code>, a one-line file naming the phase to run next. The orchestrator reads it at the top of each iteration and dispatches to the matching handler. Every phase, before it stops, rewrites this file to name its successor — for reasoning phases via <code>ravel-lite state set-phase</code>, for audit-trail phases via a direct write. A failure to advance is a stop condition: the loop refuses to re-invoke the same phase twice in a row, which would otherwise mask infinite-loop bugs.</p>
@@ -31,7 +30,7 @@ triage → git-commit-triage → [continue?] → work</pre>
 <h2 id="_reasoning_phases">Reasoning phases</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>The five reasoning phases each spawn the configured agent against a prompt file in <code>defaults/phases/</code>. Prompts are templated — <code>{{PLAN}}</code>, <code>{{PROJECT}}</code>, <code>{{ORCHESTRATOR}}</code>, and similar tokens are substituted before invocation. Customisation goes through <code>ravel.append_prompt</code> in <code>config.lua</code>; see the <a href="config-and-prompts.html">Configuration and prompts</a> reference.</p>
+<p>The four reasoning phases each spawn the configured agent against a prompt file in <code>defaults/phases/</code>. Prompts are templated — <code>{{PLAN}}</code>, <code>{{PROJECT}}</code>, <code>{{ORCHESTRATOR}}</code>, and similar tokens are substituted before invocation. Customisation goes through <code>ravel.append_prompt</code> in <code>config.lua</code>; see the <a href="config-and-prompts.html">Configuration and prompts</a> reference.</p>
 </div>
 <div class="sect2">
 <h3 id="_work">Work</h3>
@@ -115,47 +114,21 @@ triage → git-commit-triage → [continue?] → work</pre>
 </dd>
 <dt class="hdlist1">Transition</dt>
 <dd>
-<p><code>ravel-lite state set-phase {{PLAN}} git-commit-reflect</code>. Reflect <strong>always</strong> names <code>git-commit-reflect</code>. Whether the next reasoning phase is <code>dream</code> or <code>triage</code> is decided by the audit-trail handler based on the dream trigger — see below.</p>
+<p><code>ravel-lite state set-phase {{PLAN}} git-commit-reflect</code>. Reflect <strong>always</strong> names <code>git-commit-reflect</code>, and <code>git-commit-reflect</code> closes the cycle.</p>
 </dd>
 </dl>
 </div>
 <div class="paragraph">
 <p>Reflect deliberately does not read the backlog or the session log history. The first avoids task-oriented thinking during reflection; the second keeps the audit trail strictly append-only and never an LLM input.</p>
 </div>
-</div>
-<div class="sect2">
-<h3 id="_dream">Dream</h3>
 <div class="paragraph">
-<p>Conditional. Runs only when memory has grown past its compaction headroom (see <a href="#dream-trigger">The dream trigger</a>). The dream phase rewrites memory losslessly in tighter form — consolidating overlapping entries and tightening verbose prose, on the principle that compressing memory regularly keeps later cycles efficient.</p>
-</div>
-<div class="dlist">
-<dl>
-<dt class="hdlist1">Reads</dt>
-<dd>
-<p>Current memory; the Memory style rules. Nothing else — no backlog, no session log, no peer-project relationships. Fresh context for rewriting means no task momentum.</p>
-</dd>
-<dt class="hdlist1">Writes</dt>
-<dd>
-<p>Rewrites memory in place via <code>ravel-lite state memory set-body</code> / <code>set-title</code> / <code>delete</code>.</p>
-</dd>
-<dt class="hdlist1">Decisions</dt>
-<dd>
-<p>Which entries to consolidate, which to tighten, which to leave alone. The contract is <strong>strictly lossless</strong> — the only deletions allowed are pure duplicates. Reflect is the only lossy-pruning phase; dream is not.</p>
-</dd>
-<dt class="hdlist1">Transition</dt>
-<dd>
-<p><code>ravel-lite state set-phase {{PLAN}} git-commit-dream</code>.</p>
-</dd>
-</dl>
-</div>
-<div class="paragraph">
-<p>A bad dream is recoverable: <code>git checkout memory.yaml</code> restores the prior version. Memory is always tracked in git.</p>
+<p>Truth maintenance — consolidating overlapping memory entries and tightening verbose prose — is now an <strong>out-of-cycle</strong> operation. The planned <code>ravel-lite curate</code> command (not yet shipped) is the user-invoked compaction pass; it has no role inside the in-cycle phase loop. The earlier <code>dream</code> phase, which ran conditionally inside the cycle, has been removed entirely.</p>
 </div>
 </div>
 <div class="sect2">
 <h3 id="_triage">Triage</h3>
 <div class="paragraph">
-<p>The end-of-cycle phase. Reviews the backlog, mines completed tasks for hand-offs, reprioritises, and writes findings to the context-level inbox if any cross-plan observation surfaced.</p>
+<p>The cycle-opening phase. Reviews the backlog, mines completed tasks for hand-offs, reprioritises, and writes findings to the context-level inbox if any cross-plan observation surfaced.</p>
 </div>
 <div class="dlist">
 <dl>
@@ -187,7 +160,7 @@ triage → git-commit-triage → [continue?] → work</pre>
 <h2 id="_audit_trail_phases">Audit-trail phases</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>The four <code>git-commit-*</code> phases are Rust handlers, not agent invocations. Each commits the prior reasoning phase&#8217;s mutations and prepares the baseline file the next reasoning phase will diff against. They exist so every state transition lands in its own commit, producing the per-cycle audit trail visible in <code>git log</code>.</p>
+<p>The <code>git-commit-*</code> phases are Rust handlers, not agent invocations. Each commits the prior reasoning phase&#8217;s mutations and prepares the baseline file the next reasoning phase will diff against. They exist so every state transition lands in its own commit, producing the per-cycle audit trail visible in <code>git log</code>.</p>
 </div>
 <div class="sect2">
 <h3 id="_git_commit_work">git-commit-work</h3>
@@ -212,46 +185,19 @@ triage → git-commit-triage → [continue?] → work</pre>
 <div class="sect2">
 <h3 id="_git_commit_reflect">git-commit-reflect</h3>
 <div class="paragraph">
-<p>Commits the reflect phase&#8217;s memory mutations, then decides whether dream or triage runs next.</p>
+<p>Closes the cycle. Commits reflect&#8217;s memory mutations, captures <code>triage-baseline</code>, writes <code>triage</code> to <code>phase.md</code> so the next cycle resumes at triage, and exits the inner phase loop.</p>
 </div>
 <div class="paragraph">
-<p>Before deciding, the handler seeds <code>dream-word-count</code> to <code>0</code> if the file is missing — defense-in-depth for plans created before the seed was added. Then it consults the dream trigger:</p>
-</div>
-<div class="ulist">
-<ul>
-<li>
-<p>If memory&#8217;s word count exceeds <code>baseline + headroom</code>, write <code>dream</code> to <code>phase.md</code> and capture <code>dream-baseline</code>.</p>
-</li>
-<li>
-<p>Otherwise, write <code>triage</code> to <code>phase.md</code> and capture <code>triage-baseline</code> directly.</p>
-</li>
-</ul>
+<p>Two commits land: <code>run-plan: reflect ({{PLAN}})</code> for the memory mutations, then <code>run-plan: save-triage-baseline ({{PLAN}})</code> for the baseline file. The phase marker is written to <code>phase.md</code> <strong>before</strong> the commits so a fresh <code>ravel-lite run</code> after a crash mid-cycle resumes at triage rather than re-running reflect.</p>
 </div>
 <div class="paragraph">
-<p>In both cases the reflect mutations themselves land in a <code>run-plan: reflect ({{PLAN}})</code> commit, followed by a <code>save-&lt;next&gt;-baseline</code> commit holding the SHA. When dream is skipped, the handler logs a DREAM banner with "Skipped — memory within headroom" so the absence is as legible in the TUI as the work that ran.</p>
+<p>Note that <code>latest-session.yaml</code> is intentionally not touched here — analyse-work overwrites it next cycle, and leaving it in place keeps the prior session&#8217;s record available for operator inspection in the gap between cycles.</p>
 </div>
 <div class="dlist">
 <dl>
 <dt class="hdlist1">Transition</dt>
 <dd>
-<p><code>phase.md</code> ← <code>dream</code> or <code>triage</code>.</p>
-</dd>
-</dl>
-</div>
-</div>
-<div class="sect2">
-<h3 id="_git_commit_dream">git-commit-dream</h3>
-<div class="paragraph">
-<p>Commits the dream phase&#8217;s memory rewrites and captures <code>triage-baseline</code>.</p>
-</div>
-<div class="paragraph">
-<p>Two commits land: <code>run-plan: dream ({{PLAN}})</code> for the memory mutations, then <code>run-plan: save-triage-baseline ({{PLAN}})</code> for the baseline file. After git-commit-dream returns, the orchestrator runs <code>update_dream_word_count</code> against the post-dream memory so the next dream fires only after <code>headroom</code> further words accumulate.</p>
-</div>
-<div class="dlist">
-<dl>
-<dt class="hdlist1">Transition</dt>
-<dd>
-<p><code>phase.md</code> ← <code>triage</code>.</p>
+<p><code>phase.md</code> ← <code>triage</code>. Then the handler returns <code>false</code> to the inner phase loop, which exits. The outer driver decides whether to run another cycle (single-plan mode prompts "Proceed to next work phase?"; multi-plan mode returns to its survey-based selection loop).</p>
 </dd>
 </dl>
 </div>
@@ -259,19 +205,16 @@ triage → git-commit-triage → [continue?] → work</pre>
 <div class="sect2">
 <h3 id="_git_commit_triage">git-commit-triage</h3>
 <div class="paragraph">
-<p>Commits the triage phase&#8217;s mutations, captures <code>work-baseline</code>, and exits the inner phase loop.</p>
+<p>Opens the cycle. Commits the triage phase&#8217;s plan-state mutations, captures <code>work-baseline</code>, and writes <code>work</code> to <code>phase.md</code> so the cycle proceeds to the user-interactive work phase.</p>
 </div>
 <div class="paragraph">
-<p>The order of operations is load-bearing. The triage commit lands first, advancing HEAD; <strong>then</strong> <code>work-baseline</code> is captured, so the next cycle&#8217;s analyse-work diffs against post-triage state rather than conflating the previous cycle&#8217;s triage into <code>{{BACKLOG_TRANSITIONS}}</code>. The baseline lands as a separate <code>save-work-baseline</code> commit so the working tree stays clean at the user prompt that follows.</p>
-</div>
-<div class="paragraph">
-<p>Note that <code>latest-session.yaml</code> is intentionally <strong>not</strong> touched here — analyse-work overwrites it next cycle, and leaving it in place keeps the prior session&#8217;s record available for operator inspection in the gap between cycles.</p>
+<p>The order of operations is load-bearing. The triage commit lands first, advancing HEAD; <strong>then</strong> <code>work-baseline</code> is captured, so analyse-work later in this cycle diffs against post-triage state rather than conflating triage&#8217;s edits into <code>{{BACKLOG_TRANSITIONS}}</code>. The baseline lands as a separate <code>save-work-baseline</code> commit so the working tree stays clean at the user prompt that follows.</p>
 </div>
 <div class="dlist">
 <dl>
 <dt class="hdlist1">Transition</dt>
 <dd>
-<p><code>phase.md</code> ← <code>work</code>. Then the handler returns <code>false</code> to the inner phase loop, which exits. The outer driver decides whether to run another cycle (single-plan mode prompts "Proceed to next work phase?"; multi-plan mode returns to its survey-based selection loop).</p>
+<p><code>phase.md</code> ← <code>work</code>. The handler returns <code>true</code> to the inner phase loop, which continues into the work phase.</p>
 </dd>
 </dl>
 </div>
@@ -279,22 +222,13 @@ triage → git-commit-triage → [continue?] → work</pre>
 </div>
 </div>
 <div class="sect1">
-<h2 id="dream-trigger">The dream trigger</h2>
+<h2 id="_out_of_cycle_truth_maintenance">Out-of-cycle truth maintenance</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Dream is conditional. It fires when the running word count of memory content has grown past a recorded baseline plus a configurable headroom — by default <strong>1500 words</strong>, set in <code>defaults/config.yaml</code> and overridable per-project via <code>ravel.set_headroom(N)</code> in <code>config.lua</code>.</p>
+<p>Memory compaction — consolidating overlapping entries and tightening verbose prose — does not run inside the phase cycle. The planned <code>ravel-lite curate</code> command is the user-invoked, context-wide truth-maintenance pass over every active plan&#8217;s memory and every component memory in every registered repo. As of this writing the verb is not yet shipped.</p>
 </div>
 <div class="paragraph">
-<p>The mechanism is two files: <code>&lt;plan&gt;/dream-word-count</code> holds the post-last-dream baseline word count (or <code>0</code> if dream has never run), and <code>headroom</code> is the threshold. After git-commit-reflect lands the reflect mutations, it computes the current word count by summing the title and body of every memory entry. If <code>current &gt; baseline + headroom</code>, dream is selected as the next phase.</p>
-</div>
-<div class="paragraph">
-<p>After a dream phase succeeds, <code>update_dream_word_count</code> rewrites the baseline to the post-compaction count, so the next dream fires only after <code>headroom</code> further words accumulate. A dream that consolidates memory back below the prior baseline therefore lengthens the time until the next dream — exactly the desired behaviour.</p>
-</div>
-<div class="paragraph">
-<p>The baseline file is seeded defensively from three call sites: plan creation, every <code>ravel-lite state set-phase</code> invocation, and the <code>git-commit-reflect</code> handler. Any one firing is sufficient; deletion or absence of the file self-repairs on the next phase transition.</p>
-</div>
-<div class="paragraph">
-<p>Migration note: an earlier version stored this word count under the filename <code>dream-baseline</code>. That filename is now reserved for the SHA baseline written by git-commit-reflect&#8217;s dream branch. The seed function detects a usize-shaped legacy file and migrates it to <code>dream-word-count</code>; SHA-shaped content is recognised and left intact.</p>
+<p>The earlier in-cycle <code>dream</code> phase (which fired conditionally based on a memory word-count headroom) has been removed entirely. Plan execution never blocks on truth maintenance; the user invokes curate on demand when memory accumulation warrants it.</p>
 </div>
 </div>
 </div>
@@ -335,7 +269,7 @@ triage → git-commit-triage → [continue?] → work</pre>
 <h2 id="_baselines">Baselines</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>Four <code>&lt;phase&gt;-baseline</code> files thread the cycle. Each captures the HEAD SHA at a specific point so the next reasoning phase can diff against it:</p>
+<p>Three <code>&lt;phase&gt;-baseline</code> files thread the cycle. Each captures the HEAD SHA at a specific point so the next reasoning phase can diff against it:</p>
 </div>
 <div class="dlist">
 <dl>
@@ -347,13 +281,9 @@ triage → git-commit-triage → [continue?] → work</pre>
 <dd>
 <p>Captured by <code>git-commit-work</code>. Read by reflect&#8217;s <code>state phase-summary render --baseline</code> invocation to produce its structural memory diff.</p>
 </dd>
-<dt class="hdlist1">dream-baseline</dt>
-<dd>
-<p>Captured by <code>git-commit-reflect</code> when the dream trigger fires. Read by dream&#8217;s <code>phase-summary render --baseline</code>. The filename collides historically with the legacy word-count file; the seed migration above resolves the collision.</p>
-</dd>
 <dt class="hdlist1">triage-baseline</dt>
 <dd>
-<p>Captured by <code>git-commit-reflect</code> (when dream is skipped) or <code>git-commit-dream</code> (when dream runs). Read by triage&#8217;s <code>phase-summary render --baseline</code>.</p>
+<p>Captured by <code>git-commit-reflect</code>. Read by triage&#8217;s <code>phase-summary render --baseline</code> at the start of the next cycle.</p>
 </dd>
 </dl>
 </div>
@@ -372,7 +302,7 @@ triage → git-commit-triage → [continue?] → work</pre>
 <p>A crash mid-cycle is recoverable from <code>phase.md</code>. Whichever phase was running when the orchestrator died is the phase that runs again on next invocation; phase prompts are designed to be idempotent against partial prior runs (e.g., reflect&#8217;s <code>state memory add</code> against an entry that already exists will fail loudly rather than duplicate).</p>
 </div>
 <div class="paragraph">
-<p>A complete cycle leaves a complete history. <code>git log --oneline</code> between two <code>save-work-baseline</code> commits is the full record of one cycle: the work commit(s), the reflect commit, optionally the dream commit, the triage commit, and the four <code>save-*-baseline</code> commits between them. A reader can scrub through a cycle the same way they would scrub through a video.</p>
+<p>A complete cycle leaves a complete history. <code>git log --oneline</code> between two <code>save-triage-baseline</code> commits is the full record of one cycle: the triage commit, the work commit(s), the reflect commit, and the <code>save-*-baseline</code> commits between them. A reader can scrub through a cycle the same way they would scrub through a video.</p>
 </div>
 <div class="paragraph">
 <p>Phase mutations made by hand-edit between cycles are first-class inputs. Editing <code>backlog.yaml</code> between work and analyse-work is just another input the next phase will read; editing <code>memory.yaml</code> between cycles is fine. The "no magic" principle means there is no shadow state — what you see in the files is what the next phase sees.</p>

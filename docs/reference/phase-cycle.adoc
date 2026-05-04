@@ -1,25 +1,24 @@
 = Phase cycle
 
-The phase cycle is the contract Ravel-Lite enforces against every plan it runs. Each cycle is the same fixed sequence — five reasoning phases interleaved with four audit-trail commit phases — and each phase has a precise contract for what it reads, what it writes, what it decides, and how it transitions. Once you understand the cycle, the rest of Ravel-Lite is bookkeeping around it.
+The phase cycle is the contract Ravel-Lite enforces against every plan it runs. Each cycle is the same fixed sequence — four reasoning phases interleaved with audit-trail commit phases — and each phase has a precise contract for what it reads, what it writes, what it decides, and how it transitions. Once you understand the cycle, the rest of Ravel-Lite is bookkeeping around it.
 
-This page documents each phase one by one, then covers the two cross-cutting mechanisms a reader needs to reason about a cycle holistically: the dream trigger and the cross-plan findings inbox. Schemas for the files referenced live on the link:state-files.html[State files] and link:cross-plan-files.html[Cross-plan files] reference pages — this page links rather than re-narrates.
+This page documents each phase one by one, then covers the two cross-cutting mechanisms a reader needs to reason about a cycle holistically: the cross-plan findings inbox and the out-of-cycle truth-maintenance pass (planned `ravel-lite curate`, not yet shipped). Schemas for the files referenced live on the link:state-files.html[State files] and link:cross-plan-files.html[Cross-plan files] reference pages — this page links rather than re-narrates.
 
 == The shape of a cycle
 
 ----
+triage → git-commit-triage →
 work → analyse-work → git-commit-work →
-reflect → git-commit-reflect → [dream?] →
-dream → git-commit-dream →
-triage → git-commit-triage → [continue?] → work
+reflect → git-commit-reflect → [continue?] → triage
 ----
 
-Every phase is a separate process invocation. Reasoning phases are agent processes (Claude Code or Pi, depending on the project's `agent:` setting) reading a prompt file under `defaults/phases/`. Audit-trail phases — the four `git-commit-*` entries — are pure Rust handlers inside the orchestrator. They do no LLM work; they exist so each reasoning phase's mutations land in their own commit before the next one starts.
+Every phase is a separate process invocation. Reasoning phases are agent processes (Claude Code or Pi, depending on the project's `agent:` setting) reading a prompt file under `defaults/phases/`. Audit-trail phases — the `git-commit-*` entries — are pure Rust handlers inside the orchestrator. They do no LLM work; they exist so each reasoning phase's mutations land in their own commit before the next one starts.
 
 The cycle is driven by `<plan>/phase.md`, a one-line file naming the phase to run next. The orchestrator reads it at the top of each iteration and dispatches to the matching handler. Every phase, before it stops, rewrites this file to name its successor — for reasoning phases via `ravel-lite state set-phase`, for audit-trail phases via a direct write. A failure to advance is a stop condition: the loop refuses to re-invoke the same phase twice in a row, which would otherwise mask infinite-loop bugs.
 
 == Reasoning phases
 
-The five reasoning phases each spawn the configured agent against a prompt file in `defaults/phases/`. Prompts are templated — `{{PLAN}}`, `{{PROJECT}}`, `{{ORCHESTRATOR}}`, and similar tokens are substituted before invocation. Customisation goes through `ravel.append_prompt` in `config.lua`; see the link:config-and-prompts.html[Configuration and prompts] reference.
+The four reasoning phases each spawn the configured agent against a prompt file in `defaults/phases/`. Prompts are templated — `{{PLAN}}`, `{{PROJECT}}`, `{{ORCHESTRATOR}}`, and similar tokens are substituted before invocation. Customisation goes through `ravel.append_prompt` in `config.lua`; see the link:config-and-prompts.html[Configuration and prompts] reference.
 
 === Work
 
@@ -61,27 +60,15 @@ Writes:: New, updated, or deleted memory entries via `ravel-lite state memory ad
 
 Decisions:: For each learning — is it new, sharpening an existing entry, contradicting one, or making one redundant? Pruning is aggressive: memory should hold only what is currently true and useful, with the session log as the safety net for discarded content.
 
-Transition:: `ravel-lite state set-phase {{PLAN}} git-commit-reflect`. Reflect *always* names `git-commit-reflect`. Whether the next reasoning phase is `dream` or `triage` is decided by the audit-trail handler based on the dream trigger — see below.
+Transition:: `ravel-lite state set-phase {{PLAN}} git-commit-reflect`. Reflect *always* names `git-commit-reflect`, and `git-commit-reflect` closes the cycle.
 
 Reflect deliberately does not read the backlog or the session log history. The first avoids task-oriented thinking during reflection; the second keeps the audit trail strictly append-only and never an LLM input.
 
-=== Dream
-
-Conditional. Runs only when memory has grown past its compaction headroom (see <<dream-trigger>>). The dream phase rewrites memory losslessly in tighter form — consolidating overlapping entries and tightening verbose prose, on the principle that compressing memory regularly keeps later cycles efficient.
-
-Reads:: Current memory; the Memory style rules. Nothing else — no backlog, no session log, no peer-project relationships. Fresh context for rewriting means no task momentum.
-
-Writes:: Rewrites memory in place via `ravel-lite state memory set-body` / `set-title` / `delete`.
-
-Decisions:: Which entries to consolidate, which to tighten, which to leave alone. The contract is *strictly lossless* — the only deletions allowed are pure duplicates. Reflect is the only lossy-pruning phase; dream is not.
-
-Transition:: `ravel-lite state set-phase {{PLAN}} git-commit-dream`.
-
-A bad dream is recoverable: `git checkout memory.yaml` restores the prior version. Memory is always tracked in git.
+Truth maintenance — consolidating overlapping memory entries and tightening verbose prose — is now an *out-of-cycle* operation. The planned `ravel-lite curate` command (not yet shipped) is the user-invoked compaction pass; it has no role inside the in-cycle phase loop. The earlier `dream` phase, which ran conditionally inside the cycle, has been removed entirely.
 
 === Triage
 
-The end-of-cycle phase. Reviews the backlog, mines completed tasks for hand-offs, reprioritises, and writes findings to the context-level inbox if any cross-plan observation surfaced.
+The cycle-opening phase. Reviews the backlog, mines completed tasks for hand-offs, reprioritises, and writes findings to the context-level inbox if any cross-plan observation surfaced.
 
 Reads:: The backlog and current memory. Triage explicitly does *not* read sibling, parent, or child plan content — cross-plan awareness comes from the `Related plans` block in its prompt (paths only), never from direct foreign reads. No subagent is dispatched against a peer plan.
 
@@ -95,7 +82,7 @@ Triage reprioritisations require a stated reason naming the cycle learning that 
 
 == Audit-trail phases
 
-The four `git-commit-*` phases are Rust handlers, not agent invocations. Each commits the prior reasoning phase's mutations and prepares the baseline file the next reasoning phase will diff against. They exist so every state transition lands in its own commit, producing the per-cycle audit trail visible in `git log`.
+The `git-commit-*` phases are Rust handlers, not agent invocations. Each commits the prior reasoning phase's mutations and prepares the baseline file the next reasoning phase will diff against. They exist so every state transition lands in its own commit, producing the per-cycle audit trail visible in `git log`.
 
 === git-commit-work
 
@@ -109,47 +96,27 @@ Transition:: `phase.md` ← `reflect`.
 
 === git-commit-reflect
 
-Commits the reflect phase's memory mutations, then decides whether dream or triage runs next.
+Closes the cycle. Commits reflect's memory mutations, captures `triage-baseline`, writes `triage` to `phase.md` so the next cycle resumes at triage, and exits the inner phase loop.
 
-Before deciding, the handler seeds `dream-word-count` to `0` if the file is missing — defense-in-depth for plans created before the seed was added. Then it consults the dream trigger:
+Two commits land: `run-plan: reflect ({{PLAN}})` for the memory mutations, then `run-plan: save-triage-baseline ({{PLAN}})` for the baseline file. The phase marker is written to `phase.md` *before* the commits so a fresh `ravel-lite run` after a crash mid-cycle resumes at triage rather than re-running reflect.
 
-* If memory's word count exceeds `baseline + headroom`, write `dream` to `phase.md` and capture `dream-baseline`.
-* Otherwise, write `triage` to `phase.md` and capture `triage-baseline` directly.
+Note that `latest-session.yaml` is intentionally not touched here — analyse-work overwrites it next cycle, and leaving it in place keeps the prior session's record available for operator inspection in the gap between cycles.
 
-In both cases the reflect mutations themselves land in a `run-plan: reflect ({{PLAN}})` commit, followed by a `save-<next>-baseline` commit holding the SHA. When dream is skipped, the handler logs a DREAM banner with "Skipped — memory within headroom" so the absence is as legible in the TUI as the work that ran.
-
-Transition:: `phase.md` ← `dream` or `triage`.
-
-=== git-commit-dream
-
-Commits the dream phase's memory rewrites and captures `triage-baseline`.
-
-Two commits land: `run-plan: dream ({{PLAN}})` for the memory mutations, then `run-plan: save-triage-baseline ({{PLAN}})` for the baseline file. After git-commit-dream returns, the orchestrator runs `update_dream_word_count` against the post-dream memory so the next dream fires only after `headroom` further words accumulate.
-
-Transition:: `phase.md` ← `triage`.
+Transition:: `phase.md` ← `triage`. Then the handler returns `false` to the inner phase loop, which exits. The outer driver decides whether to run another cycle (single-plan mode prompts "Proceed to next work phase?"; multi-plan mode returns to its survey-based selection loop).
 
 === git-commit-triage
 
-Commits the triage phase's mutations, captures `work-baseline`, and exits the inner phase loop.
+Opens the cycle. Commits the triage phase's plan-state mutations, captures `work-baseline`, and writes `work` to `phase.md` so the cycle proceeds to the user-interactive work phase.
 
-The order of operations is load-bearing. The triage commit lands first, advancing HEAD; *then* `work-baseline` is captured, so the next cycle's analyse-work diffs against post-triage state rather than conflating the previous cycle's triage into `{{BACKLOG_TRANSITIONS}}`. The baseline lands as a separate `save-work-baseline` commit so the working tree stays clean at the user prompt that follows.
+The order of operations is load-bearing. The triage commit lands first, advancing HEAD; *then* `work-baseline` is captured, so analyse-work later in this cycle diffs against post-triage state rather than conflating triage's edits into `{{BACKLOG_TRANSITIONS}}`. The baseline lands as a separate `save-work-baseline` commit so the working tree stays clean at the user prompt that follows.
 
-Note that `latest-session.yaml` is intentionally *not* touched here — analyse-work overwrites it next cycle, and leaving it in place keeps the prior session's record available for operator inspection in the gap between cycles.
+Transition:: `phase.md` ← `work`. The handler returns `true` to the inner phase loop, which continues into the work phase.
 
-Transition:: `phase.md` ← `work`. Then the handler returns `false` to the inner phase loop, which exits. The outer driver decides whether to run another cycle (single-plan mode prompts "Proceed to next work phase?"; multi-plan mode returns to its survey-based selection loop).
+== Out-of-cycle truth maintenance
 
-[[dream-trigger]]
-== The dream trigger
+Memory compaction — consolidating overlapping entries and tightening verbose prose — does not run inside the phase cycle. The planned `ravel-lite curate` command is the user-invoked, context-wide truth-maintenance pass over every active plan's memory and every component memory in every registered repo. As of this writing the verb is not yet shipped.
 
-Dream is conditional. It fires when the running word count of memory content has grown past a recorded baseline plus a configurable headroom — by default *1500 words*, set in `defaults/config.yaml` and overridable per-project via `ravel.set_headroom(N)` in `config.lua`.
-
-The mechanism is two files: `<plan>/dream-word-count` holds the post-last-dream baseline word count (or `0` if dream has never run), and `headroom` is the threshold. After git-commit-reflect lands the reflect mutations, it computes the current word count by summing the title and body of every memory entry. If `current > baseline + headroom`, dream is selected as the next phase.
-
-After a dream phase succeeds, `update_dream_word_count` rewrites the baseline to the post-compaction count, so the next dream fires only after `headroom` further words accumulate. A dream that consolidates memory back below the prior baseline therefore lengthens the time until the next dream — exactly the desired behaviour.
-
-The baseline file is seeded defensively from three call sites: plan creation, every `ravel-lite state set-phase` invocation, and the `git-commit-reflect` handler. Any one firing is sufficient; deletion or absence of the file self-repairs on the next phase transition.
-
-Migration note: an earlier version stored this word count under the filename `dream-baseline`. That filename is now reserved for the SHA baseline written by git-commit-reflect's dream branch. The seed function detects a usize-shaped legacy file and migrates it to `dream-word-count`; SHA-shaped content is recognised and left intact.
+The earlier in-cycle `dream` phase (which fired conditionally based on a memory word-count headroom) has been removed entirely. Plan execution never blocks on truth maintenance; the user invokes curate on demand when memory accumulation warrants it.
 
 == Cross-plan findings
 
@@ -177,15 +144,13 @@ Targets must be absolute paths. The orchestrator looks up the agent backend's `d
 
 == Baselines
 
-Four `<phase>-baseline` files thread the cycle. Each captures the HEAD SHA at a specific point so the next reasoning phase can diff against it:
+Three `<phase>-baseline` files thread the cycle. Each captures the HEAD SHA at a specific point so the next reasoning phase can diff against it:
 
 work-baseline:: Captured by `git-commit-triage`. The diff anchor analyse-work uses to compute `{{BACKLOG_TRANSITIONS}}` and `{{WORK_TREE_STATUS}}`. On a brand-new plan with no prior cycle, it is seeded from the first work phase's pre-invocation HEAD so analyse-work always has something to diff against.
 
 reflect-baseline:: Captured by `git-commit-work`. Read by reflect's `state phase-summary render --baseline` invocation to produce its structural memory diff.
 
-dream-baseline:: Captured by `git-commit-reflect` when the dream trigger fires. Read by dream's `phase-summary render --baseline`. The filename collides historically with the legacy word-count file; the seed migration above resolves the collision.
-
-triage-baseline:: Captured by `git-commit-reflect` (when dream is skipped) or `git-commit-dream` (when dream runs). Read by triage's `phase-summary render --baseline`.
+triage-baseline:: Captured by `git-commit-reflect`. Read by triage's `phase-summary render --baseline` at the start of the next cycle.
 
 Each baseline lands in its own commit (`save-<phase>-baseline`) rather than being amended onto the prior commit. The follow-on-commit pattern keeps the working tree clean at the user prompt and avoids orphaning the SHA the file just captured.
 
@@ -195,6 +160,6 @@ Every state transition is a file write or a commit. Two consequences worth knowi
 
 A crash mid-cycle is recoverable from `phase.md`. Whichever phase was running when the orchestrator died is the phase that runs again on next invocation; phase prompts are designed to be idempotent against partial prior runs (e.g., reflect's `state memory add` against an entry that already exists will fail loudly rather than duplicate).
 
-A complete cycle leaves a complete history. `git log --oneline` between two `save-work-baseline` commits is the full record of one cycle: the work commit(s), the reflect commit, optionally the dream commit, the triage commit, and the four `save-*-baseline` commits between them. A reader can scrub through a cycle the same way they would scrub through a video.
+A complete cycle leaves a complete history. `git log --oneline` between two `save-triage-baseline` commits is the full record of one cycle: the triage commit, the work commit(s), the reflect commit, and the `save-*-baseline` commits between them. A reader can scrub through a cycle the same way they would scrub through a video.
 
 Phase mutations made by hand-edit between cycles are first-class inputs. Editing `backlog.yaml` between work and analyse-work is just another input the next phase will read; editing `memory.yaml` between cycles is fine. The "no magic" principle means there is no shadow state — what you see in the files is what the next phase sees.
