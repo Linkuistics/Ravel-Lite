@@ -47,8 +47,11 @@ mod tests {
         let new = tmp.path().join("new");
         fs::create_dir_all(&old).unwrap();
         fs::write(old.join("phase.md"), "triage\n").unwrap();
-        fs::write(old.join("backlog.yaml"), "schema_version: 1\nitems: []\n").unwrap();
-        fs::write(old.join("memory.yaml"), "schema_version: 1\nitems: []\n").unwrap();
+        // Real v1 wire shape — this fixture once read
+        // "schema_version: 1\nitems: []\n", which masked the
+        // missing-transform bug that motivated `transform.rs`.
+        fs::write(old.join("backlog.yaml"), "tasks: []\n").unwrap();
+        fs::write(old.join("memory.yaml"), "entries: []\n").unwrap();
         // Stale .md siblings — must NOT be copied
         fs::write(old.join("backlog.md"), "stale\n").unwrap();
         fs::write(old.join("memory.md"), "stale\n").unwrap();

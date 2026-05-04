@@ -143,8 +143,8 @@ mod tests {
         let plan_dir = root.join(project).join("LLM_STATE").join(plan);
         fs::create_dir_all(&plan_dir).unwrap();
         fs::write(plan_dir.join("phase.md"), "triage\n").unwrap();
-        fs::write(plan_dir.join("backlog.yaml"), "schema_version: 1\nitems: []\n").unwrap();
-        fs::write(plan_dir.join("memory.yaml"), "schema_version: 1\nitems: []\n").unwrap();
+        fs::write(plan_dir.join("backlog.yaml"), "tasks: []\n").unwrap();
+        fs::write(plan_dir.join("memory.yaml"), "entries: []\n").unwrap();
         plan_dir
     }
 

@@ -18,6 +18,7 @@ pub mod apply_targets;
 pub mod copy;
 pub mod orchestrator;
 pub mod proposals;
+pub mod transform;
 pub mod validate;
 
 /// Top-level entry point. Drives the full migration in two halves:
@@ -33,6 +34,7 @@ pub async fn run_migrate_v1_v2(
 ) -> Result<()> {
     let validated = validate::validate_inputs(old_plan_path, new_plan_name, config_dir)?;
     copy::copy_plan_state(&validated.old_plan_path, &validated.new_plan_dir)?;
+    transform::run(&validated.new_plan_dir)?;
     apply_intent::run(agent.clone(), &validated, skip_confirm).await?;
     apply_targets::run(agent.clone(), &validated, skip_confirm).await?;
     apply_memory::run(agent.clone(), &validated, skip_confirm).await?;

@@ -59,16 +59,17 @@ fn setup(tmp: &Path) -> (PathBuf, PathBuf) {
     let plan = source.join("LLM_STATE/core");
     fs::create_dir_all(&plan).unwrap();
     fs::write(plan.join("phase.md"), "Pursue X.\n").unwrap();
+    // Real v1 wire shape: `tasks:` / `title:` / `description:` for
+    // backlog, `entries:` / `title:` / `body:` for memory. The
+    // transform step reshapes these into v2 before apply_intent runs.
     fs::write(
         plan.join("backlog.yaml"),
-        "schema_version: 1\nitems:\n\
-         - id: t-001\n  kind: backlog-item\n  claim: T1\n  justifications: []\n  status: active\n  supersedes: []\n  authored_at: '2026-04-01T00:00:00Z'\n  authored_in: 'old'\n  category: x\n",
+        "tasks:\n- id: t-001\n  title: T1\n  category: x\n  status: not_started\n  description: ''\n",
     )
     .unwrap();
     fs::write(
         plan.join("memory.yaml"),
-        "schema_version: 1\nitems:\n\
-         - id: m-001\n  kind: memory-entry\n  claim: M1\n  justifications: []\n  status: active\n  supersedes: []\n  authored_at: '2026-04-01T00:00:00Z'\n  authored_in: 'old'\n",
+        "entries:\n- id: m-001\n  title: M1\n  body: ''\n",
     )
     .unwrap();
 
