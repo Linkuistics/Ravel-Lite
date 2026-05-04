@@ -34,7 +34,7 @@ the catalog.</code></pre>
 <p>The agent has flagged a <strong>hand-off block</strong> on the task. A hand-off is extra context attached to a completed task — usually a partially-settled design or a follow-up the agent did not feel justified its own backlog entry yet. The hand-off lives on the task&#8217;s <code>handoff</code> field in <code>backlog.yaml</code> until triage decides what to do with it.</p>
 </div>
 <div class="paragraph">
-<p>Continue through analyse-work, reflect, dream-trigger-skipped, and triage. Triage is where the hand-off gets mined. Three options the triage prompt considers for each hand-off block:</p>
+<p>Continue through analyse-work, reflect, dream-trigger-skipped, and triage. Triage is where the hand-off gets mined. Two options the triage prompt considers for each hand-off block:</p>
 </div>
 <div class="ulist">
 <ul>
@@ -44,10 +44,10 @@ the catalog.</code></pre>
 <li>
 <p><strong>Archive.</strong> Add it to durable memory if it is a learning that future cycles need to remember.</p>
 </li>
-<li>
-<p><strong>Dispatch.</strong> If a peer plan would benefit from the hand-off (the cross-plan graph names one as <code>related</code>), write a <code>subagent-dispatch.yaml</code> entry asking the orchestrator to spawn a subagent against the peer.</p>
-</li>
 </ul>
+</div>
+<div class="paragraph">
+<p>If the hand-off raises something out of scope for <strong>this</strong> plan but worth attention elsewhere, triage records it as a finding via <code>ravel-lite findings add</code> instead. Findings land in the context-level inbox where the user processes them out of band — promoting one into a new plan, marking it <code>wontfix</code>, or filing an external bug. No phase auto-applies a finding to another plan.</p>
 </div>
 <div class="paragraph">
 <p>For this hand-off, <strong>promote</strong> is the right call — adding implementation cross-references is concrete, scoped work that fits as its own task. After triage the backlog has shed the type-theory task (done tasks are removed by triage; their record lives in the git history and session log) and gained the promoted hand-off:</p>

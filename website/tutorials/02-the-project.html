@@ -148,7 +148,7 @@ projects:
 <p><code>work-baseline</code>, <code>reflect-baseline</code>, <code>dream-baseline</code>, <code>triage-baseline</code> — per-phase baseline SHAs captured so each phase has something to diff against.</p>
 </li>
 <li>
-<p><code>commits.yaml</code> and <code>subagent-dispatch.yaml</code> — written by triage when committing or when dispatching cross-plan subagents.</p>
+<p><code>commits.yaml</code> — written by analyse-work and applied by <code>git-commit-work</code>. The findings inbox (<code>findings.yaml</code>) lives at the <strong>context level</strong>, not in the plan directory; reflect and triage append to it via <code>ravel-lite findings add</code> when an observation is out of scope for the current plan.</p>
 </li>
 </ul>
 </div>

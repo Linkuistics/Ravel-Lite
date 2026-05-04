@@ -9,14 +9,14 @@ Three pillars organise the surface area: the workflow Ravel-Lite drives, the fil
 How Ravel-Lite progresses through a development cycle, and the contract each phase honours.
 
 * link:concepts.html[Concepts] — projects, plans, agent backends, the "no magic" principle, and a glossary of terms used throughout the rest of the reference.
-* link:phase-cycle.html[Phase cycle] — every phase's input and output contract, the dream-trigger condition, the triage subagent dispatch mechanism, and the per-phase git-commit audit trail.
+* link:phase-cycle.html[Phase cycle] — every phase's input and output contract, the dream-trigger condition, the cross-plan findings inbox, and the per-phase git-commit audit trail.
 
 == File formats
 
 Every piece of state Ravel-Lite manages is a readable file on disk. These pages document each format in full: schema, examples, and the phases that read or write each file.
 
 * link:state-files.html[State files] — `backlog.yaml`, `memory.yaml`, `session-log.yaml`, `latest-session.*`, `phase.md`, and `commits.yaml`.
-* link:cross-plan-files.html[Cross-plan files] — `subagent-dispatch.yaml` and `related-components.yaml`, plus the evidence-grade vocabulary used by the discover and triage flows.
+* link:cross-plan-files.html[Cross-plan files] — `findings.yaml` and `related-components.yaml`, plus the evidence-grade vocabulary used by the discover flow.
 * link:config-and-prompts.html[Configuration and prompts] — `config.yaml` plus `*.local.yaml` overlay rules, embedded defaults, the token-substitution path used by every prompt-loading route, and per-phase prompt customisation.
 
 == CLI

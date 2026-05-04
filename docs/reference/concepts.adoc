@@ -58,7 +58,7 @@ Phase:: A discrete agent invocation against a specific prompt file. There are fi
 
 Cycle:: One full pass through the phase sequence — work to triage and back. The cycle restarts at `work` unless the user stops, the backlog is empty, or a phase asks to halt.
 
-Dispatch:: The triage phase spawning a subagent — either against a sibling plan (to propagate cross-plan learnings) or against a brainstorming, TDD, or writing-plans skill (to delegate focused thinking). Triage writes `subagent-dispatch.yaml`; the orchestrator spawns the described subagents. See the link:cross-plan-files.html[Cross-plan files] reference.
+Finding:: A cross-plan observation recorded in the context-level findings inbox by reflect or triage when the cycle surfaces something out of scope for the current plan but worth attention elsewhere. Findings are advisory and user-mediated — no phase auto-acts on them; the operator promotes, archives, or marks `wontfix` out of band. Authored via `ravel-lite findings add`. See the link:cross-plan-files.html[Cross-plan files] reference.
 
 Baseline:: A git SHA captured before a reasoning phase, used as the diff anchor for the analyse-work phase that follows. Baselines are recorded as `run-plan: save-<phase>-baseline` commits, visible in `git log`.
 
@@ -66,8 +66,8 @@ Plan-state files:: The on-disk files inside a plan directory — `backlog.yaml`,
 
 Durable memory:: The contents of `memory.yaml`. Distilled learnings carried across cycles. Reflect appends; dream rewrites losslessly when memory grows past a configured `headroom` threshold; triage occasionally archives a completed task's hand-off into it. The dream-trigger mechanics live on the link:phase-cycle.html[Phase cycle] page.
 
-Hand-off:: A task's hand-off block — extra context attached to a task that triage may promote into a new task, archive into memory, or dispatch to a sibling plan. Cleared after triage acts on it.
+Hand-off:: A task's hand-off block — extra context attached to a task that triage may promote into a new top-level task or archive into memory. Cleared after triage acts on it. Hand-offs are within-plan; cross-plan observations land in the findings inbox instead.
 
 Related component:: A peer project linked via `related-components.yaml`, with an edge kind (`orchestrates`, `depends-on`, etc.), a lifecycle scope (`dev-workflow`, `build`, `runtime`), and an evidence grade. The discover phase proposes edges; the user accepts via `state related-components add-edge`. See the link:cross-plan-files.html[Cross-plan files] reference.
 
-Evidence grade:: One of `strong`, `medium`, or `weak`. Strong means concrete cross-references in both projects' surface metadata; weak means inferred from indirect signals. Triage uses the grade to decide which related components are confident enough to dispatch to.
+Evidence grade:: One of `strong`, `medium`, or `weak`. Strong means concrete cross-references in both projects' surface metadata; weak means inferred from indirect signals. The discover pipeline writes the grade based on stage-2 analysis; downstream consumers (reflect, triage, the survey) surface higher-grade edges as more salient context.

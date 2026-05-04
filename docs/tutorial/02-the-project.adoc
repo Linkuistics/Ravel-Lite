@@ -103,7 +103,7 @@ As the cycle runs, a few more files appear in the same directory:
 
 * `session-log.yaml` and `latest-session.yaml` — the analyse-work phase appends one record per completed phase to the log and overwrites the latest-session pointer each cycle.
 * `work-baseline`, `reflect-baseline`, `dream-baseline`, `triage-baseline` — per-phase baseline SHAs captured so each phase has something to diff against.
-* `commits.yaml` and `subagent-dispatch.yaml` — written by triage when committing or when dispatching cross-plan subagents.
+* `commits.yaml` — written by analyse-work and applied by `git-commit-work`. The findings inbox (`findings.yaml`) lives at the *context level*, not in the plan directory; reflect and triage append to it via `ravel-lite findings add` when an observation is out of scope for the current plan.
 
 A project can host multiple plans. Each is its own directory under `LLM_STATE/` and runs its own cycle independently. For this tutorial we will run a single plan called `main`. The full schema for each file lives on the link:../docs/state-files.html[State files] reference; the current chapter only needs the high-level shape so the next chapter's `create` command makes sense.
 

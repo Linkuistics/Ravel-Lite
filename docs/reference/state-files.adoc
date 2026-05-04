@@ -227,4 +227,4 @@ A quick lookup of which phase touches what:
 | `commits.yaml` | analyse-work | git-commit-work (then deleted)
 |===
 
-Cross-plan files — `subagent-dispatch.yaml` and `related-components.yaml` — are documented separately on the link:cross-plan-files.html[Cross-plan files] page.
+Cross-plan files — `findings.yaml` (the context-level findings inbox) and `related-components.yaml` (the workstation-wide component graph) — are documented separately on the link:cross-plan-files.html[Cross-plan files] page.

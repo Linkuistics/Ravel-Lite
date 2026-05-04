@@ -105,9 +105,9 @@
 <dd>
 <p>One full pass through the phase sequence — work to triage and back. The cycle restarts at <code>work</code> unless the user stops, the backlog is empty, or a phase asks to halt.</p>
 </dd>
-<dt class="hdlist1">Dispatch</dt>
+<dt class="hdlist1">Finding</dt>
 <dd>
-<p>The triage phase spawning a subagent — either against a sibling plan (to propagate cross-plan learnings) or against a brainstorming, TDD, or writing-plans skill (to delegate focused thinking). Triage writes <code>subagent-dispatch.yaml</code>; the orchestrator spawns the described subagents. See the <a href="cross-plan-files.html">Cross-plan files</a> reference.</p>
+<p>A cross-plan observation recorded in the context-level findings inbox by reflect or triage when the cycle surfaces something out of scope for the current plan but worth attention elsewhere. Findings are advisory and user-mediated — no phase auto-acts on them; the operator promotes, archives, or marks <code>wontfix</code> out of band. Authored via <code>ravel-lite findings add</code>. See the <a href="cross-plan-files.html">Cross-plan files</a> reference.</p>
 </dd>
 <dt class="hdlist1">Baseline</dt>
 <dd>
@@ -123,7 +123,7 @@
 </dd>
 <dt class="hdlist1">Hand-off</dt>
 <dd>
-<p>A task&#8217;s hand-off block — extra context attached to a task that triage may promote into a new task, archive into memory, or dispatch to a sibling plan. Cleared after triage acts on it.</p>
+<p>A task&#8217;s hand-off block — extra context attached to a task that triage may promote into a new top-level task or archive into memory. Cleared after triage acts on it. Hand-offs are within-plan; cross-plan observations land in the findings inbox instead.</p>
 </dd>
 <dt class="hdlist1">Related component</dt>
 <dd>
@@ -131,7 +131,7 @@
 </dd>
 <dt class="hdlist1">Evidence grade</dt>
 <dd>
-<p>One of <code>strong</code>, <code>medium</code>, or <code>weak</code>. Strong means concrete cross-references in both projects' surface metadata; weak means inferred from indirect signals. Triage uses the grade to decide which related components are confident enough to dispatch to.</p>
+<p>One of <code>strong</code>, <code>medium</code>, or <code>weak</code>. Strong means concrete cross-references in both projects' surface metadata; weak means inferred from indirect signals. The discover pipeline writes the grade based on stage-2 analysis; downstream consumers (reflect, triage, the survey) surface higher-grade edges as more salient context.</p>
 </dd>
 </dl>
 </div>

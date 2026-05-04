@@ -2,7 +2,7 @@
 
 The phase cycle is the contract Ravel-Lite enforces against every plan it runs. Each cycle is the same fixed sequence — five reasoning phases interleaved with four audit-trail commit phases — and each phase has a precise contract for what it reads, what it writes, what it decides, and how it transitions. Once you understand the cycle, the rest of Ravel-Lite is bookkeeping around it.
 
-This page documents each phase one by one, then covers the two cross-cutting mechanisms a reader needs to reason about a cycle holistically: the dream trigger and cross-plan subagent dispatch. Schemas for the files referenced live on the link:state-files.html[State files] and link:cross-plan-files.html[Cross-plan files] reference pages — this page links rather than re-narrates.
+This page documents each phase one by one, then covers the two cross-cutting mechanisms a reader needs to reason about a cycle holistically: the dream trigger and the cross-plan findings inbox. Schemas for the files referenced live on the link:state-files.html[State files] and link:cross-plan-files.html[Cross-plan files] reference pages — this page links rather than re-narrates.
 
 == The shape of a cycle
 
@@ -81,17 +81,17 @@ A bad dream is recoverable: `git checkout memory.yaml` restores the prior versio
 
 === Triage
 
-The end-of-cycle phase. Reviews the backlog, mines completed tasks for hand-offs, reprioritises, and writes `subagent-dispatch.yaml` if cross-plan propagation is warranted.
+The end-of-cycle phase. Reviews the backlog, mines completed tasks for hand-offs, reprioritises, and writes findings to the context-level inbox if any cross-plan observation surfaced.
 
-Reads:: The backlog and current memory. Triage explicitly does *not* read sibling, parent, or child plan content — cross-plan awareness comes from the `Related plans` block in its prompt (paths only) and from the subagents it dispatches, never from direct foreign reads.
+Reads:: The backlog and current memory. Triage explicitly does *not* read sibling, parent, or child plan content — cross-plan awareness comes from the `Related plans` block in its prompt (paths only), never from direct foreign reads. No subagent is dispatched against a peer plan.
 
-Writes:: Backlog mutations (`set-status`, `set-title`, `reorder`, `add`, `delete`, `set-dependencies`, `clear-handoff`); occasionally memory adds when archiving a hand-off. Cross-plan dispatch is written to `subagent-dispatch.yaml`, a one-shot scratch file the orchestrator consumes after the phase exits.
+Writes:: Backlog mutations (`set-status`, `set-title`, `reorder`, `add`, `delete`, `set-dependencies`, `clear-handoff`); occasionally memory adds when archiving a hand-off. Cross-plan observations are written to the context-level findings inbox via `ravel-lite findings add` — a user-mediated queue the operator processes out of band.
 
-Decisions:: Which tasks are still relevant; what to reprioritise and why; whether each completed task's hand-off warrants a new top-level task or a memory archive; which related plans should receive a subagent dispatch.
+Decisions:: Which tasks are still relevant; what to reprioritise and why; whether each completed task's hand-off warrants a new top-level task or a memory archive; whether any observation belongs in the findings inbox.
 
 Transition:: `ravel-lite state set-phase {{PLAN}} git-commit-triage`.
 
-Triage reprioritisations require a stated reason naming the cycle learning that drove the change — "felt better here" is not a reason. The narrative preamble carries `[REPRIORITISED]`, `[PROMOTED]`, `[ARCHIVED]`, `[BLOCKER]`, and `[DISPATCH]` intent labels alongside the renderer's structural diff. The link:cross-plan-files.html[Cross-plan files] reference covers `subagent-dispatch.yaml` in detail.
+Triage reprioritisations require a stated reason naming the cycle learning that drove the change — "felt better here" is not a reason. The narrative preamble carries `[REPRIORITISED]`, `[PROMOTED]`, `[ARCHIVED]`, `[BLOCKER]`, and `[FINDING]` intent labels alongside the renderer's structural diff. The link:cross-plan-files.html[Cross-plan files] reference covers `findings.yaml` in detail.
 
 == Audit-trail phases
 
@@ -151,23 +151,27 @@ The baseline file is seeded defensively from three call sites: plan creation, ev
 
 Migration note: an earlier version stored this word count under the filename `dream-baseline`. That filename is now reserved for the SHA baseline written by git-commit-reflect's dream branch. The seed function detects a usize-shaped legacy file and migrates it to `dream-word-count`; SHA-shaped content is recognised and left intact.
 
-== Cross-plan dispatch
+== Cross-plan findings
 
-The triage phase may write `<plan>/subagent-dispatch.yaml` to ask the orchestrator to spawn one or more subagents against related plans. The file is one-shot scratch — written by triage, consumed by the driver, deleted after dispatch.
+When reflect or triage surfaces an observation that is out of scope for the current plan but worth attention elsewhere — a defect noticed in code that was read but not edited, a suggestion that fits a different plan, an Atlas component issue picked up in passing — the phase records it in the *context-level* findings inbox via `ravel-lite findings add`. Findings are advisory: no driver step auto-acts on them, and no phase consumes them. The user processes the inbox out of band.
 
-Shape:
+Reflect and triage both call into the same verb:
 
-[source,yaml]
+[source,bash]
 ----
-dispatches:
-  - target: /absolute/path/to/related/plan
-    kind: child
-    summary: |
-      One to three paragraphs describing the learnings and
-      suggested backlog/memory updates for the target plan.
+ravel-lite findings add \
+    --claim "<one-line assertion>" \
+    --body-file <path> \
+    --raised-in {{PLAN}} \
+    --authored-in <reflect|triage> \
+    [--component <repo>:<component-id>]
 ----
 
-Every entry is dispatched as a parallel subagent task. Each subagent gets a generated prompt naming the target plan, the relationship kind (`child`, `parent`, `sibling`), and the summary; it is asked to read the target plan's backlog and memory and apply only what the summary warrants. The driver waits for every dispatched subagent to complete before the cycle ends.
+Findings live at the context level alongside `config.lua` and `repos.yaml` — *not* inside any plan directory — so observations raised in one plan are visible to any other cycle inspecting the inbox. The link:cross-plan-files.html[Cross-plan files] reference documents the schema and status transitions in full.
+
+Both phases skip the step entirely when no out-of-scope observation surfaced; that is the default case. The narrative preamble carries one `[FINDING] <one-line claim>` line per finding written, so the structural diff and the operator's TUI both reflect the writes.
+
+The previous mechanism — `subagent-dispatch.yaml`, a per-plan scratch file the driver consumed by spawning parallel subagents against named peer plans — was retired. Automated cross-plan dispatch was prone to producing low-quality drive-by edits in target plans without the originating cycle's full context; the user-mediated inbox keeps the human in the loop without losing the original observation.
 
 Targets must be absolute paths. The orchestrator looks up the agent backend's `dispatch_subagent` implementation; for Claude Code that means a fresh `claude --add-dir <target>` subprocess scoped to the target plan. The dispatching plan's only role is to write the YAML; everything else — agent spawning, parallelism, log routing, file cleanup — is the driver's responsibility. See the link:cross-plan-files.html[Cross-plan files] reference for the full schema and dispatch lifecycle.
 

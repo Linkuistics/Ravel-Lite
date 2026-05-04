@@ -4,7 +4,7 @@
 <p>The phase cycle is the contract Ravel-Lite enforces against every plan it runs. Each cycle is the same fixed sequence — five reasoning phases interleaved with four audit-trail commit phases — and each phase has a precise contract for what it reads, what it writes, what it decides, and how it transitions. Once you understand the cycle, the rest of Ravel-Lite is bookkeeping around it.</p>
 </div>
 <div class="paragraph">
-<p>This page documents each phase one by one, then covers the two cross-cutting mechanisms a reader needs to reason about a cycle holistically: the dream trigger and cross-plan subagent dispatch. Schemas for the files referenced live on the <a href="state-files.html">State files</a> and <a href="cross-plan-files.html">Cross-plan files</a> reference pages — this page links rather than re-narrates.</p>
+<p>This page documents each phase one by one, then covers the two cross-cutting mechanisms a reader needs to reason about a cycle holistically: the dream trigger and the cross-plan findings inbox. Schemas for the files referenced live on the <a href="state-files.html">State files</a> and <a href="cross-plan-files.html">Cross-plan files</a> reference pages — this page links rather than re-narrates.</p>
 </div>
 </div>
 </div>
@@ -155,21 +155,21 @@ triage → git-commit-triage → [continue?] → work</pre>
 <div class="sect2">
 <h3 id="_triage">Triage</h3>
 <div class="paragraph">
-<p>The end-of-cycle phase. Reviews the backlog, mines completed tasks for hand-offs, reprioritises, and writes <code>subagent-dispatch.yaml</code> if cross-plan propagation is warranted.</p>
+<p>The end-of-cycle phase. Reviews the backlog, mines completed tasks for hand-offs, reprioritises, and writes findings to the context-level inbox if any cross-plan observation surfaced.</p>
 </div>
 <div class="dlist">
 <dl>
 <dt class="hdlist1">Reads</dt>
 <dd>
-<p>The backlog and current memory. Triage explicitly does <strong>not</strong> read sibling, parent, or child plan content — cross-plan awareness comes from the <code>Related plans</code> block in its prompt (paths only) and from the subagents it dispatches, never from direct foreign reads.</p>
+<p>The backlog and current memory. Triage explicitly does <strong>not</strong> read sibling, parent, or child plan content — cross-plan awareness comes from the <code>Related plans</code> block in its prompt (paths only), never from direct foreign reads. No subagent is dispatched against a peer plan.</p>
 </dd>
 <dt class="hdlist1">Writes</dt>
 <dd>
-<p>Backlog mutations (<code>set-status</code>, <code>set-title</code>, <code>reorder</code>, <code>add</code>, <code>delete</code>, <code>set-dependencies</code>, <code>clear-handoff</code>); occasionally memory adds when archiving a hand-off. Cross-plan dispatch is written to <code>subagent-dispatch.yaml</code>, a one-shot scratch file the orchestrator consumes after the phase exits.</p>
+<p>Backlog mutations (<code>set-status</code>, <code>set-title</code>, <code>reorder</code>, <code>add</code>, <code>delete</code>, <code>set-dependencies</code>, <code>clear-handoff</code>); occasionally memory adds when archiving a hand-off. Cross-plan observations are written to the context-level findings inbox via <code>ravel-lite findings add</code> — a user-mediated queue the operator processes out of band.</p>
 </dd>
 <dt class="hdlist1">Decisions</dt>
 <dd>
-<p>Which tasks are still relevant; what to reprioritise and why; whether each completed task&#8217;s hand-off warrants a new top-level task or a memory archive; which related plans should receive a subagent dispatch.</p>
+<p>Which tasks are still relevant; what to reprioritise and why; whether each completed task&#8217;s hand-off warrants a new top-level task or a memory archive; whether any observation belongs in the findings inbox.</p>
 </dd>
 <dt class="hdlist1">Transition</dt>
 <dd>
@@ -178,7 +178,7 @@ triage → git-commit-triage → [continue?] → work</pre>
 </dl>
 </div>
 <div class="paragraph">
-<p>Triage reprioritisations require a stated reason naming the cycle learning that drove the change — "felt better here" is not a reason. The narrative preamble carries <code>[REPRIORITISED]</code>, <code>[PROMOTED]</code>, <code>[ARCHIVED]</code>, <code>[BLOCKER]</code>, and <code>[DISPATCH]</code> intent labels alongside the renderer&#8217;s structural diff. The <a href="cross-plan-files.html">Cross-plan files</a> reference covers <code>subagent-dispatch.yaml</code> in detail.</p>
+<p>Triage reprioritisations require a stated reason naming the cycle learning that drove the change — "felt better here" is not a reason. The narrative preamble carries <code>[REPRIORITISED]</code>, <code>[PROMOTED]</code>, <code>[ARCHIVED]</code>, <code>[BLOCKER]</code>, and <code>[FINDING]</code> intent labels alongside the renderer&#8217;s structural diff. The <a href="cross-plan-files.html">Cross-plan files</a> reference covers <code>findings.yaml</code> in detail.</p>
 </div>
 </div>
 </div>
@@ -299,26 +299,32 @@ triage → git-commit-triage → [continue?] → work</pre>
 </div>
 </div>
 <div class="sect1">
-<h2 id="_cross_plan_dispatch">Cross-plan dispatch</h2>
+<h2 id="_cross_plan_findings">Cross-plan findings</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>The triage phase may write <code>&lt;plan&gt;/subagent-dispatch.yaml</code> to ask the orchestrator to spawn one or more subagents against related plans. The file is one-shot scratch — written by triage, consumed by the driver, deleted after dispatch.</p>
+<p>When reflect or triage surfaces an observation that is out of scope for the current plan but worth attention elsewhere — a defect noticed in code that was read but not edited, a suggestion that fits a different plan, an Atlas component issue picked up in passing — the phase records it in the <strong>context-level</strong> findings inbox via <code>ravel-lite findings add</code>. Findings are advisory: no driver step auto-acts on them, and no phase consumes them. The user processes the inbox out of band.</p>
 </div>
 <div class="paragraph">
-<p>Shape:</p>
+<p>Reflect and triage both call into the same verb:</p>
 </div>
 <div class="listingblock">
 <div class="content">
-<pre class="highlight"><code class="language-yaml" data-lang="yaml">dispatches:
-  - target: /absolute/path/to/related/plan
-    kind: child
-    summary: |
-      One to three paragraphs describing the learnings and
-      suggested backlog/memory updates for the target plan.</code></pre>
+<pre class="highlight"><code class="language-bash" data-lang="bash">ravel-lite findings add \
+    --claim "&lt;one-line assertion&gt;" \
+    --body-file &lt;path&gt; \
+    --raised-in {{PLAN}} \
+    --authored-in &lt;reflect|triage&gt; \
+    [--component &lt;repo&gt;:&lt;component-id&gt;]</code></pre>
 </div>
 </div>
 <div class="paragraph">
-<p>Every entry is dispatched as a parallel subagent task. Each subagent gets a generated prompt naming the target plan, the relationship kind (<code>child</code>, <code>parent</code>, <code>sibling</code>), and the summary; it is asked to read the target plan&#8217;s backlog and memory and apply only what the summary warrants. The driver waits for every dispatched subagent to complete before the cycle ends.</p>
+<p>Findings live at the context level alongside <code>config.lua</code> and <code>repos.yaml</code> — <strong>not</strong> inside any plan directory — so observations raised in one plan are visible to any other cycle inspecting the inbox. The <a href="cross-plan-files.html">Cross-plan files</a> reference documents the schema and status transitions in full.</p>
+</div>
+<div class="paragraph">
+<p>Both phases skip the step entirely when no out-of-scope observation surfaced; that is the default case. The narrative preamble carries one <code>[FINDING] &lt;one-line claim&gt;</code> line per finding written, so the structural diff and the operator&#8217;s TUI both reflect the writes.</p>
+</div>
+<div class="paragraph">
+<p>The previous mechanism — <code>subagent-dispatch.yaml</code>, a per-plan scratch file the driver consumed by spawning parallel subagents against named peer plans — was retired. Automated cross-plan dispatch was prone to producing low-quality drive-by edits in target plans without the originating cycle&#8217;s full context; the user-mediated inbox keeps the human in the loop without losing the original observation.</p>
 </div>
 <div class="paragraph">
 <p>Targets must be absolute paths. The orchestrator looks up the agent backend&#8217;s <code>dispatch_subagent</code> implementation; for Claude Code that means a fresh <code>claude --add-dir &lt;target&gt;</code> subprocess scoped to the target plan. The dispatching plan&#8217;s only role is to write the YAML; everything else — agent spawning, parallelism, log routing, file cleanup — is the driver&#8217;s responsibility. See the <a href="cross-plan-files.html">Cross-plan files</a> reference for the full schema and dispatch lifecycle.</p>
