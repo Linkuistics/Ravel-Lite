@@ -1054,9 +1054,9 @@ entries:
   body: |
     `bail!`-at-statement-position is replaced with `bail_with!(ErrorCode::X, …)`. `anyhow!` inside `.ok_or_else`/`.map_err` closures keeps the original macro and chains `.with_code(ErrorCode::X)` afterwards. For functions returning a bare `anyhow::Error` (no `Result` chain to attach `.with_code()` to), use `anyhow::Error::new(CodedError { code, message })` — the same internal shape that `bail_with!` builds. All three patterns applied uniformly across all `ErrorCode`-tagged sites in the codebase.
 - id: with-context-chains-excluded-from-errorcode-tagging-scope
-  title: with_context chains excluded from ErrorCode tagging scope
+  title: with_context chains tagged; check.sh regression guard unimplemented
   body: |
-    The `bail!/anyhow!/ensure!`-site `ErrorCode` tagging sweep is complete across all source files. `with_context` chains wrapping IO operations were intentionally excluded and remain untagged — they are a separate follow-up gap before JSON-error-envelope work can be considered complete.
+    272 production `with_context`/`.context(` chains in 45 source files carry `.with_code(ErrorCode::X)`. The `bail!/anyhow!/ensure!` guard in `check.sh` does not cover `with_context` sites; a peer task (`cli-add-errorcode-regression-guard-to-check-sh`) tracks adding that guard. Until the guard lands, new `with_context` wraps around IO operations can silently miss a code tag. See: `check.sh regex guard rejects untagged bail!/anyhow!/ensure! macros`.
 - id: check-sh-regex-guard-rejects-untagged-bail-anyhow-ensure-macros
   title: check.sh regex guard rejects untagged bail!/anyhow!/ensure! macros
   body: |
