@@ -236,21 +236,13 @@ entries:
   body: |
     In `src/related_components.rs` and `src/discover/apply.rs`, symmetric edge kinds use sorted participants for identity (order-insensitive dedup); directed edge kinds preserve participant order. Reversing this rule silently creates duplicate or missing edges. See: `Edge::validate must enforce participant sort order`.
 - id: plan-state-md-readers-fully-migrated
-  title: LLM_STATE/core plan-state migrated to typed YAML
+  title: Legacy parse_md source files and migrate.rs deleted
   body: |
-    `src/dream.rs` and `src/survey/discover.rs` use the typed YAML API; `.md` originals deleted from `LLM_STATE/core`. `src/multi_plan.rs` and `src/main.rs` tolerate absent `.md` files.
-- id: state-migrate-takes-plan-dir-as-positional-argument
-  title: '`state migrate` takes `PLAN_DIR` as positional argument'
-  body: |
-    `--plan-dir` is not a valid flag; the CLI expects `PLAN_DIR` positionally. Correct usage: `ravel-lite state migrate <PLAN_DIR>`.
+    `parse_md.rs` deleted from `src/state/backlog/`, `src/state/memory/`, `src/state/session_log/`; `src/state/migrate.rs` deleted (815 lines). All plan-state readers use the typed YAML API. `src/dream.rs` and `src/survey/discover.rs` use typed YAML; `src/multi_plan.rs` and `src/main.rs` tolerate absent `.md` files.
 - id: plan-state-migration-requires-atomicity-idempotency-dry-run-validation
   title: Plan-state migration requires atomicity, idempotency, dry-run, validation
   body: |
     Any plan-state migration tool must apply changes atomically, be safe to re-run (idempotent), support `--dry-run` preview, and validate round-trip fidelity.
-- id: migrate-rs-uses-parse-all-then-write-all-planner
-  title: '`migrate.rs` uses parse-all-then-write-all planner'
-  body: |
-    `plan_backlog_migration`, `plan_memory_migration`, `plan_session_log_migration`, and `plan_latest_session_migration` each return `Option<PendingMigration>`; `run_migrate` errors if set is empty, then writes all only after all parses succeed.
 - id: state-memory-parses-headings-empty-body-is-an-error
   title: '`state::memory` parses `^## ` headings; empty body is an error'
   body: |
@@ -258,7 +250,7 @@ entries:
 - id: src-state-module-structure
   title: '`src/state/` uses module-per-area layout'
   body: |
-    `src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, parse_md, verbs, mod), `memory/` (schema, yaml_io, parse_md, verbs, mod), `session_log/` (schema, yaml_io, parse_md, verbs, mod), `intents/` (schema, yaml_io, verbs, mod), `findings/` (schema, yaml_io, verbs, mod), `targets/` (schema, yaml_io, verbs, mount, mod), `target_requests/` (schema, yaml_io, verbs, drain, mod), `this_cycle_focus/` (schema, yaml_io, verbs, mod), `focus_objections/` (schema, yaml_io, verbs, mod), `commits/` (schema, yaml_io, verbs, mod), and `migrate.rs`. New state areas follow this layout.
+    `src/state.rs` restructured into `src/state/` with `phase.rs`, `backlog/` (schema, yaml_io, verbs, mod), `memory/` (schema, yaml_io, verbs, mod), `session_log/` (schema, yaml_io, verbs, mod), `intents/` (schema, yaml_io, verbs, mod), `findings/` (schema, yaml_io, verbs, mod), `targets/` (schema, yaml_io, verbs, mount, mod), `target_requests/` (schema, yaml_io, verbs, drain, mod), `this_cycle_focus/` (schema, yaml_io, verbs, mod), `focus_objections/` (schema, yaml_io, verbs, mod), `commits/` (schema, yaml_io, verbs, mod). No `parse_md.rs` or `migrate.rs` remain. New state areas follow this layout.
 - id: find-task-centralises-backlog-id-lookup
   title: '`find_task` centralises backlog id-lookup'
   body: |
@@ -283,10 +275,6 @@ entries:
   title: '`discover` runs two-stage fan-out pipeline to `discover-proposals.yaml`'
   body: |
     `state related-components discover` fans out one subagent per project (two-stage pipeline: per-project interaction-surface extraction then global edge proposal) and writes `discover-proposals.yaml`; `discover-apply` merges after human review. Cache key is `(tree_sha, dirty_hash)` pair; see `Discover cache key is tree_sha + dirty_hash pair`.
-- id: state-migrate-force-required-when-yaml-predates-md
-  title: state migrate --force required when .yaml predates .md
-  body: |
-    When pre-existing `.yaml` files are stale relative to the authoritative `.md` originals, `state migrate` aborts without `--force`. `--force` re-derives from `.md` and overwrites `.yaml`. `.md` is the authoritative source; `.yaml` is a derived cache.
 - id: std-path-absolute-does-pure-path-math-anchored-to-cwd
   title: std::path::absolute does pure path math anchored to CWD
   body: |
@@ -666,7 +654,7 @@ entries:
 - id: v1-v2-cutover-is-hard-v2-binary-refuses-unmigrated-plans
   title: v2 binary refuses unmigrated plans; no migration window
   body: |
-    No migration window: the v2 binary hard-fails on unmigrated plans. Users must run `ravel-lite state migrate` before switching to v2. Settled in Phase A of architecture-next.
+    No migration window: the v2 binary hard-fails on unmigrated plans via `src/v2_gate.rs` (path-shape check: `<X>/plans/<Y>/` with `<X>/repos.yaml` present). Run `ravel-lite migrate-v1-v2 <old-plan-path> --as <name>` before switching to v2. Settled in Phase A of architecture-next.
 - id: legacy-backfill-uses-one-shot-llm-extraction-at-migrate-time
   title: Legacy backfill uses one-shot LLM extraction at migrate time
   body: |
@@ -1017,7 +1005,7 @@ entries:
 - id: errorcode-and-exitcategory-are-the-typed-cli-error-vocabulary
   title: ErrorCode and ExitCategory are the typed CLI error vocabulary
   body: |
-    `ErrorCode` (7 variants: `AuthRequired`, `InvalidInput`, `NotFound`, `Conflict`, `IoError`, `RateLimited`, `Internal`) in `src/cli/error_code.rs` with `as_str()`, `parse_opt()`, and `all()`. `ExitCategory` (7 variants, codes 0–6) in `src/cli/exit_category.rs` with `as_code()`, `label()`, `documented()`, and `From<&ErrorCode>` mapping. `ErrorCode::all()` and `ExitCategory::documented()` enumerate both sets at runtime; `capabilities` sources from them to prevent drift. Exit-code table injected into `--help` via `AFTER_HELP`. See: `capabilities verb sources from ErrorCode::all() and ExitCategory::documented()`.
+    `ErrorCode` (8 variants: `AuthRequired`, `InvalidInput`, `NotFound`, `Conflict`, `IoError`, `RateLimited`, `Internal`, `Cancelled`) in `src/cli/error_code.rs` with `as_str()`, `parse_opt()`, and `all()`. `Cancelled` is for user-declined confirmation prompts (distinct from `InvalidInput`). `ExitCategory` (7 variants, codes 0–6) in `src/cli/exit_category.rs` with `as_code()`, `label()`, `documented()`, and `From<&ErrorCode>` mapping. `ErrorCode::all()` and `ExitCategory::documented()` enumerate both sets at runtime; `capabilities` sources from them to prevent drift. Exit-code table injected into `--help` via `AFTER_HELP`. See: `capabilities verb sources from ErrorCode::all() and ExitCategory::documented()`.
 - id: capabilities-verb-sources-from-errorcode-all-and-exitcategory-documented
   title: capabilities verb sources from ErrorCode::all() and ExitCategory::documented()
   body: |
@@ -1089,7 +1077,7 @@ entries:
 - id: v1-v2-migrator-design-settled-spec-at-docs-superpowers-specs
   title: v1→v2 migrator design settled; spec at docs/superpowers/specs/
   body: |
-    `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` is the settled design: verb shape, two-half flow, gate detection, module layout, test plan, and defaults. `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` has 21 TDD tasks across 8 phases (P1–P8); P3 is highest-leverage first task. See: `LLM_STATE/core backlog.yaml is legacy; awaits v1→v2 migrator`.
+    `migrate-v1-v2` shipped (P1–P8 complete). Design ref: `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md`; plan: `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md`. See: `LLM_STATE/core backlog.yaml is legacy; awaits v1→v2 migrator`.
 - id: sequential-llm-extraction-phases-abort-early-on-upstream-failure
   title: Sequential LLM extraction phases abort early on upstream failure
   body: |
@@ -1097,32 +1085,22 @@ entries:
 - id: migrate-v1-v2-settled-design-decisions-verb-shape-gate-phases-legacy-fields
   title: migrate-v1-v2 settled design decisions (verb shape, gate, phases, legacy fields)
   body: |
-    Settled design decisions for the `migrate-v1-v2` verb (from the planning cycle that authored
-    `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` and
-    `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md`). These decisions are binding for P1–P8.
-
-    - Verb name is `migrate-v1-v2` as a top-level command, NOT `state migrate-v1-v2`. Reason: aligns
-      with v2.x release framing and disambiguates from the legacy `state migrate` (.md → .yaml) verb
-      deleted in P7.
-    - `--as <new-name>` is required (not optional). Reason: most projects have a `core` plan, so
-      name collisions between old and new layout are the norm, not the exception.
-    - "Context dir" and "config dir" are the same path. The verb reuses the existing `--config` flag
-      and `config::resolve_config_dir`.
-    - The "v2 refuses v1" gate is path-shape only — no marker file. A v2 plan dir satisfies
-      `<X>/plans/<Y>/` where `<X>/repos.yaml` exists.
-    - Three separate LLM phases (MigrateIntent, MigrateTargets, MigrateMemoryBackfill) are NOT
-      folded into one. Reason: gives early-abort signal on clearly-wrong intent extraction without
-      wasting downstream LLM budget.
-    - `BacklogEntry` gains a `legacy: bool` extension field for items the LLM cannot attribute.
-      `#[serde(default, skip_serializing_if = "std::ops::Not::not")]` — omitted from YAML when false.
-    - `MemoryEntry` gains `status: legacy` via a new `MemoryStatus::Legacy` variant for entries the
-      LLM cannot attribute.
-    - The legacy `state migrate` (.md → .yaml) verb and its `parse_*_markdown` parsers are deleted
-      in P7. Verified on 2026-05-04: all 13 LLM_STATE dirs / 23 plans are already YAML-shaped — the
-      converter is dead code.
-    - Cross-repo `.md` sibling cleanup (P8) covers 5 sibling repos:
-      AppSpec, Ravel, APIAnyware-MacOS, TestAnyware, IDEs/RacketPro.
+    Settled design facts (shipped in P1–P8):
+    - Verb: `migrate-v1-v2` (top-level, not `state migrate-v1-v2`); `--as <new-name>` required — most projects have a `core` plan, collisions are the norm.
+    - Gate: path-shape only — `<X>/plans/<Y>/` with `<X>/repos.yaml` exists. No marker file.
+    - Three separate LLM phases: MigrateIntent, MigrateTargets, MigrateMemoryBackfill (abort-early on upstream failure; see `src/migrate_v1_v2/`).
+    - `BacklogEntry.legacy: bool` — `#[serde(default, skip_serializing_if = "std::ops::Not::not")]`.
+    - `MemoryStatus::Legacy` variant for unattributable entries.
+    - Legacy `state migrate` verb and all four `parse_*_markdown` parsers deleted. All 13 LLM_STATE dirs across 23 plans were already YAML-shaped; the converter was dead code.
 - id: adding-llmphase-match-arm-clears-secondary-unused-variable-error-in-test-mock
   title: Adding LlmPhase match arm clears secondary unused-variable error in test mock
   body: |
     In `tests/phase_loop.rs`, `ContractMockAgent::invoke_headless` matches on `LlmPhase`. A missing arm for a new variant emits `E0004` (non-exhaustive patterns) plus a secondary `unused variable: 'prompt'` error. Both originate from the same missing arm; adding the arm clears both. P5/P6 implementers adding new `LlmPhase` variants should expect this pair and not treat the secondary error as a separate issue.
+- id: v2-gate-rejects-cycle-verbs-against-v1-plan-dirs
+  title: v2 gate rejects cycle verbs against v1 plan dirs
+  body: |
+    `src/v2_gate.rs` checks path shape before cycle-bearing verbs (`run`, `state set-phase`). A plan dir is v2 if it matches `<X>/plans/<Y>/` with `<X>/repos.yaml` present; any other layout is rejected as unmigrated v1. Four hermetic unit tests + `tests/v2_gate_integration.rs`. The check fires before any plan-state read, so v1 plans cannot accidentally enter the cycle loop.
+- id: build-headless-agent-for-one-shot-workflows
+  title: build_headless_agent() for one-shot workflows
+  body: |
+    `build_headless_agent()` in `src/main.rs` (introduced for `migrate-v1-v2`) constructs a headless agent for workflows that run outside the TUI phase loop. Use this for any future top-level command that needs a single LLM call without the cycle state machine. Contrasts with the `phase_loop` path used for interactive/cycle phases.
