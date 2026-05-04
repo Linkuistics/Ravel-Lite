@@ -306,18 +306,6 @@ Examples:
   ravel-lite state set-phase LLM_STATE/core analyse-work
 ";
 
-const STATE_MIGRATE_AFTER_HELP: &str = "\
-Examples:
-  # convert a legacy plan with .md state files to .yaml
-  ravel-lite state migrate LLM_STATE/core
-
-  # preview the rewrite without writing
-  ravel-lite state migrate LLM_STATE/core --dry-run
-
-  # delete the .md originals after a clean migration
-  ravel-lite state migrate LLM_STATE/core --delete-originals
-";
-
 // ---- state phase-summary --------------------------------------------
 const PHASE_SUMMARY_RENDER_AFTER_HELP: &str = "\
 Examples:
@@ -1015,6 +1003,24 @@ enum Commands {
         #[command(subcommand)]
         command: FixedMemoryCommands,
     },
+    /// Migrate a v1 plan (`<project>/LLM_STATE/<plan>/`) to a v2 layout
+    /// (`<config-dir>/plans/<new-name>/`). Once-only; ravel-lite 2.x
+    /// refuses to operate on unmigrated v1 plans.
+    #[command(name = "migrate-v1-v2")]
+    MigrateV1V2 {
+        /// Path to the v1 plan dir.
+        old_plan_path: PathBuf,
+        /// New plan name in the v2 context. Required because most projects
+        /// have a `core` plan and collisions are expected.
+        #[arg(long = "as")]
+        as_name: String,
+        /// Config dir override. Defaults via `config::resolve_config_dir`.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Skip the three confirm-before-apply prompts.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1406,24 +1412,6 @@ enum StateCommands {
     Commits {
         #[command(subcommand)]
         command: CommitsCommands,
-    },
-    /// Single-plan conversion of legacy .md files into typed .yaml
-    /// siblings. Covers backlog.md, memory.md, session-log.md and
-    /// latest-session.md (each written when present).
-    #[command(after_help = STATE_MIGRATE_AFTER_HELP)]
-    Migrate {
-        plan_dir: PathBuf,
-        #[arg(long)]
-        dry_run: bool,
-        /// Keep the .md originals on disk after migration (default).
-        #[arg(long, conflicts_with = "delete_originals")]
-        keep_originals: bool,
-        /// Delete the .md originals only after write and validation both succeed.
-        #[arg(long)]
-        delete_originals: bool,
-        /// Overwrite an existing backlog.yaml that differs from the re-migration output.
-        #[arg(long)]
-        force: bool,
     },
     /// Global component-relationship graph at
     /// `<config-dir>/related-components.yaml`. Edges follow the
@@ -2400,6 +2388,9 @@ async fn dispatch() -> Result<()> {
             if debug {
                 ravel_lite::debug_log::enable(ravel_lite::debug_log::EMBEDDING_DEBUG_FILE)?;
             }
+            for plan_dir in &plan_dirs {
+                ravel_lite::v2_gate::validate_v2_plan_dir(plan_dir)?;
+            }
             match plan_dirs.len() {
                 0 => unreachable!("clap requires at least one plan_dir"),
                 1 => {
@@ -2476,7 +2467,44 @@ async fn dispatch() -> Result<()> {
         Commands::Findings { command } => dispatch_findings(command),
         Commands::Atlas { command } => dispatch_atlas(command),
         Commands::FixedMemory { command } => dispatch_fixed_memory(command),
+        Commands::MigrateV1V2 {
+            old_plan_path,
+            as_name,
+            config,
+            yes,
+        } => {
+            let config_dir = resolve_config_dir(config)?;
+            let agent = build_headless_agent(&config_dir)?;
+            ravel_lite::migrate_v1_v2::run_migrate_v1_v2(
+                agent,
+                &old_plan_path,
+                &as_name,
+                &config_dir,
+                yes,
+            )
+            .await
+        }
     }
+}
+
+/// Construct an `Arc<dyn Agent>` from the user's shared config for
+/// one-shot headless workflows (e.g. `migrate-v1-v2`) that do not run
+/// inside the TUI phase loop.
+fn build_headless_agent(config_root: &Path) -> Result<std::sync::Arc<dyn Agent>> {
+    let shared_config = load_shared_config(config_root)?;
+    let agent_config = load_agent_config(config_root, &shared_config.agent)?;
+    let agent: std::sync::Arc<dyn Agent> = match shared_config.agent.as_str() {
+        "claude-code" => std::sync::Arc::new(ClaudeCodeAgent::new(
+            agent_config,
+            config_root.to_string_lossy().to_string(),
+        )),
+        "pi" => std::sync::Arc::new(PiAgent::new(
+            agent_config,
+            config_root.to_string_lossy().to_string(),
+        )),
+        other => bail_with!(ErrorCode::InvalidInput, "Unknown agent: {other}"),
+    };
+    Ok(agent)
 }
 
 fn dispatch_fixed_memory(command: FixedMemoryCommands) -> Result<()> {
@@ -2657,6 +2685,7 @@ fn dispatch_repo(command: RepoCommands) -> Result<()> {
 async fn dispatch_state(command: StateCommands) -> Result<()> {
     match command {
         StateCommands::SetPhase { plan_dir, phase } => {
+            ravel_lite::v2_gate::validate_v2_plan_dir(&plan_dir)?;
             state::run_set_phase(&plan_dir, &phase)
         }
         StateCommands::Projects { _args: _ } => Err(repos::migrate_projects_yaml_error()),
@@ -2669,24 +2698,6 @@ async fn dispatch_state(command: StateCommands) -> Result<()> {
         StateCommands::ThisCycleFocus { command } => dispatch_this_cycle_focus(command),
         StateCommands::FocusObjections { command } => dispatch_focus_objections(command),
         StateCommands::Commits { command } => dispatch_commits(command),
-        StateCommands::Migrate {
-            plan_dir,
-            dry_run,
-            keep_originals: _,
-            delete_originals,
-            force,
-        } => {
-            let options = state::migrate::MigrateOptions {
-                dry_run,
-                original_policy: if delete_originals {
-                    state::migrate::OriginalPolicy::Delete
-                } else {
-                    state::migrate::OriginalPolicy::Keep
-                },
-                force,
-            };
-            state::migrate::run_migrate(&plan_dir, &options)
-        }
         StateCommands::RelatedComponents { command } => dispatch_related_components(command).await,
         StateCommands::DiscoverProposals { command } => dispatch_discover_proposals(command),
         StateCommands::PhaseSummary { command } => dispatch_phase_summary(command),

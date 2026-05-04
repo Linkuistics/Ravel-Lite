@@ -29,7 +29,7 @@ pub fn read_session_log(plan_dir: &Path) -> Result<SessionLogFile> {
     if !path.exists() {
         bail_with!(
             ErrorCode::NotFound,
-            "{SESSION_LOG_FILENAME} not found at {}. Run `ravel-lite state migrate` to convert an existing session-log.md.",
+            "{SESSION_LOG_FILENAME} not found at {}. The plan must be a v2 layout — run `ravel-lite migrate-v1-v2 <old-plan-path> --as <name>` to convert a legacy plan.",
             path.display()
         );
     }
@@ -150,7 +150,7 @@ mod tests {
             msg.contains(SESSION_LOG_FILENAME),
             "error must name {SESSION_LOG_FILENAME}: {msg}"
         );
-        assert!(msg.contains("state migrate"), "error must suggest migrate: {msg}");
+        assert!(msg.contains("migrate-v1-v2"), "error must suggest migrate: {msg}");
     }
 
     #[test]

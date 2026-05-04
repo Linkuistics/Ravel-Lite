@@ -84,6 +84,7 @@ impl From<&ErrorCode> for ExitCategory {
             ErrorCode::RateLimited => ExitCategory::RateLimited,
             ErrorCode::IoError => ExitCategory::GenericFailure,
             ErrorCode::Internal => ExitCategory::GenericFailure,
+            ErrorCode::Cancelled => ExitCategory::UsageError,
         }
     }
 }

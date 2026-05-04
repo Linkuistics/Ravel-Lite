@@ -6,13 +6,18 @@ use tempfile::TempDir;
 
 #[test]
 fn state_set_phase_rejects_invalid_phase_via_binary() {
+    // V2-shaped plan dir so the v2_gate accepts it; the test then
+    // exercises the inner phase-name validation.
     let tmp = TempDir::new().unwrap();
-    let plan = tmp.path();
+    let context = tmp.path().join("ctx");
+    fs::create_dir_all(context.join("plans/p")).unwrap();
+    fs::write(context.join("repos.yaml"), "schema_version: 1\nrepos: {}\n").unwrap();
+    let plan = context.join("plans/p");
     fs::write(plan.join("phase.md"), "work").unwrap();
 
     let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
         .args(["state", "set-phase"])
-        .arg(plan)
+        .arg(&plan)
         .arg("analyze-work") // American spelling — invalid
         .output()
         .expect("binary must spawn");
@@ -35,16 +40,17 @@ fn state_set_phase_rejects_invalid_phase_via_binary() {
 /// CLI dispatch layer where multi-plan vs single-plan branches.
 #[test]
 fn run_multi_plan_requires_survey_state_flag() {
+    // V2-shaped plan dirs so the v2_gate accepts them; the test then
+    // exercises the multi-plan --survey-state validation.
     let tmp = TempDir::new().unwrap();
-    let plan_a = tmp.path().join("plan-a");
-    let plan_b = tmp.path().join("plan-b");
+    let config_root = tmp.path().join("cfg");
+    ravel_lite::init::run_init(&config_root, false).unwrap();
+    let plan_a = config_root.join("plans/plan-a");
+    let plan_b = config_root.join("plans/plan-b");
     fs::create_dir_all(&plan_a).unwrap();
     fs::create_dir_all(&plan_b).unwrap();
     fs::write(plan_a.join("phase.md"), "work").unwrap();
     fs::write(plan_b.join("phase.md"), "work").unwrap();
-
-    let config_root = tmp.path().join("cfg");
-    ravel_lite::init::run_init(&config_root, false).unwrap();
 
     let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
         .args(["run", "--config"])
@@ -74,13 +80,14 @@ fn run_multi_plan_requires_survey_state_flag() {
 /// ignored — silently ignoring would mask their mistake.
 #[test]
 fn run_single_plan_rejects_survey_state_flag() {
+    // V2-shaped plan dir so the v2_gate accepts it; the test then
+    // exercises single-plan rejection of --survey-state.
     let tmp = TempDir::new().unwrap();
-    let plan = tmp.path().join("solo");
-    fs::create_dir_all(&plan).unwrap();
-    fs::write(plan.join("phase.md"), "work").unwrap();
-
     let config_root = tmp.path().join("cfg");
     ravel_lite::init::run_init(&config_root, false).unwrap();
+    let plan = config_root.join("plans/solo");
+    fs::create_dir_all(&plan).unwrap();
+    fs::write(plan.join("phase.md"), "work").unwrap();
 
     let state_path = tmp.path().join("survey.yaml");
 
@@ -592,41 +599,7 @@ fn discover_with_empty_registry_exits_with_not_found_code() {
     );
 }
 
-/// `state migrate` against a malformed legacy `session-log.md` must
-/// surface the `InvalidInput` code from `parse_md.rs` (exit 2,
-/// UsageError) through the `with_context` wrap in `state/migrate.rs`.
-/// Confirms that the parser's typed errors survive the caller's
-/// narrative-context layer — `error_code_of` walks the anyhow chain.
-#[test]
-fn state_migrate_with_malformed_session_log_md_exits_with_usage_error_code() {
-    let tmp = TempDir::new().unwrap();
-    let plan = tmp.path();
-    // Malformed: `### Session` heading with no body. The parser bails
-    // with `invalid("session ... has no body")`, which is `InvalidInput`.
-    fs::write(
-        plan.join("session-log.md"),
-        "### Session 1 (2026-01-01T00:00:00Z) — Empty body\n\n\
-         ### Session 2 (2026-01-02T00:00:00Z) — Has body\n\n\
-         real body\n",
-    )
-    .unwrap();
-
-    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
-        .args(["state", "migrate"])
-        .arg(plan)
-        .output()
-        .expect("binary must spawn");
-    assert_eq!(
-        out.status.code(),
-        Some(2),
-        "malformed session-log.md must exit 2 (UsageError, from InvalidInput); \
-         got {:?}, stderr: {}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stderr),
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("no body"),
-        "inner parser message must survive into the rendered error: {stderr}"
-    );
-}
+// `state migrate` (.md → .yaml converter) was removed in the v1→v2
+// cutover; every plan in every LLM_STATE dir is already YAML-shaped.
+// The companion test for the typed-error survival through that verb is
+// retired with the verb itself.

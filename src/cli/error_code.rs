@@ -35,6 +35,10 @@ pub enum ErrorCode {
     /// agent should NOT retry; this signals a code-level bug rather
     /// than a transient or user-fixable condition.
     Internal,
+    /// Operation cancelled by the user (e.g. declined a confirmation
+    /// prompt). Distinct from `InvalidInput` because the request was
+    /// well-formed; the user simply chose not to proceed.
+    Cancelled,
 }
 
 impl ErrorCode {
@@ -49,6 +53,7 @@ impl ErrorCode {
             ErrorCode::IoError => "IO_ERROR",
             ErrorCode::RateLimited => "RATE_LIMITED",
             ErrorCode::Internal => "INTERNAL",
+            ErrorCode::Cancelled => "CANCELLED",
         }
     }
 
@@ -64,6 +69,7 @@ impl ErrorCode {
             "IO_ERROR" => Some(ErrorCode::IoError),
             "RATE_LIMITED" => Some(ErrorCode::RateLimited),
             "INTERNAL" => Some(ErrorCode::Internal),
+            "CANCELLED" => Some(ErrorCode::Cancelled),
             _ => None,
         }
     }
@@ -80,6 +86,7 @@ impl ErrorCode {
             ErrorCode::IoError,
             ErrorCode::RateLimited,
             ErrorCode::Internal,
+            ErrorCode::Cancelled,
         ]
     }
 }

@@ -4,6 +4,8 @@ pub mod common;
 pub mod pi;
 pub mod pty_capture;
 
+pub mod test_stub;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;

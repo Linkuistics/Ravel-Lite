@@ -22,7 +22,7 @@ pub fn read_backlog(plan_dir: &Path) -> Result<BacklogFile> {
     if !path.exists() {
         bail_with!(
             ErrorCode::NotFound,
-            "{BACKLOG_FILENAME} not found at {}. Run `ravel-lite state migrate` to convert an existing backlog.md.",
+            "{BACKLOG_FILENAME} not found at {}. The plan must be a v2 layout — run `ravel-lite migrate-v1-v2 <old-plan-path> --as <name>` to convert a legacy plan.",
             path.display()
         );
     }
@@ -145,7 +145,7 @@ mod tests {
         let err = read_backlog(tmp.path()).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains(BACKLOG_FILENAME), "error must name {BACKLOG_FILENAME}: {msg}");
-        assert!(msg.contains("state migrate"), "error must suggest migrate: {msg}");
+        assert!(msg.contains("migrate-v1-v2"), "error must suggest migrate: {msg}");
     }
 
     #[test]

@@ -2066,3 +2066,25 @@ sessions:
     - **What worked:** Both tasks landed cleanly. `BacklogEntry.legacy` uses `#[serde(default, skip_serializing_if = "std::ops::Not::not")]` so the field is invisible in YAML when false; 14 `BacklogEntry { ... }` literal sites across tests and production code were patched. The three `LlmPhase` variants gained `as_str`/`parse` round-trips; non-exhaustive match sites in `format.rs`, `prompt.rs`, `phase_loop.rs`, and `tests/phase_loop.rs` were all handled. The migrate variants return `Ok(String::new())` from `load_phase_file` (P5 wires real prompts), and `unreachable!()` in both the production phase loop and the test mock. Full test suite green (1013 lib + 9 phase_loop + integration suites); clippy clean.
     - **What didn't work / gotchas:** Rustc emitted a spurious "unused variable: `prompt`" secondary error alongside the non-exhaustive match error in the test mock — adding the new arm cleared both. Future P5/P6 subagents touching match sites should watch for the same cascade.
     - **What this suggests trying next:** P2 (v2 path-shape gate) and P3 (mechanical migration half) are both fully unblocked and independent. P5 (three headless prompt files) is now unblocked by this session's placeholder arms in `prompt.rs::load_phase_file` (tagged `TODO(migrate-v1-v2 Phase 5)`). P4 (apply layers) still waits on P3's `Validated` struct.
+- id: session-146
+  timestamp: 2026-05-04T08:56:18Z
+  phase: work
+  body: |
+    ### Session 146 (2026-05-04T08:56:18Z) — Implement migrate-v1-v2 and remove legacy markdown state parsers
+
+    - Completed all six remaining P2–P7 tasks of the v1→v2 migration plan in a single work session.
+    - Added `src/v2_gate.rs`: path-shape gate that rejects cycle-shaped verbs (`run`, `state set-phase`) against unmigrated v1 plan dirs. Four hermetic unit tests; `tests/v2_gate_integration.rs` exercises the binary.
+    - Created `src/migrate_v1_v2/` module: `validate.rs` (seven failure modes, seven tests), `copy.rs` (copies `.yaml` state files, skips stale `.md`), `apply_intent.rs` / `apply_targets.rs` / `apply_memory.rs` (three headless apply layers driven by new phase prompt files), `orchestrator.rs` (wires validate → copy → apply chain), `proposals.rs` (LLM-driven proposal scaffolding).
+    - Added three headless phase prompts: `defaults/phases/migrate-intent.md`, `migrate-targets.md`, `migrate-memory-backfill.md`; embedded in `src/init.rs` so they deploy with `ravel-lite init`.
+    - Added `ravel-lite migrate-v1-v2 <old-plan-path> --as <name>` top-level CLI command to `src/main.rs`; introduced `build_headless_agent()` for one-shot workflows outside the TUI loop.
+    - Added `ErrorCode::Cancelled` for user-declined confirmation prompts (distinct from `InvalidInput`).
+    - Deleted `src/state/migrate.rs` (815 lines), `src/state/backlog/parse_md.rs` (452 lines), `src/state/memory/parse_md.rs` (236 lines), `src/state/session_log/parse_md.rs` (354 lines) — the entire legacy markdown-to-yaml migration system is gone.
+    - Removed `StateCommands::Migrate` from the CLI and its `STATE_MIGRATE_AFTER_HELP` constant.
+    - Fixed three pre-existing tests in `tests/cli.rs` whose fixtures used v1-shaped plan dirs; re-rooted them inside v2 context dirs so the gate accepts them. Same pattern in state_backlog/memory/session_log tests.
+    - Net: 311 insertions, 2406 deletions across 27 files.
+
+    What worked: all plan-prescribed code lifted directly. The gate integration and apply-layer dispatch pattern were clean. Test fixture repair (v1→v2 re-rooting) was mechanical.
+
+    What didn't: minor adaptation needed — clap's `r#as` raw-identifier syntax replaced with `#[arg(long = "as")]`; fixtures required `schema_version: 1` in `repos.yaml`.
+
+    What this suggests next: the live `LLM_STATE/core/` plan dir is a v1 layout; a fresh binary deployment will trip the gate on any cycle verb. The v1→v2 cutover migration of this dir must complete before the binary deploys (constraint: don't install a new binary until the migrator is fully wired).

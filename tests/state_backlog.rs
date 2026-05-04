@@ -1,6 +1,6 @@
-//! End-to-end CLI integration tests for `ravel-lite state backlog *`
-//! and `ravel-lite state migrate`. Shells out to the built binary via
-//! CARGO_BIN_EXE_ravel-lite, matching the pattern in tests/integration.rs.
+//! End-to-end CLI integration tests for `ravel-lite state backlog *`.
+//! Shells out to the built binary via CARGO_BIN_EXE_ravel-lite,
+//! matching the pattern in tests/integration.rs.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -11,132 +11,37 @@ fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_ravel-lite"))
 }
 
-fn seed_two_task_backlog_md(plan_dir: &std::path::Path) {
-    let content = "\
-### Add clippy `-D warnings` CI gate
-
-**Category:** `maintenance`
-**Status:** `not_started`
-**Dependencies:** none
-
-**Description:**
-
-Cargo clippy is clean today. Add a CI gate to keep it that way.
-
-**Results:** _pending_
-
----
-
-### Remove Claude Code `--debug-file` workaround
-
-**Category:** `maintenance`
-**Status:** `not_started`
-**Dependencies:** none
-
-**Description:**
-
-Blocked on upstream Claude Code release past 2.1.116.
-
-**Results:** _pending_
-
----
+/// Seed two TMS-shaped backlog items that the
+/// `list_format_markdown_*` tests below assert against. Replaces the
+/// pre-cutover .md → migrate path with a direct YAML write.
+fn seed_two_task_backlog_yaml(plan_dir: &std::path::Path) {
+    let yaml = "\
+schema_version: 1
+items:
+- id: add-clippy-d-warnings-ci-gate
+  kind: backlog-item
+  claim: 'Add clippy `-D warnings` CI gate'
+  justifications:
+  - kind: rationale
+    text: |
+      Cargo clippy is clean today. Add a CI gate to keep it that way.
+  status: active
+  authored_at: test
+  authored_in: test
+  category: maintenance
+- id: remove-claude-code-debug-file-workaround
+  kind: backlog-item
+  claim: 'Remove Claude Code `--debug-file` workaround'
+  justifications:
+  - kind: rationale
+    text: |
+      Blocked on upstream Claude Code release past 2.1.116.
+  status: active
+  authored_at: test
+  authored_in: test
+  category: maintenance
 ";
-    std::fs::write(plan_dir.join("backlog.md"), content).unwrap();
-}
-
-#[test]
-fn migrate_converts_backlog_md_to_yaml_and_list_emits_ready_tasks() {
-    let tmp = TempDir::new().unwrap();
-    seed_two_task_backlog_md(tmp.path());
-
-    let migrate = Command::new(bin())
-        .args(["state", "migrate"])
-        .arg(tmp.path())
-        .output()
-        .expect("failed to spawn ravel-lite");
-    assert!(
-        migrate.status.success(),
-        "migrate failed: stderr={}",
-        String::from_utf8_lossy(&migrate.stderr)
-    );
-    assert!(tmp.path().join("backlog.yaml").exists());
-    assert!(tmp.path().join("backlog.md").exists(), "default is keep-originals");
-
-    let list = Command::new(bin())
-        .args(["state", "backlog", "list"])
-        .arg(tmp.path())
-        .args(["--status", "active", "--ready"])
-        .output()
-        .expect("failed to spawn ravel-lite");
-    assert!(
-        list.status.success(),
-        "list failed: stderr={}",
-        String::from_utf8_lossy(&list.stderr)
-    );
-    let stdout = String::from_utf8(list.stdout).unwrap();
-    assert!(stdout.contains("add-clippy-d-warnings-ci-gate"), "output must include task id: {stdout}");
-    assert!(
-        stdout.contains("remove-claude-code-debug-file-workaround"),
-        "output must include second task id: {stdout}"
-    );
-}
-
-#[test]
-fn migrate_dry_run_does_not_write_yaml() {
-    let tmp = TempDir::new().unwrap();
-    seed_two_task_backlog_md(tmp.path());
-
-    let out = Command::new(bin())
-        .args(["state", "migrate"])
-        .arg(tmp.path())
-        .arg("--dry-run")
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "dry-run must exit 0");
-    assert!(!tmp.path().join("backlog.yaml").exists(), "dry-run wrote yaml");
-}
-
-#[test]
-fn migrate_is_idempotent_across_repeated_runs() {
-    let tmp = TempDir::new().unwrap();
-    seed_two_task_backlog_md(tmp.path());
-
-    for _ in 0..2 {
-        let out = Command::new(bin())
-            .args(["state", "migrate"])
-            .arg(tmp.path())
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "migrate failed: stderr={}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-
-    // List must still yield two tasks (no duplication, no corruption).
-    let list = Command::new(bin())
-        .args(["state", "backlog", "list"])
-        .arg(tmp.path())
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8(list.stdout).unwrap();
-    let tasks: usize = stdout.matches("id:").count();
-    assert_eq!(tasks, 2, "expected two tasks after idempotent migrate, got stdout:\n{stdout}");
-}
-
-#[test]
-fn migrate_parse_failure_leaves_filesystem_untouched() {
-    let tmp = TempDir::new().unwrap();
-    std::fs::write(tmp.path().join("backlog.md"), "### Bad\n\nno fields\n").unwrap();
-
-    let out = Command::new(bin())
-        .args(["state", "migrate"])
-        .arg(tmp.path())
-        .output()
-        .unwrap();
-    assert!(!out.status.success(), "malformed input must exit non-zero");
-    assert!(!tmp.path().join("backlog.yaml").exists(), "partial write on parse failure");
+    std::fs::write(plan_dir.join("backlog.yaml"), yaml).unwrap();
 }
 
 fn add_seed_task(plan_dir: &std::path::Path) {
@@ -569,12 +474,7 @@ fn repair_stale_statuses_dry_run_does_not_mutate_disk() {
 #[test]
 fn list_format_markdown_emits_deterministic_table_grouped_by_category() {
     let tmp = TempDir::new().unwrap();
-    seed_two_task_backlog_md(tmp.path());
-    Command::new(bin())
-        .args(["state", "migrate"])
-        .arg(tmp.path())
-        .output()
-        .unwrap();
+    seed_two_task_backlog_yaml(tmp.path());
 
     let out = Command::new(bin())
         .args(["state", "backlog", "list"])
@@ -599,12 +499,7 @@ fn list_format_markdown_emits_deterministic_table_grouped_by_category() {
 #[test]
 fn list_format_markdown_with_invalid_group_by_rejects() {
     let tmp = TempDir::new().unwrap();
-    seed_two_task_backlog_md(tmp.path());
-    Command::new(bin())
-        .args(["state", "migrate"])
-        .arg(tmp.path())
-        .output()
-        .unwrap();
+    seed_two_task_backlog_yaml(tmp.path());
 
     let out = Command::new(bin())
         .args(["state", "backlog", "list"])

@@ -76,9 +76,9 @@ fn project_name_for_plan(plan_path: &Path) -> Result<String> {
 /// co-located on the CLI.
 ///
 /// Structured plan-state (backlog, memory) is routed through the typed
-/// YAML API — `read_backlog` / `read_memory` — so `load_plan` cannot
-/// be silently bypassed by deleting the legacy `.md` originals via
-/// `state migrate --delete-originals`.
+/// YAML API — `read_backlog` / `read_memory`. Legacy `.md` siblings
+/// have no role in the v2 wire shape; the `state migrate` verb that
+/// produced them was retired with the v1→v2 cutover.
 pub fn load_plan(plan_dir: &Path) -> Result<PlanSnapshot> {
     let phase_file = plan_dir.join(PHASE_FILENAME);
     if !phase_file.exists() {

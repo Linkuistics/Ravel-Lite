@@ -2,7 +2,7 @@ tasks:
 - id: migrate-v1-v2-p2-v2-path-shape-gate
   title: 'migrate-v1-v2 P2: v2 path-shape gate'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Implement Phase 2 of the `migrate-v1-v2` plan: the v2 path-shape gate that blocks ravel-lite 2.x cycle-shaped verbs against unmigrated v1 plan paths.
@@ -29,10 +29,29 @@ tasks:
     ## Note
 
     This phase has no hard dependency on Phase 1 — they can be done in parallel by separate subagents if desired.
+  results: |
+    ## What was done
+
+    - Created `src/v2_gate.rs` with `validate_v2_plan_dir(plan_dir: &Path)`. Path-shape gate: passes iff `plan_dir.parent()` is `plans` and the grandparent contains `repos.yaml`. Error message includes the actionable `ravel-lite migrate-v1-v2 ... --as <new-name>` invocation.
+    - 4 hermetic unit tests cover: accepts v2; rejects v1; rejects `plans/` without `repos.yaml`; rejects `/`.
+    - Wired the gate into `Commands::Run` (loops over each plan_dir before dispatching to single/multi) and `StateCommands::SetPhase` in `src/main.rs`.
+    - Added `tests/v2_gate_integration.rs` with two binary-level tests (one for `run`, one for `set-phase`) asserting on the v1-layout error message.
+
+    ## What worked
+
+    The plan-prescribed code lifted directly. The `bail_with!` macro and `repos::REGISTRY_FILE` constant were already in place. Only `Run` and `SetPhase` were necessary to gate — the spec-mentioned `Triage`/`Reflect`/`AnalyseWork`/`Dream` are not standalone top-level verbs in this codebase (they live inside the cycle driven by `run_phase_loop`), so gating `Run` covers them transitively.
+
+    ## What didn't
+
+    - The downstream `tests/cli.rs` had three pre-existing tests that built temp plan dirs in v1 shape and exercised `run`/`set-phase`. Those tripped the gate. Fixed by re-rooting their fixtures inside an init'd v2 context (see P7 notes for the same kind of fix).
+
+    ## What this suggests next
+
+    - The local `LLM_STATE/core/` plan dir is itself a v1 layout. Once a fresh binary deploys, this work-phase prompt's final `ravel-lite state set-phase LLM_STATE/core analyse-work` call will hit the gate and fail. The constraint "don't install a new binary" (frozen-LLM_STATE memory) protects the current cycle, but the migration cutover plan needs to migrate this dir before the binary deploys.
 - id: migrate-v1-v2-p3-mechanical-half-validate-copy-cli-surface
   title: 'migrate-v1-v2 P3: mechanical half (validate, copy, CLI surface)'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Implement Phase 3 of the `migrate-v1-v2` plan: the mechanical half — module skeleton, CLI surface, input validation, and the file-copy step.
@@ -61,10 +80,33 @@ tasks:
     ## Note
 
     Independent of Phases 1, 2 — can run in parallel.
+  results: |
+    ## What was done
+
+    - Created `src/migrate_v1_v2/{mod.rs,validate.rs,copy.rs,apply_intent.rs,apply_targets.rs,apply_memory.rs}` module skeleton.
+    - `mod.rs::run_migrate_v1_v2(agent, old_plan_path, new_plan_name, config_dir, skip_confirm)` is the orchestrator entry point; calls validate → copy → three apply layers in sequence.
+    - `validate.rs::validate_inputs` returns the `Validated` struct; covers all seven failure modes (not-a-v1-plan, only-md plan, already-v2, missing repos.yaml, name collision, unregistered source repo, missing Atlas index). 7 hermetic tests.
+    - `copy.rs::copy_plan_state` copies `phase.md` + the four `.yaml` state files when present; skips stale `.md` siblings. 1 hermetic test.
+    - Apply layers shipped as stubs with the proper `pub async fn run(...)` signature and `unimplemented!()` bodies (filled in by P4).
+    - Added top-level `MigrateV1V2 { old_plan_path, --as, --config, --yes }` clap command in `src/main.rs` plus its dispatch arm.
+    - Factored `build_headless_agent(&Path) -> Result<Arc<dyn Agent>>` for one-shot headless workflows that don't run inside the TUI phase loop. Reuses existing `load_shared_config` + `load_agent_config` + ClaudeCodeAgent/PiAgent constructors.
+
+    ## What worked
+
+    - 8/8 unit tests green on the first compile after fixing a small set of registry-fixture details (added `schema_version: 1` to repos.yaml fixtures since the parser requires it; also added `OtherProj` directory creation for the unregistered-source-repo test so canonicalize succeeds).
+    - The plan's prescribed code lifted directly except for one small adaptation: clap's `r#as: String` field-name renaming — used `as_name: String` with `#[arg(long = "as")]` instead, which avoids the raw-identifier syntax.
+
+    ## What didn't
+
+    Nothing significant.
+
+    ## What this suggests next
+
+    P4 (apply layers) can proceed against the stub `Validated` struct. The proposal scratch schemas the apply layers consume are in P4's task scope.
 - id: migrate-v1-v2-p5-three-headless-prompt-files
   title: 'migrate-v1-v2 P5: three headless prompt files'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Implement Phase 5 of the `migrate-v1-v2` plan: the three headless prompt files for the migrate-* phases.
@@ -102,10 +144,32 @@ tasks:
     ## Verification
 
     `cargo test --package ravel-lite --lib init::tests::every_file_under_defaults_is_registered_in_embedded_files` passes after each. `./scripts/check.sh` passes.
+  results: |
+    ## What was done
+
+    - Authored three prompt files under `defaults/phases/`:
+      - `migrate-intent.md` — distil 1–5 intents from `phase.md`+backlog; emit `migrate-intent-proposal.yaml` with `intents` + `item_attributions`.
+      - `migrate-targets.md` — pick edit-targets from the source repo's catalog; emit `migrate-targets-proposal.yaml`.
+      - `migrate-memory-backfill.md` — assign per-entry `attribution`; emit `migrate-memory-proposal.yaml`.
+    - All three reference the five token substitutions (`{{OLD_PLAN_PATH}}`, `{{NEW_PLAN_DIR}}`, `{{NEW_PLAN_NAME}}`, `{{SOURCE_REPO_SLUG}}`, `{{SOURCE_REPO_PATH}}`) — wired by P6's orchestrator.
+    - Added all three to `EMBEDDED_FILES` in `src/init.rs`.
+    - Replaced the placeholder match arm in `src/prompt.rs::load_phase_file` (the one Phase 1 left returning `Ok(String::new())`) with the standard embedded-files lookup that already covers every other variant. Result: `load_phase_file` is now a single one-line lookup against the embedded set — no per-variant special-case.
+
+    ## What worked
+
+    `init::tests::every_file_under_defaults_is_registered_in_embedded_files` (the drift-guard) passes — the three new prompt files are properly registered.
+
+    ## What didn't
+
+    Nothing significant.
+
+    ## What this suggests next
+
+    The collapse of `load_phase_file` into a single line (vs the pre-existing per-variant match) is a small nice-to-have hygiene improvement enabled by removing Phase 1's placeholder. P6 can now compose these prompts via `compose_prompt(phase, &ctx, &tokens, &[])` without any further wiring.
 - id: migrate-v1-v2-p7-remove-legacy-state-migrate-verb
   title: 'migrate-v1-v2 P7: remove legacy state migrate verb'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Implement Phase 7 of the `migrate-v1-v2` plan: delete the legacy `state migrate` (.md → .yaml) verb and its `parse_*_markdown` parsers.
@@ -140,6 +204,32 @@ tasks:
     ## Verification
 
     `cargo build --package ravel-lite` passes. `cargo test --package ravel-lite` full suite green. `./scripts/check.sh` passes.
+  results: |
+    ## What was done
+
+    - Verified via grep: `parse_*_markdown` only referenced inside `state/migrate.rs`, the parser modules themselves, and `mod.rs` re-exports. No external callers.
+    - Removed `StateCommands::Migrate { ... }` enum variant + its dispatch arm + the `STATE_MIGRATE_AFTER_HELP` const block from `src/main.rs`.
+    - Deleted `src/state/migrate.rs`, `src/state/backlog/parse_md.rs`, `src/state/memory/parse_md.rs`, `src/state/session_log/parse_md.rs`.
+    - Updated mod declarations + re-exports in `src/state/mod.rs`, `src/state/backlog/mod.rs`, `src/state/memory/mod.rs`, `src/state/session_log/mod.rs`.
+    - Updated three "file not found" error messages in `state/{backlog,memory,session_log}/yaml_io.rs` to point at `migrate-v1-v2` instead of the deleted `state migrate`.
+    - Updated docstring in `src/survey/discover.rs::load_plan` that mentioned `state migrate --delete-originals`.
+    - Deleted the 7 pre-existing tests that exercised `state migrate` directly (3 in `tests/state_backlog.rs`, 3 in `tests/state_memory.rs`, 3 in `tests/state_session_log.rs`, 1 in `tests/cli.rs`).
+    - Replaced the `state migrate`-based seeding in `list_format_markdown_*` tests with direct YAML seeding (new `seed_two_task_backlog_yaml` helper).
+    - Updated the assertion strings in three `read_errors_when_*_is_missing` tests in yaml_io modules to look for `"migrate-v1-v2"` instead of `"state migrate"`.
+
+    ## What worked
+
+    - Cargo build clean after deletes (no orphan callers).
+    - Full test suite green: every previously-passing test still passes after the cleanup.
+    - `./scripts/check.sh` (clippy + bail!/anyhow! audit + with_context audit) passes.
+
+    ## What didn't
+
+    Pre-existing tests in `tests/cli.rs` and `tests/state_*.rs` were broken by the v2_gate (P2) and the `state migrate` deletion (P7) in ways the plan didn't fully spell out. Fixing them by reshaping fixtures and deleting now-meaningless tests was the right call — the deleted tests were testing a verb that no longer exists.
+
+    ## What this suggests next
+
+    P8 (cross-repo .md sibling cleanup in 5 sibling repos) is the only remaining migrate-v1-v2-related task. Now that the local repo's source no longer has the legacy parsers, removing the `.md` siblings in the 5 sibling repos becomes purely cosmetic — the deployed binary can't read them anyway. Mechanical task; can be done by direct git operations rather than via subagents.
 - id: migrate-v1-v2-p8-cross-repo-md-sibling-cleanup
   title: 'migrate-v1-v2 P8: cross-repo md sibling cleanup'
   category: architecture-next
@@ -197,7 +287,7 @@ tasks:
 - id: migrate-v1-v2-p4-apply-layers-intent-targets-memory
   title: 'migrate-v1-v2 P4: apply layers (intent, targets, memory)'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies:
   - migrate-v1-v2-p3-mechanical-half-validate-copy-cli-surface
   description: |
@@ -232,10 +322,32 @@ tasks:
     ## Verification
 
     `./scripts/check.sh` passes. `cargo test --package ravel-lite --lib migrate_v1_v2::{proposals,apply_intent,apply_targets,apply_memory}` all green.
+  results: |
+    ## What was done
+
+    - `src/migrate_v1_v2/proposals.rs` — proposal scratch schemas: `IntentProposal` (with `ItemAttribution::is_legacy()`), `TargetsProposal`, `TargetProposal`, `MemoryProposal`, `MemoryAttribution`. Constants `INTENT_PROPOSAL_FILENAME`, `TARGETS_PROPOSAL_FILENAME`, `MEMORY_PROPOSAL_FILENAME`. 4 round-trip serde tests.
+    - `apply_intent.rs::apply_proposal` — parses scratch YAML → writes `intents.yaml` → walks `backlog.yaml` adding `Justification::ServesIntent { intent_id }` for attributed items or stamping `legacy: true` for unattributed. 3 hermetic tests including unknown-id error path.
+    - `apply_targets.rs::apply_proposal` — parses scratch → calls `mount_target` for each target. 2 hermetic tests including a real `git init`'d source repo with stub `.atlas/components.yaml` (full schema with `generated_at` + `cache_fingerprints` so the strict atlas parser accepts it).
+    - `apply_memory.rs::apply_proposal` — parses scratch → sets `attribution` per entry; null attribution also sets `status: legacy`. 2 hermetic tests.
+    - Added `MemoryStatus::Legacy` variant to `src/plan_kg.rs`. Non-terminal (the user can curate by re-attributing → Active or defeating). Transition table extended with `Legacy → Active` and `Legacy → Defeated`. The status round-trip test extended; all enum match sites still exhaustive (no clippy regressions).
+
+    ## What worked
+
+    - 19/19 migrate_v1_v2 tests pass.
+    - `Justification::ServesIntent` already exists in the knowledge-graph crate (verified by grep before adding), so no extension to the substrate was needed.
+    - The atlas components.yaml fixture for the targets test required two iterations — first to add `evidence_grade`/`rationale`, then to add `generated_at` + `cache_fingerprints` (the parser is strict). Final fixture matches `src/atlas.rs::write_components_yaml` test helper.
+
+    ## What didn't
+
+    The `pub async fn run(...)` orchestrator-facing functions are intentionally minimal stubs that just call `apply_proposal`; the `super::orchestrator::invoke_phase` wiring is P6.
+
+    ## What this suggests next
+
+    P6 can now wire the three `pub async fn run` functions to call `super::orchestrator::invoke_phase` first. The apply_proposal functions are the testable surface; they're already covered.
 - id: migrate-v1-v2-p6-orchestrator-and-end-to-end-test
   title: 'migrate-v1-v2 P6: orchestrator and end-to-end test'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies:
   - migrate-v1-v2-p4-apply-layers-intent-targets-memory
   - migrate-v1-v2-p5-three-headless-prompt-files
@@ -267,6 +379,31 @@ tasks:
     ## Verification
 
     `./scripts/check.sh` passes. `cargo test --package ravel-lite --test migrate_v1_v2_e2e` green. This is the gate after which the migrator is feature-complete.
+  results: |
+    ## What was done
+
+    - `src/agent/test_stub.rs` — `StubAgent` impl Agent. Per-phase pre-baked YAML written to the appropriate scratch filename when `invoke_headless` is called for a `Migrate*` phase; `unreachable!()` for interactive and non-migrate phases. Convenience constructor `stub(plan_dir, intent_yaml, targets_yaml, memory_yaml) -> Arc<dyn Agent>`.
+    - `src/migrate_v1_v2/orchestrator.rs` — `invoke_phase(agent, validated, phase)` renders the prompt with all five tokens via `compose_prompt`, builds a throwaway `UISender` via `tokio::sync::mpsc::unbounded_channel()`, and calls `agent.invoke_headless`. `confirm(message)` does the stdin Y/N prompt, errors with `ErrorCode::Cancelled` on no.
+    - Added `Cancelled` ErrorCode variant + wire-form `"CANCELLED"` + `ExitCategory::UsageError` mapping. Updated `parse_opt`, `all()`, `from(&ErrorCode)`. The existing `round_trip_every_variant` test catches missing arms automatically; passes.
+    - Wired the three `apply_*::run` functions to call `super::orchestrator::invoke_phase` before `apply_proposal`, and added `confirm` calls inside `apply_proposal` when `!skip_confirm`.
+    - `tests/migrate_v1_v2_e2e.rs` — full end-to-end test: real git repo + Atlas index + v1 plan + repos.yaml; pre-bake three proposal YAMLs; run `run_migrate_v1_v2`; assert all v2 files present, worktree mounted, scratch files removed, `serves-intent` justification on the backlog item, `attribution` on the memory entry.
+    - Renamed clap variant from inferred `migrate-v1v2` (Rust's CamelCase → kebab-case heuristic merges the trailing v2) to explicit `migrate-v1-v2` via `#[command(name = "migrate-v1-v2")]`. The drift-guard test at `tests/phase_prompts_cli_resolution.rs` (which spawns the binary against the verb names mentioned in prompt prose) caught this.
+
+    ## What worked
+
+    - E2E test green on first run after fixing two compile issues: `KindMarker::new()` (not in scope where I first put it), and the `#[cfg(test)]` visibility puzzle for `test_stub` between unit and integration test crates.
+    - Resolved the cfg(test) visibility issue by making `test_stub` an unconditional `pub mod`. Trade-off: the StubAgent's ~30 LoC ships in the production binary. It's safe (only writes a file when `invoke_headless` is called for a Migrate* phase) and never reachable from the CLI surface, so the cost is negligible.
+
+    ## What didn't
+
+    Nothing significant once the visibility puzzle was resolved.
+
+    ## What this suggests next
+
+    The migrator is feature-complete. Ready to migrate the local `LLM_STATE/core` plan once we can deploy the new binary. Out of scope for this cycle:
+    - P7 (remove legacy state migrate verb) — done in this cycle as well.
+    - P8 (cross-repo .md sibling cleanup in 5 sibling repos) — deferred. Best done after the new binary deploys and the local `LLM_STATE/core` is migrated, so we have a reference point for "this is what a clean post-cutover repo looks like."
+    - A separate, settled task: actually migrating `LLM_STATE/core` (the local plan) to the v2 layout. Requires the new binary on disk, which is currently blocked by the `LLM_STATE-shape-frozen-until-migrator-exists` constraint. Now that the migrator exists, the constraint can be lifted.
 - id: state-intents-render-overview-regenerate-phase-md-from-intents-task-counts
   title: 'state intents render-overview: regenerate phase.md from intents + task counts'
   category: architecture-next

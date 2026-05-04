@@ -133,6 +133,10 @@ pub enum MemoryStatus {
     Active,
     Defeated,
     Superseded,
+    /// Migrated from a v1 plan but the migrate-memory-backfill phase
+    /// could not attribute the entry to any component. Awaits user
+    /// curation: either re-attribute (→ Active) or defeat.
+    Legacy,
 }
 
 impl ItemStatus for MemoryStatus {
@@ -141,6 +145,7 @@ impl ItemStatus for MemoryStatus {
             MemoryStatus::Active => "active",
             MemoryStatus::Defeated => "defeated",
             MemoryStatus::Superseded => "superseded",
+            MemoryStatus::Legacy => "legacy",
         }
     }
     fn parse(s: &str) -> Option<Self> {
@@ -148,16 +153,21 @@ impl ItemStatus for MemoryStatus {
             "active" => Some(MemoryStatus::Active),
             "defeated" => Some(MemoryStatus::Defeated),
             "superseded" => Some(MemoryStatus::Superseded),
+            "legacy" => Some(MemoryStatus::Legacy),
             _ => None,
         }
     }
     fn is_terminal(self) -> bool {
-        !matches!(self, MemoryStatus::Active)
+        matches!(self, MemoryStatus::Defeated | MemoryStatus::Superseded)
     }
     fn transitions() -> &'static [(Self, Self)] {
         &[
             (MemoryStatus::Active, MemoryStatus::Defeated),
             (MemoryStatus::Active, MemoryStatus::Superseded),
+            // Legacy is awaiting curation: the user can either bring it
+            // back to active (after attributing) or defeat it.
+            (MemoryStatus::Legacy, MemoryStatus::Active),
+            (MemoryStatus::Legacy, MemoryStatus::Defeated),
         ]
     }
 }
@@ -282,6 +292,7 @@ mod tests {
             MemoryStatus::Active,
             MemoryStatus::Defeated,
             MemoryStatus::Superseded,
+            MemoryStatus::Legacy,
         ] {
             let yaml = serde_yaml::to_string(&s).unwrap();
             let back: MemoryStatus = serde_yaml::from_str(&yaml).unwrap();
