@@ -23,6 +23,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use super::yaml_io::{delete_target_requests, read_target_requests};
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
 use crate::state::targets::mount_target;
 
 pub fn drain_target_requests(plan_dir: &Path, context_root: &Path) -> Result<usize> {
@@ -49,7 +51,8 @@ pub fn drain_target_requests(plan_dir: &Path, context_root: &Path) -> Result<usi
                 req.reason,
                 plan_dir.display()
             )
-        })?;
+        })
+        .with_code(ErrorCode::IoError)?;
         mounted += 1;
     }
 

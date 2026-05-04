@@ -16,6 +16,7 @@
 use anyhow::{Context, Result};
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::{CodedError, ErrorCode};
 
 fn invalid(message: String) -> anyhow::Error {
@@ -40,7 +41,8 @@ pub fn parse_backlog_markdown(input: &str) -> Result<BacklogFile> {
     let blocks = split_into_task_blocks(input);
     for (block_index, block) in blocks.into_iter().enumerate() {
         let entry = parse_single_task_block(&block, &existing_ids)
-            .with_context(|| format!("failed to parse task block #{}", block_index + 1))?;
+            .with_context(|| format!("failed to parse task block #{}", block_index + 1))
+            .with_code(ErrorCode::InvalidInput)?;
         existing_ids.push(entry.item.id.clone());
         items.push(entry);
     }

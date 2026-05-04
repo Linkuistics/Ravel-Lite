@@ -91,7 +91,8 @@ pub fn resolve(global_dir: &Path, plan_dir: Option<&Path>) -> Result<ResolvedCon
     // defaults to the Lua surface before reading any layer. Idempotent
     // and a no-op for fresh or already-v2 dirs.
     migrate_v1_to_v2::migrate_if_needed(global_dir)
-        .context("v1\u{2192}v2 config-dir migration")?;
+        .context("v1\u{2192}v2 config-dir migration")
+        .with_code(ErrorCode::IoError)?;
 
     let acc = Arc::new(Mutex::new(seed_from_embedded()?));
 
@@ -133,19 +134,22 @@ pub fn resolve(global_dir: &Path, plan_dir: Option<&Path>) -> Result<ResolvedCon
 
 fn seed_from_embedded() -> Result<Accumulator> {
     let shared: SharedConfig = serde_yaml::from_str(require_embedded("config.yaml")?)
-        .context("parse embedded config.yaml")?;
+        .context("parse embedded config.yaml")
+        .with_code(ErrorCode::Internal)?;
 
     let mut agents = HashMap::new();
     let mut tokens = HashMap::new();
     for name in KNOWN_AGENTS {
         let cfg_key = format!("agents/{name}/config.yaml");
         let cfg: AgentConfig = serde_yaml::from_str(require_embedded(&cfg_key)?)
-            .with_context(|| format!("parse embedded {cfg_key}"))?;
+            .with_context(|| format!("parse embedded {cfg_key}"))
+            .with_code(ErrorCode::Internal)?;
         agents.insert((*name).to_string(), cfg);
 
         let tok_key = format!("agents/{name}/tokens.yaml");
         let tok: HashMap<String, String> = serde_yaml::from_str(require_embedded(&tok_key)?)
-            .with_context(|| format!("parse embedded {tok_key}"))?;
+            .with_context(|| format!("parse embedded {tok_key}"))
+            .with_code(ErrorCode::Internal)?;
         tokens.insert((*name).to_string(), tok);
     }
 
@@ -164,7 +168,8 @@ fn lua_path(dir: &Path) -> Option<std::path::PathBuf> {
 
 fn run_layer(lua: &Lua, path: &Path, label: &str) -> Result<()> {
     let body = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {label} {}", path.display()))?;
+        .with_context(|| format!("Failed to read {label} {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
     let chunk_name = path.to_string_lossy().to_string();
     lua.load(&body)
         .set_name(chunk_name)

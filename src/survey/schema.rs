@@ -7,6 +7,7 @@
 use anyhow::{Context, Result};
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 use crate::plan_kg::FindingStatus;
 use crate::state::backlog::{PlanRowCounts, TaskCounts};
@@ -153,11 +154,13 @@ pub struct Recommendation {
 /// instructions otherwise.
 pub fn parse_survey_response(stdout: &str) -> Result<SurveyResponse> {
     let content = strip_code_fence(stdout);
-    serde_yaml::from_str(content).with_context(|| {
-        format!(
-            "Failed to parse survey response as YAML. Raw output from claude:\n---\n{stdout}\n---"
-        )
-    })
+    serde_yaml::from_str(content)
+        .with_context(|| {
+            format!(
+                "Failed to parse survey response as YAML. Raw output from claude:\n---\n{stdout}\n---"
+            )
+        })
+        .with_code(ErrorCode::InvalidInput)
 }
 
 /// Serialise a `SurveyResponse` to canonical YAML. Re-emission via
@@ -165,7 +168,9 @@ pub fn parse_survey_response(stdout: &str) -> Result<SurveyResponse> {
 /// through the typed schema — two emissions of the same struct
 /// produce byte-identical YAML.
 pub fn emit_survey_yaml(response: &SurveyResponse) -> Result<String> {
-    serde_yaml::to_string(response).context("Failed to serialise SurveyResponse as YAML")
+    serde_yaml::to_string(response)
+        .context("Failed to serialise SurveyResponse as YAML")
+        .with_code(ErrorCode::Internal)
 }
 
 /// Inject the Rust-computed `input_hash` into every `PlanRow`, matched
@@ -186,13 +191,16 @@ pub fn inject_input_hashes(
     let mut injected = 0;
     for row in &mut response.plans {
         let key = plan_key(&row.project, &row.plan);
-        let hash = hashes_by_plan_key.get(&key).with_context(|| {
-            format!(
-                "survey response contains plan {key} that was not discovered. \
-                 The LLM returned a plan row we did not supply — this usually \
-                 means the model hallucinated a plan identifier."
-            )
-        })?;
+        let hash = hashes_by_plan_key
+            .get(&key)
+            .with_context(|| {
+                format!(
+                    "survey response contains plan {key} that was not discovered. \
+                     The LLM returned a plan row we did not supply — this usually \
+                     means the model hallucinated a plan identifier."
+                )
+            })
+            .with_code(ErrorCode::Internal)?;
         row.input_hash = hash.clone();
         injected += 1;
     }

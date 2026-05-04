@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 use component_ontology::{self as ontology, Edge, EvidenceGrade, RelatedComponentsFile};
 use crate::repos::{self, ReposRegistry};
@@ -115,7 +116,8 @@ pub fn run_list(config_root: &Path, filter: &ListFilter<'_>) -> Result<()> {
     };
 
     let yaml = serde_yaml::to_string(&filtered)
-        .context("failed to serialise related-components to YAML")?;
+        .context("failed to serialise related-components to YAML")
+        .with_code(ErrorCode::Internal)?;
     print!("{yaml}");
     Ok(())
 }
@@ -224,21 +226,27 @@ fn resolve_plan_component_name(registry: &ReposRegistry, plan_dir: &Path) -> Res
 /// convention; avoids `canonicalize`'s symlink-induced `/private/...`
 /// drift on macOS).
 fn plan_project_path(plan_dir: &Path) -> Result<PathBuf> {
-    let absolute = std::path::absolute(plan_dir).with_context(|| {
-        format!(
-            "failed to resolve plan dir {} to an absolute path",
-            plan_dir.display()
-        )
-    })?;
+    let absolute = std::path::absolute(plan_dir)
+        .with_context(|| {
+            format!(
+                "failed to resolve plan dir {} to an absolute path",
+                plan_dir.display()
+            )
+        })
+        .with_code(ErrorCode::IoError)?;
     let parent = absolute
         .parent()
-        .with_context(|| format!("plan dir {} has no parent", absolute.display()))?;
-    let grandparent = parent.parent().with_context(|| {
-        format!(
-            "plan dir {} has no grandparent (expected <project>/<state-dir>/<plan>)",
-            absolute.display()
-        )
-    })?;
+        .with_context(|| format!("plan dir {} has no parent", absolute.display()))
+        .with_code(ErrorCode::InvalidInput)?;
+    let grandparent = parent
+        .parent()
+        .with_context(|| {
+            format!(
+                "plan dir {} has no grandparent (expected <project>/<state-dir>/<plan>)",
+                absolute.display()
+            )
+        })
+        .with_code(ErrorCode::InvalidInput)?;
     Ok(grandparent.to_path_buf())
 }
 

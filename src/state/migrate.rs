@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 
 use crate::state::backlog::{
@@ -169,7 +170,8 @@ pub fn run_migrate(plan_dir: &Path, options: &MigrateOptions) -> Result<()> {
             PendingMigration::Backlog { parsed, .. } => {
                 write_backlog(plan_dir, parsed)?;
                 let validated = read_backlog(plan_dir)
-                    .with_context(|| "validation round-trip read failed after backlog write")?;
+                    .with_context(|| "validation round-trip read failed after backlog write")
+                    .with_code(ErrorCode::Internal)?;
                 if !backlogs_equivalent(&validated, parsed) {
                     bail_with!(
                         ErrorCode::Internal,
@@ -180,7 +182,8 @@ pub fn run_migrate(plan_dir: &Path, options: &MigrateOptions) -> Result<()> {
             PendingMigration::Memory { parsed, .. } => {
                 write_memory(plan_dir, parsed)?;
                 let validated = read_memory(plan_dir)
-                    .with_context(|| "validation round-trip read failed after memory write")?;
+                    .with_context(|| "validation round-trip read failed after memory write")
+                    .with_code(ErrorCode::Internal)?;
                 if !memories_equivalent(&validated, parsed) {
                     bail_with!(
                         ErrorCode::Internal,
@@ -190,9 +193,11 @@ pub fn run_migrate(plan_dir: &Path, options: &MigrateOptions) -> Result<()> {
             }
             PendingMigration::SessionLog { parsed, .. } => {
                 write_session_log(plan_dir, parsed)?;
-                let validated = read_session_log(plan_dir).with_context(|| {
-                    "validation round-trip read failed after session-log write"
-                })?;
+                let validated = read_session_log(plan_dir)
+                    .with_context(|| {
+                        "validation round-trip read failed after session-log write"
+                    })
+                    .with_code(ErrorCode::Internal)?;
                 if !session_logs_equivalent(&validated, parsed) {
                     bail_with!(
                         ErrorCode::Internal,
@@ -202,9 +207,11 @@ pub fn run_migrate(plan_dir: &Path, options: &MigrateOptions) -> Result<()> {
             }
             PendingMigration::LatestSession { parsed, .. } => {
                 write_latest_session(plan_dir, parsed)?;
-                let validated = read_latest_session(plan_dir).with_context(|| {
-                    "validation round-trip read failed after latest-session write"
-                })?;
+                let validated = read_latest_session(plan_dir)
+                    .with_context(|| {
+                        "validation round-trip read failed after latest-session write"
+                    })
+                    .with_code(ErrorCode::Internal)?;
                 if !session_records_equivalent(&validated, parsed) {
                     bail_with!(
                         ErrorCode::Internal,
@@ -220,7 +227,8 @@ pub fn run_migrate(plan_dir: &Path, options: &MigrateOptions) -> Result<()> {
             let source = mig.source();
             if source.exists() {
                 std::fs::remove_file(source)
-                    .with_context(|| format!("failed to delete {}", source.display()))?;
+                    .with_context(|| format!("failed to delete {}", source.display()))
+                    .with_code(ErrorCode::IoError)?;
             }
         }
     }
@@ -238,13 +246,16 @@ fn plan_backlog_migration(
     }
 
     let text = std::fs::read_to_string(&source)
-        .with_context(|| format!("failed to read {}", source.display()))?;
+        .with_context(|| format!("failed to read {}", source.display()))
+        .with_code(ErrorCode::IoError)?;
     let parsed = parse_backlog_markdown(&text)
-        .with_context(|| format!("failed to parse {} as legacy backlog markdown", source.display()))?;
+        .with_context(|| format!("failed to parse {} as legacy backlog markdown", source.display()))
+        .with_code(ErrorCode::InvalidInput)?;
 
     let needs_write = if target.exists() {
         let existing = read_backlog(plan_dir)
-            .with_context(|| "failed to read existing backlog.yaml for idempotency check")?;
+            .with_context(|| "failed to read existing backlog.yaml for idempotency check")
+            .with_code(ErrorCode::IoError)?;
         if backlogs_equivalent(&existing, &parsed) {
             false
         } else if options.force {
@@ -279,13 +290,16 @@ fn plan_memory_migration(
     }
 
     let text = std::fs::read_to_string(&source)
-        .with_context(|| format!("failed to read {}", source.display()))?;
+        .with_context(|| format!("failed to read {}", source.display()))
+        .with_code(ErrorCode::IoError)?;
     let parsed = parse_memory_markdown(&text)
-        .with_context(|| format!("failed to parse {} as legacy memory markdown", source.display()))?;
+        .with_context(|| format!("failed to parse {} as legacy memory markdown", source.display()))
+        .with_code(ErrorCode::InvalidInput)?;
 
     let needs_write = if target.exists() {
         let existing = read_memory(plan_dir)
-            .with_context(|| "failed to read existing memory.yaml for idempotency check")?;
+            .with_context(|| "failed to read existing memory.yaml for idempotency check")
+            .with_code(ErrorCode::IoError)?;
         if memories_equivalent(&existing, &parsed) {
             false
         } else if options.force {
@@ -320,17 +334,21 @@ fn plan_session_log_migration(
     }
 
     let text = std::fs::read_to_string(&source)
-        .with_context(|| format!("failed to read {}", source.display()))?;
-    let parsed = parse_session_log_markdown(&text).with_context(|| {
-        format!(
-            "failed to parse {} as legacy session-log markdown",
-            source.display()
-        )
-    })?;
+        .with_context(|| format!("failed to read {}", source.display()))
+        .with_code(ErrorCode::IoError)?;
+    let parsed = parse_session_log_markdown(&text)
+        .with_context(|| {
+            format!(
+                "failed to parse {} as legacy session-log markdown",
+                source.display()
+            )
+        })
+        .with_code(ErrorCode::InvalidInput)?;
 
     let needs_write = if target.exists() {
         let existing = read_session_log(plan_dir)
-            .with_context(|| "failed to read existing session-log.yaml for idempotency check")?;
+            .with_context(|| "failed to read existing session-log.yaml for idempotency check")
+            .with_code(ErrorCode::IoError)?;
         if session_logs_equivalent(&existing, &parsed) {
             false
         } else if options.force {
@@ -365,18 +383,23 @@ fn plan_latest_session_migration(
     }
 
     let text = std::fs::read_to_string(&source)
-        .with_context(|| format!("failed to read {}", source.display()))?;
-    let parsed = parse_latest_session_markdown(&text).with_context(|| {
-        format!(
-            "failed to parse {} as legacy latest-session markdown",
-            source.display()
-        )
-    })?;
+        .with_context(|| format!("failed to read {}", source.display()))
+        .with_code(ErrorCode::IoError)?;
+    let parsed = parse_latest_session_markdown(&text)
+        .with_context(|| {
+            format!(
+                "failed to parse {} as legacy latest-session markdown",
+                source.display()
+            )
+        })
+        .with_code(ErrorCode::InvalidInput)?;
 
     let needs_write = if target.exists() {
-        let existing = read_latest_session(plan_dir).with_context(|| {
-            "failed to read existing latest-session.yaml for idempotency check"
-        })?;
+        let existing = read_latest_session(plan_dir)
+            .with_context(|| {
+                "failed to read existing latest-session.yaml for idempotency check"
+            })
+            .with_code(ErrorCode::IoError)?;
         if session_records_equivalent(&existing, &parsed) {
             false
         } else if options.force {

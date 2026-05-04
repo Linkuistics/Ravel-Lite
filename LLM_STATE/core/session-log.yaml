@@ -1995,3 +1995,16 @@ sessions:
     - `migrate_projects_yaml_error()` in `repos.rs` was special-cased: it returns a bare `anyhow::Error` with no `Result` chain to attach `.with_code()` to, so it was rewritten as `anyhow::Error::new(CodedError { code, message })` — same internal shape that `bail_with!` builds.
     - Guard is now clean against the full `src/**` tree; all 22 sites were the last batch of missed paths from the prior tagging sweeps.
     - What this suggests next: the `with_context` IO-chain sweep (untagged `.context()`/`.with_context()` propagation paths) is the remaining gap before the JSON error-envelope work can proceed.
+- id: session-140
+  timestamp: 2026-05-04T01:39:45Z
+  phase: work
+  body: |
+    ### Session 140 (2026-05-04T01:39:45Z) — Tag with_context chains with ErrorCode across src/**
+
+    - Completed the final leg of the three-cycle ErrorCode tagging sweep: all `with_context` / `.context(` chains in 45 production source files now carry `.with_code(ErrorCode::X)`.
+    - 272 production sites tagged; test-mod sites and `tests/` left untouched per task spec.
+    - Categorisation applied: `IoError` for file I/O and subprocess failures, `InvalidInput` for parse/malformed-content wraps, `Internal` for serialisation invariants that should never fail, `NotFound` for registry lookup misses.
+    - `ResultExt` import added where missing; no new infrastructure introduced — `with_code` already existed in `src/cli/error_context.rs`.
+    - Build clean (`cargo check --all-targets`), clippy clean, 999 lib tests pass.
+
+    What this suggests trying next: extend `scripts/check.sh` with a regression guard that forbids future untagged `.with_context(` / `.context(` sites (the peer task `cli-add-errorcode-regression-guard-to-check-sh`). Now that every production site is tagged, the invariant can be locked in CI.

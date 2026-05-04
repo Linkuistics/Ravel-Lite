@@ -144,12 +144,14 @@ pub fn resolve_plan_dir(context_root: &Path, plan_name: &str) -> Result<PathBuf>
 /// This keeps the "no LLM-authored mechanical scaffolding" contract
 /// intact.
 pub fn scaffold_plan_dir(abs_plan_dir: &Path) -> Result<()> {
-    fs::create_dir(abs_plan_dir).with_context(|| {
-        format!(
-            "Failed to create plan directory {}",
-            abs_plan_dir.display()
-        )
-    })?;
+    fs::create_dir(abs_plan_dir)
+        .with_context(|| {
+            format!(
+                "Failed to create plan directory {}",
+                abs_plan_dir.display()
+            )
+        })
+        .with_code(ErrorCode::IoError)?;
 
     let writes: [(&str, &[u8]); 6] = [
         (PHASE_FILENAME, b"triage\n"),
@@ -162,7 +164,8 @@ pub fn scaffold_plan_dir(abs_plan_dir: &Path) -> Result<()> {
     for (name, bytes) in writes {
         let path = abs_plan_dir.join(name);
         fs::write(&path, bytes)
-            .with_context(|| format!("Failed to write {}", path.display()))?;
+            .with_context(|| format!("Failed to write {}", path.display()))
+            .with_code(ErrorCode::IoError)?;
     }
     Ok(())
 }
@@ -213,7 +216,8 @@ pub async fn run_create(
     let plans_dir = config_root.join("plans");
     if !plans_dir.exists() {
         fs::create_dir_all(&plans_dir)
-            .with_context(|| format!("Failed to create {}", plans_dir.display()))?;
+            .with_context(|| format!("Failed to create {}", plans_dir.display()))
+            .with_code(ErrorCode::IoError)?;
     }
 
     // Runner-owned scaffolding runs BEFORE the claude spawn so the LLM
@@ -260,7 +264,8 @@ pub async fn run_create(
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
-        .context("Failed to spawn claude CLI. Ensure it is installed and on PATH.")?;
+        .context("Failed to spawn claude CLI. Ensure it is installed and on PATH.")
+        .with_code(ErrorCode::IoError)?;
 
     let status = child.wait().await?;
     if !status.success() {
@@ -273,7 +278,8 @@ pub async fn run_create(
     // create — the first triage cycle generates backlog items from
     // intents (per architecture-next §`ravel-lite run <plan>`).
     let intents = crate::state::intents::read_intents(&abs_plan_dir)
-        .context("Failed to read scaffolded intents.yaml after claude session")?;
+        .context("Failed to read scaffolded intents.yaml after claude session")
+        .with_code(ErrorCode::IoError)?;
     if intents.items.is_empty() {
         eprintln!(
             "\nwarning: {} has no intents — the session may have exited before the plan was populated.",

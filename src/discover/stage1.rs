@@ -25,6 +25,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::{CodedError, ErrorCode};
 
 use super::DiscoverTarget;
@@ -123,12 +124,14 @@ async fn process_project(
     catalog_names: &[String],
     timeout: Duration,
 ) -> Result<Stage1Outcome> {
-    let state = compute_project_state(path).with_context(|| {
-        format!(
-            "compute_project_state for '{name}' at {}",
-            path.display()
-        )
-    })?;
+    let state = compute_project_state(path)
+        .with_context(|| {
+            format!(
+                "compute_project_state for '{name}' at {}",
+                path.display()
+            )
+        })
+        .with_code(ErrorCode::IoError)?;
 
     if let Some(cached) = cache::load(config_root, name)? {
         if cached.tree_sha == state.tree_sha && cached.dirty_hash == state.dirty_hash {
@@ -137,14 +140,18 @@ async fn process_project(
     }
 
     let cache_dir = cache::cache_dir(config_root);
-    std::fs::create_dir_all(&cache_dir).with_context(|| {
-        format!("failed to create cache dir {}", cache_dir.display())
-    })?;
+    std::fs::create_dir_all(&cache_dir)
+        .with_context(|| {
+            format!("failed to create cache dir {}", cache_dir.display())
+        })
+        .with_code(ErrorCode::IoError)?;
     let output_path = cache_dir.join(format!(".tmp-{name}-{}.yaml", std::process::id()));
     if output_path.exists() {
-        std::fs::remove_file(&output_path).with_context(|| {
-            format!("failed to remove stale tmp file {}", output_path.display())
-        })?;
+        std::fs::remove_file(&output_path)
+            .with_context(|| {
+                format!("failed to remove stale tmp file {}", output_path.display())
+            })
+            .with_code(ErrorCode::IoError)?;
     }
 
     let catalog_block = render_catalog_for_prompt(name, catalog_names);
@@ -168,15 +175,19 @@ async fn process_project(
         );
     }
 
-    let raw = std::fs::read_to_string(&output_path).with_context(|| {
-        format!("failed to read Stage 1 output {}", output_path.display())
-    })?;
-    let surface: SurfaceRecord = serde_yaml::from_str(&raw).with_context(|| {
-        format!(
-            "parse Stage 1 output for '{name}' from {}",
-            output_path.display()
-        )
-    })?;
+    let raw = std::fs::read_to_string(&output_path)
+        .with_context(|| {
+            format!("failed to read Stage 1 output {}", output_path.display())
+        })
+        .with_code(ErrorCode::IoError)?;
+    let surface: SurfaceRecord = serde_yaml::from_str(&raw)
+        .with_context(|| {
+            format!(
+                "parse Stage 1 output for '{name}' from {}",
+                output_path.display()
+            )
+        })
+        .with_code(ErrorCode::InvalidInput)?;
     let _ = std::fs::remove_file(&output_path);
 
     let file = SurfaceFile {
@@ -219,12 +230,14 @@ async fn spawn_claude_with_cwd(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .context("failed to spawn `claude` — ensure it is installed and on PATH")?;
+        .context("failed to spawn `claude` — ensure it is installed and on PATH")
+        .with_code(ErrorCode::IoError)?;
 
     let mut stdout = child
         .stdout
         .take()
-        .context("claude stdout pipe unavailable")?;
+        .context("claude stdout pipe unavailable")
+        .with_code(ErrorCode::Internal)?;
     let mut drain = String::new();
     let wait = tokio::time::timeout(timeout, async {
         let _ = stdout.read_to_string(&mut drain).await;
@@ -233,7 +246,9 @@ async fn spawn_claude_with_cwd(
     .await;
     match wait {
         Ok(Ok(status)) => Ok(status.success()),
-        Ok(Err(io_err)) => Err(io_err).context("waiting on claude process"),
+        Ok(Err(io_err)) => Err(io_err)
+            .context("waiting on claude process")
+            .with_code(ErrorCode::IoError),
         Err(_elapsed) => {
             let _ = child.kill().await;
             bail_with!(

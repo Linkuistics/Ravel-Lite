@@ -5,6 +5,7 @@ use std::process::Command;
 use anyhow::{Context, Result};
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 use crate::config::CONFIG_ENV_VAR;
 use crate::repos;
@@ -34,13 +35,15 @@ pub fn embedded_content(relative_path: &str) -> Option<&'static str> {
 /// file is shipped under `defaults/` and a missing entry would be a
 /// drift bug rather than a runtime miss.
 pub fn require_embedded(relative_path: &str) -> Result<&'static str> {
-    embedded_content(relative_path).with_context(|| {
-        format!(
-            "Embedded default not registered for path '{relative_path}'. \
-             This is a drift bug: the path must be added to EMBEDDED_FILES \
-             in src/init.rs."
-        )
-    })
+    embedded_content(relative_path)
+        .with_context(|| {
+            format!(
+                "Embedded default not registered for path '{relative_path}'. \
+                 This is a drift bug: the path must be added to EMBEDDED_FILES \
+                 in src/init.rs."
+            )
+        })
+        .with_code(ErrorCode::Internal)
 }
 
 /// Iterate `(path, content)` pairs whose path starts with `prefix`.
@@ -162,31 +165,36 @@ const FINDINGS_SEED: &str = "findings: []\n";
 /// `--force` run never destroys customisation.
 pub fn run_init(target_dir: &Path, force: bool) -> Result<()> {
     fs::create_dir_all(target_dir)
-        .with_context(|| format!("Failed to create {}", target_dir.display()))?;
+        .with_context(|| format!("Failed to create {}", target_dir.display()))
+        .with_code(ErrorCode::IoError)?;
 
     let stub_path = target_dir.join(CONFIG_LUA_FILENAME);
     let stub_existed = stub_path.exists();
     if !stub_existed {
         fs::write(&stub_path, CONFIG_LUA_STUB)
-            .with_context(|| format!("Failed to write {}", stub_path.display()))?;
+            .with_context(|| format!("Failed to write {}", stub_path.display()))
+            .with_code(ErrorCode::IoError)?;
     }
 
     for dir_name in LAYOUT_DIRS {
         let dir = target_dir.join(dir_name);
         fs::create_dir_all(&dir)
-            .with_context(|| format!("Failed to create {}", dir.display()))?;
+            .with_context(|| format!("Failed to create {}", dir.display()))
+            .with_code(ErrorCode::IoError)?;
     }
 
     let repos_path = target_dir.join(repos::REGISTRY_FILE);
     if !repos_path.exists() {
         repos::save_atomic(target_dir, &repos::ReposRegistry::default())
-            .with_context(|| format!("Failed to seed empty {}", repos_path.display()))?;
+            .with_context(|| format!("Failed to seed empty {}", repos_path.display()))
+            .with_code(ErrorCode::IoError)?;
     }
 
     let findings_path = target_dir.join(FINDINGS_FILENAME);
     if !findings_path.exists() {
         fs::write(&findings_path, FINDINGS_SEED)
-            .with_context(|| format!("Failed to seed empty {}", findings_path.display()))?;
+            .with_context(|| format!("Failed to seed empty {}", findings_path.display()))
+            .with_code(ErrorCode::IoError)?;
     }
 
     let git_initialised = ensure_git_repository(target_dir)?;
@@ -199,13 +207,17 @@ pub fn run_init(target_dir: &Path, force: bool) -> Result<()> {
                 continue;
             }
             if path.is_dir() {
-                fs::remove_dir_all(&path).with_context(|| {
-                    format!("Failed to prune retired dir {}", path.display())
-                })?;
+                fs::remove_dir_all(&path)
+                    .with_context(|| {
+                        format!("Failed to prune retired dir {}", path.display())
+                    })
+                    .with_code(ErrorCode::IoError)?;
             } else {
-                fs::remove_file(&path).with_context(|| {
-                    format!("Failed to prune retired file {}", path.display())
-                })?;
+                fs::remove_file(&path)
+                    .with_context(|| {
+                        format!("Failed to prune retired file {}", path.display())
+                    })
+                    .with_code(ErrorCode::IoError)?;
             }
             pruned += 1;
             println!("  ✗ Pruned retired path: {retired}");
@@ -264,7 +276,8 @@ fn run_git(cwd: &Path, args: &[&str], label: &str) -> Result<()> {
         .current_dir(cwd)
         .args(args)
         .output()
-        .with_context(|| format!("Failed to spawn git {label} in {}", cwd.display()))?;
+        .with_context(|| format!("Failed to spawn git {label} in {}", cwd.display()))
+        .with_code(ErrorCode::IoError)?;
     if !output.status.success() {
         bail_with!(
             ErrorCode::IoError,

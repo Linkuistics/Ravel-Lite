@@ -14,6 +14,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::cli::error_code::ErrorCode;
+use crate::cli::error_context::ResultExt;
 use crate::cli::exit_category::ExitCategory;
 
 /// Bump on incompatible field changes. Adding fields is non-breaking.
@@ -100,7 +101,8 @@ fn top_level_subcommands() -> Vec<&'static str> {
 pub fn run(version_string: &'static str) -> Result<()> {
     let caps = build(version_string);
     let json = serde_json::to_string_pretty(&caps)
-        .context("Failed to serialise capabilities document to JSON")?;
+        .context("Failed to serialise capabilities document to JSON")
+        .with_code(ErrorCode::Internal)?;
     println!("{json}");
     Ok(())
 }

@@ -80,7 +80,8 @@ pub fn run_freshness(context_root: &Path, require_fresh: bool) -> Result<()> {
     let yaml = serde_yaml::to_string(&FreshnessReport {
         freshness: report.clone(),
     })
-    .context("Failed to serialise atlas freshness report to YAML")?;
+    .context("Failed to serialise atlas freshness report to YAML")
+    .with_code(ErrorCode::Internal)?;
     print!("{yaml}");
     if require_fresh {
         let stale: Vec<&str> = report
@@ -346,9 +347,11 @@ pub fn run_list_components(
             };
             let serialised = match fmt {
                 OutputFormat::Yaml => serde_yaml::to_string(&envelope)
-                    .context("Failed to serialise atlas components list to YAML")?,
+                    .context("Failed to serialise atlas components list to YAML")
+                    .with_code(ErrorCode::Internal)?,
                 OutputFormat::Json => serde_json::to_string_pretty(&envelope)
-                    .context("Failed to serialise atlas components list to JSON")?
+                    .context("Failed to serialise atlas components list to JSON")
+                    .with_code(ErrorCode::Internal)?
                     + "\n",
                 OutputFormat::Markdown => bail_with!(
                     ErrorCode::InvalidInput,
@@ -428,9 +431,11 @@ pub fn run_summary(
             };
             let serialised = match fmt {
                 OutputFormat::Yaml => serde_yaml::to_string(&envelope)
-                    .context("Failed to serialise atlas summary to YAML")?,
+                    .context("Failed to serialise atlas summary to YAML")
+                    .with_code(ErrorCode::Internal)?,
                 OutputFormat::Json => serde_json::to_string_pretty(&envelope)
-                    .context("Failed to serialise atlas summary to JSON")?
+                    .context("Failed to serialise atlas summary to JSON")
+                    .with_code(ErrorCode::Internal)?
                     + "\n",
                 OutputFormat::Markdown => bail_with!(
                     ErrorCode::InvalidInput,
@@ -661,7 +666,8 @@ pub fn run_describe(context_root: &Path, ref_str: &str) -> Result<()> {
         children,
     };
     let yaml = serde_yaml::to_string(&report)
-        .context("Failed to serialise atlas describe report to YAML")?;
+        .context("Failed to serialise atlas describe report to YAML")
+        .with_code(ErrorCode::Internal)?;
     print!("{yaml}");
     Ok(())
 }
@@ -737,7 +743,8 @@ pub fn run_memory(context_root: &Path, ref_str: &str, search: Option<&str>) -> R
         None => memory,
     };
     let yaml = serde_yaml::to_string(&output)
-        .context("Failed to serialise component memory to YAML")?;
+        .context("Failed to serialise component memory to YAML")
+        .with_code(ErrorCode::Internal)?;
     print!("{yaml}");
     Ok(())
 }
@@ -822,9 +829,11 @@ impl EdgeGraph {
         for (slug, rc) in &catalog.repos {
             let path = rc.local_path.join(ATLAS_DIR).join(RELATED_COMPONENTS_FILENAME);
             let file: RelatedComponentsFile =
-                component_ontology::load_or_default(&path).with_context(|| {
-                    format!("repo {slug}: failed loading {}", path.display())
-                })?;
+                component_ontology::load_or_default(&path)
+                    .with_context(|| {
+                        format!("repo {slug}: failed loading {}", path.display())
+                    })
+                    .with_code(ErrorCode::IoError)?;
             for edge in file.edges {
                 let key = edge.canonical_key();
                 if seen_keys.insert(key) {

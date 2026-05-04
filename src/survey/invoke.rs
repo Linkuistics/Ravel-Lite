@@ -17,6 +17,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command as TokioCommand;
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 use crate::config::{load_agent_config, load_shared_config};
 use crate::debug_log;
@@ -134,7 +135,8 @@ pub async fn compute_survey_response(
     let mut all_plans = Vec::with_capacity(plan_dirs.len());
     for plan_dir in plan_dirs {
         let snapshot = load_plan(plan_dir)
-            .with_context(|| format!("Failed to load plan at {}", plan_dir.display()))?;
+            .with_context(|| format!("Failed to load plan at {}", plan_dir.display()))
+            .with_code(ErrorCode::IoError)?;
         all_plans.push(snapshot);
     }
     all_plans.sort_by(|a, b| (&a.project, &a.plan).cmp(&(&b.project, &b.plan)));
@@ -162,7 +164,8 @@ pub async fn compute_survey_response(
     // Injecting at the end of the pipeline applies uniformly to cold,
     // incremental-merge, and incremental-noop paths.
     let findings_file = read_findings(config_root)
-        .with_context(|| format!("Failed to read findings inbox at {}", config_root.display()))?;
+        .with_context(|| format!("Failed to read findings inbox at {}", config_root.display()))
+        .with_code(ErrorCode::IoError)?;
     inject_findings(&mut response, &findings_file.items);
 
     Ok(response)
@@ -330,9 +333,11 @@ async fn run_incremental_survey(
 /// re-run without `--prior`.
 fn load_and_validate_prior(path: &Path) -> Result<SurveyResponse> {
     let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read prior survey at {}", path.display()))?;
+        .with_context(|| format!("Failed to read prior survey at {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
     let prior = parse_survey_response(&content)
-        .with_context(|| format!("Failed to parse prior survey at {}", path.display()))?;
+        .with_context(|| format!("Failed to parse prior survey at {}", path.display()))
+        .with_code(ErrorCode::InvalidInput)?;
     if prior.schema_version != SCHEMA_VERSION {
         bail_with!(
             ErrorCode::Conflict,
@@ -387,12 +392,14 @@ async fn spawn_claude_and_read(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .context("Failed to spawn 'claude' CLI. Ensure it is installed and on PATH.")?;
+        .context("Failed to spawn 'claude' CLI. Ensure it is installed and on PATH.")
+        .with_code(ErrorCode::IoError)?;
 
     let mut stdout = child
         .stdout
         .take()
-        .context("claude CLI stdout pipe was unexpectedly unavailable")?;
+        .context("claude CLI stdout pipe was unexpectedly unavailable")
+        .with_code(ErrorCode::Internal)?;
     let mut output = String::new();
     let timeout = resolve_timeout(timeout_override_secs);
     let start = Instant::now();
@@ -402,7 +409,9 @@ async fn spawn_claude_and_read(
         Ok(Ok(_)) => {}
         Ok(Err(io_err)) => {
             let _ = child.kill().await;
-            return Err(io_err).context("failed reading stdout from claude");
+            return Err(io_err)
+                .context("failed reading stdout from claude")
+                .with_code(ErrorCode::IoError);
         }
         Err(_elapsed) => {
             let _ = child.kill().await;
@@ -450,7 +459,8 @@ async fn spawn_claude_and_read(
 /// lets the user re-render a stored survey cheaply.
 pub fn run_survey_format(path: &Path) -> Result<()> {
     let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read survey file at {}", path.display()))?;
+        .with_context(|| format!("Failed to read survey file at {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
     let response = parse_survey_response(&content)?;
     print!("{}", render_survey_output(&response));
     Ok(())

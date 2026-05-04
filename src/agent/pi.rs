@@ -11,6 +11,7 @@ use serde::Deserialize;
 use tokio::process::Command;
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 
 use super::Agent;
@@ -163,6 +164,7 @@ impl PiAgent {
         let content = require_embedded(&rel)?;
         crate::prompt::substitute_tokens(content, ctx, &HashMap::new())
             .with_context(|| format!("Failed to substitute tokens in embedded {rel}"))
+            .with_code(ErrorCode::InvalidInput)
     }
 
     fn build_headless_args(&self, prompt: &str, phase: LlmPhase, system_prompt: &str) -> Vec<String> {
@@ -241,7 +243,8 @@ impl Agent for PiAgent {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .status()
-            .context("Failed to spawn pi")?;
+            .context("Failed to spawn pi")
+            .with_code(ErrorCode::IoError)?;
 
         debug_log::log(
             "pi exit (interactive, work)",
@@ -289,7 +292,8 @@ impl Agent for PiAgent {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .context("Failed to spawn pi")?;
+            .context("Failed to spawn pi")
+            .with_code(ErrorCode::IoError)?;
 
         run_streaming_child(child, phase, agent_id, "pi", tx, parse_pi_stream_line).await
     }
@@ -329,12 +333,14 @@ impl Agent for PiAgent {
 
         // 3. Ensure the pi-subagent extension is installed.
         let settings_path = dirs::home_dir()
-            .context("Cannot determine home directory")?
+            .context("Cannot determine home directory")
+            .with_code(ErrorCode::Internal)?
             .join(".pi/agent/settings.json");
 
         let extension_installed = if settings_path.exists() {
             let raw = fs::read_to_string(&settings_path)
-                .with_context(|| format!("Failed to read {}", settings_path.display()))?;
+                .with_context(|| format!("Failed to read {}", settings_path.display()))
+                .with_code(ErrorCode::IoError)?;
             let val: serde_json::Value = match serde_json::from_str(&raw) {
                 Ok(v) => v,
                 Err(e) => {
@@ -364,7 +370,8 @@ impl Agent for PiAgent {
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
                 .status()
-                .context("Failed to run `pi install npm:@mjakl/pi-subagent`")?;
+                .context("Failed to run `pi install npm:@mjakl/pi-subagent`")
+                .with_code(ErrorCode::IoError)?;
             if !status.success() {
                 bail_with!(
                     ErrorCode::IoError,
@@ -380,7 +387,8 @@ impl Agent for PiAgent {
         // `EMBEDDED_FILES` is the only source of truth.
         let dest_dir = Path::new(&ctx.project_dir).join(".pi/agents");
         fs::create_dir_all(&dest_dir)
-            .with_context(|| format!("Failed to create {}", dest_dir.display()))?;
+            .with_context(|| format!("Failed to create {}", dest_dir.display()))
+            .with_code(ErrorCode::IoError)?;
 
         let prefix = "agents/pi/subagents/";
         for (rel_path, raw) in embedded_entries_with_prefix(prefix) {
@@ -390,9 +398,12 @@ impl Agent for PiAgent {
             }
 
             let process = || -> Result<()> {
-                let caps = FRONTMATTER_RE.captures(raw).with_context(|| {
-                    format!("No YAML frontmatter found in embedded {rel_path}")
-                })?;
+                let caps = FRONTMATTER_RE
+                    .captures(raw)
+                    .with_context(|| {
+                        format!("No YAML frontmatter found in embedded {rel_path}")
+                    })
+                    .with_code(ErrorCode::InvalidInput)?;
                 let fm_str = caps.get(1).unwrap().as_str();
                 let body = caps.get(2).unwrap().as_str();
 
@@ -405,9 +416,11 @@ impl Agent for PiAgent {
                     thinking: Option<String>,
                 }
 
-                let fm: SkillFrontmatter = serde_yaml::from_str(fm_str).with_context(|| {
-                    format!("Failed to parse frontmatter in embedded {rel_path}")
-                })?;
+                let fm: SkillFrontmatter = serde_yaml::from_str(fm_str)
+                    .with_context(|| {
+                        format!("Failed to parse frontmatter in embedded {rel_path}")
+                    })
+                    .with_code(ErrorCode::InvalidInput)?;
 
                 let mut out = format!("---\nname: {}\ndescription: {}\n", fm.name, fm.description);
                 if let Some(tools) = &fm.tools {
@@ -424,7 +437,8 @@ impl Agent for PiAgent {
 
                 let dest = dest_dir.join(filename);
                 fs::write(&dest, &out)
-                    .with_context(|| format!("Failed to write {}", dest.display()))?;
+                    .with_context(|| format!("Failed to write {}", dest.display()))
+                    .with_code(ErrorCode::IoError)?;
                 Ok(())
             };
 

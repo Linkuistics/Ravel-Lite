@@ -27,6 +27,7 @@ use anyhow::{Context, Result};
 use serde_yaml::Value;
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 use crate::config_lua::KNOWN_AGENTS;
 use crate::init::embedded_entries_with_prefix;
@@ -77,15 +78,20 @@ pub fn migrate_if_needed(config_dir: &Path) -> Result<bool> {
     if plan.needs_translate {
         let body = generate_lua_from_legacy(config_dir)?;
         write_atomic(&config_dir.join("config.lua"), &body)
-            .context("write migrated config.lua")?;
+            .context("write migrated config.lua")
+            .with_code(ErrorCode::IoError)?;
     } else if plan.needs_marker_stamp {
         append_marker_to_existing_lua(&config_dir.join("config.lua"))
-            .context("stamp version marker into existing config.lua")?;
+            .context("stamp version marker into existing config.lua")
+            .with_code(ErrorCode::IoError)?;
     }
 
     delete_legacy_files(config_dir, &plan.legacy_files)
-        .context("delete legacy materialised files")?;
-    prune_legacy_dirs(config_dir).context("prune empty legacy directories")?;
+        .context("delete legacy materialised files")
+        .with_code(ErrorCode::IoError)?;
+    prune_legacy_dirs(config_dir)
+        .context("prune empty legacy directories")
+        .with_code(ErrorCode::IoError)?;
 
     Ok(true)
 }
@@ -176,7 +182,9 @@ fn delete_legacy_files(config_dir: &Path, files: &[PathBuf]) -> Result<()> {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
-                return Err(e).with_context(|| format!("remove {}", path.display()));
+                return Err(e)
+                    .with_context(|| format!("remove {}", path.display()))
+                    .with_code(ErrorCode::IoError);
             }
         }
     }
@@ -198,7 +206,9 @@ fn prune_legacy_dirs(config_dir: &Path) -> Result<()> {
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
-                return Err(e).with_context(|| format!("rmdir {}", dir.display()));
+                return Err(e)
+                    .with_context(|| format!("rmdir {}", dir.display()))
+                    .with_code(ErrorCode::IoError);
             }
         }
     }
@@ -207,15 +217,19 @@ fn prune_legacy_dirs(config_dir: &Path) -> Result<()> {
 
 fn write_atomic(path: &Path, body: &str) -> Result<()> {
     let tmp = path.with_extension("lua.tmp");
-    fs::write(&tmp, body).with_context(|| format!("write {}", tmp.display()))?;
+    fs::write(&tmp, body)
+        .with_context(|| format!("write {}", tmp.display()))
+        .with_code(ErrorCode::IoError)?;
     fs::rename(&tmp, path)
-        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
+        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))
+        .with_code(ErrorCode::IoError)?;
     Ok(())
 }
 
 fn append_marker_to_existing_lua(path: &Path) -> Result<()> {
     let mut existing = fs::read_to_string(path)
-        .with_context(|| format!("read {}", path.display()))?;
+        .with_context(|| format!("read {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
     if !existing.ends_with('\n') {
         existing.push('\n');
     }
@@ -227,7 +241,8 @@ fn append_marker_to_existing_lua(path: &Path) -> Result<()> {
 
 fn file_contains_line(path: &Path, needle: &str) -> Result<bool> {
     let body = fs::read_to_string(path)
-        .with_context(|| format!("read {}", path.display()))?;
+        .with_context(|| format!("read {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
     Ok(body.lines().any(|l| l.trim() == needle))
 }
 
@@ -357,9 +372,11 @@ fn read_merged_yaml(
 
 fn parse_yaml_file(path: &Path) -> Result<Value> {
     let body = fs::read_to_string(path)
-        .with_context(|| format!("read {}", path.display()))?;
+        .with_context(|| format!("read {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
     serde_yaml::from_str::<Value>(&body)
         .with_context(|| format!("parse {} as YAML", path.display()))
+        .with_code(ErrorCode::InvalidInput)
 }
 
 fn deep_merge_yaml(base: &mut Value, overlay: Value) {

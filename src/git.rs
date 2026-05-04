@@ -6,6 +6,7 @@ use std::process::Command;
 use anyhow::{Context, Result};
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 #[cfg(test)]
 use crate::state::filenames::BACKLOG_FILENAME;
@@ -32,13 +33,15 @@ pub fn git_commit_plan(plan_dir: &Path, plan_name: &str, phase_name: &str) -> Re
         .current_dir(plan_dir)
         .args(["add", "."])
         .output()
-        .context("Failed to run git add")?;
+        .context("Failed to run git add")
+        .with_code(ErrorCode::IoError)?;
 
     let diff = Command::new("git")
         .current_dir(plan_dir)
         .args(["diff", "--cached", "--quiet"])
         .output()
-        .context("Failed to run git diff")?;
+        .context("Failed to run git diff")
+        .with_code(ErrorCode::IoError)?;
 
     if diff.status.success() {
         return Ok(CommitResult {
@@ -51,7 +54,8 @@ pub fn git_commit_plan(plan_dir: &Path, plan_name: &str, phase_name: &str) -> Re
         .current_dir(plan_dir)
         .args(["commit", "-m", &message])
         .output()
-        .context("Failed to run git commit")?;
+        .context("Failed to run git commit")
+        .with_code(ErrorCode::IoError)?;
 
     Ok(CommitResult {
         committed: true,
@@ -151,14 +155,17 @@ fn apply_parsed_spec(
             for p in &entry.paths {
                 add.arg(p);
             }
-            add.output().context("Failed to run git add for commit spec")?;
+            add.output()
+                .context("Failed to run git add for commit spec")
+                .with_code(ErrorCode::IoError)?;
         }
 
         let diff = Command::new("git")
             .current_dir(&cwd)
             .args(["diff", "--cached", "--quiet"])
             .output()
-            .context("Failed to run git diff --cached")?;
+            .context("Failed to run git diff --cached")
+            .with_code(ErrorCode::IoError)?;
 
         if diff.status.success() {
             results.push(CommitResult {
@@ -172,7 +179,8 @@ fn apply_parsed_spec(
             .current_dir(&cwd)
             .args(["commit", "-m", &entry.message])
             .output()
-            .context("Failed to run git commit for commit spec")?;
+            .context("Failed to run git commit for commit spec")
+            .with_code(ErrorCode::IoError)?;
 
         results.push(CommitResult {
             committed: true,
@@ -193,13 +201,15 @@ fn commit_whole_subtree(project_dir: &Path, message: &str) -> Result<CommitResul
         .current_dir(project_dir)
         .args(["add", "-A", "--", "."])
         .output()
-        .context("Failed to run git add -A")?;
+        .context("Failed to run git add -A")
+        .with_code(ErrorCode::IoError)?;
 
     let diff = Command::new("git")
         .current_dir(project_dir)
         .args(["diff", "--cached", "--quiet"])
         .output()
-        .context("Failed to run git diff --cached")?;
+        .context("Failed to run git diff --cached")
+        .with_code(ErrorCode::IoError)?;
 
     if diff.status.success() {
         return Ok(CommitResult {
@@ -212,7 +222,8 @@ fn commit_whole_subtree(project_dir: &Path, message: &str) -> Result<CommitResul
         .current_dir(project_dir)
         .args(["commit", "-m", message])
         .output()
-        .context("Failed to run git commit (catch-all)")?;
+        .context("Failed to run git commit (catch-all)")
+        .with_code(ErrorCode::IoError)?;
 
     Ok(CommitResult {
         committed: true,
@@ -229,7 +240,8 @@ fn unstage_subtree(project_dir: &Path) -> Result<()> {
         .current_dir(project_dir)
         .args(["reset", "-q", "HEAD", "--", "."])
         .output()
-        .context("Failed to run git reset")?;
+        .context("Failed to run git reset")
+        .with_code(ErrorCode::IoError)?;
     Ok(())
 }
 
@@ -269,7 +281,8 @@ pub fn paths_changed_since_baseline(
         .args(["diff", "--name-only", baseline_sha, "--"])
         .arg(project_dir)
         .output()
-        .context("Failed to run git diff --name-only")?;
+        .context("Failed to run git diff --name-only")
+        .with_code(ErrorCode::IoError)?;
     if !output.status.success() {
         bail_with!(
             ErrorCode::IoError,
@@ -304,7 +317,8 @@ pub fn working_tree_status(project_dir: &Path) -> Result<Vec<String>> {
         .args(["status", "--porcelain", "--"])
         .arg(project_dir)
         .output()
-        .context("Failed to run git status")?;
+        .context("Failed to run git status")
+        .with_code(ErrorCode::IoError)?;
     if !output.status.success() {
         bail_with!(
             ErrorCode::IoError,
@@ -345,7 +359,8 @@ pub fn project_root_for_plan(plan_dir: &Path) -> Result<String> {
                 "Cannot derive subtree root from plan dir {} — expected <subtree>/<state-dir>/<plan> layout",
                 plan_dir.display()
             )
-        })?;
+        })
+        .with_code(ErrorCode::InvalidInput)?;
     Ok(root.to_string_lossy().to_string())
 }
 

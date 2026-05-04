@@ -22,6 +22,7 @@ use tokio::process::{Child, ChildStderr, ChildStdout};
 use tokio::task::JoinHandle;
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 use crate::debug_log;
 use crate::format::{FormattedOutput, Intent, Span, Style, StyledLine};
@@ -182,8 +183,16 @@ pub async fn run_streaming_child(
     tx: UISender,
     parse_line: ParseLineFn,
 ) -> Result<()> {
-    let stdout = child.stdout.take().context("No stdout")?;
-    let stderr = child.stderr.take().context("No stderr")?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("No stdout")
+        .with_code(ErrorCode::Internal)?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("No stderr")
+        .with_code(ErrorCode::Internal)?;
 
     let stderr_task = spawn_stderr_drain(stderr, tx.clone(), agent_id.to_string(), agent_name);
     let read_err = pump_stdout_to_ui(stdout, phase, agent_id, agent_name, &tx, parse_line).await;

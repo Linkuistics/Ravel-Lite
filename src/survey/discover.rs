@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 use crate::git::project_root_for_plan;
 use crate::state::backlog::{read_backlog, PlanRowCounts, TaskCounts};
@@ -64,6 +65,7 @@ fn project_name_for_plan(plan_path: &Path) -> Result<String> {
         .and_then(|n| n.to_str())
         .map(|s| s.to_string())
         .with_context(|| format!("Could not derive project name from subtree root {root}"))
+        .with_code(ErrorCode::InvalidInput)
 }
 
 /// Load a single plan directory's state into a `PlanSnapshot`. A
@@ -94,7 +96,8 @@ pub fn load_plan(plan_dir: &Path) -> Result<PlanSnapshot> {
         .to_string();
     let project = project_name_for_plan(plan_dir)?;
     let phase_raw = fs::read_to_string(&phase_file)
-        .with_context(|| format!("Failed to read {}", phase_file.display()))?;
+        .with_context(|| format!("Failed to read {}", phase_file.display()))
+        .with_code(ErrorCode::IoError)?;
     let phase = phase_raw.trim().to_string();
 
     let backlog_file = if plan_dir.join(BACKLOG_FILENAME).exists() {
@@ -112,12 +115,14 @@ pub fn load_plan(plan_dir: &Path) -> Result<PlanSnapshot> {
         .as_ref()
         .map(serde_yaml::to_string)
         .transpose()
-        .with_context(|| format!("failed to re-serialise {BACKLOG_FILENAME} for survey input"))?;
+        .with_context(|| format!("failed to re-serialise {BACKLOG_FILENAME} for survey input"))
+        .with_code(ErrorCode::Internal)?;
     let memory = memory_file
         .as_ref()
         .map(serde_yaml::to_string)
         .transpose()
-        .with_context(|| format!("failed to re-serialise {MEMORY_FILENAME} for survey input"))?;
+        .with_context(|| format!("failed to re-serialise {MEMORY_FILENAME} for survey input"))
+        .with_code(ErrorCode::Internal)?;
 
     let related_plans = fs::read_to_string(plan_dir.join("related-plans.md")).ok();
 

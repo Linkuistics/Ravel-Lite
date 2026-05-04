@@ -9,6 +9,7 @@ use ravel_lite::agent::claude_code::ClaudeCodeAgent;
 use ravel_lite::agent::pi::PiAgent;
 use ravel_lite::agent::Agent;
 use ravel_lite::bail_with;
+use ravel_lite::cli::error_context::ResultExt;
 use ravel_lite::cli::{ErrorCode, OutputFormat};
 use ravel_lite::component_ref::ComponentRef;
 use ravel_lite::config::{load_agent_config, load_shared_config, resolve_config_dir};
@@ -2855,9 +2856,11 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
         }
         BacklogCommands::Init { plan_dir, body_file } => {
             let text = std::fs::read_to_string(&body_file)
-                .with_context(|| format!("failed to read {}", body_file.display()))?;
+                .with_context(|| format!("failed to read {}", body_file.display()))
+                .with_code(ErrorCode::IoError)?;
             let seed: backlog::BacklogFile = serde_yaml::from_str(&text)
-                .with_context(|| format!("failed to parse {} as backlog.yaml", body_file.display()))?;
+                .with_context(|| format!("failed to parse {} as backlog.yaml", body_file.display()))
+                .with_code(ErrorCode::InvalidInput)?;
             backlog::run_init(&plan_dir, &seed)
         }
         BacklogCommands::SetStatus {
@@ -2971,9 +2974,11 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
         }
         MemoryCommands::Init { plan_dir, body_file } => {
             let text = std::fs::read_to_string(&body_file)
-                .with_context(|| format!("failed to read {}", body_file.display()))?;
+                .with_context(|| format!("failed to read {}", body_file.display()))
+                .with_code(ErrorCode::IoError)?;
             let seed: memory::MemoryFile = serde_yaml::from_str(&text)
-                .with_context(|| format!("failed to parse {} as memory.yaml", body_file.display()))?;
+                .with_context(|| format!("failed to parse {} as memory.yaml", body_file.display()))
+                .with_code(ErrorCode::InvalidInput)?;
             memory::run_init(&plan_dir, &seed)
         }
         MemoryCommands::SetBody { plan_dir, id, body_file, body } => {
@@ -2996,7 +3001,8 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
             };
             let report = memory::check_anchors_from_disk(&plan_dir, &root)?;
             let yaml = serde_yaml::to_string(&report)
-                .context("failed to serialise SuspectReport as YAML")?;
+                .context("failed to serialise SuspectReport as YAML")
+                .with_code(ErrorCode::Internal)?;
             print!("{yaml}");
             Ok(())
         }
@@ -3291,13 +3297,15 @@ fn dispatch_session_log(command: SessionLogCommands) -> Result<()> {
 fn resolve_body(body_file: Option<PathBuf>, body: Option<String>) -> Result<String> {
     match (body_file, body) {
         (Some(path), None) => std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display())),
+            .with_context(|| format!("failed to read {}", path.display()))
+            .with_code(ErrorCode::IoError),
         (None, Some(value)) if value == "-" => {
             use std::io::Read;
             let mut buf = String::new();
             std::io::stdin()
                 .read_to_string(&mut buf)
-                .context("failed to read body from stdin")?;
+                .context("failed to read body from stdin")
+                .with_code(ErrorCode::IoError)?;
             Ok(buf)
         }
         (None, Some(value)) => Ok(value),

@@ -26,6 +26,7 @@ use std::process::Command;
 use anyhow::{Context, Result};
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::{CodedError, ErrorCode};
 
 fn coded(code: ErrorCode, message: String) -> anyhow::Error {
@@ -123,7 +124,8 @@ fn ensure_worktrees_parent_exists(plan_dir: &Path) -> Result<()> {
     let parent = plan_dir.join(WORKTREES_DIRNAME);
     if !parent.exists() {
         std::fs::create_dir_all(&parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
+            .with_context(|| format!("failed to create {}", parent.display()))
+            .with_code(ErrorCode::IoError)?;
     }
     Ok(())
 }
@@ -226,7 +228,8 @@ fn resolve_path_segments(
         );
     }
     let file: ComponentsFile = load_or_default_components(&components_path)
-        .with_context(|| format!("failed to load {}", components_path.display()))?;
+        .with_context(|| format!("failed to load {}", components_path.display()))
+        .with_code(ErrorCode::IoError)?;
     let entry = file.components.iter().find(|c| c.id == component_id).ok_or_else(|| {
         coded(
             ErrorCode::NotFound,
@@ -256,6 +259,7 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<std::process::Output> {
                 cwd.display()
             )
         })
+        .with_code(ErrorCode::IoError)
 }
 
 #[cfg(test)]

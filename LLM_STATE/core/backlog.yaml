@@ -22,7 +22,7 @@ tasks:
 - id: cli-tag-with-context-io-failure-chains-with-errorcode-ioerror
   title: 'CLI: tag with_context IO-failure chains with ErrorCode::IoError'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Tag `with_context` IO-failure chains in `src/**` with `ErrorCode::IoError` to close the last gap before the JSON-error-envelope work in the architecture-next backlog.
@@ -42,6 +42,49 @@ tasks:
     - `src/discover/tree_sha.rs` — existing pattern of `.map_err(|e| anyhow!(…)).with_code(ErrorCode::X)` for reference style.
 
     **Dependencies:** None — the regression guard (`cli-add-errorcode-regression-guard-to-check-sh`) is a peer task, not a prerequisite. Both can land independently.
+  results: |
+    ## What was done
+
+    Tagged 272 production `with_context` / `context` chains across 45 files in `src/**` with the appropriate `ErrorCode`. Closes the last gap in the three-cycle `ErrorCode`-tagging sweep (`bail!`/`anyhow!`/`ensure!` macros were tagged in earlier sessions; `with_context` chains were intentionally deferred until now).
+
+    ## Coverage
+
+    Final scanner report: 0/272 production sites untagged. Test-mod sites in `src/` and code in `tests/` were left alone per the task description.
+
+    ## Categorisation rules applied
+
+    - **`IoError`** — file `read_to_string`, `write`, `create_dir_all`, `remove_file`, `rename`, subprocess `spawn`/`status`/`output`/`wait`, git invocations, anything wrapping `std::io::Error` or external command failure.
+    - **`InvalidInput`** — YAML parse failures (`serde_yaml::from_str`), markdown parse failures, malformed paths (no parent / no file_name), regex captures that fail, token-substitution failures.
+    - **`Internal`** — internal serialisation that should never fail in practice (`serde_yaml::to_string` over our own typed structs, `serde_json::to_string_pretty`), `Option::context` for invariants we expect to hold (e.g. child stdout pipe unavailable, internal store inserts), embedded-default lookups, "shouldn't happen" assertions.
+    - **`NotFound`** — registry lookup miss for a slug the user named.
+
+    The categorisation table in the task description (`with_context wraps std::io::Error → IoError; file-not-found → NotFound; malformed-content → InvalidInput`) was the starting heuristic; the four-bucket distribution above refines it for cases the spec didn't enumerate (path-shape errors, internal-only invariants, tool-defined drift).
+
+    ## Files touched (all edits added the `ResultExt` import where missing and chained `.with_code(ErrorCode::X)` after each `.context(...)` / `.with_context(|| ...)`)
+
+    - Agent layer: `src/agent/{claude_code,common,pi,pty_capture}.rs`
+    - CLI: `src/cli/capabilities.rs`, `src/main.rs`
+    - State YAML I/O: `src/state/{backlog,memory,intents,findings,this_cycle_focus,targets,target_requests,focus_objections,commits,session_log}/yaml_io.rs`
+    - State sub-modules: `src/state/backlog/parse_md.rs`, `src/state/memory/check_anchors.rs`, `src/state/migrate.rs`, `src/state/phase.rs`, `src/state/target_requests/drain.rs`, `src/state/targets/mount.rs`
+    - Discover pipeline: `src/discover/{apply,cache,mod,stage1,stage2}.rs`
+    - Survey pipeline: `src/survey/{discover,invoke,schema}.rs`
+    - Top-level: `src/atlas.rs`, `src/config_lua.rs`, `src/create.rs`, `src/debug_log.rs`, `src/defeat_cascade.rs`, `src/fixed_memory.rs`, `src/git.rs`, `src/init.rs`, `src/migrate_v1_to_v2.rs`, `src/multi_plan.rs`, `src/phase_loop.rs`, `src/related_components.rs`, `src/repos.rs`, `src/subagent.rs`
+
+    ## Verification
+
+    - `./scripts/check.sh` — passes (clippy clean + macro-tagging guard still green).
+    - `cargo test --lib` — 999 tests pass, 0 failures.
+    - Build: `cargo check --all-targets` clean.
+
+    ## Suggestions for follow-up
+
+    The peer task **`cli-add-errorcode-regression-guard-to-check-sh`** (mentioned in this task's description) should now extend `scripts/check.sh` to forbid future untagged `with_context` / `.context(` sites. The grep should ignore `errorcode-exempt:` and tolerate test mods. With every production site tagged today, this is the right moment to lock the invariant in CI.
+
+    Concretely: extend the existing `bail!/anyhow!/ensure!` regex in `check.sh` to also catch lines containing `\.with_context(` or `\.context(` that lack a `.with_code(` within the same statement. The trailing `?`-terminated chain is the natural delimiter; a Python helper inside `check.sh` (or a small Rust helper) is more robust than pure grep because the chain spans lines.
+
+    ## Ergonomic note
+
+    The current `with_code` flattens any inner `CodedError` into the outer message. For most call sites the outer code is the more user-actionable categorisation, so the flattening is intentional. A handful of cases (e.g. `dispatch_subagents`) may benefit from preserving the inner code; these are not material today but the design point may bite later if a TMS/parse error needs to bubble through a UI layer.
 - id: plan-finish-pr-merge-with-memory-promotion-and-archive
   title: 'Plan finish: pr/merge with memory promotion and archive'
   category: architecture-next

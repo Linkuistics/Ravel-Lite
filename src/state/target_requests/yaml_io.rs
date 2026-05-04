@@ -63,7 +63,8 @@ pub fn read_target_requests(plan_dir: &Path) -> Result<TargetRequestsFile> {
 pub fn write_target_requests(plan_dir: &Path, requests: &TargetRequestsFile) -> Result<()> {
     let path = target_requests_path(plan_dir);
     let yaml = serde_yaml::to_string(requests)
-        .with_context(|| format!("Failed to serialise {TARGET_REQUESTS_FILENAME}"))?;
+        .with_context(|| format!("Failed to serialise {TARGET_REQUESTS_FILENAME}"))
+        .with_code(ErrorCode::Internal)?;
     atomic_write(&path, yaml.as_bytes())
 }
 
@@ -75,17 +76,21 @@ pub fn delete_target_requests(plan_dir: &Path) -> Result<()> {
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("Failed to remove {}", path.display())),
+        Err(e) => Err(e)
+            .with_context(|| format!("Failed to remove {}", path.display()))
+            .with_code(ErrorCode::IoError),
     }
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
-        .with_context(|| format!("{} has no parent directory", path.display()))?;
+        .with_context(|| format!("{} has no parent directory", path.display()))
+        .with_code(ErrorCode::InvalidInput)?;
     let file_name = path
         .file_name()
-        .with_context(|| format!("{} has no file name", path.display()))?
+        .with_context(|| format!("{} has no file name", path.display()))
+        .with_code(ErrorCode::InvalidInput)?
         .to_string_lossy();
     let tmp = parent.join(format!(".{file_name}.tmp"));
     std::fs::write(&tmp, bytes)

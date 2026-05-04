@@ -64,10 +64,12 @@ pub fn run_set_phase(plan_dir: &Path, phase: &str) -> Result<()> {
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
-        .with_context(|| format!("{} has no parent directory", path.display()))?;
+        .with_context(|| format!("{} has no parent directory", path.display()))
+        .with_code(ErrorCode::InvalidInput)?;
     let file_name = path
         .file_name()
-        .with_context(|| format!("{} has no file name", path.display()))?
+        .with_context(|| format!("{} has no file name", path.display()))
+        .with_code(ErrorCode::InvalidInput)?
         .to_string_lossy();
     let tmp = parent.join(format!(".{file_name}.tmp"));
     std::fs::write(&tmp, bytes)

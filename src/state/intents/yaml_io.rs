@@ -44,17 +44,20 @@ pub fn read_intents(plan_dir: &Path) -> Result<IntentsFile> {
 pub fn write_intents(plan_dir: &Path, intents: &IntentsFile) -> Result<()> {
     let path = intents_path(plan_dir);
     let yaml = serde_yaml::to_string(intents)
-        .with_context(|| format!("Failed to serialise {INTENTS_FILENAME}"))?;
+        .with_context(|| format!("Failed to serialise {INTENTS_FILENAME}"))
+        .with_code(ErrorCode::Internal)?;
     atomic_write(&path, yaml.as_bytes())
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
-        .with_context(|| format!("{} has no parent directory", path.display()))?;
+        .with_context(|| format!("{} has no parent directory", path.display()))
+        .with_code(ErrorCode::InvalidInput)?;
     let file_name = path
         .file_name()
-        .with_context(|| format!("{} has no file name", path.display()))?
+        .with_context(|| format!("{} has no file name", path.display()))
+        .with_code(ErrorCode::InvalidInput)?
         .to_string_lossy();
     let tmp = parent.join(format!(".{file_name}.tmp"));
     std::fs::write(&tmp, bytes)

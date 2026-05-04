@@ -6,6 +6,8 @@ use anyhow::{Context, Result};
 use tokio::task::JoinSet;
 
 use crate::agent::Agent;
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
 use crate::state::filenames::SUBAGENT_DISPATCH_FILENAME;
 use crate::types::SubagentDispatch;
 use crate::ui::UI;
@@ -22,9 +24,11 @@ pub fn parse_dispatch_file(plan_dir: &Path) -> Result<Vec<SubagentDispatch>> {
         return Ok(Vec::new());
     }
     let content = fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+        .with_context(|| format!("Failed to read {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
     let file: DispatchFile = serde_yaml::from_str(&content)
-        .with_context(|| format!("Failed to parse {}", path.display()))?;
+        .with_context(|| format!("Failed to parse {}", path.display()))
+        .with_code(ErrorCode::InvalidInput)?;
     Ok(file.dispatches)
 }
 

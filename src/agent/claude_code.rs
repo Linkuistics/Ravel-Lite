@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use tokio::process::Command;
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 
 use super::Agent;
@@ -242,7 +243,8 @@ impl Agent for ClaudeCodeAgent {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .status()
-            .context("Failed to spawn claude")?;
+            .context("Failed to spawn claude")
+            .with_code(ErrorCode::IoError)?;
 
         debug_log::log(
             "claude exit (interactive, work)",
@@ -289,7 +291,8 @@ impl Agent for ClaudeCodeAgent {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .context("Failed to spawn claude")?;
+            .context("Failed to spawn claude")
+            .with_code(ErrorCode::IoError)?;
 
         run_streaming_child(child, phase, agent_id, "claude", tx, parse_stream_line).await
     }
@@ -345,7 +348,8 @@ async fn spawn_claude_via_pty(
         pty_capture::run_pty_session("claude", &args, &project_dir, "claude")
     })
     .await
-    .context("PTY task panicked")??;
+    .context("PTY task panicked")
+    .with_code(ErrorCode::Internal)??;
 
     debug_log::log(
         "claude exit (interactive, work)",

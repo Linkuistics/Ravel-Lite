@@ -30,6 +30,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use knowledge_graph::cascade_serves_intent;
 
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
 use crate::plan_kg::{BacklogStatus, BacklogStore, IntentStore};
 use crate::state::backlog::{read_backlog, write_backlog};
 use crate::state::intents::read_intents;
@@ -50,28 +52,36 @@ use crate::state::intents::read_intents;
 /// reconstructing entries from the typed store.
 pub fn run_defeat_cascade(plan_dir: &Path) -> Result<Vec<String>> {
     let intents_file = read_intents(plan_dir)
-        .context("Defeat cascade: failed to read intents.yaml")?;
+        .context("Defeat cascade: failed to read intents.yaml")
+        .with_code(ErrorCode::IoError)?;
     let mut backlog_file = read_backlog(plan_dir)
-        .context("Defeat cascade: failed to read backlog.yaml")?;
+        .context("Defeat cascade: failed to read backlog.yaml")
+        .with_code(ErrorCode::IoError)?;
 
     let mut intent_store = IntentStore::new();
     for entry in &intents_file.items {
-        intent_store.insert(entry.item.clone()).with_context(|| {
-            format!(
-                "Defeat cascade: failed to materialise intent {} into store",
-                entry.item.id
-            )
-        })?;
+        intent_store
+            .insert(entry.item.clone())
+            .with_context(|| {
+                format!(
+                    "Defeat cascade: failed to materialise intent {} into store",
+                    entry.item.id
+                )
+            })
+            .with_code(ErrorCode::Internal)?;
     }
 
     let mut backlog_store = BacklogStore::new();
     for entry in &backlog_file.items {
-        backlog_store.insert(entry.item.clone()).with_context(|| {
-            format!(
-                "Defeat cascade: failed to materialise backlog item {} into store",
-                entry.item.id
-            )
-        })?;
+        backlog_store
+            .insert(entry.item.clone())
+            .with_context(|| {
+                format!(
+                    "Defeat cascade: failed to materialise backlog item {} into store",
+                    entry.item.id
+                )
+            })
+            .with_code(ErrorCode::Internal)?;
     }
 
     let newly_defeated =
@@ -93,7 +103,8 @@ pub fn run_defeat_cascade(plan_dir: &Path) -> Result<Vec<String>> {
     }
 
     write_backlog(plan_dir, &backlog_file)
-        .context("Defeat cascade: failed to write updated backlog.yaml")?;
+        .context("Defeat cascade: failed to write updated backlog.yaml")
+        .with_code(ErrorCode::IoError)?;
 
     Ok(newly_defeated)
 }

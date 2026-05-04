@@ -31,6 +31,7 @@ use portable_pty::{
 };
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 use crate::debug_log;
 
@@ -80,7 +81,10 @@ pub fn run_pty_session(
     });
 
     let pty_system = native_pty_system();
-    let pair = pty_system.openpty(size).context("openpty failed")?;
+    let pair = pty_system
+        .openpty(size)
+        .context("openpty failed")
+        .with_code(ErrorCode::IoError)?;
 
     let mut cmd = CommandBuilder::new(program);
     for arg in args {
@@ -91,7 +95,8 @@ pub fn run_pty_session(
     let child = pair
         .slave
         .spawn_command(cmd)
-        .with_context(|| format!("Failed to spawn {program} under PTY"))?;
+        .with_context(|| format!("Failed to spawn {program} under PTY"))
+        .with_code(ErrorCode::IoError)?;
 
     debug_log::log(
         &format!("{debug_label} pty open"),
@@ -145,8 +150,12 @@ where
 
     let master_reader = master
         .try_clone_reader()
-        .context("PTY try_clone_reader failed")?;
-    let master_writer = master.take_writer().context("PTY take_writer failed")?;
+        .context("PTY try_clone_reader failed")
+        .with_code(ErrorCode::IoError)?;
+    let master_writer = master
+        .take_writer()
+        .context("PTY take_writer failed")
+        .with_code(ErrorCode::IoError)?;
 
     let shutdown = Arc::new(AtomicBool::new(false));
 
@@ -181,7 +190,10 @@ where
     #[cfg(not(unix))]
     let _master_keepalive = master;
 
-    let status = child.wait().context("child wait failed")?;
+    let status = child
+        .wait()
+        .context("child wait failed")
+        .with_code(ErrorCode::IoError)?;
 
     // Signal stdin pump (and resize thread) to exit. Both check the
     // flag every STDIN_POLL_TIMEOUT_MS, so worst-case shutdown
@@ -390,7 +402,9 @@ struct RawModeGuard;
 
 impl RawModeGuard {
     fn enable() -> Result<Self> {
-        crossterm::terminal::enable_raw_mode().context("enable_raw_mode failed")?;
+        crossterm::terminal::enable_raw_mode()
+            .context("enable_raw_mode failed")
+            .with_code(ErrorCode::IoError)?;
         Ok(RawModeGuard)
     }
 }

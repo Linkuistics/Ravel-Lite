@@ -5,6 +5,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use component_ontology::{Edge, EdgeKind, RelatedComponentsFile};
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
 use crate::related_components;
 
 use super::load_proposals;
@@ -74,7 +76,8 @@ pub fn apply_proposals(config_root: &Path) -> Result<ApplyReport> {
 
     if added > 0 {
         related_components::save_atomic(config_root, &file)
-            .context("save related-components.yaml after applying proposals")?;
+            .context("save related-components.yaml after applying proposals")
+            .with_code(ErrorCode::IoError)?;
     }
 
     Ok(ApplyReport {

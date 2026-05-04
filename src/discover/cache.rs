@@ -57,7 +57,9 @@ pub fn save_atomic(config_root: &Path, file: &SurfaceFile) -> Result<()> {
         .with_code(ErrorCode::IoError)?;
     let path = cache_path(config_root, &file.project);
     let tmp = dir.join(format!(".{}.tmp", file.project));
-    let yaml = serde_yaml::to_string(file).context("failed to serialise SurfaceFile")?;
+    let yaml = serde_yaml::to_string(file)
+        .context("failed to serialise SurfaceFile")
+        .with_code(ErrorCode::Internal)?;
     std::fs::write(&tmp, yaml.as_bytes())
         .with_context(|| format!("failed to write temp file {}", tmp.display()))
         .with_code(ErrorCode::IoError)?;

@@ -18,6 +18,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command as TokioCommand;
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 
 use super::schema::{ProposalsFile, Stage1Failure, SurfaceFile, PROPOSALS_SCHEMA_VERSION};
@@ -64,18 +65,21 @@ pub async fn run_stage2(
         failures,
     };
     save_proposals_atomic(&cfg.config_root, &initial)
-        .context("pre-initialise discover-proposals.yaml for Stage 2 CLI appends")?;
+        .context("pre-initialise discover-proposals.yaml for Stage 2 CLI appends")
+        .with_code(ErrorCode::IoError)?;
 
     let surfaces_yaml = render_surfaces_for_prompt(surfaces)?;
     let ontology_block = render_embedded_kinds_for_prompt()
-        .context("render shipped ontology YAML for Stage 2 prompt")?;
+        .context("render shipped ontology YAML for Stage 2 prompt")
+        .with_code(ErrorCode::Internal)?;
     let prompt = cfg
         .prompt_template
         .replace("{{ONTOLOGY_KINDS}}", &ontology_block)
         .replace("{{CONFIG_ROOT}}", &cfg.config_root.to_string_lossy())
         .replace("{{SURFACE_RECORDS_YAML}}", &surfaces_yaml);
     assert_no_dangling_tokens(&prompt)
-        .context("composing Stage 2 prompt")?;
+        .context("composing Stage 2 prompt")
+        .with_code(ErrorCode::Internal)?;
 
     let success = spawn_claude_for_stage2(&prompt, &cfg.model, &cfg.config_root, cfg.timeout).await?;
     if !success {
@@ -85,10 +89,12 @@ pub async fn run_stage2(
         );
     }
 
-    load_proposals(&cfg.config_root).context(
-        "load discover-proposals.yaml after Stage 2 — claude may have failed to \
-         invoke any `ravel-lite state discover-proposals add-proposal` commands",
-    )
+    load_proposals(&cfg.config_root)
+        .context(
+            "load discover-proposals.yaml after Stage 2 — claude may have failed to \
+             invoke any `ravel-lite state discover-proposals add-proposal` commands",
+        )
+        .with_code(ErrorCode::IoError)
 }
 
 /// Hard-error if the composed prompt still carries any `{{NAME}}`
@@ -161,8 +167,13 @@ async fn spawn_claude_for_stage2(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .context("failed to spawn `claude`")?;
-    let mut stdout = child.stdout.take().context("claude stdout pipe unavailable")?;
+        .context("failed to spawn `claude`")
+        .with_code(ErrorCode::IoError)?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .context("claude stdout pipe unavailable")
+        .with_code(ErrorCode::Internal)?;
     let mut drain = String::new();
     let wait = tokio::time::timeout(timeout, async {
         let _ = stdout.read_to_string(&mut drain).await;
@@ -171,7 +182,9 @@ async fn spawn_claude_for_stage2(
     .await;
     match wait {
         Ok(Ok(status)) => Ok(status.success()),
-        Ok(Err(io_err)) => Err(io_err).context("waiting on claude"),
+        Ok(Err(io_err)) => Err(io_err)
+            .context("waiting on claude")
+            .with_code(ErrorCode::IoError),
         Err(_elapsed) => {
             let _ = child.kill().await;
             bail_with!(

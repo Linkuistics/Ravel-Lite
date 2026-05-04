@@ -22,6 +22,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
+
 /// Path the `--debug-file` argument points claude at. Hard-coded — the
 /// flag is a debug knob, not a configuration surface.
 pub const CLAUDE_DEBUG_FILE: &str = "/tmp/ravel-claude-debug.log";
@@ -48,7 +51,8 @@ pub fn enable(path: impl AsRef<Path>) -> Result<()> {
         .write(true)
         .truncate(true)
         .open(&path)
-        .with_context(|| format!("failed to open debug log {}", path.display()))?;
+        .with_context(|| format!("failed to open debug log {}", path.display()))
+        .with_code(ErrorCode::IoError)?;
     let _ = DEBUG_LOG.set(DebugLog { file: Mutex::new(file) });
     log("debug log opened", &format!("path: {}", path.display()));
     Ok(())

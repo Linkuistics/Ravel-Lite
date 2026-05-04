@@ -5,6 +5,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use crate::agent::Agent;
+use crate::cli::error_context::ResultExt;
+use crate::cli::ErrorCode;
 use crate::backlog_transitions::backlog_transitions;
 use crate::config_lua;
 use crate::format::phase_info;
@@ -26,9 +28,11 @@ const HR: &str = "────────────────────�
 
 fn read_phase(plan_dir: &Path) -> Result<Phase> {
     let content = fs::read_to_string(plan_dir.join(PHASE_FILENAME))
-        .with_context(|| format!("Failed to read {PHASE_FILENAME}"))?;
+        .with_context(|| format!("Failed to read {PHASE_FILENAME}"))
+        .with_code(ErrorCode::IoError)?;
     Phase::parse(content.trim())
         .with_context(|| format!("Unknown phase: {}", content.trim()))
+        .with_code(ErrorCode::InvalidInput)
 }
 
 /// Writes the next phase marker to `phase.md`. Errors are propagated so
@@ -40,6 +44,7 @@ fn write_phase(plan_dir: &Path, phase: Phase) -> Result<()> {
     let path = plan_dir.join(PHASE_FILENAME);
     fs::write(&path, phase.to_string())
         .with_context(|| format!("Failed to write phase marker: {}", path.display()))
+        .with_code(ErrorCode::IoError)
 }
 
 fn plan_name(plan_dir: &Path) -> String {
@@ -185,12 +190,14 @@ fn warn_if_project_tree_dirty(ui: &UI, project_dir: &Path, plan_dir: &Path) {
 /// a filesystem failure here surfaces clearly in the phase-loop log
 /// rather than as a bare path-not-removed error.
 fn consume_focus_objections(plan_dir: &Path) -> Result<()> {
-    delete_focus_objections(plan_dir).with_context(|| {
-        format!(
-            "Failed to consume focus-objections.yaml at {}",
-            plan_dir.display()
-        )
-    })
+    delete_focus_objections(plan_dir)
+        .with_context(|| {
+            format!(
+                "Failed to consume focus-objections.yaml at {}",
+                plan_dir.display()
+            )
+        })
+        .with_code(ErrorCode::IoError)
 }
 
 /// Run the serves-intent defeat cascade if the plan has migrated to
@@ -246,7 +253,8 @@ fn append_session_log(plan_dir: &Path) -> Result<()> {
                 "Failed to append latest-session.yaml to session-log.yaml at {}",
                 plan_dir.display()
             )
-        })?;
+        })
+        .with_code(ErrorCode::IoError)?;
     Ok(())
 }
 

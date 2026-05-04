@@ -19,6 +19,7 @@ use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 
 use crate::bail_with;
+use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 use crate::agent::claude_code::ClaudeCodeAgent;
 use crate::agent::pi::PiAgent;
@@ -62,7 +63,8 @@ pub fn build_plan_dir_map(plan_dirs: &[PathBuf]) -> Result<HashMap<String, PathB
             );
         }
         let snapshot = load_plan(plan_dir)
-            .with_context(|| format!("Failed to load plan at {}", plan_dir.display()))?;
+            .with_context(|| format!("Failed to load plan at {}", plan_dir.display()))
+            .with_code(ErrorCode::IoError)?;
         let key = plan_key(&snapshot.project, &snapshot.plan);
         if let Some(existing) = map.insert(key.clone(), plan_dir.clone()) {
             bail_with!(
@@ -328,12 +330,14 @@ pub async fn run_multi_plan(
             compute_survey_response(config_root, plan_dirs, None, None, prior, false).await?;
 
         let yaml = emit_survey_yaml(&response)?;
-        fs::write(survey_state_path, &yaml).with_context(|| {
-            format!(
-                "Failed to write --survey-state at {}",
-                survey_state_path.display()
-            )
-        })?;
+        fs::write(survey_state_path, &yaml)
+            .with_context(|| {
+                format!(
+                    "Failed to write --survey-state at {}",
+                    survey_state_path.display()
+                )
+            })
+            .with_code(ErrorCode::IoError)?;
 
         let stdout = std::io::stdout();
         let stdin = std::io::stdin();

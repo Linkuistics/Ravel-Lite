@@ -46,17 +46,20 @@ pub fn read_findings(context_root: &Path) -> Result<FindingsFile> {
 pub fn write_findings(context_root: &Path, findings: &FindingsFile) -> Result<()> {
     let path = findings_path(context_root);
     let yaml = serde_yaml::to_string(findings)
-        .with_context(|| format!("Failed to serialise {FINDINGS_FILENAME}"))?;
+        .with_context(|| format!("Failed to serialise {FINDINGS_FILENAME}"))
+        .with_code(ErrorCode::Internal)?;
     atomic_write(&path, yaml.as_bytes())
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
-        .with_context(|| format!("{} has no parent directory", path.display()))?;
+        .with_context(|| format!("{} has no parent directory", path.display()))
+        .with_code(ErrorCode::InvalidInput)?;
     let file_name = path
         .file_name()
-        .with_context(|| format!("{} has no file name", path.display()))?
+        .with_context(|| format!("{} has no file name", path.display()))
+        .with_code(ErrorCode::InvalidInput)?
         .to_string_lossy();
     let tmp = parent.join(format!(".{file_name}.tmp"));
     std::fs::write(&tmp, bytes)

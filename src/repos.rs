@@ -133,7 +133,9 @@ pub fn save_atomic(context_root: &Path, registry: &ReposRegistry) -> Result<()> 
 
 fn serialise_registry(registry: &ReposRegistry) -> Result<String> {
     let raw = to_raw_registry(registry);
-    serde_yaml::to_string(&raw).context("Failed to serialise repos registry to YAML")
+    serde_yaml::to_string(&raw)
+        .context("Failed to serialise repos registry to YAML")
+        .with_code(ErrorCode::Internal)
 }
 
 /// Insert a new repo entry. Errors if the slug is already registered.
@@ -157,6 +159,7 @@ pub fn try_add(
                 .with_context(|| {
                     format!("Failed to resolve local_path {} to an absolute path", p.display())
                 })
+                .with_code(ErrorCode::IoError)
                 .map(|abs| abs.clean())
         })
         .transpose()?;
@@ -177,9 +180,11 @@ pub fn run_list(context_root: &Path, format: OutputFormat) -> Result<()> {
     let raw = to_raw_registry(&registry);
     let serialised = match format {
         OutputFormat::Yaml => serde_yaml::to_string(&raw)
-            .context("Failed to serialise repos registry to YAML")?,
+            .context("Failed to serialise repos registry to YAML")
+            .with_code(ErrorCode::Internal)?,
         OutputFormat::Json => serde_json::to_string_pretty(&raw)
-            .context("Failed to serialise repos registry to JSON")?
+            .context("Failed to serialise repos registry to JSON")
+            .with_code(ErrorCode::Internal)?
             + "\n",
         OutputFormat::Markdown => bail_with!(
             ErrorCode::InvalidInput,

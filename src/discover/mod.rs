@@ -98,7 +98,8 @@ pub async fn run_discover(config_root: &Path, options: RunDiscoverOptions) -> Re
             let target = all_targets
                 .iter()
                 .find(|t| t.slug == *name)
-                .with_context(|| format!("repo '{name}' not in registry"))?
+                .with_context(|| format!("repo '{name}' not in registry"))
+                .with_code(ErrorCode::NotFound)?
                 .clone();
             vec![target]
         }
@@ -252,7 +253,9 @@ pub fn proposals_path(config_root: &Path) -> PathBuf {
 pub fn save_proposals_atomic(config_root: &Path, file: &ProposalsFile) -> Result<()> {
     let path = proposals_path(config_root);
     let tmp = config_root.join(format!(".{PROPOSALS_FILE}.tmp"));
-    let yaml = serde_yaml::to_string(file).context("serialise ProposalsFile")?;
+    let yaml = serde_yaml::to_string(file)
+        .context("serialise ProposalsFile")
+        .with_code(ErrorCode::Internal)?;
     std::fs::write(&tmp, yaml.as_bytes())?;
     std::fs::rename(&tmp, &path)?;
     Ok(())

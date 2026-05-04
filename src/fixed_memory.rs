@@ -19,7 +19,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use crate::cli::OutputFormat;
+use crate::cli::error_context::ResultExt;
+use crate::cli::{ErrorCode, OutputFormat};
 use crate::init::{embedded_content, embedded_entries_with_prefix};
 
 const FIXED_MEMORY_DIR: &str = "fixed-memory";
@@ -108,11 +109,14 @@ pub fn discover(config_dir: &Path) -> Result<BTreeMap<String, EntrySources>> {
     let user_dir = config_dir.join(FIXED_MEMORY_DIR);
     if user_dir.is_dir() {
         let read = fs::read_dir(&user_dir)
-            .with_context(|| format!("Failed to read {}", user_dir.display()))?;
+            .with_context(|| format!("Failed to read {}", user_dir.display()))
+            .with_code(ErrorCode::IoError)?;
         for entry in read {
-            let entry = entry.with_context(|| {
-                format!("Failed to enumerate entries under {}", user_dir.display())
-            })?;
+            let entry = entry
+                .with_context(|| {
+                    format!("Failed to enumerate entries under {}", user_dir.display())
+                })
+                .with_code(ErrorCode::IoError)?;
             let path = entry.path();
             if !path.is_file() {
                 continue;
