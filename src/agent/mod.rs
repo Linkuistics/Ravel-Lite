@@ -31,15 +31,6 @@ pub trait Agent: Send + Sync {
         tx: UISender,
     ) -> Result<()>;
 
-    /// Dispatch a subagent to a target plan.
-    async fn dispatch_subagent(
-        &self,
-        prompt: &str,
-        target_plan: &str,
-        agent_id: &str,
-        tx: UISender,
-    ) -> Result<()>;
-
     fn tokens(&self) -> HashMap<String, String>;
 
     async fn setup(&self, _ctx: &PlanContext) -> Result<()> {

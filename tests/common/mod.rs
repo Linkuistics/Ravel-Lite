@@ -129,16 +129,6 @@ impl Agent for MockAgent {
         Ok(())
     }
 
-    async fn dispatch_subagent(
-        &self,
-        _prompt: &str,
-        _target_plan: &str,
-        _agent_id: &str,
-        _tx: UISender,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     fn tokens(&self) -> HashMap<String, String> {
         // The shipped work prompt references `{{TOOL_READ}}`. In the
         // triage-first cycle the loop transitions through Work after

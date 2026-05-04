@@ -27,8 +27,10 @@ when warranted.
 - The session log history
 - The latest-session record
 - **Any file under a sibling, parent, or child plan directory.** Cross-plan
-  awareness comes from the Related plans block above (paths only) and from
-  dispatched subagents — never from direct reads of foreign plan content.
+  awareness comes from the Related plans block above (paths only). When you
+  observe something that warrants attention in another plan, write a
+  finding (see "Cross-plan findings" below) — never read or mutate
+  another plan's files.
 
 ## Behavior
 
@@ -155,29 +157,32 @@ dependency — treat the report as advisory, not authoritative.
    step — `state this-cycle-focus set` requires a `<repo>:<component>`
    reference and there is no useful default for a single-root plan.
 
-## Cross-plan subagent dispatch
+## Cross-plan findings
 
-For each related plan where learnings warrant propagation, **write**
-`{{PLAN}}/subagent-dispatch.yaml` directly (this is a one-shot scratch
-file, not a state-CLI-managed one) containing one entry per target:
+When this cycle's review surfaces something out of scope for the current
+plan but worth attention elsewhere — a cross-cutting concern, a
+component-level issue you can't act on here, an observation about
+another plan's code you noticed while reading the catalog — record it as
+a finding in the context-level inbox:
 
-```yaml
-dispatches:
-  - target: /absolute/path/to/related/plan
-    kind: child
-    summary: |
-      One to three paragraphs describing the learnings and
-      suggested backlog/memory updates for the target plan.
-```
+    ravel-lite findings add \
+      --claim "<one-line assertion>" \
+      --body-file <path> \
+      --raised-in {{PLAN}} \
+      --authored-in triage \
+      [--component <repo>:<component>]
 
 Rules:
-- Use absolute paths for targets
-- Use `|` (block scalar) for multi-line summaries
-- Omit the file entirely if there are no dispatches
-- Do **not** attempt to dispatch anything yourself — the driver reads this file after you exit and handles dispatch
-- For each dispatch entry written, include a
-  `[DISPATCH] <kind>: <target plan name> — <one-line summary>` line in
-  your narrative preamble.
+- One finding per distinct observation. Do not bundle.
+- `--claim` is the assertion; `--body-file` (or `--body -`) carries the
+  rationale text that becomes the rationale justification.
+- `--component` is optional; pass it when the finding clearly attaches
+  to one Atlas component.
+- Findings never mutate another plan. The user processes the inbox out
+  of band — promoting findings into new plans, filing external bugs,
+  or marking them `wontfix`. Triage is purely advisory cross-plan.
+- For each finding written, include a
+  `[FINDING] <one-line claim>` line in your narrative preamble.
 
 9. Run `ravel-lite state set-phase {{PLAN}} git-commit-triage`. The
    runner consumes `focus-objections.yaml`, runs the serves-intent
@@ -202,7 +207,7 @@ Your output has two parts, in order:
    - `[BLOCKER] <new task title> — extracted from <parent task title>` (step 6)
    - `[OBJECTION] <kind>[: <subject>] → <action>` (step 7)
    - `[FOCUS] target=<ref>, items=[<id>, ...]` (step 8)
-   - `[DISPATCH] <kind>: <target plan name> — <summary>` (cross-plan dispatch)
+   - `[FINDING] <one-line claim>` (cross-plan findings)
 
    These complement — they do not replace — the renderer's structural
    output below. Intent labels capture the "why" the diff cannot

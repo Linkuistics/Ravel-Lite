@@ -135,14 +135,6 @@ pub struct AgentConfig {
     pub provider: Option<String>,
 }
 
-/// A subagent dispatch entry from subagent-dispatch.yaml.
-#[derive(Debug, Deserialize)]
-pub struct SubagentDispatch {
-    pub target: String,
-    pub kind: String,
-    pub summary: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

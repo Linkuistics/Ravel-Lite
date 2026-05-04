@@ -10,11 +10,9 @@
 //! * the stdout pump that fans parser outputs to `UIMessage::Progress`
 //!   / `Persist` and surfaces parse failures as Persist warnings;
 //! * the post-spawn dance (pump, wait, drain, `AgentDone`, exit-error
-//!   shape), so a fix on one side cannot silently drift on the other;
-//! * dispatch-subagent `PlanContext` construction.
+//!   shape), so a fix on one side cannot silently drift on the other.
 
 use std::collections::HashSet;
-use std::path::Path;
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -26,7 +24,7 @@ use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
 use crate::debug_log;
 use crate::format::{FormattedOutput, Intent, Span, Style, StyledLine};
-use crate::types::{LlmPhase, PlanContext};
+use crate::types::LlmPhase;
 use crate::ui::{UIMessage, UISender};
 
 /// Rolling cap on stderr retained for surfacing in error messages.
@@ -227,27 +225,6 @@ pub async fn run_streaming_child(
         );
     }
     Ok(())
-}
-
-/// Build a `PlanContext` for a subagent dispatched to `target_plan`.
-/// Resolves `project_dir` via `git::project_root_for_plan` and derives
-/// `dev_root` as the grandparent of the plan directory.
-pub fn build_dispatch_plan_context(
-    target_plan: &str,
-    config_root: String,
-) -> Result<PlanContext> {
-    let project_dir = crate::git::project_root_for_plan(Path::new(target_plan))?;
-    Ok(PlanContext {
-        plan_dir: target_plan.to_string(),
-        project_dir,
-        dev_root: Path::new(target_plan)
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default(),
-        related_plans: String::new(),
-        config_root,
-    })
 }
 
 #[cfg(test)]

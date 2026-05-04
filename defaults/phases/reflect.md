@@ -23,8 +23,9 @@ throughout.
 - The task backlog (avoids task-oriented thinking during reflection)
 - The session log history (append-only audit trail; never read by any
   LLM phase)
-- Declared peer-project relationships (cross-plan propagation is
-  triage's concern, not reflect's)
+- Declared peer-project relationships (paths only; never read or
+  mutate another plan's files — record cross-plan observations as
+  findings per step 4 instead)
 
 ## Behavior
 
@@ -132,7 +133,27 @@ but surfacing it prevents silent accumulation across many cycles. Do
 not author one of these entries every cycle by default — only when
 something concrete is worth recording.
 
-### 4. Hand off
+### 4. Cross-plan findings
+
+If distillation surfaces an observation that is out of scope for this
+plan but worth attention elsewhere — a cross-cutting issue you noticed
+in another component, a defect in code you read but did not edit, a
+suggestion that belongs in a different plan — record it in the
+context-level findings inbox:
+
+    ravel-lite findings add \
+      --claim "<one-line assertion>" \
+      --body-file <path> \
+      --raised-in {{PLAN}} \
+      --authored-in reflect \
+      [--component <repo>:<component>]
+
+Findings are advisory and the user processes them out of band; reflect
+must not mutate other plans. Skip this step entirely when there is
+nothing to record. For each finding written, include a
+`[FINDING] <one-line claim>` line in your narrative preamble.
+
+### 5. Hand off
 
 Run `ravel-lite state set-phase {{PLAN}} git-commit-reflect`. Reflect
 closes the cycle: after the runner commits reflect's plan-state
@@ -165,6 +186,8 @@ Your output has two parts, in order:
    - `[TRAJECTORY] <intent claim> — <observed drift>` if step 3 led you
      to author an intent-trajectory memory entry. Cite the specific
      intent ids the entry concerns.
+   - `[FINDING] <one-line claim>` (step 4) when you wrote a cross-plan
+     finding to the context-level inbox.
 
    These complement — they do not replace — the renderer's structural
    output below. The renderer reports the "what" (NEW / STALE /

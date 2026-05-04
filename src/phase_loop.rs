@@ -20,7 +20,6 @@ use crate::state::filenames::PHASE_FILENAME;
 use crate::state::focus_objections::delete_focus_objections;
 use crate::state::intents::intents_path;
 use crate::state::target_requests::drain_target_requests;
-use crate::subagent::dispatch_subagents;
 use crate::types::*;
 use crate::ui::UI;
 
@@ -481,10 +480,6 @@ pub async fn phase_loop(
                 if new_phase == phase {
                     ui.log(&format!("\n  ✗  Phase did not advance from {phase}. Stopping."));
                     return Ok(());
-                }
-
-                if lp == LlmPhase::Triage {
-                    dispatch_subagents(agent.clone(), plan_dir, ui).await?;
                 }
             }
         }

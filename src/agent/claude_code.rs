@@ -12,7 +12,7 @@ use crate::cli::ErrorCode;
 
 use super::Agent;
 use super::common::{
-    STREAM_SNIPPET_BYTES, StreamLineOutcome, build_dispatch_plan_context, run_streaming_child,
+    STREAM_SNIPPET_BYTES, StreamLineOutcome, run_streaming_child,
     truncate_snippet,
 };
 use super::pty_capture;
@@ -295,17 +295,6 @@ impl Agent for ClaudeCodeAgent {
             .with_code(ErrorCode::IoError)?;
 
         run_streaming_child(child, phase, agent_id, "claude", tx, parse_stream_line).await
-    }
-
-    async fn dispatch_subagent(
-        &self,
-        prompt: &str,
-        target_plan: &str,
-        agent_id: &str,
-        tx: UISender,
-    ) -> Result<()> {
-        let ctx = build_dispatch_plan_context(target_plan, self.config_root.clone())?;
-        self.invoke_headless(prompt, &ctx, LlmPhase::Triage, agent_id, tx).await
     }
 
     fn tokens(&self) -> HashMap<String, String> {

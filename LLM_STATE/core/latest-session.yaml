@@ -1,10 +1,18 @@
-id: session-142
-timestamp: 2026-05-04T02:37:08Z
+id: session-143
+timestamp: 2026-05-04T04:40:35Z
 phase: work
 body: |
-  ### Session 142 (2026-05-04T02:37:08Z) — Add ravel-lite sync verb for cross-plan merging
+  ### Session 143 (2026-05-04T04:40:35Z) — Remove subagent-dispatch and wire findings inbox
 
-  - **What was attempted:** Implement `ravel-lite sync <plan> --from <other-plan>` per the architecture-next.md spec. The verb merges each shared target's plan branch from `--from` into the destination plan's worktrees; targets unique to `--from` are auto-mounted first.
-  - **What worked:** Full implementation shipped in `src/sync.rs` (~631 LoC, 13 unit tests). Wired through `src/lib.rs` (one `pub mod sync;`) and `src/main.rs` (after-help constant, `Sync` variant on `Commands`, dispatch arm). `cargo build` clean, `cargo test --lib` 1012/1012 pass, clippy clean. The "remove direct-mode target types" scope item was a no-op — the source had already shed that code.
-  - **What this suggests trying next:** Findings inbox (`architecture-next.md` §"Findings inbox") is the next natural leaf — it and sync together complete the cross-plan visibility story, reducing unknowns before the keystone migrator. `--format json` for the sync report is also small scope (~50 LoC) when the other verbs' JSON envelopes are being standardised.
-  - **Key learnings:** The shared-source-repo trick (both plans' worktrees share the same source repo's `.git`) means no special branch-lookup machinery is needed — `ravel-lite/<other-plan>/main` is visible from any worktree off the same source. Same-context guard is the right call: cross-context merges that "just happen to work" because the source repos resolve identically would be silent coupling that's hard to audit later.
+  - Completed the remaining scope items for the findings-inbox task: source-side removal of the v1 `subagent-dispatch.yaml` mechanism and prompt rewrites in `triage.md`/`reflect.md`.
+  - The schema/CLI/yaml-io layer and survey integration were already in place from a prior cycle; this session closed out the code and prompt side.
+  - All tests pass (1100+); clippy clean.
+
+  What worked:
+  - Deleting `src/subagent.rs` and tracing all its callers upstream (`phase_loop.rs`, `agent/mod.rs`, `agent/pi.rs`, `agent/claude_code.rs`, `agent/common.rs`) was clean — no other callers existed.
+  - `triage.md` replacement of the `[DISPATCH]` / `subagent-dispatch.yaml` section with a `ravel-lite findings add` block is a direct structural swap with no ambiguity.
+  - `reflect.md` gained a new step 4 ("Cross-plan findings") and the old step 4 ("Hand off") was renumbered to step 5.
+
+  What this suggests trying next:
+  - The seven AsciiDoc website docs still describe `subagent-dispatch.yaml`; a docs-reconciliation pass is the natural follow-up.
+  - Reflect's `state memory check-anchors` run should surface the now-stale `pi_dispatch_subagent` memory entry next cycle.

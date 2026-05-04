@@ -357,16 +357,6 @@ impl Agent for ContractMockAgent {
         Ok(())
     }
 
-    async fn dispatch_subagent(
-        &self,
-        _prompt: &str,
-        _target_plan: &str,
-        _agent_id: &str,
-        _tx: UISender,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     fn tokens(&self) -> HashMap<String, String> {
         // The shipped work prompt references `{{TOOL_READ}}`. With the
         // triage-first cycle, even analyse-work-started tests reach

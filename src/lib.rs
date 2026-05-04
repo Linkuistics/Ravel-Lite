@@ -25,7 +25,6 @@ pub mod prompt;
 pub mod related_components;
 pub mod repos;
 pub mod state;
-pub mod subagent;
 pub mod survey;
 pub mod sync;
 pub mod term_title;

@@ -6,7 +6,6 @@ use regex::Regex;
 
 use crate::state::filenames::{
     BACKLOG_FILENAME, COMMITS_FILENAME, LATEST_SESSION_FILENAME, MEMORY_FILENAME, PHASE_FILENAME,
-    SUBAGENT_DISPATCH_FILENAME,
 };
 use crate::types::LlmPhase;
 
@@ -136,7 +135,6 @@ static PHASE_HIGHLIGHTS: Lazy<HashMap<LlmPhase, Vec<HighlightRule>>> = Lazy::new
     ]);
     m.insert(LlmPhase::Triage, vec![
         HighlightRule { pattern: filename_suffix_regex(BACKLOG_FILENAME), label: "Updating backlog" },
-        HighlightRule { pattern: filename_suffix_regex(SUBAGENT_DISPATCH_FILENAME), label: "Dispatching to related plans" },
     ]);
     m
 });
