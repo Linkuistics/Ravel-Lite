@@ -4,9 +4,11 @@ use std::fs;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use regex::Regex;
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use crate::init::require_embedded;
 use crate::types::{LlmPhase, PlanContext};
 
@@ -57,12 +59,13 @@ pub fn substitute_tokens(
             .iter()
             .map(|n| format!("{{{{{n}}}}}"))
             .collect();
-        return Err(anyhow!(
+        bail_with!(
+            ErrorCode::InvalidInput,
             "Prompt contains unresolved token(s) after substitution: {}. \
              This usually indicates a typo in a phase prompt or a missing \
              agent-provided token.",
             names.join(", ")
-        ));
+        );
     }
 
     Ok(result)

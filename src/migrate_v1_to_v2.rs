@@ -26,6 +26,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde_yaml::Value;
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use crate::config_lua::KNOWN_AGENTS;
 use crate::init::embedded_entries_with_prefix;
 
@@ -163,7 +165,8 @@ fn delete_legacy_files(config_dir: &Path, files: &[PathBuf]) -> Result<()> {
     for path in files {
         // Defence in depth: never delete anything outside the config dir.
         if !path.starts_with(config_dir) {
-            anyhow::bail!(
+            bail_with!(
+                ErrorCode::InvalidInput,
                 "refusing to delete {} — outside config dir {}",
                 path.display(),
                 config_dir.display()

@@ -117,10 +117,10 @@ pub fn resolve(global_dir: &Path, plan_dir: Option<&Path>) -> Result<ResolvedCon
 
     drop(lua);
     let final_acc = Arc::try_unwrap(acc)
-        .map_err(|_| anyhow::anyhow!("internal: Lua state held an extra reference to accumulator"))
+        .map_err(|_| anyhow::anyhow!("internal: Lua state held an extra reference to accumulator")) // errorcode-exempt: tagged via .with_code() below
         .with_code(ErrorCode::Internal)?
         .into_inner()
-        .map_err(|e| anyhow::anyhow!("internal: poisoned config accumulator: {e}"))
+        .map_err(|e| anyhow::anyhow!("internal: poisoned config accumulator: {e}")) // errorcode-exempt: tagged via .with_code() below
         .with_code(ErrorCode::Internal)?;
 
     Ok(ResolvedConfig {
@@ -170,7 +170,7 @@ fn run_layer(lua: &Lua, path: &Path, label: &str) -> Result<()> {
         .set_name(chunk_name)
         .exec()
         .map_err(|e| {
-            anyhow::anyhow!(
+            anyhow::anyhow!( // errorcode-exempt: tagged via .with_code() below
                 "Failed to execute {label} {}: {e}",
                 path.display()
             )
@@ -183,7 +183,7 @@ fn run_layer(lua: &Lua, path: &Path, label: &str) -> Result<()> {
 /// the `?`-via-`anyhow::Context` path, so every Lua boundary call
 /// passes through this helper.
 fn lua_anyhow(context: &'static str) -> impl Fn(mlua::Error) -> anyhow::Error {
-    move |e| anyhow::anyhow!("{context}: {e}")
+    move |e| anyhow::anyhow!("{context}: {e}") // errorcode-exempt: helper; every callsite chains .with_code()
 }
 
 fn install_ravel_table(lua: &Lua, acc: Arc<Mutex<Accumulator>>) -> mlua::Result<()> {

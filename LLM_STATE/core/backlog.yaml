@@ -22,7 +22,7 @@ tasks:
 - id: cli-add-errorcode-regression-guard-to-scripts-check-sh
   title: 'CLI: add ErrorCode regression guard to scripts/check.sh'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Add a grep-based regression guard to `scripts/check.sh` that fails on any new untagged `bail!`/`anyhow!` macro in `src/**` — i.e., any occurrence of `anyhow::bail!`, `anyhow::anyhow!`, or bare `bail!(` / `anyhow!(` that is not preceded by an `ErrorCode` argument.
@@ -42,6 +42,101 @@ tasks:
     - `src/config_lua.rs:175` — `lua_anyhow` helper that must NOT be flagged.
 
     **Dependencies:** None — pure tooling, no wire-shape changes.
+  results: |
+    ## What was done
+
+    Added a regression guard to `scripts/check.sh` that scans `src/**/*.rs`
+    for untagged `bail!` / `anyhow!` / `ensure!` macro invocations and fails
+    the gate if any are found. Sites that legitimately need to bypass the
+    convention carry an inline `// errorcode-exempt: <reason>` comment that
+    the guard ignores.
+
+    The single ripgrep pattern `\b(anyhow|bail|ensure)!\(` catches every
+    forbidden form (`anyhow::bail!(`, `anyhow::anyhow!(`, bare `bail!(`,
+    etc.) without flagging `bail_with!(` — the underscore in `bail_with`
+    breaks the word match before the required `!`.
+
+    ## What worked
+
+    - The pattern proved tight: zero false positives across `src/**`, and
+      the planted-violation smoke test (a temporary file with
+      `anyhow::bail!("...")`) was caught immediately on the first guard run
+      with no other lines firing.
+    - Auto-prefix `// errorcode-exempt:` markers documented intent locally.
+      Six legitimate exemptions across four files (`config_lua.rs`,
+      `create.rs`, `phase_summary.rs`, `cli/error_context.rs`) — every one
+      is a `.map_err(|...| anyhow!(...))` or `.ok_or_else(|| anyhow!(...))`
+      closure that *is* tagged via a downstream `.with_code(ErrorCode::X)`,
+      plus the `lua_anyhow` helper documented in the task and two test
+      cases that intentionally assert the untagged-fallback path.
+
+    ## What didn't work — and the resulting scope expansion
+
+    The task description claimed the prior three-cycle tagging sweep was
+    "complete across all production code paths (~152 sites total)". On
+    first run the guard surfaced **22 untagged macro sites** the sweep had
+    missed, almost all `anyhow::bail!(...)` for subprocess-exit / IO
+    failures or validation. Shipping the guard alone would have left
+    `check.sh` failing on `main`.
+
+    Resolution: tagged all 22 sites in tandem with the guard. The fixes
+    were mechanical, ErrorCode choices followed the existing rubric:
+
+    | ErrorCode | Where applied |
+    |-----------|---------------|
+    | `IoError` | subprocess exits (claude, pi, git), timeouts, agent crashes |
+    | `InvalidInput` | env validation (pi missing), agent mismatch, malformed plan dir, unresolved prompt tokens, "no plan dirs", missing-from-response, defence-in-depth path checks, `models.work` missing, `migrate_projects_yaml_error` |
+    | `Conflict` | survey schema_version mismatch |
+    | `Internal` | PTY pump panics |
+
+    `migrate_projects_yaml_error()` was special-cased: as a helper
+    returning `anyhow::Error` (no `Result` chain to attach `.with_code()`
+    to), the right shape was direct construction of
+    `anyhow::Error::new(CodedError { code, message })` — the same value
+    `bail_with!` builds internally.
+
+    ## What this suggests next
+
+    - **The guard now covers the main attack surface** — any new
+      `bail!`/`anyhow!`/`ensure!` macro added to `src/**` will fail
+      `check.sh` and the pre-push hook. The convention has teeth for the
+      first time.
+    - **The peer task `cli-tag-with-context-io-failure-chains-with-errorcode-ioerror`
+      is a natural follow-up.** That task tags `with_context` chains for
+      IO failures — a complementary surface the macro-focused guard does
+      not see. Together they cover both error-creation forms.
+    - **The "completion" claim pattern is a recurring failure mode.** Three
+      prior task cycles each declared the sweep complete; the guard
+      surfaced the residual 22 sites in seconds. Triage might consider
+      whether other "completed" sweeps (e.g. typed-API migrations) warrant
+      similar mechanical guards.
+    - **Scope-coverage delta worth noting:** the regression guard is line-
+      based and cannot detect `.map_err(|e| anyhow!(...))` where the
+      `.with_code()` is on the next line. The convention adopted here is
+      that such patterns carry an inline `// errorcode-exempt:` marker.
+      This is documentation, not enforcement — a future contributor could
+      add the marker without the chain. A multiline-aware Rust integration
+      test (the alternative the task originally suggested) would close
+      that gap, but the line-based approach in `check.sh` was preferred to
+      keep the gate fast and standalone.
+
+    ## Files changed
+
+    - `scripts/check.sh` — guard added after clippy
+    - `src/agent/{common,claude_code,pi,pty_capture}.rs` — 8 sites tagged
+    - `src/survey/{invoke,schema,discover}.rs` — 7 sites tagged
+    - `src/{phase_summary,prompt,init,migrate_v1_to_v2}.rs` — 7 sites tagged
+    - `src/repos.rs` — `migrate_projects_yaml_error` restructured
+    - `src/{config_lua,create,cli/error_context}.rs` — 6 inline exempt
+      markers added on legitimate downstream-tagged or test sites
+
+    ## Verification
+
+    - `./scripts/check.sh` passes (clippy clean, guard finds zero violations)
+    - `cargo test --workspace`: every test green (~1100+ tests)
+    - Planted-violation test: temporary `anyhow::bail!("...")` in a new src
+      file caused the guard to fire with exactly that one line in the
+      output; no other false positives surfaced
 - id: cli-tag-with-context-io-failure-chains-with-errorcode-ioerror
   title: 'CLI: tag with_context IO-failure chains with ErrorCode::IoError'
   category: architecture-next

@@ -25,9 +25,12 @@
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::Serialize;
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
+use crate::cli::error_context::ResultExt;
 use crate::plan_kg::BacklogStatus;
 use crate::state::backlog::schema::{BacklogEntry, BacklogFile};
 use crate::state::filenames::{BACKLOG_FILENAME, MEMORY_FILENAME};
@@ -331,14 +334,16 @@ fn read_baseline_yaml<T: serde::de::DeserializeOwned>(
         .current_dir(plan_dir)
         .args(["ls-files", "--full-name", filename])
         .output()
-        .map_err(|e| anyhow!("git ls-files failed: {e}"))?;
+        .map_err(|e| anyhow!("git ls-files failed: {e}")) // errorcode-exempt: tagged via .with_code() below
+        .with_code(ErrorCode::IoError)?;
 
     if !full_name_out.status.success() {
-        return Err(anyhow!(
+        bail_with!(
+            ErrorCode::IoError,
             "git ls-files exited {}: {}",
             full_name_out.status,
             String::from_utf8_lossy(&full_name_out.stderr).trim()
-        ));
+        );
     }
 
     let full_name = String::from_utf8_lossy(&full_name_out.stdout)
@@ -352,7 +357,8 @@ fn read_baseline_yaml<T: serde::de::DeserializeOwned>(
         .current_dir(plan_dir)
         .args(["show", &format!("{baseline_sha}:{full_name}")])
         .output()
-        .map_err(|e| anyhow!("git show failed: {e}"))?;
+        .map_err(|e| anyhow!("git show failed: {e}")) // errorcode-exempt: tagged via .with_code() below
+        .with_code(ErrorCode::IoError)?;
 
     if !show_out.status.success() {
         // File did not exist at this SHA (most likely first cycle).
@@ -361,7 +367,8 @@ fn read_baseline_yaml<T: serde::de::DeserializeOwned>(
 
     let text = String::from_utf8_lossy(&show_out.stdout).into_owned();
     let parsed = serde_yaml::from_str::<T>(&text)
-        .map_err(|e| anyhow!("baseline {filename} YAML parse: {e}"))?;
+        .map_err(|e| anyhow!("baseline {filename} YAML parse: {e}")) // errorcode-exempt: tagged via .with_code() below
+        .with_code(ErrorCode::InvalidInput)?;
     Ok(Some(parsed))
 }
 

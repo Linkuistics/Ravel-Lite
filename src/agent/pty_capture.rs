@@ -30,6 +30,8 @@ use portable_pty::{
     Child, CommandBuilder, ExitStatus, MasterPty, PtyPair, PtySize, native_pty_system,
 };
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use crate::debug_log;
 
 /// Buffer size for the master→stdout copy. Sized to comfortably hold
@@ -189,13 +191,13 @@ where
     // Join the stdout pump first — when the child exits the master
     // closes and read returns 0, so this terminates promptly.
     if let Err(panic) = stdout_handle.join() {
-        anyhow::bail!("PTY stdout pump panicked: {panic:?}");
+        bail_with!(ErrorCode::Internal, "PTY stdout pump panicked: {panic:?}");
     }
 
     // Join the stdin pump. Its poll-loop wakes within
     // STDIN_POLL_TIMEOUT_MS of the shutdown flag flip.
     if let Err(panic) = stdin_handle.join() {
-        anyhow::bail!("PTY stdin pump panicked: {panic:?}");
+        bail_with!(ErrorCode::Internal, "PTY stdin pump panicked: {panic:?}");
     }
 
     #[cfg(unix)]

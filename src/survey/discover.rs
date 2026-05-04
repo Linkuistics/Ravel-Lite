@@ -11,6 +11,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use crate::git::project_root_for_plan;
 use crate::state::backlog::{read_backlog, PlanRowCounts, TaskCounts};
 use crate::state::filenames::{BACKLOG_FILENAME, MEMORY_FILENAME, PHASE_FILENAME};
@@ -78,7 +80,8 @@ fn project_name_for_plan(plan_path: &Path) -> Result<String> {
 pub fn load_plan(plan_dir: &Path) -> Result<PlanSnapshot> {
     let phase_file = plan_dir.join(PHASE_FILENAME);
     if !phase_file.exists() {
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::InvalidInput,
             "{} is not a plan directory (no {PHASE_FILENAME} found)",
             plan_dir.display()
         );

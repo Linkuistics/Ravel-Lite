@@ -4,6 +4,8 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use crate::config::CONFIG_ENV_VAR;
 use crate::repos;
 
@@ -264,7 +266,8 @@ fn run_git(cwd: &Path, args: &[&str], label: &str) -> Result<()> {
         .output()
         .with_context(|| format!("Failed to spawn git {label} in {}", cwd.display()))?;
     if !output.status.success() {
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::IoError,
             "git {label} failed in {}: {}",
             cwd.display(),
             String::from_utf8_lossy(&output.stderr).trim()

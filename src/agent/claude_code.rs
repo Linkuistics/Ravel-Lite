@@ -6,6 +6,9 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tokio::process::Command;
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
+
 use super::Agent;
 use super::common::{
     STREAM_SNIPPET_BYTES, StreamLineOutcome, build_dispatch_plan_context, run_streaming_child,
@@ -247,7 +250,11 @@ impl Agent for ClaudeCodeAgent {
         );
 
         if !status.success() {
-            anyhow::bail!("claude exited with code {:?}", status.code());
+            bail_with!(
+                ErrorCode::IoError,
+                "claude exited with code {:?}",
+                status.code()
+            );
         }
         Ok(())
     }
@@ -346,7 +353,7 @@ async fn spawn_claude_via_pty(
     );
 
     if !status.success() {
-        anyhow::bail!("claude exited with status {status:?}");
+        bail_with!(ErrorCode::IoError, "claude exited with status {status:?}");
     }
     Ok(())
 }

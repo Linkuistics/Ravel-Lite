@@ -235,7 +235,7 @@ pub async fn run_create(
         .get("work")
         .cloned()
         .ok_or_else(|| {
-            anyhow::anyhow!(
+            anyhow::anyhow!( // errorcode-exempt: tagged via .with_code() below
                 "Agent config is missing a `models.work` entry; cannot select a model for create."
             )
         })

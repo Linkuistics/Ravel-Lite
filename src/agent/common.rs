@@ -21,6 +21,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdout};
 use tokio::task::JoinHandle;
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use crate::debug_log;
 use crate::format::{FormattedOutput, Intent, Span, Style, StyledLine};
 use crate::types::{LlmPhase, PlanContext};
@@ -203,9 +205,14 @@ pub async fn run_streaming_child(
     if !status.success() {
         let trimmed = stderr_tail.trim();
         if trimmed.is_empty() {
-            anyhow::bail!("{agent_name} exited with code {:?}", status.code());
+            bail_with!(
+                ErrorCode::IoError,
+                "{agent_name} exited with code {:?}",
+                status.code()
+            );
         }
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::IoError,
             "{agent_name} exited with code {:?}\n--- stderr ---\n{trimmed}",
             status.code()
         );

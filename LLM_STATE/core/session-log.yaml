@@ -1981,3 +1981,17 @@ sessions:
     - `with_context` chains intentionally left untouched — out of scope; tagged `bail!`/`anyhow!`/`ensure!` only.
     - `./scripts/check.sh` clean; `cargo test --workspace` all green (999 tests in the main crate, no regressions).
     - Two natural follow-ups identified: a grep-based regression guard in `scripts/check.sh` to prevent new untagged sites drifting in, and a `with_context` IO-chain sweep to close the last gap before JSON-error-envelope work.
+- id: session-139
+  timestamp: 2026-05-04T00:58:31Z
+  phase: work
+  body: |
+    ### Session 139 (2026-05-04T00:58:31Z) — Add ErrorCode regression guard and tag remaining untagged macro sites
+
+    - Attempted: Add a ripgrep-based regression guard to `scripts/check.sh` that rejects any new untagged `bail!`/`anyhow!`/`ensure!` macros in `src/**`.
+    - On first guard run, 22 previously-missed untagged sites surfaced across 9 files — so the work expanded to tag all of them in tandem before shipping the guard.
+    - Guard added to `scripts/check.sh`: pattern `\b(anyhow|bail|ensure)!\(` via `rg --pcre2`, piped through grep to exclude lines carrying `// errorcode-exempt: <reason>`. `bail_with!(` is safe because the `_` breaks the word boundary match.
+    - 22 newly-tagged sites across: `src/agent/claude_code.rs` (2 × IoError), `src/agent/common.rs` (2 × IoError), `src/agent/pi.rs` (2 × IoError, 1 × InvalidInput), `src/agent/pty_capture.rs` (2 × Internal), `src/init.rs` (1 × IoError), `src/migrate_v1_to_v2.rs` (1 × InvalidInput), `src/phase_summary.rs` (3 × IoError/InvalidInput), `src/prompt.rs` (1 × InvalidInput), `src/survey/discover.rs` (1 × InvalidInput), `src/survey/invoke.rs` (5 × IoError/InvalidInput/Conflict), `src/survey/schema.rs` (1 × InvalidInput).
+    - 6 exemption markers added to sites that are legitimately untagged: `config_lua.rs` (lua_anyhow helper + 2 `.map_err` closures chained via `.with_code()`), `create.rs` (1 `.ok_or_else` closure), `phase_summary.rs` (2 `.map_err` closures), `cli/error_context.rs` (2 test assertions of the untagged-fallback path).
+    - `migrate_projects_yaml_error()` in `repos.rs` was special-cased: it returns a bare `anyhow::Error` with no `Result` chain to attach `.with_code()` to, so it was rewritten as `anyhow::Error::new(CodedError { code, message })` — same internal shape that `bail_with!` builds.
+    - Guard is now clean against the full `src/**` tree; all 22 sites were the last batch of missed paths from the prior tagging sweeps.
+    - What this suggests next: the `with_context` IO-chain sweep (untagged `.context()`/`.with_context()` propagation paths) is the remaining gap before the JSON error-envelope work can proceed.

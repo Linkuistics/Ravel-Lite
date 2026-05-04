@@ -10,6 +10,9 @@ use regex::Regex;
 use serde::Deserialize;
 use tokio::process::Command;
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
+
 use super::Agent;
 use super::common::{
     STREAM_SNIPPET_BYTES, StreamLineOutcome, build_dispatch_plan_context, run_streaming_child,
@@ -246,7 +249,11 @@ impl Agent for PiAgent {
         );
 
         if !status.success() {
-            anyhow::bail!("pi exited with code {:?}", status.code());
+            bail_with!(
+                ErrorCode::IoError,
+                "pi exited with code {:?}",
+                status.code()
+            );
         }
         Ok(())
     }
@@ -309,7 +316,8 @@ impl Agent for PiAgent {
             .output();
         match which {
             Ok(out) if out.status.success() => {}
-            _ => anyhow::bail!(
+            _ => bail_with!(
+                ErrorCode::InvalidInput,
                 "pi is not installed. Install it from https://pi.ai or via your package manager."
             ),
         }
@@ -358,7 +366,8 @@ impl Agent for PiAgent {
                 .status()
                 .context("Failed to run `pi install npm:@mjakl/pi-subagent`")?;
             if !status.success() {
-                anyhow::bail!(
+                bail_with!(
+                    ErrorCode::IoError,
                     "`pi install npm:@mjakl/pi-subagent` failed with code {:?}",
                     status.code()
                 );

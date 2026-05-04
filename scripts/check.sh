@@ -15,3 +15,28 @@ IFS=$'\n\t'
 trap 'echo "check: error on line $LINENO" >&2' ERR
 
 cargo clippy --all-targets --workspace -- -D warnings
+
+# Reject untagged bail!/anyhow!/ensure! macros under src/**.
+#
+# The convention (src/cli/error_context.rs) is that every fallible
+# call-site attaches an ErrorCode — via `bail_with!(ErrorCode::X, ...)`
+# for early-exit, or `.with_code(ErrorCode::X)` for ?-propagation. The
+# `\b(anyhow|bail|ensure)!\(` pattern catches `anyhow::bail!(`,
+# `anyhow::anyhow!(`, bare `bail!(`, etc., but not `bail_with!(` (the `_`
+# breaks the word match). Lines that are legitimately untagged carry an
+# inline `// errorcode-exempt: <reason>` marker; the guard ignores them.
+violations=$(rg --line-number --pcre2 \
+  '\b(anyhow|bail|ensure)!\(' \
+  --glob 'src/**/*.rs' \
+  | { grep -v 'errorcode-exempt:' || true; })
+
+if [[ -n "$violations" ]]; then
+  echo "check: untagged bail!/anyhow!/ensure! macros found under src/**." >&2
+  echo "       Use bail_with!(ErrorCode::X, ...) or chain .with_code(ErrorCode::X)" >&2
+  echo "       on the propagated error. For unavoidable cases (helpers tagged" >&2
+  echo "       downstream, tests asserting the untagged path), append" >&2
+  echo "       '// errorcode-exempt: <reason>' to the line." >&2
+  echo >&2
+  printf '%s\n' "$violations" >&2
+  exit 1
+fi

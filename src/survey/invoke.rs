@@ -16,6 +16,8 @@ use anyhow::{Context, Result};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command as TokioCommand;
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use crate::config::{load_agent_config, load_shared_config};
 use crate::debug_log;
 use crate::types::AgentConfig;
@@ -116,7 +118,8 @@ pub async fn compute_survey_response(
 ) -> Result<SurveyResponse> {
     let shared = load_shared_config(config_root)?;
     if shared.agent != "claude-code" {
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::InvalidInput,
             "survey currently only supports agent 'claude-code' (configured agent: '{}').",
             shared.agent
         );
@@ -126,7 +129,7 @@ pub async fn compute_survey_response(
     let model = resolve_model(&agent_config, model_override);
 
     if plan_dirs.is_empty() {
-        anyhow::bail!("No plan directories supplied.");
+        bail_with!(ErrorCode::InvalidInput, "No plan directories supplied.");
     }
     let mut all_plans = Vec::with_capacity(plan_dirs.len());
     for plan_dir in plan_dirs {
@@ -331,7 +334,8 @@ fn load_and_validate_prior(path: &Path) -> Result<SurveyResponse> {
     let prior = parse_survey_response(&content)
         .with_context(|| format!("Failed to parse prior survey at {}", path.display()))?;
     if prior.schema_version != SCHEMA_VERSION {
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::Conflict,
             "prior survey at {} declares schema_version={}, but this binary \
              speaks schema_version={}. Re-run without `--prior` to produce a \
              fresh baseline.",
@@ -402,7 +406,8 @@ async fn spawn_claude_and_read(
         }
         Err(_elapsed) => {
             let _ = child.kill().await;
-            anyhow::bail!(
+            bail_with!(
+                ErrorCode::IoError,
                 "claude CLI did not produce a result within {}s timeout (elapsed {}s).\n\
                  Captured {} bytes of stdout before timing out:\n{}\n\n\
                  Try one of:\n  \
@@ -433,7 +438,7 @@ async fn spawn_claude_and_read(
         }
     }
     if !status.success() {
-        anyhow::bail!("claude CLI exited with status {status}");
+        bail_with!(ErrorCode::IoError, "claude CLI exited with status {status}");
     }
     Ok(output)
 }

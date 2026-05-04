@@ -6,6 +6,8 @@
 
 use anyhow::{Context, Result};
 
+use crate::bail_with;
+use crate::cli::ErrorCode;
 use crate::plan_kg::FindingStatus;
 use crate::state::backlog::{PlanRowCounts, TaskCounts};
 use crate::state::findings::FindingEntry;
@@ -204,7 +206,8 @@ pub fn inject_input_hashes(
             .keys()
             .filter(|k| !response_keys.contains(*k))
             .collect();
-        anyhow::bail!(
+        bail_with!(
+            ErrorCode::InvalidInput,
             "survey response is missing {} discovered plan(s) — the prompt \
              contract requires every discovered plan to appear in the response. \
              Missing: {:?}",

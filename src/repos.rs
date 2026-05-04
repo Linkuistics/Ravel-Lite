@@ -29,7 +29,7 @@ use path_clean::PathClean;
 use serde::{Deserialize, Serialize};
 
 use crate::bail_with;
-use crate::cli::error_context::ResultExt;
+use crate::cli::error_context::{CodedError, ResultExt};
 use crate::cli::{ErrorCode, OutputFormat};
 
 pub const REGISTRY_FILE: &str = "repos.yaml";
@@ -242,18 +242,19 @@ pub const LEGACY_PROJECTS_FILENAME: &str = "projects.yaml";
 /// `repos.yaml`. Centralising the message guards against drift between
 /// call sites.
 pub fn migrate_projects_yaml_error() -> anyhow::Error {
-    anyhow::anyhow!(
-        "{} is no longer supported. The per-context repo registry moved to {} \
-         in the architecture-next migration. Migrate by running\n\
-         \n  \
-         ravel-lite repo add <slug> --url <git-url> [--local-path <path>]\n\
-         \n\
-         for each entry in your existing {}, then delete the old file. \
-         See docs/architecture-next.md §\"The repo registry\".",
-        LEGACY_PROJECTS_FILENAME,
-        REGISTRY_FILE,
-        LEGACY_PROJECTS_FILENAME,
-    )
+    anyhow::Error::new(CodedError {
+        code: ErrorCode::InvalidInput,
+        message: format!(
+            "{} is no longer supported. The per-context repo registry moved to {} \
+             in the architecture-next migration. Migrate by running\n\
+             \n  \
+             ravel-lite repo add <slug> --url <git-url> [--local-path <path>]\n\
+             \n\
+             for each entry in your existing {}, then delete the old file. \
+             See docs/architecture-next.md §\"The repo registry\".",
+            LEGACY_PROJECTS_FILENAME, REGISTRY_FILE, LEGACY_PROJECTS_FILENAME,
+        ),
+    })
 }
 
 /// Loader used by every consumer that previously read `projects.yaml`.

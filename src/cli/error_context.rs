@@ -135,13 +135,13 @@ mod tests {
 
     #[test]
     fn untagged_error_falls_back_to_internal() {
-        let err = anyhow::anyhow!("plain error with no code");
+        let err = anyhow::anyhow!("plain error with no code"); // errorcode-exempt: test asserts the untagged-fallback contract
         assert_eq!(error_code_of(&err), ErrorCode::Internal);
     }
 
     #[test]
     fn result_ext_with_code_overrides_internal_default() {
-        let result: Result<(), anyhow::Error> = Err(anyhow::anyhow!("disk read failed"));
+        let result: Result<(), anyhow::Error> = Err(anyhow::anyhow!("disk read failed")); // errorcode-exempt: test exercises the .with_code() upgrade path
         let coded = result.with_code(ErrorCode::IoError).unwrap_err();
         assert_eq!(error_code_of(&coded), ErrorCode::IoError);
         assert!(format!("{coded:#}").contains("disk read failed"));
