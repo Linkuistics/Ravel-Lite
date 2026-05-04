@@ -1124,3 +1124,7 @@ entries:
   title: session-log list uses tail-keep semantics; other state lists head-keep
   body: |
     `select_records` in `src/state/session_log/yaml_io.rs` keeps the N newest records from the tail of the log (tail-keep). All other state list verbs (memory, backlog, intents, findings) head-keep (first-N). Both the `--limit` doc comment and `SESSION_LOG_LIST_AFTER_HELP` call out this distinction explicitly. Reversing to head-keep for session-log would return the oldest sessions, not the most recent.
+- id: phase-prompts-have-stale-set-phase-transition-targets
+  title: Phase prompts have stale set-phase transition targets
+  body: |
+    `defaults/phases/*.md` prompts set stale next-phase values in `ravel-lite state set-phase` calls. Confirmed: `work.md` uses `analyse-work` — the correct next phase after work is `git-commit-work` (ScriptPhase). Other phase prompts may have similar drift. See: `write_phase precedes git_commit_plan in all commit handlers`.
