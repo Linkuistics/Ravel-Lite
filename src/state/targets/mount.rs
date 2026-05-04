@@ -223,8 +223,9 @@ fn resolve_path_segments(
     if !components_path.exists() {
         bail_with!(
             ErrorCode::NotFound,
-            "{} not found. Run `ravel-lite atlas index --repo {repo_slug}` and retry.",
-            components_path.display()
+            "{} not found. Run `atlas index {}` and retry.",
+            components_path.display(),
+            local_path.display()
         );
     }
     let file: ComponentsFile = load_or_default_components(&components_path)
@@ -235,8 +236,10 @@ fn resolve_path_segments(
             ErrorCode::NotFound,
             format!(
                 "component {repo_slug}:{component_id} not found in {}. \
-                 Run `ravel-lite atlas index --repo {repo_slug}` and retry.",
-                components_path.display()
+                 Either the id is wrong (check `ravel-lite atlas list-components --repo {repo_slug} --format yaml` for the bare `id:` values) \
+                 or the index is stale (re-run `atlas index {}`).",
+                components_path.display(),
+                local_path.display()
             ),
         )
     })?;

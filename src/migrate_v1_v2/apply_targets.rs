@@ -44,11 +44,24 @@ pub fn apply_proposal(v: &Validated, skip_confirm: bool) -> Result<()> {
     }
 
     for tp in &proposal.targets {
+        // The migrate-targets prompt feeds the LLM `atlas list-components`,
+        // whose default text shape prints `<repo_slug>/<component_id>`.
+        // The LLM occasionally emits that qualified form into
+        // `component_id`. Strip the source-repo prefix so the lookup
+        // sees the bare id that components.yaml stores. Cross-repo
+        // targets are out of scope for v1 (per the prompt); a
+        // non-matching prefix passes through and fails with the
+        // standard not-found error.
+        let prefix = format!("{}/", v.source_repo_slug);
+        let bare_id = tp
+            .component_id
+            .strip_prefix(&prefix)
+            .unwrap_or(&tp.component_id);
         mount_target(
             &v.new_plan_dir,
             &v.config_dir,
             &v.source_repo_slug,
-            &tp.component_id,
+            bare_id,
         )?;
     }
 
@@ -170,6 +183,32 @@ mod tests {
         assert_eq!(targets.targets[0].repo_slug, "source");
         assert_eq!(targets.targets[0].component_id, "core");
         assert!(v.new_plan_dir.join(".worktrees/source").is_dir());
+    }
+
+    #[test]
+    fn apply_strips_source_repo_prefix_from_component_id() {
+        // The LLM sees `<repo_slug>/<component_id>  <kind>` rows from
+        // `atlas list-components` and sometimes emits the qualified
+        // form into `component_id`. The bare id is what mount expects.
+        let tmp = TempDir::new().unwrap();
+        let v = fake_validated(tmp.path());
+        let proposal = TargetsProposal {
+            targets: vec![super::super::proposals::TargetProposal {
+                component_id: "source/core".into(),
+            }],
+        };
+        fs::write(
+            v.new_plan_dir.join(TARGETS_PROPOSAL_FILENAME),
+            serde_yaml::to_string(&proposal).unwrap(),
+        )
+        .unwrap();
+
+        apply_proposal(&v, true).unwrap();
+
+        let targets =
+            crate::state::targets::yaml_io::read_targets(&v.new_plan_dir).unwrap();
+        assert_eq!(targets.targets.len(), 1);
+        assert_eq!(targets.targets[0].component_id, "core");
     }
 
     #[test]

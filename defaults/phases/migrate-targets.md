@@ -5,7 +5,10 @@ You are running the `migrate-targets` one-shot phase of the
 
 - Source repo slug: `{{SOURCE_REPO_SLUG}}`.
 - Source repo's components are available via:
-  - `ravel-lite atlas list-components --repo {{SOURCE_REPO_SLUG}}`
+  - `ravel-lite atlas list-components --repo {{SOURCE_REPO_SLUG}} --format yaml`
+    — emits a structured envelope; pull the bare `id:` field from each
+    record (NOT the `<repo_slug>/<id>` display string the default
+    text format prints).
   - `ravel-lite atlas describe <component-ref>` for details.
 - The plan's intents have already been extracted to
   `{{NEW_PLAN_DIR}}/intents.yaml`.
@@ -27,9 +30,14 @@ Write `{{NEW_PLAN_DIR}}/migrate-targets-proposal.yaml`:
 
 ```yaml
 targets:
-  - component_id: <atlas-component-id-in-source-repo>
-  - component_id: <other-component-id>
+  - component_id: <bare-id-from-yaml-output>
+  - component_id: <other-bare-id>
 ```
+
+`component_id` is the bare `id:` value from `atlas list-components
+--format yaml` (e.g. `core`, `foo-bar`). Do NOT include a
+`{{SOURCE_REPO_SLUG}}/` prefix — the runner already knows the
+source repo and will mount the component within it.
 
 Then exit. The runner mounts a git worktree per target via existing
 `mount_target` machinery.
