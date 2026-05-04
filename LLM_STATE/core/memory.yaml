@@ -1040,7 +1040,7 @@ entries:
 - id: after-help-examples-cover-every-leaf-verb-llm-state-core-is-the-placeholder
   title: After-help examples cover every leaf verb; LLM_STATE/core is the placeholder
   body: |
-    ~640 lines of `after_help` constants in `src/main.rs` cover every leaf verb family: init, run, survey, capabilities, repo, fixed-memory, atlas, state/backlog, state/memory, state/intents, state/targets, state/target-requests, state/commits, state/this-cycle-focus, state/focus-objections, findings, plan, state/session-log, related-components, and discover-proposals. All examples use `LLM_STATE/core` as the canonical plan-dir placeholder. Integration test `example_blocks_present_across_representative_verbs` checks 14 representative verbs. See: `after_help const avoids dead-code warnings; no intermediate URL consts`.
+    `after_help` constants in `src/main.rs` cover every leaf verb family: init, run, survey, capabilities, repo, fixed-memory, atlas, state/backlog, state/memory, state/intents, state/targets, state/target-requests, state/commits, state/this-cycle-focus, state/focus-objections, findings, plan, state/session-log, related-components, discover-proposals, and sync. All examples use `LLM_STATE/core` as the canonical plan-dir placeholder. Integration test `example_blocks_present_across_representative_verbs` checks 14 representative verbs. See: `after_help const avoids dead-code warnings; no intermediate URL consts`.
 - id: verb-aliases-follow-ls-rm-get-create-compound-names-use-qualified-form
   title: Verb aliases follow ls/rm/get/create; compound names use qualified form
   body: |
@@ -1077,3 +1077,7 @@ entries:
   title: '// errorcode-exempt: opts out of the with_context chain guard'
   body: |
     // errorcode-exempt: comment on a line opts it out of the chain guard in check_errorcode_chains.py. Three sites in src/cli/error_context.rs use it: lines 138, 144 (pre-existing), and 177 (mod tests, asserts CodedError codes survive the anyhow chain). Any future test or intentional untagged chain must add this annotation.
+- id: sync-merges-plan-branches-same-context-guard-blocks-cross-repo
+  title: '''sync'' merges plan branches; same-context guard blocks cross-repo'
+  body: |
+    `src/sync.rs` (~631 LoC, 13 unit tests). `ravel-lite sync <plan> --from <other-plan>` merges each shared target's plan branch from `--from` into the destination plan's worktrees; targets unique to `--from` are auto-mounted first. Branch visibility is automatic: both plans' worktrees share the source repo's `.git`, so `ravel-lite/<other-plan>/main` is reachable with no special lookup machinery. Same-context guard rejects merges across plans whose source repos resolve differently — cross-context merges that "happen to work" via coincidence would be silent coupling that's hard to audit.
