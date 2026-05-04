@@ -176,7 +176,7 @@ entries:
   body: |
     `warn_if_project_tree_dirty` at `GitCommitWork` entry has no user-facing gate; the warning fires but the phase proceeds unconditionally. If this becomes unacceptable, promote to a hard error rather than re-adding a gate.
 - id: phase-loop-is-single-cycle-run-single-plan-holds-the-inter-cycle-prompt
-  title: '`phase_loop` is single-cycle; `run_single_plan` holds the inter-cycle prompt'
+  title: '`phase_loop` is single-cycle; `run_single_plan` holds inter-cycle prompt'
   body: |
     `phase_loop` is a single-cycle function. The inter-cycle user prompt ("continue / switch plan / exit") lives in `run_single_plan`, which wraps `phase_loop` in a loop. Multi-plan dispatch calls `phase_loop` directly via `dispatch_one_cycle` in `src/multi_plan.rs`.
 - id: src-multi-plan-rs-owns-survey-driven-multi-plan-routing
@@ -484,11 +484,11 @@ entries:
   body: |
     The work-baseline SHA is captured at the triage commit (end of the previous cycle), not at session start. Triage additions from the prior cycle therefore appear in the `{{BACKLOG_TRANSITIONS}}` diff alongside this cycle's work changes. `analyse-work.md` includes a caveat about this. A cleaner fix requires a separate session-start baseline snapshot. See: `Work-baseline seeded atomically in the triage commit`.
 - id: llm-reasoning-preamble-in-reflect-dream-triage-is-a-preserved-feature
-  title: LLM reasoning preamble in reflect/dream/triage is a preserved feature
+  title: Headless-phase LLM preamble carries reasoning; preserve it
   body: |
     The LLM-authored prose preamble above the label list in reflect, dream, and triage is intentional — it carries the LLM's reasoning, not just the action list. Preserve it across prompt and renderer changes: label-rendering code replaces only the label block, not the whole output; `format_result_text` must not filter paragraph text, only structural noise (`---` separators, stray code fences). Output-format sections in `defaults/phases/{reflect,dream,triage}.md` must explicitly list every intent label the LLM is expected to emit in the preamble — omitting the list causes the LLM to silently drop them. `format_result_text` handles all intent labels; a missing label in output is always a prompt omission, not a renderer gap.
 - id: run-create-pre-seeds-plan-dir-in-rust-before-llm-spawn
-  title: run_create pre-seeds plan dir in Rust before LLM spawn
+  title: run_create scaffolds plan dir before LLM spawn
   body: |
     `run_create` takes `plan_name: &str`; `validate_plan_name` replaces `validate_target`; `resolve_plan_dir` enforces `<context_root>/plans/<name>/` placement. Callers must pass a bare plan name, not a path. `src/create.rs` scaffolds the plan directory — `backlog.yaml`, `memory.yaml`, `intents.yaml`, and related plan-state files — via CLI calls before the create-plan LLM spawn; initial `phase.md` is seeded to `triage`. Eliminates format drift; `defaults/create-plan.md` carries no scaffolding instructions. See: `Pre-initialise output file before CLI-driven spawn`.
 - id: headless-output-filters-hr-lines-in-rust
@@ -528,7 +528,7 @@ entries:
   body: |
     `src/init.rs` contains a drift-guard sentinel asserting phase prompt templates include the substring `state phase-summary render`. Any change to how phase prompts emit their output requires updating this sentinel.
 - id: ops-log-yaml-mechanism-for-intent-label-capture-deferred
-  title: ops.log.yaml mechanism for intent-label capture (deferred)
+  title: ops.log.yaml intent-label-capture mechanism is deferred
   body: |
     `src/phase_summary.rs:21-23` describes an `ops.log.yaml` mechanism: mutating verbs record `--intent <label>` and `--reason "<text>"` at mutation time; the renderer merges structural diff with intent records, removing the LLM's responsibility for emitting intent labels. Deferred: intent is currently LLM reasoning, not mechanical — the verb caller does not yet hold the intent value before invoking the verb. Only worth pursuing when intent becomes mechanical enough that LLM authorship is redundant.
 - id: triage-reprioritised-requires-an-llm-authored-reason
@@ -652,9 +652,9 @@ entries:
   body: |
     `testanyware download` cannot pull a directory (`LLM_STATE/`); fails with HTTP 400. Workaround: capture individual transcripts via `testanyware exec`. Full-directory options: (a) recursive walk + per-file download; (b) tar roundtrip (`testanyware exec -- tar czf /tmp/llm_state.tar.gz LLM_STATE && testanyware download /tmp/llm_state.tar.gz`). Low priority: per-file exec covers prose-fold tasks.
 - id: capture-chapter-transitions-use-exit-sentinel-echo-before-next-chapter
-  title: Capture chapter transitions use /exit + sentinel echo before next chapter
+  title: End capture chapters with /exit then sentinel echo
   body: |
-    At the tail of a capture chapter that may leave Claude running (e.g., `capture_chapter03_create_session`), send `/exit` + Return into the GUI Terminal, type `echo <SENTINEL>` + Return, and wait with `testanyware find-text "<SENTINEL>" --timeout 30`. Robust to Claude having already exited: `/exit` becomes harmless command-not-found and the sentinel still renders. Prevents the next chapter from typing into a Claude TUI instead of the shell. See: `Hybrid capture splits screenshot vs transcript_at by content stability`.
+    At the end of a capture chapter that may leave Claude running: send `/exit` + Return into the GUI Terminal, then `echo <SENTINEL>` + Return, then wait with `testanyware find-text "<SENTINEL>" --timeout 30`. `/exit` is harmless if Claude already exited (becomes command-not-found; sentinel still renders). Prevents the next chapter from sending keystrokes into a Claude TUI. See: `Hybrid capture splits screenshot vs transcript_at by content stability`.
 - id: config-lua-rs-doc-comment-can-drift-from-registered-api
   title: config_lua.rs doc comment can drift from registered API
   body: |
@@ -758,15 +758,11 @@ entries:
 - id: plan-cascade-extension-defeat-supersede-visibility-verb
   title: plan cascade extension — defeat/supersede visibility verb
   body: |
-    A natural extension to `ravel-lite plan` once the cascade primitives are exercised is `plan cascade <plan-dir> <id>` — show items that would be defeated or superseded if `<id>` flips to a terminal status. Uses `cascade_serves_intent` and related primitives in `crates/knowledge-graph/src/plan_kg.rs`.
-
-    Deferred; unblocked after `findings-inbox` and `migrate` land and cascade primitives are exercised against real plan data. Forward-compatible: `src/plan_inspect.rs` gains a new `run_cascade` arm; no existing verb changes.
+    `plan cascade <plan-dir> <id>` (not yet implemented) would show backlog items that `cascade_serves_intent` would defeat or supersede if `<id>` reaches a terminal status. Uses primitives in `crates/knowledge-graph/src/plan_kg.rs`. Blocked on `findings-inbox` and `migrate` tasks. Implementation: add `run_cascade` arm to `src/plan_inspect.rs`; no existing verbs change.
 - id: plan-query-by-status-cross-kind-union-design-stance-deferred
   title: plan query-by-status cross-kind union — design stance deferred
   body: |
-    In `src/plan_inspect.rs`, `plan query-by-status` without `--kind` walks every known kind whose vocabulary includes the supplied status string and unions the matches. Works correctly today because no status string is shared across kinds with conflicting semantics.
-
-    If the v2 design forbids cross-kind status string sharing (e.g., `superseded` means different things for a backlog item vs. a memory entry), `plan query-by-status` needs an explicit stance — either an error, a disambiguation flag, or a kind-scoped union with explicit labels.
+    `plan query-by-status` without `--kind` walks all known kinds and unions matches on the status string. Currently correct — no status string is shared across kinds with conflicting semantics. If v2 introduces conflicting cross-kind status names, add an error, disambiguation flag, or kind-scoped union with explicit labels.
 - id: no-ci-clippy-gate-lint-errors-accumulate-silently
   title: scripts/check.sh gates clippy; CI and hook not wired
   body: |
@@ -774,7 +770,16 @@ entries:
 - id: atlas-cli-routes-via-dispatch-atlas-in-src-atlas-rs
   title: Atlas CLI routes via dispatch_atlas in src/atlas.rs
   body: |
-    `src/atlas.rs` implements `dispatch_atlas`; `src/main.rs` routes `Commands::Atlas` to it via `AtlasCommands` enum. `atlas-index` is a workspace path dep in `Cargo.toml`. Core verbs: `atlas list-repos` (delegates to `repos::run_list`), `atlas freshness [--require-fresh]` (four status outcomes: `fresh`, `missing`, `no_local_path`, `unparseable`), `atlas list-components [--repo <slug>] [--format yaml|json]`, `atlas summary [--repo <slug>] [--format yaml|json]` (both load the `Catalog`; JSON paths emit typed envelopes `AtlasComponentsList`/`AtlasSummary` with `schema_version: 1`), `atlas describe <ref>` (resolves qualified `<repo>/<id>` or bare `<id>`, emits `ComponentEntry` YAML with `compute_children` list), `atlas memory <ref> [--search <term>]` (reads `.atlas/memory.yaml`, optional case-insensitive substring filter). `--repo` validates against the fresh-repo set and emits a named-repos error on unknown slug rather than silent empty output. Additional verbs: `atlas edges`, `atlas neighbors`, `atlas roots` (EdgeGraph traversal); `atlas path`, `atlas scc` (DirectedGraph algorithms). See: `atlas edges/neighbors/roots traverse EdgeGraph from catalog`; `atlas path (BFS) and scc (Tarjan) verbs in src/atlas.rs`.
+    `src/atlas.rs` implements `dispatch_atlas`; `src/main.rs` routes `Commands::Atlas` via `AtlasCommands`. `atlas-index` is a workspace path dep.
+
+    Verbs:
+    - `list-repos`: delegates to `repos::run_list`
+    - `freshness [--require-fresh]`: four outcomes — `fresh`, `missing`, `no_local_path`, `unparseable`
+    - `list-components [--repo <slug>] [--format yaml|json]`
+    - `summary [--repo <slug>] [--format yaml|json]`: JSON paths emit `AtlasComponentsList`/`AtlasSummary` with `schema_version: 1`
+    - `describe`, `memory`, `edges`, `neighbors`, `roots`, `path`, `scc`: see dedicated entries
+
+    `--repo` validates against the fresh-repo set; unknown slug → named-repos error rather than silent empty output. See: `atlas edges/neighbors/roots traverse EdgeGraph from catalog`; `atlas path (BFS) and scc (Tarjan) verbs`.
 - id: catalog-projects-token-is-not-in-phase-prompts-strip-task-is-no-op
   title: '`CATALOG_PROJECTS` absent from phase prompts'
   body: |
@@ -951,18 +956,10 @@ entries:
   title: 'Per-phase allowlist architecture: headless uses --dangerously-skip-permissions'
   body: |
     Headless phases (analyse-work, reflect, triage, dream) run with `--dangerously-skip-permissions` — set via the `dangerous: true` param and `force_dangerous` in `src/main.rs:24-35`. The interactive work phase does not pass `--allowed-tools`; it inherits the user's machine-level `settings.json`. There are no per-phase allowlist constants to update for work/reflect/dream in the current architecture. `CREATE_ALLOWED_TOOLS` in `src/create.rs` governs the create-plan flow only — it is not a template for the main phase loop. If a future shipped `settings.json` overlay or a per-phase allowlist constant for headless phases lands via architecture-next work, add `Bash(ravel-lite fixed-memory:*)` at the same time — phase prompts authored after the fixed-memory CLI task assume those verbs are reachable.
-- id: triage-verifies-arch-next-roots-via-git-log-before-work-recommendation
-  title: Triage verifies arch-next roots via git log first
-  body: |
-    Dep-free architecture-next root tasks may have shipped without a status flip. Triage should run `git log -- <files referenced in task description>` on `active` arch-next root tasks to verify before recommending them as work items. Pattern confirmed: `cycle-reorder-triage-first-phase-sequence` was `not_started` after shipping in `ef892e8`.
 - id: check-dep-free-architecture-next-tasks-against-code-before-executing
-  title: Check dep-free architecture-next tasks against code before executing
+  title: Verify dep-free arch-next tasks against code before queueing
   body: |
-    Before executing a dep-free `architecture-next` task, run a quick code check to confirm the work isn't already shipped. The cycle that closed `cycle-reorder-triage-first-phase-sequence` found the reorder had already landed in `ef892e8` but the backlog item was never flipped. A `git log -- <referenced files>` or a grep of the named tests (from the task description) typically settles it in one round.
-
-    **Why:** The architecture-next tasks were written speculatively before implementation. As work accumulates they drift out of sync with the tree; silent drift wastes a full work cycle on a no-op.
-
-    **How to apply:** In triage, for each dep-free `architecture-next` task at `not_started` status, skim the task's referenced files and named tests before queueing it for the work phase.
+    Dep-free `architecture-next` tasks were written speculatively before implementation; they drift out of sync as work accumulates. Before queueing any dep-free `architecture-next` task at `not_started` status for work, verify via `git log -- <referenced files>` or a grep of named tests that the work hasn't already shipped. One confirmation round typically settles it.
 - id: resolve-target-worktree-translates-componentref-to-worktree-path
   title: resolve_target_worktree translates ComponentRef to worktree path
   body: |
