@@ -1036,7 +1036,7 @@ entries:
 - id: error-context-rs-tags-call-sites-with-typed-errorcode
   title: error_context.rs tags call sites with typed ErrorCode
   body: |
-    `CodedError`, `error_code_of()`, `ResultExt::with_code()`, and `bail_with!` live in `src/cli/error_context.rs`. `error_code_of(&err)` at the `run()` boundary in `src/main.rs` recovers typed codes from anyhow errors; `ErrorCode::Internal` is the fallback only for truly unclassified sites. `error_code_of` walks the full anyhow chain through `with_context` wraps — confirmed by unit test in `cli/error_context.rs`. Tag every leaf-verb `bail!` site with `bail_with!(code, …)` or `.with_code(code)` to propagate the right exit category and JSON envelope `code` field end-to-end. Where 3+ identical `not_found` bail sites exist in one file, extract a private `not_found_in_<file>(id)` helper rather than repeating the `bail_with!`. Swept: `State/*`, `atlas.rs`, `repos.rs`, `related_components.rs`, `component_ref.rs`, `survey/delta.rs`, `discover/{mod,cache,stage1,stage2,tree_sha}.rs`, `state/session_log/parse_md.rs`. Residual untagged sites: `config.rs`, `create.rs`, `git.rs`, `multi_plan.rs`, `plan_inspect.rs`, `config_lua.rs`.
+    `CodedError`, `error_code_of()`, `ResultExt::with_code()`, and `bail_with!` live in `src/cli/error_context.rs`. `error_code_of(&err)` at the `run()` boundary in `src/main.rs` recovers typed codes from anyhow errors; `ErrorCode::Internal` is the fallback only for truly unclassified sites. `error_code_of` walks the full anyhow chain through `with_context` wraps — confirmed by unit test in `cli/error_context.rs`. Tag every leaf-verb `bail!` site with `bail_with!(code, …)` or `.with_code(code)` to propagate the right exit category and JSON envelope `code` field end-to-end. Where 3+ identical `not_found` bail sites exist in one file, extract a private `not_found_in_<file>(id)` helper rather than repeating the `bail_with!`. See: `bail_with! for statement sites; .with_code() for closure contexts`; `check.sh regex guard rejects untagged bail!/anyhow!/ensure! macros`.
 - id: after-help-examples-cover-every-leaf-verb-llm-state-core-is-the-placeholder
   title: After-help examples cover every leaf verb; LLM_STATE/core is the placeholder
   body: |
@@ -1052,8 +1052,12 @@ entries:
 - id: bail-with-for-statement-sites-with-code-for-closure-contexts
   title: bail_with! for statement sites; .with_code() for closure contexts
   body: |
-    `bail!`-at-statement-position is replaced with `bail_with!(ErrorCode::X, …)`. `anyhow!` inside `.ok_or_else`/`.map_err` closures keeps the original macro and chains `.with_code(ErrorCode::X)` afterwards. Both patterns applied uniformly across all `ErrorCode`-tagged sites in the codebase.
+    `bail!`-at-statement-position is replaced with `bail_with!(ErrorCode::X, …)`. `anyhow!` inside `.ok_or_else`/`.map_err` closures keeps the original macro and chains `.with_code(ErrorCode::X)` afterwards. For functions returning a bare `anyhow::Error` (no `Result` chain to attach `.with_code()` to), use `anyhow::Error::new(CodedError { code, message })` — the same internal shape that `bail_with!` builds. All three patterns applied uniformly across all `ErrorCode`-tagged sites in the codebase.
 - id: with-context-chains-excluded-from-errorcode-tagging-scope
   title: with_context chains excluded from ErrorCode tagging scope
   body: |
     The `bail!/anyhow!/ensure!`-site `ErrorCode` tagging sweep is complete across all source files. `with_context` chains wrapping IO operations were intentionally excluded and remain untagged — they are a separate follow-up gap before JSON-error-envelope work can be considered complete.
+- id: check-sh-regex-guard-rejects-untagged-bail-anyhow-ensure-macros
+  title: check.sh regex guard rejects untagged bail!/anyhow!/ensure! macros
+  body: |
+    `scripts/check.sh` contains an `rg --pcre2` guard (pattern `\b(anyhow|bail|ensure)!\(`) that fails if any matching line in `src/**` lacks the `// errorcode-exempt: <reason>` exemption marker. `bail_with!(` is safe — the `_` breaks the word boundary. Exemption marker format: `// errorcode-exempt: <reason>` on the offending line; use for closure `.map_err`/`.ok_or_else` sites and test assertions of the untagged-fallback path that cannot be converted to `bail_with!`. See: `bail_with! for statement sites; .with_code() for closure contexts`.
