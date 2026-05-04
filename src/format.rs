@@ -180,6 +180,9 @@ pub fn phase_info(phase: LlmPhase) -> PhaseInfo {
         LlmPhase::Work => PhaseInfo { label: "WORK", description: "Pick a task, implement it, record results" },
         LlmPhase::AnalyseWork => PhaseInfo { label: "ANALYSE", description: "Examine git diff, write session log and commit message" },
         LlmPhase::Reflect => PhaseInfo { label: "REFLECT", description: "Distil session learnings into durable memory" },
+        LlmPhase::MigrateIntent => PhaseInfo { label: "MIGRATE-INTENT", description: "v1→v2: extract intents and attribute backlog items" },
+        LlmPhase::MigrateTargets => PhaseInfo { label: "MIGRATE-TARGETS", description: "v1→v2: propose target components and worktree mounts" },
+        LlmPhase::MigrateMemoryBackfill => PhaseInfo { label: "MIGRATE-MEMORY", description: "v1→v2: backfill component attribution on memory entries" },
     }
 }
 

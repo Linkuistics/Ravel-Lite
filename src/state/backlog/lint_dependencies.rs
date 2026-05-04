@@ -186,6 +186,7 @@ mod tests {
             dependencies,
             results: None,
             handoff: None,
+            legacy: false,
         }
     }
 

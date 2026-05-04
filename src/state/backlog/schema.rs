@@ -36,6 +36,13 @@ pub struct BacklogEntry {
     pub results: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handoff: Option<String>,
+    /// Set by the v1→v2 migrator when an LLM cannot attribute a backlog
+    /// item to any extracted intent. Default-false items participate in
+    /// the normal `serves-intent` graph; `legacy: true` items are kept
+    /// visible but exempt from the intent-cascade and intent-completion
+    /// gates.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub legacy: bool,
 }
 
 /// The full `backlog.yaml` document.
@@ -225,6 +232,7 @@ mod tests {
                 None
             },
             handoff: None,
+            legacy: false,
         }
     }
 
@@ -241,6 +249,50 @@ mod tests {
         let e = entry("ex", "Example", BacklogStatus::Active, &[]);
         let yaml = serde_yaml::to_string(&e).unwrap();
         assert!(yaml.contains("kind: backlog-item"), "yaml was:\n{yaml}");
+    }
+
+    #[test]
+    fn legacy_field_omitted_when_false_and_round_trips_when_true() {
+        // Default-false `legacy` is elided from YAML so existing v1 entries
+        // remain visually clean. A `true` value round-trips through serde.
+        let mut e = entry("ex", "Example", BacklogStatus::Active, &[]);
+        let yaml = serde_yaml::to_string(&e).unwrap();
+        assert!(
+            !yaml.contains("legacy:"),
+            "legacy: false must be skipped, yaml was:\n{yaml}"
+        );
+
+        e.legacy = true;
+        let yaml = serde_yaml::to_string(&e).unwrap();
+        assert!(
+            yaml.contains("legacy: true"),
+            "legacy: true must serialise, yaml was:\n{yaml}"
+        );
+        let decoded: BacklogEntry = serde_yaml::from_str(&yaml).unwrap();
+        assert!(decoded.legacy);
+        assert_eq!(decoded, e);
+    }
+
+    #[test]
+    fn legacy_defaults_false_when_absent_in_yaml() {
+        // Existing v1 backlog entries have no `legacy:` key. They must
+        // deserialise as `legacy: false` — this is the round-trip guarantee
+        // that lets the migrator stamp `legacy: true` selectively.
+        let yaml = "\
+id: ex
+kind: backlog-item
+claim: Example
+justifications:
+- kind: rationale
+  text: |
+    Body.
+status: active
+authored_at: '2026-04-29T00:00:00Z'
+authored_in: test
+category: maintenance
+";
+        let decoded: BacklogEntry = serde_yaml::from_str(yaml).unwrap();
+        assert!(!decoded.legacy);
     }
 
     #[test]

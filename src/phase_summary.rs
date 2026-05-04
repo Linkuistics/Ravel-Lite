@@ -427,6 +427,7 @@ mod tests {
                 None
             },
             handoff: None,
+            legacy: false,
         }
     }
 

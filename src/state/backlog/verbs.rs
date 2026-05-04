@@ -207,6 +207,7 @@ pub fn run_add(plan_dir: &Path, req: &AddRequest) -> Result<()> {
         dependencies: req.dependencies.clone(),
         results: None,
         handoff: None,
+        legacy: false,
     });
     write_backlog(plan_dir, &backlog)
 }
@@ -604,6 +605,7 @@ mod tests {
                 None
             },
             handoff: None,
+            legacy: false,
         }
     }
 

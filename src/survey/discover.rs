@@ -241,6 +241,7 @@ mod tests {
                 dependencies: vec![],
                 results: None,
                 handoff: None,
+                legacy: false,
             }],
         }
     }
@@ -546,6 +547,7 @@ mod tests {
                     None
                 },
                 handoff: None,
+                legacy: false,
             }
         }
         let backlog = BacklogFile {

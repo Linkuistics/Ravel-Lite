@@ -74,6 +74,7 @@ pub fn write_backlog_yaml_with_marker(plan: &Path, marker: &str) {
             dependencies: vec![],
             results: None,
             handoff: None,
+            legacy: false,
         }],
     };
     write_backlog(plan, &backlog).unwrap();

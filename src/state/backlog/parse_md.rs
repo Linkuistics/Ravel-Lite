@@ -207,6 +207,7 @@ fn parse_single_task_block(block: &str, existing_ids: &[String]) -> Result<Backl
         dependencies,
         results,
         handoff,
+        legacy: false,
     })
 }
 

@@ -74,8 +74,22 @@ pub fn substitute_tokens(
 /// Load the phase prompt from the embedded set. No disk read — the
 /// shipped default is the only source of truth.
 pub fn load_phase_file(phase: LlmPhase) -> Result<String> {
-    let rel = format!("phases/{}.md", phase);
-    Ok(require_embedded(&rel)?.to_string())
+    match phase {
+        // TODO(migrate-v1-v2 Phase 5): replace these placeholders with the
+        // embedded `phases/migrate-*.md` prompt files. Phase 1 introduced
+        // the `LlmPhase` variants; Phase 5 ships the prompts and registers
+        // them in `EMBEDDED_FILES`. Until then `load_phase_file` would
+        // hard-error trying to read a non-existent embedded entry, so
+        // return an empty string and let the migrator orchestrator (also
+        // not yet wired) be the only caller.
+        LlmPhase::MigrateIntent | LlmPhase::MigrateTargets | LlmPhase::MigrateMemoryBackfill => {
+            Ok(String::new())
+        }
+        _ => {
+            let rel = format!("phases/{}.md", phase);
+            Ok(require_embedded(&rel)?.to_string())
+        }
+    }
 }
 
 /// Load an optional plan-specific prompt override.

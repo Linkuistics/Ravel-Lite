@@ -425,6 +425,16 @@ pub async fn phase_loop(
                 continue;
             }
             Phase::Llm(lp) => {
+                if matches!(
+                    lp,
+                    LlmPhase::MigrateIntent
+                        | LlmPhase::MigrateTargets
+                        | LlmPhase::MigrateMemoryBackfill
+                ) {
+                    unreachable!(
+                        "{lp} is not part of the cycle — invoke directly via migrate-v1-v2"
+                    );
+                }
                 let agent_id = "main";
                 crate::term_title::set_title(&project, &name, lp.as_str());
                 log_phase_header(ui, lp, &project, &name);

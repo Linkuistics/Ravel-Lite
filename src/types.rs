@@ -4,15 +4,21 @@ use std::fmt;
 
 use serde::Deserialize;
 
-/// LLM phases — the agent subprocess runs these. Variant order matches
-/// the cycle position: triage opens, reflect closes. Dream is no longer
-/// part of the in-cycle execution; it moves to `ravel-lite curate`.
+/// LLM phases — the agent subprocess runs these. The first four
+/// variants are the cycle phases in order: triage opens, reflect closes.
+/// Dream is no longer part of the in-cycle execution; it moves to
+/// `ravel-lite curate`. The trailing `Migrate*` variants are off-cycle —
+/// invoked one-shot by the `migrate-v1-v2` verb, never reached through
+/// `phase_loop`. See `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LlmPhase {
     Triage,
     Work,
     AnalyseWork,
     Reflect,
+    MigrateIntent,
+    MigrateTargets,
+    MigrateMemoryBackfill,
 }
 
 impl LlmPhase {
@@ -22,6 +28,9 @@ impl LlmPhase {
             Self::Work => "work",
             Self::AnalyseWork => "analyse-work",
             Self::Reflect => "reflect",
+            Self::MigrateIntent => "migrate-intent",
+            Self::MigrateTargets => "migrate-targets",
+            Self::MigrateMemoryBackfill => "migrate-memory-backfill",
         }
     }
 
@@ -31,6 +40,9 @@ impl LlmPhase {
             "work" => Some(Self::Work),
             "analyse-work" => Some(Self::AnalyseWork),
             "reflect" => Some(Self::Reflect),
+            "migrate-intent" => Some(Self::MigrateIntent),
+            "migrate-targets" => Some(Self::MigrateTargets),
+            "migrate-memory-backfill" => Some(Self::MigrateMemoryBackfill),
             _ => None,
         }
     }
@@ -165,6 +177,19 @@ mod tests {
     fn parse_invalid_phase() {
         assert_eq!(Phase::parse("invalid"), None);
         assert_eq!(Phase::parse(""), None);
+    }
+
+    #[test]
+    fn parse_migrate_llm_phases_round_trip() {
+        // The migrate-* phases are NOT cycle phases (see phase_loop.rs),
+        // but they must round-trip as LlmPhase string forms because the
+        // migrator invokes them via `agent.invoke_headless` using the
+        // standard prompt-loading machinery.
+        for s in ["migrate-intent", "migrate-targets", "migrate-memory-backfill"] {
+            let parsed = LlmPhase::parse(s).unwrap_or_else(|| panic!("parse failed for {s:?}"));
+            assert_eq!(parsed.as_str(), s);
+            assert_eq!(parsed.to_string(), s);
+        }
     }
 
     #[test]

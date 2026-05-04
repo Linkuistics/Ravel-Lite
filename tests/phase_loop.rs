@@ -353,6 +353,13 @@ impl Agent for ContractMockAgent {
                 // Work is interactive in the phase loop; invoke_headless is
                 // not expected to fire for it. Fall through without writing.
             }
+            LlmPhase::MigrateIntent
+            | LlmPhase::MigrateTargets
+            | LlmPhase::MigrateMemoryBackfill => {
+                unreachable!(
+                    "{phase} is not part of the cycle — phase_loop must never invoke it"
+                );
+            }
         }
         Ok(())
     }

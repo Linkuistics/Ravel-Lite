@@ -674,6 +674,7 @@ mod tests {
             dependencies: vec![],
             results: None,
             handoff: None,
+            legacy: false,
         }
     }
 

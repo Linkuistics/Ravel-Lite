@@ -187,6 +187,7 @@ mod tests {
             dependencies: deps.iter().map(|s| s.to_string()).collect(),
             results: results.map(String::from),
             handoff: None,
+            legacy: false,
         }
     }
 
