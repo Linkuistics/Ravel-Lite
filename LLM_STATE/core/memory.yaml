@@ -1069,3 +1069,11 @@ entries:
     **Why:** Three consecutive task cycles each declared the ErrorCode tagging sweep complete with zero exceptions noted; none ran a mechanical check. The guard disproved all three claims on first run.
 
     **How to apply:** When a "sweep task" is marked done without a mechanical guard, treat the completion claim as advisory. Where feasible, add a guard that would fail on regression before declaring the sweep done.
+- id: check-sh-enforces-with-code-on-every-with-context-chain
+  title: check.sh enforces with_code on every with_context chain
+  body: |
+    scripts/check_errorcode_chains.py (invoked from check.sh) forbids any .with_context(...) or .context(...) chain in src/**/*.rs that lacks .with_code(ErrorCode::X). Guards the invariant established when all 272 production sites were tagged. Sanitises string literals and block comments before pattern matching to avoid false positives.
+- id: errorcode-exempt-opts-out-of-the-with-context-chain-guard
+  title: '// errorcode-exempt: opts out of the with_context chain guard'
+  body: |
+    // errorcode-exempt: comment on a line opts it out of the chain guard in check_errorcode_chains.py. Three sites in src/cli/error_context.rs use it: lines 138, 144 (pre-existing), and 177 (mod tests, asserts CodedError codes survive the anyhow chain). Any future test or intentional untagged chain must add this annotation.
