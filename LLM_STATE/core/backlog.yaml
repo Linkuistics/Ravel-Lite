@@ -19,178 +19,6 @@ tasks:
     7. Backfill memory (one-shot LLM): pass over `legacy_memory.md` produces a `memory.yaml` with `status: legacy` entries. User curates in their own time.
 
     Verification: dogfood by migrating `LLM_STATE/core` (this very plan) as the canonical test case before the v2.0 release.
-- id: findings-inbox-implement-context-level-findings-yaml-and-state-verbs
-  title: 'Findings inbox: implement context-level findings.yaml and state verbs'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Implement the context-level findings inbox as specified in `docs/architecture-next.md` §Findings inbox.
-
-    This replaces the v1 `subagent-dispatch.yaml` cross-plan mechanism. Triage becomes purely advisory cross-plan: it adjusts its own plan's backlog and writes findings to the inbox, but never initiates work in another plan. All cross-plan effects flow through the inbox, mediated by the user.
-
-    Reference: `docs/architecture-next.md` §Findings inbox, §What this replaces or removes.
-
-    ## Data shape
-
-    `<context>/findings.yaml` — context-level TMS inbox:
-
-    ```yaml
-    findings:
-      - id: f-2026-04-26-0001
-        kind: finding
-        claim: "..."
-        justifications:
-          - kind: rationale
-            text: "Came up while investigating intent i-003"
-        status: new          # new | promoted | wontfix | superseded
-        component: atlas:atlas-ontology   # optional attribution
-        raised_in: plan/foo
-        raised_at: 2026-04-26T...
-    ```
-
-    ## Scope
-
-    1. Add `src/state/findings/` module (schema, yaml_io, verbs) for `findings.yaml` CRUD, following the module-per-area layout in `src/state/`.
-    2. CLI verbs: `state findings list`, `state findings add`, `state findings set-status`, `state findings delete`.
-    3. Wire into `dispatch_state` in `src/main.rs`.
-    4. Update `defaults/phases/triage.md` and `defaults/phases/reflect.md` to write findings via the CLI verbs instead of writing to `subagent-dispatch.yaml`.
-    5. Update `src/survey/` to surface `findings.yaml` new-status entries in the survey output (per `ravel-lite-survey-emits-structured-yaml` memory).
-    6. Remove or deprecate the `subagent-dispatch.yaml` write logic from the triage prompt once the findings path is live.
-    7. Tests: CRUD round-trip, idempotent add (duplicate id rejected), status transitions, survey injection.
-
-    ## Design notes
-
-    - `state findings add` must pre-initialise `findings.yaml` on first write (parallel to `state discover-proposals` pattern).
-    - `raised_in` and `raised_at` are required identity fields (no `serde(default)`); `component` is optional data.
-    - `schema_version` guard in `yaml_io::read_findings` hard-fails on mismatch.
-    - No reads from `findings.yaml` during plan execution — only `survey` surfaces it.
-
-    ## Relationship to the migrator
-
-    With sync and findings inbox both shipped, the v1→v2 migrator has fewer cross-plan coordination unknowns: the subagent-dispatch mechanism it must retire is fully replaced, and the findings inbox it must initialise has a stable schema.
-  results: |
-    ## What was done
-
-    Closed out the findings-inbox task by completing the two scope items
-    that were still pending: the prompt rewrites in
-    `defaults/phases/triage.md` and `defaults/phases/reflect.md`, and the
-    removal of the v1 `subagent-dispatch.yaml` mechanism the inbox replaces.
-
-    The schema/CLI/yaml-io layer (scope items 1, 2, 3, 7) and the survey
-    integration (scope item 5) were already implemented before this cycle.
-    Verified intact: `src/state/findings/{mod,schema,verbs,yaml_io}.rs`,
-    top-level `findings` CLI dispatch in `main.rs`, survey rendering in
-    `src/survey/render.rs`, all 23 findings unit tests passing.
-
-    ### Source-side removals (scope item 6)
-
-    - Deleted `src/subagent.rs` entirely (parsing, dispatch fan-out, tests).
-    - Removed `pub mod subagent;` from `src/lib.rs`.
-    - Removed `dispatch_subagents` import + the `if lp == LlmPhase::Triage`
-      fan-out block from `src/phase_loop.rs:486-488`.
-    - Removed `async fn dispatch_subagent(...)` from the `Agent` trait
-      (`src/agent/mod.rs`) and its two implementations
-      (`src/agent/pi.rs`, `src/agent/claude_code.rs`).
-    - Removed `build_dispatch_plan_context` from `src/agent/common.rs`
-      (no other callers).
-    - Removed `SubagentDispatch` struct from `src/types.rs`.
-    - Removed `SUBAGENT_DISPATCH_FILENAME` from `src/state/filenames.rs`
-      and the matching `HighlightRule` + import from `src/format.rs`.
-    - Removed mock `dispatch_subagent` impls from `tests/common/mod.rs`
-      and `tests/phase_loop.rs`.
-    - Removed the `pi_dispatch_subagent_invokes_pi_with_target_plan_args`
-      test from `tests/pi_agent.rs`.
-
-    ### Prompt rewrites (scope item 4)
-
-    - `defaults/phases/triage.md`: replaced the "Cross-plan subagent
-      dispatch" section (which wrote `subagent-dispatch.yaml`) with a
-      "Cross-plan findings" section that uses
-      `ravel-lite findings add --claim ... --body-file ... --raised-in {{PLAN}} --authored-in triage`.
-      Updated the "Do NOT read" guidance to point at the findings inbox
-      instead of "dispatched subagents". Replaced `[DISPATCH] <kind>:
-      <target> — <summary>` intent label with `[FINDING] <one-line claim>`.
-    - `defaults/phases/reflect.md`: added a new step 4 ("Cross-plan
-      findings") authorising reflect to also write findings when
-      distillation surfaces cross-plan-relevant observations. Renumbered
-      the previous step 4 ("Hand off") to step 5. Added `[FINDING]`
-      to the intent label list. Updated the "Do NOT read" entry for
-      declared peer-project relationships to redirect cross-plan
-      observations into the findings inbox.
-
-    ### Verification
-
-    - `./scripts/check.sh` — clippy clean.
-    - `cargo test --workspace` — 1100+ tests pass, 0 failures, 3
-      pre-existing PTY-capture ignores (the `infra` blocked task).
-    - End-to-end smoke test of `findings add` → `findings list` →
-      `findings set-status` against a temp config dir produced the
-      expected on-disk shape: `kind: finding`, `status: new` →
-      `wontfix`, optional `component:`/`raised_in:` round-trip.
-
-    ## Deliberate design divergences from the original task scope
-
-    - **Top-level `findings` verb, not `state findings`.** The task
-      description listed `state findings list/add/set-status/delete`, but
-      the implementation chose top-level `ravel-lite findings <verb>` to
-      reflect that findings are *context-level*, not plan-state. All
-      `state <kind>` verbs take a `<plan>` argument; findings.yaml lives
-      at `<context>/findings.yaml` and has no plan scoping. The shape
-      follows the architecture: keeping findings under `state` would have
-      required either a fake plan argument or special-casing inside
-      `state` dispatch, both worse than a separate top-level verb.
-
-    - **No `delete` verb.** TMS items don't get deleted — they get
-      superseded or marked `wontfix`. The status transitions table is
-      `new → promoted | wontfix | superseded`. `wontfix` IS the
-      delete-equivalent for an inbox item. Adding a `delete` would
-      break the supersession invariant the substrate enforces.
-
-    ## What was NOT in this work phase's scope
-
-    - **Website docs (cross-plan-files.adoc, phase-cycle.adoc, concepts.adoc,
-      state-files.adoc, index.adoc, two tutorials).** All seven AsciiDoc
-      source files still describe `subagent-dispatch.yaml` and the old
-      dispatch flow. Not touched here — see suggested follow-up below.
-      The session-log entry at `LLM_STATE/core/session-log.yaml:1528`
-      flagged "docs reconciliation" as deferred, and the backlog already
-      carries a separate "Update tutorial and reference docs for
-      repos.yaml cutover" task that is the natural home for these edits.
-
-    - **`LLM_STATE/core/memory.yaml` entry "`pi_dispatch_subagent` test
-      pins dispatch argv contract"** is now stale — it describes a test
-      that no longer exists. Updating memory is reflect's job; the
-      bounded-TMS check (`state memory check-anchors`) should surface
-      this on the next reflect cycle if the entry has a code-anchor.
-      Left in place rather than touched from work.
-
-    ## What this unlocks
-
-    Per the task's own "Relationship to the migrator" note, this clears
-    two of the three blockers the v1→v2 plan migrator faces:
-
-    1. The cross-plan coordination mechanism it must retire
-       (`subagent-dispatch.yaml`) is fully replaced by the findings inbox.
-    2. The findings inbox the migrator must initialise has a stable schema
-       and verbs to call.
-
-    The remaining work for the migrator (Atlas indexing, target/intent
-    extraction phases, worktree mounting) is not blocked by findings
-    inbox work.
-
-    ## Suggested next work
-
-    - **Docs reconciliation.** The seven AsciiDoc files referenced above
-      need a pass to remove subagent-dispatch.yaml documentation and
-      document the findings inbox in its place. The existing "Update
-      tutorial and reference docs for repos.yaml cutover" task could
-      absorb this, or a new task could be split out — the work is bigger
-      than just the repos.yaml cutover.
-    - **Reflect's bounded-TMS check on the now-stale "`pi_dispatch_subagent`
-      test pins dispatch argv contract" memory entry.** Should be
-      defeated automatically by `state memory check-anchors` on the next
-      reflect cycle if it carries a code-anchor; if not, mark it manually.
 - id: plan-finish-pr-merge-with-memory-promotion-and-archive
   title: 'Plan finish: pr/merge with memory promotion and archive'
   category: architecture-next
@@ -253,6 +81,39 @@ tasks:
     1. Update prose in `docs/tutorial/` and `docs/reference/` to use `repo add/list/remove` vocabulary.
     2. Re-run `scripts/capture/ravel-lite-tutorial.sh` against a VM and replace the three stale transcript files.
     3. Verify no remaining references to `state projects` in docs (grep: `state projects`).
+- id: update-reference-docs-to-replace-subagent-dispatch-yaml-with-findings-inbox
+  title: Update reference docs to replace subagent-dispatch.yaml with findings inbox
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Update the seven AsciiDoc reference and tutorial source files that still describe `subagent-dispatch.yaml` and the old cross-plan dispatch flow, replacing that content with findings-inbox documentation.
+
+    ## Problem being solved
+
+    The findings-inbox implementation (completed this cycle) fully retired the `subagent-dispatch.yaml` mechanism. However, seven AsciiDoc source files under `docs/` still describe the old flow:
+
+    - `docs/reference/cross-plan-files.adoc`
+    - `docs/reference/phase-cycle.adoc`
+    - `docs/reference/concepts.adoc`
+    - `docs/reference/state-files.adoc`
+    - `docs/reference/index.adoc`
+    - `docs/tutorial/` (two tutorial chapters that reference cross-plan coordination)
+
+    These were explicitly deferred from the findings-inbox work task scope; see session-log entry flagging "docs reconciliation" as deferred.
+
+    ## Scope
+
+    1. Remove `subagent-dispatch.yaml` documentation from all seven files.
+    2. Document the findings inbox (`findings.yaml`, `ravel-lite findings add/list/set-status`) in its place.
+    3. Update cross-plan-coordination prose: triage now writes findings via CLI verbs rather than writing `subagent-dispatch.yaml`; the user mediates cross-plan propagation via the findings inbox.
+    4. Grep for `subagent-dispatch` in `docs/` to confirm no remaining references.
+
+    ## Notes
+
+    - This task is NOT gated on architecture-next milestones. The findings inbox has a stable schema and CLI surface; docs can be updated now.
+    - Overlap with `update-tutorial-and-reference-docs-for-repos-yaml-cutover`: `cross-plan-files.adoc` appears in both scopes. Coordinate or combine edits if that task becomes unblocked before this one runs.
+    - No VM re-capture is needed; these are prose edits to AsciiDoc source files, not capture transcripts.
 - id: state-intents-render-overview-regenerate-phase-md-from-intents-task-counts
   title: 'state intents render-overview: regenerate phase.md from intents + task counts'
   category: architecture-next
