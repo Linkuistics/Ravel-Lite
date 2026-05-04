@@ -12,7 +12,15 @@
 
 set -euo pipefail
 IFS=$'\n\t'
-trap 'echo "check: error on line $LINENO" >&2' ERR
+trap 'echo "check: error on line $LINENO: $BASH_COMMAND" >&2' ERR
+
+# Detach from the caller's stdin. Git's pre-push hook always pipes the list
+# of refs being pushed to the hook on stdin, even when the hook ignores it.
+# Tools like ripgrep auto-detect piped stdin and switch to reading from it
+# instead of the filesystem — silently producing zero matches and a non-zero
+# exit that pipefail then escalates into a script abort. Closing stdin makes
+# every step behave identically whether invoked by hand or by git.
+exec </dev/null
 
 cargo clippy --all-targets --workspace -- -D warnings
 
