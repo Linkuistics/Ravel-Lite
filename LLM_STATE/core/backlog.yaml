@@ -19,72 +19,33 @@ tasks:
     7. Backfill memory (one-shot LLM): pass over `legacy_memory.md` produces a `memory.yaml` with `status: legacy` entries. User curates in their own time.
 
     Verification: dogfood by migrating `LLM_STATE/core` (this very plan) as the canonical test case before the v2.0 release.
-- id: cli-tag-with-context-io-failure-chains-with-errorcode-ioerror
-  title: 'CLI: tag with_context IO-failure chains with ErrorCode::IoError'
+- id: cli-add-errorcode-regression-guard-to-check-sh
+  title: 'CLI: add ErrorCode regression guard to check.sh'
   category: architecture-next
-  status: done
+  status: not_started
   dependencies: []
   description: |
-    Tag `with_context` IO-failure chains in `src/**` with `ErrorCode::IoError` to close the last gap before the JSON-error-envelope work in the architecture-next backlog.
+    Extend `scripts/check.sh` to forbid future untagged `with_context` / `.context(` chains in production source, locking the invariant that was fully established by the `cli-tag-with-context-io-failure-chains-with-errorcode-ioerror` task (272 sites tagged in session, all now carry `.with_code(ErrorCode::X)`).
 
-    **Problem being solved:** The three-cycle `ErrorCode` tagging sweep (`cli-tag-inner-verb-error-sites-state-atlas-repos-discover-sweep`, `cli-tag-discover-internals-session-log-parse-md-error-sites-with-errorcode`, and the just-completed session-138 task) tagged all `bail!`/`anyhow!`/`ensure!` macro sites but intentionally left `with_context` chains untouched. The `with_context` chains are the last source of errors that reach callers without an `ErrorCode` on them. Typical form: `.context("Failed to run git X")` or `.with_context(|| format!("Failed to read {}", path.display()))`.
+    **Why now:** Every production site is tagged. A regression guard is only meaningful once all existing violations are fixed; that moment is now.
 
-    **Settled design decisions:**
-    - `with_context` wraps `std::io::Error` or subprocess failures → `ErrorCode::IoError` is the correct code for nearly all of them. File-not-found wraps are `NotFound`; malformed-content wraps are `InvalidInput`. Categorise per the existing table.
-    - Apply via `.with_code(ErrorCode::X)` chained after `.context(...)` / `.with_context(...)`. The `ResultExt::with_code` method already exists in `src/cli/error_context.rs`; no new infrastructure needed.
-    - Files most affected (from the earlier sweep): `src/git.rs`, `src/state/`, `src/discover/`, `src/atlas.rs`, `src/phase_loop.rs`. A grep for `\.context(` / `\.with_context(` scoped to `src/**` identifies the full set.
-    - Do NOT touch `tests/` — test helpers use `with_context` legitimately without codes.
-    - This task does NOT change any wire shape; it is a pure diagnostic-metadata improvement.
+    **Settled design (from the tagging task Results):**
 
-    **Reference examples:**
-    - `src/git.rs:271` — `output.context("Failed to run git diff --name-only")` — already has a `bail_with!(ErrorCode::IoError, …)` a few lines down; the `context` call above it is the pattern to tag.
-    - `src/cli/error_context.rs` — `ResultExt::with_code` trait; `.with_code(ErrorCode::X)` is the chain to append.
-    - `src/discover/tree_sha.rs` — existing pattern of `.map_err(|e| anyhow!(…)).with_code(ErrorCode::X)` for reference style.
+    - Extend the existing `bail!/anyhow!/ensure!` regex in `check.sh` to also catch lines containing `\.with_context(` or `\.context(` that lack a `.with_code(` within the same statement.
+    - The trailing `?`-terminated chain is the natural delimiter; a Python or small Rust helper inside `check.sh` is more robust than pure grep because the chain spans lines.
+    - Exempt marker: `errorcode-exempt:` comment suffix silences the guard for the handful of intentional non-coded sites (test mods in `src/**`, generated code paths).
+    - Scope: `src/**` only. `tests/` is intentionally excluded — test helpers use `.context(` without codes.
 
-    **Dependencies:** None — the regression guard (`cli-add-errorcode-regression-guard-to-check-sh`) is a peer task, not a prerequisite. Both can land independently.
-  results: |
-    ## What was done
+    **Reference:**
 
-    Tagged 272 production `with_context` / `context` chains across 45 files in `src/**` with the appropriate `ErrorCode`. Closes the last gap in the three-cycle `ErrorCode`-tagging sweep (`bail!`/`anyhow!`/`ensure!` macros were tagged in earlier sessions; `with_context` chains were intentionally deferred until now).
+    - `scripts/check.sh` — existing macro-tagging guard is the pattern to extend.
+    - `src/cli/error_context.rs` — `ResultExt::with_code` trait; `.with_code(ErrorCode::X)` is the chain that satisfies the guard.
+    - Completed task `cli-tag-with-context-io-failure-chains-with-errorcode-ioerror` — established all production sites are tagged; see its Results for full file list.
 
-    ## Coverage
+    **Verification:**
 
-    Final scanner report: 0/272 production sites untagged. Test-mod sites in `src/` and code in `tests/` were left alone per the task description.
-
-    ## Categorisation rules applied
-
-    - **`IoError`** — file `read_to_string`, `write`, `create_dir_all`, `remove_file`, `rename`, subprocess `spawn`/`status`/`output`/`wait`, git invocations, anything wrapping `std::io::Error` or external command failure.
-    - **`InvalidInput`** — YAML parse failures (`serde_yaml::from_str`), markdown parse failures, malformed paths (no parent / no file_name), regex captures that fail, token-substitution failures.
-    - **`Internal`** — internal serialisation that should never fail in practice (`serde_yaml::to_string` over our own typed structs, `serde_json::to_string_pretty`), `Option::context` for invariants we expect to hold (e.g. child stdout pipe unavailable, internal store inserts), embedded-default lookups, "shouldn't happen" assertions.
-    - **`NotFound`** — registry lookup miss for a slug the user named.
-
-    The categorisation table in the task description (`with_context wraps std::io::Error → IoError; file-not-found → NotFound; malformed-content → InvalidInput`) was the starting heuristic; the four-bucket distribution above refines it for cases the spec didn't enumerate (path-shape errors, internal-only invariants, tool-defined drift).
-
-    ## Files touched (all edits added the `ResultExt` import where missing and chained `.with_code(ErrorCode::X)` after each `.context(...)` / `.with_context(|| ...)`)
-
-    - Agent layer: `src/agent/{claude_code,common,pi,pty_capture}.rs`
-    - CLI: `src/cli/capabilities.rs`, `src/main.rs`
-    - State YAML I/O: `src/state/{backlog,memory,intents,findings,this_cycle_focus,targets,target_requests,focus_objections,commits,session_log}/yaml_io.rs`
-    - State sub-modules: `src/state/backlog/parse_md.rs`, `src/state/memory/check_anchors.rs`, `src/state/migrate.rs`, `src/state/phase.rs`, `src/state/target_requests/drain.rs`, `src/state/targets/mount.rs`
-    - Discover pipeline: `src/discover/{apply,cache,mod,stage1,stage2}.rs`
-    - Survey pipeline: `src/survey/{discover,invoke,schema}.rs`
-    - Top-level: `src/atlas.rs`, `src/config_lua.rs`, `src/create.rs`, `src/debug_log.rs`, `src/defeat_cascade.rs`, `src/fixed_memory.rs`, `src/git.rs`, `src/init.rs`, `src/migrate_v1_to_v2.rs`, `src/multi_plan.rs`, `src/phase_loop.rs`, `src/related_components.rs`, `src/repos.rs`, `src/subagent.rs`
-
-    ## Verification
-
-    - `./scripts/check.sh` — passes (clippy clean + macro-tagging guard still green).
-    - `cargo test --lib` — 999 tests pass, 0 failures.
-    - Build: `cargo check --all-targets` clean.
-
-    ## Suggestions for follow-up
-
-    The peer task **`cli-add-errorcode-regression-guard-to-check-sh`** (mentioned in this task's description) should now extend `scripts/check.sh` to forbid future untagged `with_context` / `.context(` sites. The grep should ignore `errorcode-exempt:` and tolerate test mods. With every production site tagged today, this is the right moment to lock the invariant in CI.
-
-    Concretely: extend the existing `bail!/anyhow!/ensure!` regex in `check.sh` to also catch lines containing `\.with_context(` or `\.context(` that lack a `.with_code(` within the same statement. The trailing `?`-terminated chain is the natural delimiter; a Python helper inside `check.sh` (or a small Rust helper) is more robust than pure grep because the chain spans lines.
-
-    ## Ergonomic note
-
-    The current `with_code` flattens any inner `CodedError` into the outer message. For most call sites the outer code is the more user-actionable categorisation, so the flattening is intentional. A handful of cases (e.g. `dispatch_subagents`) may benefit from preserving the inner code; these are not material today but the design point may bite later if a TMS/parse error needs to bubble through a UI layer.
+    - Guard fires on a synthetic untagged `.with_context(` added to a src file and passes when `.with_code(ErrorCode::IoError)` is chained.
+    - `./scripts/check.sh` passes on current HEAD (0 violations).
 - id: plan-finish-pr-merge-with-memory-promotion-and-archive
   title: 'Plan finish: pr/merge with memory promotion and archive'
   category: architecture-next
