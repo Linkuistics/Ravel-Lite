@@ -189,7 +189,7 @@ tasks:
 - id: state-session-log-list-add-all-flag-and-truncation-envelope
   title: 'state session-log list: add --all flag and truncation envelope'
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Add `--all` flag and truncation envelope to `state session-log list`.
@@ -220,6 +220,65 @@ tasks:
       when total > 5.
     - `state session-log list --all` returns all with no truncation metadata.
     - `--limit` and `--all` are mutually exclusive at clap layer.
+  results: |
+    Added `--all` flag and truncation envelope to `state session-log list`, bringing it to parity with `memory list`, `backlog list`, `intents list`, and `findings list` while preserving its distinctive *newest-N* (tail) `--limit` semantics.
+
+    ## What changed
+
+    ### `src/state/session_log/schema.rs`
+    - Added `pub const SESSION_LOG_SCHEMA_VERSION: u32 = 1;` constant. The on-disk `SessionLogFile` shape continues to use `#[serde(flatten)] extra: IndexMap` to round-trip `schema_version:` softly; the new constant pins the version emitted by the list verb's `ListEnvelope`.
+
+    ### `src/state/session_log/verbs.rs`
+    - `run_list` signature changed from `(plan_dir, limit: Option<usize>, format)` to `(plan_dir, limits: ListLimits, format)`.
+    - Extracted pure helper `select_records(records, limits) -> ListEnvelope<SessionRecord>`. Tail-keep semantics: when `--limit N < total`, returns `records[total-N..]` and sets `truncated: Some(true) / total / returned`.
+    - `untruncated_envelope(items)` builds the no-metadata variant.
+    - `emit_envelope(envelope, format)` is the new emitter — prints YAML/JSON to stdout, writes the human truncation summary to stderr via `list_limits::truncation_summary_line` (same format as memory/backlog/etc.: `"Showing N of M results. Use --limit N or --all to see more."`).
+
+    ### `src/main.rs`
+    - `SessionLogCommands::List` gained `all: bool` field with `#[arg(long, conflicts_with = "limit")]`.
+    - `--limit` doc-comment rewritten to explicitly call out the *newest-N (tail)* semantic difference vs the head-keeping verbs.
+    - `SESSION_LOG_LIST_AFTER_HELP` extended with the `--all` example and a "Note:" paragraph clarifying the head-vs-tail distinction.
+    - `dispatch_session_log` constructs `ListLimits { limit, all }` and forwards.
+
+    ### Tests added (in `verbs.rs::tests`)
+    1. `select_records_default_returns_all_with_no_metadata`
+    2. `select_records_all_flag_returns_all_with_no_metadata`
+    3. `select_records_limit_keeps_newest_and_records_truncation` — explicitly asserts `s-2, s-3, s-4` returned for input `[s-0..s-4]` with `--limit 3`.
+    4. `select_records_limit_at_or_above_total_emits_no_truncation` (covers both `==` and `>` boundary)
+    5. `select_records_empty_input_returns_empty_with_no_metadata`
+    6. `untruncated_envelope_yaml_uses_items_key_and_omits_truncation_fields` — guards backward compatibility of the no-truncation YAML shape.
+    7. `truncated_envelope_yaml_carries_truncation_metadata` — guards the truncated YAML shape.
+
+    The pre-existing `run_list_limit_truncates_to_newest_n` test was replaced by the more comprehensive `select_records_limit_keeps_newest_and_records_truncation` (same intent, exercises the new pure helper directly).
+
+    ## Verification
+
+    - `cargo test --workspace` → 1019 + 23 + others pass; 0 failures.
+    - `./scripts/check.sh` → exit 0 (clippy gate clean).
+    - `ravel-lite state session-log list LLM_STATE/core --limit 2`:
+      - stdout: YAML envelope `{ schema_version: 1, items: [s-146, s-147], truncated: true, total: 147, returned: 2 }`.
+      - stderr: `Showing 2 of 147 results. Use --limit N or --all to see more.`
+    - `ravel-lite state session-log list LLM_STATE/core --all`:
+      - stdout: YAML envelope without truncation fields, all 147 sessions.
+      - stderr: empty.
+    - `ravel-lite state session-log list /tmp/x --limit 1 --all` → exit 2, error `the argument '--limit <LIMIT>' cannot be used with '--all'` (clap's mutual-exclusion).
+    - `--format json` produces the same envelope shape as YAML (verified via real-plan smoke).
+
+    ## Output shape change (deliberate)
+
+    Pre-this-change YAML output: `{ sessions: [...] }` (matching the on-disk file shape).
+    Post-this-change YAML output: `{ schema_version: 1, items: [...] [, truncated, total, returned] }` (matching the `ListEnvelope<T>` pattern used by every other state list verb).
+
+    The on-disk `session-log.yaml` shape is unchanged — only the CLI list output moves to the envelope shape. Consumers that round-trip CLI output through `SessionLogFile` will need to switch to `ListEnvelope<SessionRecord>` (or just deserialise items directly). I checked the in-tree consumers:
+    - `defaults/phases/analyse-work.md:102` calls `state session-log list {{PLAN}}` and instructs the LLM to "count records returned". The LLM will continue to count list items regardless of the wrapper key — no breakage.
+    - `src/survey/discover.rs:652` writes the on-disk file shape (`sessions: []`), not the CLI output shape — unaffected.
+
+    No external consumers are known.
+
+    ## What this suggests next
+
+    - The `analyse-work.md` "count records returned" step is mechanical work that violates the memory entry "Never do in an LLM what you can do in code". A follow-up could expose `state session-log count` (or include a count in the envelope) and replace the LLM-side counting with a deterministic Rust call. Out of scope for this task.
+    - Now that all five list verbs (memory, backlog, intents, findings, session-log) use `ListEnvelope`, the doc-comment on `list_limits.rs:20` claiming "Inherently large listings (atlas list-components, state session-log list) can pass a real default to opt their callers into safe-by-default truncation" is potentially worth revisiting: should `state session-log list` adopt a default cap (e.g., 50) so `list` without flags doesn't dump all 147 entries? I left the default as unbounded for backwards compatibility, but the comment hints at a future judgment call.
 - id: update-tutorial-and-reference-docs-for-repos-yaml-cutover
   title: Update tutorial and reference docs for repos.yaml cutover
   category: architecture-next
@@ -245,7 +304,7 @@ tasks:
 - id: fix-dream-phase-drift-in-docs-reference-phase-cycle-adoc
   title: Fix dream-phase drift in docs/reference/phase-cycle.adoc
   category: architecture-next
-  status: not_started
+  status: done
   dependencies: []
   description: |
     Fix dream-phase drift in `docs/reference/phase-cycle.adoc`.
@@ -277,6 +336,44 @@ tasks:
       future-tense mentions, no present-tense in-cycle descriptions.
     - Rendered HTML fragment at `website/docs/phase-cycle.html` is coherent.
     - `./scripts/check.sh` passes (no Rust changes; just a docs guard).
+  results: |
+    Updated `docs/reference/phase-cycle.adoc` to remove `dream` from the in-cycle phase list and reflect the new cycle anchor (closes at `reflect/git-commit-reflect`). Regenerated `website/docs/phase-cycle.html` via `./scripts/render-docs.sh`.
+
+    ## What changed
+
+    - Cycle diagram (top of page) now shows: `triage → git-commit-triage → work → analyse-work → git-commit-work → reflect → git-commit-reflect → [continue?] → triage`. The `[dream?]` gate, the `dream → git-commit-dream →` row, and the prior `[continue?]` checkpoint after `git-commit-triage` are gone.
+    - Removed `=== Dream` reasoning-phase subsection.
+    - Replaced `[[dream-trigger]] == The dream trigger` section with a concise `== Out-of-cycle truth maintenance` section pointing to the planned (not-yet-shipped) `ravel-lite curate` command.
+    - Removed `=== git-commit-dream` audit-trail subsection.
+    - Rewrote `=== git-commit-reflect`: now described as the phase that *closes* the cycle (returns `false` to the inner phase loop, exits). Previously described the dream/triage decision logic.
+    - Rewrote `=== git-commit-triage`: now described as the phase that *opens* the cycle (writes `phase.md ← work`, returns `true`, continues). Previously described as exiting the inner loop.
+    - Updated Reflect's transition prose: dropped the "dream or triage" decision sentence; now says reflect always names `git-commit-reflect` and that handler closes the cycle.
+    - Updated Triage opener: "The end-of-cycle phase" → "The cycle-opening phase".
+    - Removed `dream-baseline` from the Baselines section; updated "Four `<phase>-baseline` files" → "Three"; tightened `triage-baseline` description (no longer conditional).
+    - Updated Recovery section's `git log --oneline` example: dropped "optionally the dream commit"; anchor changed from `save-work-baseline ↔ save-work-baseline` to `save-triage-baseline ↔ save-triage-baseline` (since the cycle now opens at triage).
+    - Dropped count claims from intro and audit-trail intro paragraphs ("interleaved with audit-trail commit phases" / "The `git-commit-*` phases") to avoid encoding a number that the doc may need to revise once `git-commit-analyse-work` is documented.
+
+    ## Verification
+
+    - `grep -i dream docs/reference/phase-cycle.adoc`: only two matches remain, both explicitly past-tense ("The earlier `dream` phase ... has been removed entirely"). Satisfies the task's spec ("only historical or future-tense mentions, no present-tense in-cycle descriptions").
+    - `git status --short` after rendering shows only `docs/reference/phase-cycle.adoc` and `website/docs/phase-cycle.html` modified — no churn in other rendered fragments because asciidoctor output is deterministic for unchanged input.
+    - `./scripts/check.sh` passes (clippy gate, exit 0).
+
+    ## Residual drift (deferred — not in this task's scope)
+
+    The phase-cycle.adoc still has unrelated drift that I deliberately left alone:
+
+    1. **Audit-trail section is missing `git-commit-analyse-work`.** Code (`src/phase_loop.rs:334`) has 4 audit-trail handlers; the doc lists 3 (`git-commit-work`, `git-commit-reflect`, `git-commit-triage`). The `git-commit-work` subsection's prose ("Applies `commits.yaml` to the project subtree, then captures `reflect-baseline`") describes what `git-commit-analyse-work` actually does in code; `git-commit-work` now commits work's plan-state mutations and captures `analyse-work-baseline`. I dropped the explicit "four" count in the intro to avoid actively lying, but a follow-up task should add the missing subsection and split the prose correctly.
+    2. **Reasoning-phase section ordering.** Subsections still go Work → Analyse-work → Reflect → Triage. Code's cycle order (after this fix's reframing) is Triage → Work → Analyse-work → Reflect. Internal coherence is preserved (Triage's prose is self-contained either way), but a reorder would match the diagram and aid first-time readers.
+    3. **`reflect-baseline` capture attribution.** Doc says "captured by `git-commit-work`"; code captures it in `git-commit-analyse-work`. Tied to issue 1.
+    4. **Triage subsection prose** ("Reviews the backlog, mines completed tasks for hand-offs, reprioritises…") doesn't mention v2 responsibilities described in `docs/architecture-next.md` §TRIAGE: intent hygiene, defeat cascade, gap detection, focus selection, this-cycle-focus.yaml output, mount requests. Pure intent-system drift, separate from dream removal.
+
+    These should be a single follow-up task: "Update phase-cycle.adoc audit-trail section + reasoning-phase ordering for v2". I did not file it as a backlog item — leaving that judgment to triage.
+
+    ## What this suggests next
+
+    - The audit-trail-section drift is a clear next docs task. Worth filing once the v2 cutover lands and the per-worktree YAML baseline shape settles, since baselines section also needs revising for that.
+    - The doc-render pipeline behaved well: deterministic asciidoctor output meant only the touched fragment changed in `website/docs/`. No need to manually filter `git status` after rendering.
 - id: plan-finish-pr-merge-with-memory-promotion-and-archive
   title: 'Plan finish: pr/merge with memory promotion and archive'
   category: architecture-next

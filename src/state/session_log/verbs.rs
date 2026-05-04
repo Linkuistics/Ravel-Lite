@@ -11,25 +11,49 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::bail_with;
+use crate::cli::list_limits::{self, ListEnvelope, ListLimits};
 use crate::cli::{CodedError, ErrorCode, OutputFormat};
 
-use super::schema::{SessionLogFile, SessionRecord};
+use super::schema::{SessionLogFile, SessionRecord, SESSION_LOG_SCHEMA_VERSION};
 use super::yaml_io::{read_latest_session, read_session_log, write_latest_session, write_session_log};
 
-pub fn run_list(plan_dir: &Path, limit: Option<usize>, format: OutputFormat) -> Result<()> {
+pub fn run_list(plan_dir: &Path, limits: ListLimits, format: OutputFormat) -> Result<()> {
     let log = read_session_log(plan_dir)?;
-    let projected = match limit {
-        Some(n) => {
-            let total = log.sessions.len();
-            let start = total.saturating_sub(n);
-            SessionLogFile {
-                sessions: log.sessions[start..].to_vec(),
-                extra: Default::default(),
+    let envelope = select_records(&log.sessions, &limits);
+    emit_envelope(&envelope, format)
+}
+
+/// Pure function for testability: project `records` per `limits` into a
+/// `ListEnvelope`. Unlike the head-keeping `list_limits::apply` used by
+/// memory/backlog/intents/findings, session-log keeps the *newest* N
+/// (tail) — `--limit N` is "show me the most recent N sessions", which
+/// is the historical semantics this verb was deferred to preserve.
+fn select_records(records: &[SessionRecord], limits: &ListLimits) -> ListEnvelope<SessionRecord> {
+    let total = records.len();
+    match limits.effective(None) {
+        None => untruncated_envelope(records.to_vec()),
+        Some(cap) if total <= cap => untruncated_envelope(records.to_vec()),
+        Some(cap) => {
+            let start = total - cap;
+            ListEnvelope {
+                schema_version: SESSION_LOG_SCHEMA_VERSION,
+                items: records[start..].to_vec(),
+                truncated: Some(true),
+                total: Some(total),
+                returned: Some(cap),
             }
         }
-        None => log,
-    };
-    emit_log(&projected, format)
+    }
+}
+
+fn untruncated_envelope(items: Vec<SessionRecord>) -> ListEnvelope<SessionRecord> {
+    ListEnvelope {
+        schema_version: SESSION_LOG_SCHEMA_VERSION,
+        items,
+        truncated: None,
+        total: None,
+        returned: None,
+    }
 }
 
 pub fn run_show(plan_dir: &Path, id: &str, format: OutputFormat) -> Result<()> {
@@ -58,6 +82,27 @@ pub(crate) fn find_session<'a>(
             code: ErrorCode::NotFound,
             message: format!("no session with id {id:?}"),
         }))
+}
+
+fn emit_envelope(
+    envelope: &ListEnvelope<SessionRecord>,
+    format: OutputFormat,
+) -> Result<()> {
+    let serialised = match format {
+        OutputFormat::Yaml => serde_yaml::to_string(envelope)?,
+        OutputFormat::Json => serde_json::to_string_pretty(envelope)? + "\n",
+        OutputFormat::Markdown => {
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`state session-log` does not support --format markdown; use yaml or json"
+            )
+        }
+    };
+    print!("{serialised}");
+    if let Some(line) = list_limits::truncation_summary_line(envelope) {
+        eprintln!("{line}");
+    }
+    Ok(())
 }
 
 fn emit_log(log: &SessionLogFile, format: OutputFormat) -> Result<()> {
@@ -283,23 +328,79 @@ mod tests {
         assert!(msg.contains("missing"), "error must cite bad id: {msg}");
     }
 
+    fn five_records() -> Vec<SessionRecord> {
+        (0..5).map(|i| sample_record(&format!("s-{i}"))).collect()
+    }
+
     #[test]
-    fn run_list_limit_truncates_to_newest_n() {
-        let tmp = TempDir::new().unwrap();
-        for idx in 0..5 {
-            append_record(tmp.path(), &sample_record(&format!("s-{idx}"))).unwrap();
-        }
-        // Smoke via direct slicing: run_list prints to stdout, not
-        // easily captured here; the slicing logic is the interesting
-        // part and is unit-tested in isolation.
-        let log = read_session_log(tmp.path()).unwrap();
-        let limit = 3;
-        let start = log.sessions.len().saturating_sub(limit);
-        let tail: Vec<&str> = log.sessions[start..]
-            .iter()
-            .map(|s| s.id.as_str())
-            .collect();
-        assert_eq!(tail, vec!["s-2", "s-3", "s-4"]);
+    fn select_records_default_returns_all_with_no_metadata() {
+        let envelope = select_records(&five_records(), &ListLimits::default());
+        let ids: Vec<&str> = envelope.items.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, vec!["s-0", "s-1", "s-2", "s-3", "s-4"]);
+        assert_eq!(envelope.truncated, None);
+        assert_eq!(envelope.total, None);
+        assert_eq!(envelope.returned, None);
+    }
+
+    #[test]
+    fn select_records_all_flag_returns_all_with_no_metadata() {
+        let limits = ListLimits { limit: None, all: true };
+        let envelope = select_records(&five_records(), &limits);
+        assert_eq!(envelope.items.len(), 5);
+        assert_eq!(envelope.truncated, None);
+    }
+
+    #[test]
+    fn select_records_limit_keeps_newest_and_records_truncation() {
+        let limits = ListLimits { limit: Some(3), all: false };
+        let envelope = select_records(&five_records(), &limits);
+        let ids: Vec<&str> = envelope.items.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, vec!["s-2", "s-3", "s-4"], "must keep newest 3");
+        assert_eq!(envelope.truncated, Some(true));
+        assert_eq!(envelope.total, Some(5));
+        assert_eq!(envelope.returned, Some(3));
+    }
+
+    #[test]
+    fn select_records_limit_at_or_above_total_emits_no_truncation() {
+        let limits = ListLimits { limit: Some(5), all: false };
+        let envelope = select_records(&five_records(), &limits);
+        assert_eq!(envelope.items.len(), 5);
+        assert_eq!(envelope.truncated, None);
+
+        let limits = ListLimits { limit: Some(10), all: false };
+        let envelope = select_records(&five_records(), &limits);
+        assert_eq!(envelope.items.len(), 5);
+        assert_eq!(envelope.truncated, None);
+    }
+
+    #[test]
+    fn select_records_empty_input_returns_empty_with_no_metadata() {
+        let limits = ListLimits { limit: Some(3), all: false };
+        let envelope = select_records(&[], &limits);
+        assert!(envelope.items.is_empty());
+        assert_eq!(envelope.truncated, None);
+    }
+
+    #[test]
+    fn untruncated_envelope_yaml_uses_items_key_and_omits_truncation_fields() {
+        let envelope = untruncated_envelope(vec![sample_record("only")]);
+        let yaml = serde_yaml::to_string(&envelope).unwrap();
+        assert!(yaml.contains("schema_version: 1"), "yaml: {yaml}");
+        assert!(yaml.contains("items:"), "yaml: {yaml}");
+        assert!(!yaml.contains("truncated"), "yaml: {yaml}");
+        assert!(!yaml.contains("total:"), "yaml: {yaml}");
+        assert!(!yaml.contains("returned:"), "yaml: {yaml}");
+    }
+
+    #[test]
+    fn truncated_envelope_yaml_carries_truncation_metadata() {
+        let limits = ListLimits { limit: Some(2), all: false };
+        let envelope = select_records(&five_records(), &limits);
+        let yaml = serde_yaml::to_string(&envelope).unwrap();
+        assert!(yaml.contains("truncated: true"), "yaml: {yaml}");
+        assert!(yaml.contains("total: 5"), "yaml: {yaml}");
+        assert!(yaml.contains("returned: 2"), "yaml: {yaml}");
     }
 
     #[test]

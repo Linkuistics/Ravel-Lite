@@ -7,6 +7,13 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+/// Wire version for `state session-log list` envelope output. The on-disk
+/// `session-log.yaml` shape uses a soft `extra: IndexMap` to round-trip
+/// any `schema_version:` key it finds; this constant pins the version
+/// emitted by the list verb's `ListEnvelope` so JSON/YAML consumers can
+/// gate on it.
+pub const SESSION_LOG_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRecord {
     pub id: String,

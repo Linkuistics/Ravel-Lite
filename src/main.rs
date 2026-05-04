@@ -701,6 +701,11 @@ const SESSION_LOG_LIST_AFTER_HELP: &str = "\
 Examples:
   ravel-lite state session-log list LLM_STATE/core
   ravel-lite state session-log list LLM_STATE/core --limit 10
+  ravel-lite state session-log list LLM_STATE/core --all
+
+Note: unlike memory/backlog/intents/findings (which take \"first N\"),
+`session-log list --limit N` returns the newest N sessions (tail).
+The default is unbounded; pass `--all` for explicit clarity.
 ";
 
 const SESSION_LOG_SHOW_AFTER_HELP: &str = "\
@@ -2170,9 +2175,17 @@ enum SessionLogCommands {
     #[command(visible_alias = "ls", after_help = SESSION_LOG_LIST_AFTER_HELP)]
     List {
         plan_dir: PathBuf,
-        /// Truncate output to the last N sessions (newest-kept).
+        /// Keep the newest N sessions (tail). Conflicts with `--all`.
+        /// Truncated output carries `truncated: true`, `total`, and
+        /// `returned` metadata in YAML/JSON; a human summary line is
+        /// also written to stderr. Note the semantic difference from
+        /// memory/backlog/intents/findings, where `--limit N` keeps
+        /// the first N (head).
         #[arg(long)]
         limit: Option<usize>,
+        /// Explicitly request unbounded output. Conflicts with `--limit`.
+        #[arg(long, conflicts_with = "limit")]
+        all: bool,
         #[arg(long, default_value = "yaml")]
         format: String,
     },
@@ -3335,12 +3348,13 @@ fn dispatch_findings(command: FindingsCommands) -> Result<()> {
 }
 
 fn dispatch_session_log(command: SessionLogCommands) -> Result<()> {
+    use ravel_lite::cli::list_limits::ListLimits;
     use ravel_lite::state::session_log;
 
     match command {
-        SessionLogCommands::List { plan_dir, limit, format } => {
+        SessionLogCommands::List { plan_dir, limit, all, format } => {
             let fmt = OutputFormat::parse(&format)?;
-            session_log::run_list(&plan_dir, limit, fmt)
+            session_log::run_list(&plan_dir, ListLimits { limit, all }, fmt)
         }
         SessionLogCommands::Show { plan_dir, id, format } => {
             let fmt = OutputFormat::parse(&format)?;
