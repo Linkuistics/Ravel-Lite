@@ -262,7 +262,7 @@ entries:
 - id: state-session-log-provides-full-verb-surface
   title: '`state session-log` provides full verb surface'
   body: |
-    `src/state/session_log/` holds `SessionRecord` / `SessionLogFile` types. CLI verbs: `list`, `show`, `append`, `set-latest`, `show-latest`. `append_record` is idempotent by session id; duplicate appends are silently skipped.
+    `src/state/session_log/` holds `SessionRecord` / `SessionLogFile` types. CLI verbs: `list`, `show`, `append`, `set-latest`, `show-latest`. `list` emits `ListEnvelope<SessionRecord>` and accepts `--all` (return all records) or `--limit N` (return newest N). `append_record` is idempotent by session id; duplicate appends are silently skipped. See: `session-log list uses tail-keep semantics; other state lists head-keep`.
 - id: split-into-task-blocks-splits-on-headings
   title: '`split_into_task_blocks` splits on `### ` headings'
   body: |
@@ -1120,3 +1120,7 @@ entries:
   title: dream is out-of-cycle; curate is the cross-context replacement
   body: |
     The `dream` phase is not an automatic in-cycle phase. `curate` is the cross-context replacement. Reference docs still carry in-cycle prose drift from the old design — this is a known follow-on to fix.
+- id: session-log-list-uses-tail-keep-semantics-other-state-lists-head-keep
+  title: session-log list uses tail-keep semantics; other state lists head-keep
+  body: |
+    `select_records` in `src/state/session_log/yaml_io.rs` keeps the N newest records from the tail of the log (tail-keep). All other state list verbs (memory, backlog, intents, findings) head-keep (first-N). Both the `--limit` doc comment and `SESSION_LOG_LIST_AFTER_HELP` call out this distinction explicitly. Reversing to head-keep for session-log would return the oldest sessions, not the most recent.
