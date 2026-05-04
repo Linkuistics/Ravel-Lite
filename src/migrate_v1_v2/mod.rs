@@ -22,9 +22,15 @@ pub mod transform;
 pub mod validate;
 
 /// Top-level entry point. Drives the full migration in two halves:
-/// mechanical (validate + copy) followed by three sequential headless
-/// LLM phases (intent → targets → memory) with confirm-before-apply
-/// between each agent output and runner application.
+/// mechanical (validate + copy + transform) followed by three
+/// sequential headless LLM phases (intent → targets → memory) with
+/// confirm-before-apply between each agent output and runner
+/// application.
+///
+/// Emits step-by-step progress to stderr (matches `discover/mod.rs`
+/// pattern). The three LLM phases each take ~30–60s with no
+/// intermediate output, so the prefix lines warn the user the verb
+/// is alive and waiting.
 pub async fn run_migrate_v1_v2(
     agent: Arc<dyn Agent>,
     old_plan_path: &Path,
@@ -32,11 +38,33 @@ pub async fn run_migrate_v1_v2(
     config_dir: &Path,
     skip_confirm: bool,
 ) -> Result<()> {
+    eprintln!(
+        "migrate-v1-v2: {} → plans/{}",
+        old_plan_path.display(),
+        new_plan_name
+    );
+
+    eprintln!("[1/6] Validating inputs");
     let validated = validate::validate_inputs(old_plan_path, new_plan_name, config_dir)?;
+
+    eprintln!("[2/6] Copying state files");
     copy::copy_plan_state(&validated.old_plan_path, &validated.new_plan_dir)?;
+
+    eprintln!("[3/6] Reshaping v1→v2 wire format");
     transform::run(&validated.new_plan_dir)?;
+
+    eprintln!("[4/6] migrate-intent (LLM, ~30–60s) — extracting intents from phase.md");
     apply_intent::run(agent.clone(), &validated, skip_confirm).await?;
+
+    eprintln!("[5/6] migrate-targets (LLM, ~30–60s) — identifying target components");
     apply_targets::run(agent.clone(), &validated, skip_confirm).await?;
+
+    eprintln!("[6/6] migrate-memory-backfill (LLM, ~30–60s) — attributing memory entries");
     apply_memory::run(agent.clone(), &validated, skip_confirm).await?;
+
+    eprintln!(
+        "✓ migrate-v1-v2 complete: {}",
+        validated.new_plan_dir.display()
+    );
     Ok(())
 }
