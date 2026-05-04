@@ -1,357 +1,4 @@
 tasks:
-- id: migrate-ravel-lite-migrate-for-v1-to-v2-cutover
-  title: 'Migrate: ravel-lite migrate for v1 to v2 cutover'
-  category: architecture-next
-  status: done
-  dependencies: []
-  description: |
-    Implement the `ravel-lite migrate <old-plan-path>` verb that cuts a v1 `<project>/LLM_STATE/<plan>` plan over to v2's `<context>/plans/<plan>` model. Hard cutover: the v2 binary refuses to run on unmigrated v1 plans.
-
-    Reference: `docs/architecture-next.md` §Migration sketch, §Settled decisions (cutover policy + backfill).
-
-    Scope (per the 7-step sketch):
-    1. Register repos: ensure each project hosting an existing plan is in the new context's `repos.yaml` (URL + local_path).
-    2. Run Atlas: index each registered repo so `.atlas/components.yaml` exists. Plans cannot start without this.
-    3. Move plan state: copy `<project>/LLM_STATE/<plan>/` → `<context>/plans/<plan>/`. Rename `memory.md` to `legacy_memory.md`; new `memory.yaml` starts mostly empty.
-    4. Extract intent (one-shot LLM): the migrate-intent headless phase reads `phase.md` + recent backlog and emits `intents.yaml` with best-effort intents; backlog items get `serves-intent` justifications (or `legacy: true` if unattributable).
-    5. Mint targets (one-shot LLM): a headless pass against the project's components.yaml proposes initial `targets.yaml`; user reviews.
-    6. Mount worktrees: initialise worktrees from the project's current main per the new mount mechanics.
-    7. Backfill memory (one-shot LLM): pass over `legacy_memory.md` produces a `memory.yaml` with `status: legacy` entries. User curates in their own time.
-
-    Verification: dogfood by migrating `LLM_STATE/core` (this very plan) as the canonical test case before the v2.0 release.
-  results: |
-    ## What was done
-
-    This work cycle delivered the design and decomposition of the migrator. The original task — "implement `ravel-lite migrate <old-plan-path>` for the v1 → v2 cutover" — has been split into a written design spec, an implementation plan, and 8 phase-level backlog items. Each phase item is sized to be picked up by a separate work cycle and driven via subagent-driven-development.
-
-    ## Artefacts
-
-    - **Design spec:** `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` — verb shape, two-half flow, gate detection, module layout, test plan, settled defaults.
-    - **Implementation plan:** `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` — 21 TDD-shaped tasks across 8 phases, each task with explicit code blocks, file paths, and verification commands.
-
-    ## Decomposition into 8 backlog items
-
-    | Phase | ID | Deps |
-    |---|---|---|
-    | P1 | `migrate-v1-v2-p1-schema-and-llmphase-variants` | — |
-    | P2 | `migrate-v1-v2-p2-v2-path-shape-gate` | — |
-    | P3 | `migrate-v1-v2-p3-mechanical-half-validate-copy-cli-surface` | — |
-    | P4 | `migrate-v1-v2-p4-apply-layers-intent-targets-memory` | P1, P3 |
-    | P5 | `migrate-v1-v2-p5-three-headless-prompt-files` | P1 |
-    | P6 | `migrate-v1-v2-p6-orchestrator-and-end-to-end-test` | P4, P5 |
-    | P7 | `migrate-v1-v2-p7-remove-legacy-state-migrate-verb` | — |
-    | P8 | `migrate-v1-v2-p8-cross-repo-md-sibling-cleanup` | — |
-
-    P1, P2, P3, P7, P8 can run in parallel from the start. P4 unblocks once P1 and P3 are done. P5 unblocks once P1 is done. P6 (the gate after which the migrator is feature-complete) needs P4 + P5.
-
-    ## Downstream rewires
-
-    The four backlog items that previously depended on this umbrella now depend on P6 instead (the more accurate dependency, since "migrator feature-complete" is what unblocks them):
-
-    - `state-intents-render-overview-regenerate-phase-md-from-intents-task-counts`
-    - `rename-phase-baselines-to-per-worktree-yaml-map-shape-prompts-phase-loop-rs`
-    - `cli-json-schema-versioning-policy-and-documentation`
-    - `cli-add-limit-n-and-all-flags-to-list-verbs`
-
-    ## Settled design decisions worth carrying forward in memory
-
-    - Verb name `migrate-v1-v2` (top-level), not `state migrate-v1-v2`. Aligns with the v2.x release framing and disambiguates from the legacy `state migrate` (.md → .yaml) verb that P7 deletes.
-    - Plan rename via `--as <new-name>` is required — most projects have a `core` plan, so collisions are expected.
-    - "Context dir" and "config dir" are the same path; the verb reuses the existing `--config` flag and `config::resolve_config_dir`.
-    - The "v2 refuses v1" gate is path-shape based (no marker file): a v2 plan dir is `<X>/plans/<Y>/` where `<X>/repos.yaml` exists.
-    - Three separate LLM phases (intent, targets, memory) — not folded — gives early-abort signal on a clearly-wrong intent extraction without wasting downstream LLM time.
-    - Backlog items the LLM cannot attribute get a new `legacy: bool` extension field on `BacklogEntry` (default false, omitted on serialise unless true).
-    - Memory entries the LLM cannot attribute get `status: legacy` (a new `MemoryStatus` variant P11 verifies/adds).
-    - Cross-repo `.md` sibling cleanup is in scope (P8); 5 sibling repos identified.
-    - `state migrate` (.md → .yaml) is deleted in P7 — verified all 13 LLM_STATE dirs already YAML-shaped on 2026-05-04.
-
-    ## What this cycle did NOT do
-
-    - No Rust source code changed. The migrator implementation is the work of P1–P8.
-    - The `LLM_STATE-shape-frozen` constraint remains in force until P6 lands and the user installs a new binary against a migrated `LLM_STATE/core`.
-
-    ## Suggested next pickups
-
-    P1, P2, P3 are all dep-free and small — natural first cycles. P3 in particular pulls a lot of the mechanical scaffolding into place; P4 unblocks once both P1 and P3 are done.
-- id: plan-finish-pr-merge-with-memory-promotion-and-archive
-  title: 'Plan finish: pr/merge with memory promotion and archive'
-  category: architecture-next
-  status: not_started
-  dependencies: []
-  description: |
-    Implement plan completion: promote plan memory into component memory, ship code + memory together via PR or local fast-forward, archive the plan dir.
-
-    Reference: `docs/architecture-next.md` §`ravel-lite finish <plan>`, §Promotion at plan finish, §Archive, §Continuous attribution.
-
-    Scope:
-    - `ravel-lite finish <plan> [--pr | --merge] [--yes]`. Default `--pr`.
-    - Completion criterion: every intent has `status: satisfied | defeated | superseded`. Backlog drainage alone does not qualify.
-    - `promote` headless phase reads plan memory + intents + targets + catalog (via atlas CLI); emits `promotion-spec.yaml` grouping promotions by satisfied/defeated intent: `{ intent_id, entries: [{ entry_id, target_component }] }`.
-    - Runner applies spec mechanically: append entries to `<component-path>/.atlas/memory.yaml`. `cross-root` entries go to `<context>/cross-root-memory.yaml` (or edge-attached when atlas-contracts provides slot — open question).
-    - "Highest-level component within a git root" rule: walk the `parent` chain in `components.yaml`, land at lowest common ancestor for entries spanning multiple components in one repo.
-    - Confirm-before-commit on promotion-spec by default; `--yes` skips for non-interactive workflows.
-    - `--pr`: push each target's plan branch and open a PR per target repo; plan dir stays in `plans/` until all PRs land then moves to `archive/`.
-    - `--merge`: fast-forward each target's main onto plan branch locally, delete plan branches, remove worktrees, archive.
-    - Archive: `<context>/archive/<plan>/` retains `phase.md`, `intents.yaml`, `backlog.yaml`, post-promotion `memory.yaml`. Worktrees are removed.
-
-    Continuous attribution is enforced upstream in reflect (entries carry target component when authored). Promotion at finish only groups; no fresh attribution reasoning.
-- id: curate-standalone-truth-maintenance-replaces-dream-phase
-  title: 'Curate: standalone truth maintenance, replaces dream phase'
-  category: architecture-next
-  status: not_started
-  dependencies: []
-  description: |
-    Add `ravel-lite curate` as a standalone, context-wide truth-maintenance pass over every active plan's memory and every component memory in every registered repo. Replaces the v1 in-cycle dream phase, which is removed entirely.
-
-    Reference: `docs/architecture-next.md` §Curate (unbounded TMS, separate process), §What this replaces or removes.
-
-    Scope:
-    - `ravel-lite curate` is invoked by the user on demand (not in plan cycle). Plan execution never blocks on curate.
-    - Validate every memory entry against current code: code-anchor SHA checks at scale, rationale entries surfaced for LLM re-evaluation, contradiction detection across entries.
-    - Output: `curate-report.yaml` of discrepancies, grouped by component and severity. User reviews and acts (defeat, supersede, edit) — curate proposes, user disposes.
-    - Operates on both plan memory (`<plan>/memory.yaml` for active plans) and component memory (`<repo>/<component>/.atlas/memory.yaml`).
-    - Remove the v1 `dream` phase entirely from the cycle.
-
-    Coordination: relies on plan KG wiring for the structured memory schema and on the knowledge-graph crate for the cascade primitives.
-- id: update-tutorial-and-reference-docs-for-repos-yaml-cutover
-  title: Update tutorial and reference docs for repos.yaml cutover
-  category: architecture-next
-  status: not_started
-  dependencies: []
-  description: |
-    Re-record and update the published tutorial and reference docs to replace retired `state projects` verbs with the new `repo add/list/remove` CLI shape.
-
-    **Problem being solved:** `docs/tutorial/01-install-and-config.adoc`, `docs/tutorial/02-the-project.adoc`, `docs/reference/cli-state.adoc`, `docs/reference/cross-plan-files.adoc`, and capture transcripts under `docs/captures/ravel-lite-tutorial/transcripts/` all reference the retired `state projects` verbs and `projects.yaml`. Anyone following the published tutorial hits the deprecation alias and bounces.
-
-    **Settled decisions from session 89:**
-    - The deprecation alias (`state projects <anything>` → prints migration message, exits non-zero) is intentional and permanent. Don't remove it; just stop documenting the old verbs.
-    - The new CLI shape is `ravel-lite repo {add,list,remove}` (top-level, singular, not `state repos`). Reference: `src/main.rs` — the `Repo` top-level subcommand.
-    - `projects.yaml` is fully retired. The resolver is now `<config-dir>/repos.yaml` managed via `ravel-lite repo`. Reference: `src/repos.rs`.
-    - Capture transcripts at `docs/captures/ravel-lite-tutorial/transcripts/{01-projects-list-empty,02-projects-add,02-projects-list-populated}.txt` must be re-recorded (not hand-edited) to stay coherent with the prose. The re-capture script is `scripts/capture/ravel-lite-tutorial.sh` run against a TestAnyware VM.
-
-    **Dependencies:** Defer until further architecture-next tasks stabilise (especially `targets-and-worktrees` and `ravel-lite create v2`) to avoid double-recapturing the tutorial once more changes land. Only block on this if the tutorial is being actively promoted to new users.
-
-    **Scope:**
-    1. Update prose in `docs/tutorial/` and `docs/reference/` to use `repo add/list/remove` vocabulary.
-    2. Re-run `scripts/capture/ravel-lite-tutorial.sh` against a VM and replace the three stale transcript files.
-    3. Verify no remaining references to `state projects` in docs (grep: `state projects`).
-- id: update-reference-docs-to-replace-subagent-dispatch-yaml-with-findings-inbox
-  title: Update reference docs to replace subagent-dispatch.yaml with findings inbox
-  category: architecture-next
-  status: not_started
-  dependencies: []
-  description: |
-    Update the seven AsciiDoc reference and tutorial source files that still describe `subagent-dispatch.yaml` and the old cross-plan dispatch flow, replacing that content with findings-inbox documentation.
-
-    ## Problem being solved
-
-    The findings-inbox implementation (completed this cycle) fully retired the `subagent-dispatch.yaml` mechanism. However, seven AsciiDoc source files under `docs/` still describe the old flow:
-
-    - `docs/reference/cross-plan-files.adoc`
-    - `docs/reference/phase-cycle.adoc`
-    - `docs/reference/concepts.adoc`
-    - `docs/reference/state-files.adoc`
-    - `docs/reference/index.adoc`
-    - `docs/tutorial/` (two tutorial chapters that reference cross-plan coordination)
-
-    These were explicitly deferred from the findings-inbox work task scope; see session-log entry flagging "docs reconciliation" as deferred.
-
-    ## Scope
-
-    1. Remove `subagent-dispatch.yaml` documentation from all seven files.
-    2. Document the findings inbox (`findings.yaml`, `ravel-lite findings add/list/set-status`) in its place.
-    3. Update cross-plan-coordination prose: triage now writes findings via CLI verbs rather than writing `subagent-dispatch.yaml`; the user mediates cross-plan propagation via the findings inbox.
-    4. Grep for `subagent-dispatch` in `docs/` to confirm no remaining references.
-
-    ## Notes
-
-    - This task is NOT gated on architecture-next milestones. The findings inbox has a stable schema and CLI surface; docs can be updated now.
-    - Overlap with `update-tutorial-and-reference-docs-for-repos-yaml-cutover`: `cross-plan-files.adoc` appears in both scopes. Coordinate or combine edits if that task becomes unblocked before this one runs.
-    - No VM re-capture is needed; these are prose edits to AsciiDoc source files, not capture transcripts.
-- id: state-intents-render-overview-regenerate-phase-md-from-intents-task-counts
-  title: 'state intents render-overview: regenerate phase.md from intents + task counts'
-  category: architecture-next
-  status: not_started
-  dependencies:
-  - migrate-v1-v2-p6-orchestrator-and-end-to-end-test
-  description: |
-    Add `state intents render-overview` verb that reads `intents.yaml` + active task counts from `backlog.yaml` and writes a structured overview to `phase.md`. Wire into `run_set_phase` so phase.md regenerates on every phase transition.
-
-    **Why this is its own task:** The done `introduce-intents-yaml-and-state-intents-crud-verbs` task deferred this explicitly with the rationale: the render-overview verb separates "compute the overview" from "write the phase file", and reading `backlog.yaml` for task counts during `set-phase` would fail on the current plan (legacy v1 wire shape). The verb should land after the migrator ships and a new binary deploys.
-
-    **Settled design (from intents task results):**
-    - `state intents render-overview <plan-dir>` reads `intents.yaml` (active intents) + `backlog.yaml` (active/blocked task counts) and writes a structured `phase.md` overview: intent summary, active counts, housekeeping metadata.
-    - `run_set_phase` calls this verb (or its equivalent logic) on every LLM phase transition so `phase.md` is always coherent with current intents + backlog state.
-    - `phase.md` transitions from a hand-authored intent-source document (v1) to a machine-generated overview (v2). It is never the canonical intent source; that role moves to `intents.yaml`.
-    - The factoring mirrors `compose_prompt` layering: compute separately, write separately.
-
-    **Scope:**
-    1. Add `StateCommands::Intents` → `IntentsCommands::RenderOverview` verb in `src/main.rs`.
-    2. Implementation reads `read_intents`, `read_backlog`, injects active intent claims + task counts into a Markdown template, writes to `phase.md`.
-    3. Update `run_set_phase` to call the render logic after phase file write.
-    4. Tests: rendered output includes intent claims, task counts match backlog, phase transitions leave `phase.md` non-empty and structured.
-
-    **Gating constraint:** Must wait until the v1→v2 migrator ships and a new binary deploys — `read_backlog` on `LLM_STATE/core/backlog.yaml` today hits the legacy v1 wire shape and would fail. See `LLM_STATE-shape-frozen` memory entry.
-- id: rename-phase-baselines-to-per-worktree-yaml-map-shape-prompts-phase-loop-rs
-  title: Rename phase baselines to per-worktree YAML map shape (prompts + phase_loop.rs)
-  category: architecture-next
-  status: not_started
-  dependencies:
-  - migrate-v1-v2-p6-orchestrator-and-end-to-end-test
-  description: |
-    When per-worktree YAML baseline maps land as part of the v2 architecture, sweep
-    `defaults/phases/*.md` and `src/phase_loop.rs` together to rename the flat phase
-    baseline files.
-
-    ## Why
-
-    The completed `phase-prompt-updates-for-triage-first-cycle-shape` task explicitly
-    deferred this: `defaults/phases/triage.md` et al. contain shell-out patterns like
-    `cat {{PLAN}}/<phase>-baseline 2>/dev/null` that must rename in lockstep with the
-    runner-side `git_save_baseline` calls in `phase_loop.rs`. If either side moves
-    alone, the renderer's shell-out fails silently (`2>/dev/null` swallows it).
-
-    ## Scope
-
-    1. Update the four `git_save_baseline` call sites in `src/phase_loop.rs` to use the
-       new per-worktree YAML map shape (exact API TBD when the v2 baseline spec lands).
-    2. Update the corresponding `cat {{PLAN}}/<phase>-baseline` shell fragments in
-       `defaults/phases/triage.md` and the renderer call in
-       `ravel-lite state phase-summary render`.
-    3. Confirm `every_file_under_defaults_is_registered_in_embedded_files` and
-       `shipped_pi_prompts_have_no_dangling_tokens` still pass.
-
-    ## Gating constraint
-
-    Blocked on `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` shipping a new binary
-    and the per-worktree YAML baseline spec being settled in `docs/architecture-next.md`.
-    Do not rename ahead of the spec or the renderer call will break silently.
-- id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
-  title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
-  category: infra
-  status: blocked
-  blocked_reason: Not needed yet; defer until pi-side TUI debugging actually requires it
-  dependencies: []
-  description: |
-    Add the same PTY-capture path to `pi.rs::invoke_interactive` that was
-    built for `claude_code.rs` in the PTY-capture task. The mechanism is
-    already implemented in `src/agent/pty_capture.rs`; this task is a
-    small scope wiring job.
-
-    ## Why
-
-    When debug logging is enabled, `claude_code.rs::invoke_interactive` now
-    routes through `pty_capture::run_pty_session`, capturing every byte
-    exchanged with the claude subprocess in the debug log. The `pi.rs`
-    equivalent still uses inherited stdio (`stdio: inherited (no transcript
-    available)` per the Results from the PTY-capture task). A pi TUI hang
-    would have the same diagnostic blind spot the claude hang had before the
-    PTY work shipped.
-
-    ## Scope
-
-    - In `src/agent/pi.rs::invoke_interactive`, add an early branch:
-      when `debug_log::is_enabled()`, call
-      `pty_capture::run_pty_session("pi", &args, &cwd, "pi")` via
-      `spawn_blocking`, matching the pattern in `claude_code.rs`.
-    - Existing argv construction is shared; only the spawn mechanism differs.
-    - Update the log entry text to read `stdio: pty (full byte transcript
-      follows)` on the debug path, matching the claude path.
-
-    ## Verification
-
-    - `cargo test` passes (all PTY-capture unit/integration tests still
-      pass; the pi tests are unaffected because none exercise the debug path).
-    - Non-debug pi invocation: TUI renders identically, no behaviour change.
-    - Debug-enabled pi invocation: TUI renders identically AND debug log
-      captures the pi byte stream.
-- id: cli-json-schema-versioning-policy-and-documentation
-  title: 'CLI: JSON schema versioning policy and documentation'
-  category: architecture-next
-  status: not_started
-  dependencies:
-  - migrate-v1-v2-p6-orchestrator-and-end-to-end-test
-  description: |
-    CLI audit scope item #2 (cli-tool-design.md §1): every
-    `--format json` output carries a top-level `schema_version`, and
-    each verb's schema is documented and stable.
-
-    ## Status of `schema_version`
-
-    Already present on the typed YAML/JSON envelope structs that
-    underlie state verbs:
-
-    - `BACKLOG_SCHEMA_VERSION`, `MEMORY_SCHEMA_VERSION`,
-      `INTENTS_SCHEMA_VERSION`, `FINDINGS_SCHEMA_VERSION`,
-      `TARGETS_SCHEMA_VERSION`, `TARGET_REQUESTS_SCHEMA_VERSION`,
-      `THIS_CYCLE_FOCUS_SCHEMA_VERSION`,
-      `FOCUS_OBJECTIONS_SCHEMA_VERSION`, `COMMITS_SCHEMA_VERSION`.
-    - `LIST_SCHEMA_VERSION` for `fixed-memory list`.
-
-    What is missing:
-
-    1. Verbs that don't yet emit JSON (atlas, repos — see
-       `cli-fmt-json-parity-for-repo-and-atlas-verbs`) need the same
-       versioned wrapper when they gain JSON.
-    2. `schema_version` needs documentation surfaces — preferably the
-       `ravel-lite schema <command>` verb in `cli-discoverability-verbs`,
-       not freestanding markdown that rots.
-    3. Bump policy must be written down. Cli-tool-design.md §1
-       says "Schema must be stable across patch versions. Breaking
-       changes go in major versions and are documented." — reflect
-       this in the project README or a short ADR-style note.
-
-    ## Why deferred
-
-    The on-disk wire shape is frozen until the v1→v2 migrator exists
-    (see `migrate-ravel-lite-migrate-for-v1-to-v2-cutover`). Writing a
-    formal schema doc now risks codifying a shape that the migration
-    will reshape. Wait until the v2 cutover lands, then snapshot what
-    ships.
-
-    ## Reference
-
-    - `defaults/fixed-memory/cli-tool-design.md` §1, §"Anti-patterns"
-      ("Unstable JSON").
-    - Memory: "LLM_STATE shape frozen until v1→v2 migrator exists" —
-      pins schema-doc work behind that migrator.
-- id: cli-add-limit-n-and-all-flags-to-list-verbs
-  title: 'CLI: add --limit N and --all flags to list verbs'
-  category: architecture-next
-  status: not_started
-  dependencies:
-  - migrate-v1-v2-p6-orchestrator-and-end-to-end-test
-  description: |
-    Add `--limit N` and `--all` flags to every `list`-style verb that today emits unbounded output, per `defaults/fixed-memory/cli-tool-design.md` §6 ("Sensible default output limits"). A `list` returning 50,000 rows by default can blow out an agent's context in a single call.
-
-    ## Affected verbs (current unbounded listings)
-
-    - `state backlog list <plan>`
-    - `state memory list <plan>`
-    - `state intents list <plan>`
-    - `state findings list <plan>` (if exists)
-    - `state session-log list <plan>`
-    - `findings list`
-    - `repo list`
-    - `atlas list-components`
-    - `atlas list-repos`
-    - `atlas summary`
-    - `fixed-memory list`
-
-    ## Behaviour
-
-    - Default `--limit N` (suggested: 100). The exact default per verb may differ (e.g. `state backlog list` could default `--all` because most plans have <100 tasks; `atlas list-components` likely warrants a real default).
-    - `--all` (mutually exclusive with `--limit`) opts in to unbounded.
-    - When truncating, append a stderr line in text mode and a `truncated: true` / `total: N` / `returned: M` metadata block in YAML/JSON envelopes (per cli-tool-design.md §6 example).
-
-    ## Reference
-
-    - `defaults/fixed-memory/cli-tool-design.md` §6 "Sensible default output limits".
-    - Sibling task results from `cli-finish-audit-checklist-sweep-defaults-ids-aliases-hidden-state`.
-
-    ## Gating constraint
-
-    May intersect with the v1→v2 migrator schema bump (`migrate-ravel-lite-migrate-for-v1-to-v2-cutover`) because adding metadata fields to the YAML/JSON envelopes changes the wire shape for list verbs. Coordinate with that task or land after it.
 - id: migrate-v1-v2-p1-schema-and-llmphase-variants
   title: 'migrate-v1-v2 P1: schema and LlmPhase variants'
   category: architecture-next
@@ -440,6 +87,98 @@ tasks:
     ## Note
 
     Independent of Phases 1, 2 — can run in parallel.
+- id: migrate-v1-v2-p7-remove-legacy-state-migrate-verb
+  title: 'migrate-v1-v2 P7: remove legacy state migrate verb'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Implement Phase 7 of the `migrate-v1-v2` plan: delete the legacy `state migrate` (.md → .yaml) verb and its `parse_*_markdown` parsers.
+
+    ## Reference
+
+    - Plan: `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` §Phase 7 (Tasks 18–20).
+    - Spec: `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` §Companion scope: remove the state migrate verb.
+
+    ## Why
+
+    Verified across all 13 LLM_STATE dirs / 23 plans on 2026-05-04: every plan has the YAML form. No plan exists in pure-`.md` form. The legacy converter is dead code path.
+
+    ## Scope
+
+    1. **Task 18** — Verify with grep that `parse_*_markdown` is referenced ONLY by `src/state/migrate.rs` and the parser modules themselves. Confirmed during plan authoring; re-confirm to catch any drift.
+
+    2. **Task 19** — Remove the `StateCommands::Migrate { ... }` variant in `src/main.rs` and its match arm.
+
+    3. **Task 20** — Delete `src/state/migrate.rs`, `src/state/backlog/parse_md.rs`, `src/state/memory/parse_md.rs`. Find and delete `parse_session_log_markdown` and `parse_latest_session_markdown` functions in `src/state/session_log/`. Update mod declarations in `src/state/mod.rs`, `src/state/backlog/mod.rs`, `src/state/memory/mod.rs`.
+
+    Final commit message: refactor the deletion as one atomic change citing the verification result.
+
+    ## Dependencies
+
+    None — independent of all other phases. Can run in parallel with anything.
+
+    ## Use the subagent-driven-development skill
+
+    One subagent for Task 18 (read-only verification), then one subagent for Tasks 19+20 combined (the deletion lands as one logical change).
+
+    ## Verification
+
+    `cargo build --package ravel-lite` passes. `cargo test --package ravel-lite` full suite green. `./scripts/check.sh` passes.
+- id: migrate-v1-v2-p8-cross-repo-md-sibling-cleanup
+  title: 'migrate-v1-v2 P8: cross-repo md sibling cleanup'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Implement Phase 8 of the `migrate-v1-v2` plan: cross-repo cleanup of stale `.md` siblings in 5 sibling repos.
+
+    ## Reference
+
+    - Plan: `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` §Phase 8 (Task 21).
+    - Spec: `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` §Companion scope: cross-repo cleanup of stale .md siblings.
+
+    ## Why
+
+    Once Phase 7 deletes the `state migrate` verb, the `.md` siblings in each project's LLM_STATE are pure noise — they were leftover artefacts of the keep-originals migration policy. Removing them keeps each project tidy.
+
+    ## Scope
+
+    For each of these 5 sibling repos:
+
+    - `/Users/antony/Development/AppSpec`
+    - `/Users/antony/Development/Ravel`
+    - `/Users/antony/Development/APIAnyware-MacOS`
+    - `/Users/antony/Development/TestAnyware`
+    - `/Users/antony/Development/IDEs/RacketPro`
+
+    The procedure per repo:
+
+    1. `cd` into the repo.
+    2. `git status --short`. If non-empty: STOP for this repo, add it to a "skipped" report, move to the next repo.
+    3. Find files matching `LLM_STATE/**/{backlog,memory,session-log,latest-session}.md` AND where a `.yaml` sibling exists in the same dir.
+    4. `git rm <files>`; `git commit -m "chore: remove stale legacy .md state siblings"`.
+    5. Do NOT push — leave that to the user.
+
+    After all five repos: report which were cleaned vs skipped (with each skipped repo's dirty-tree contents).
+
+    ## Files explicitly NOT to delete
+
+    - `phase.md` (universal, hand-authored)
+    - `prompt-*.md` (per-plan agent overrides)
+    - `decisions.md`, `research-notes.md`, `related-plans.md`, `new-language-guide.md`, `overview.md`, `project-workflow.md`, `targets/template.md` (user-authored content)
+
+    ## Dependencies
+
+    None — independent of all other phases.
+
+    ## Use the subagent-driven-development skill
+
+    One subagent per repo (5 dispatches). Each subagent operates strictly within its assigned repo and reports back.
+
+    ## Verification
+
+    After each repo's commit, `git status --short` in that repo is empty. After all five, no repo has untracked or partially-staged content.
 - id: migrate-v1-v2-p4-apply-layers-intent-targets-memory
   title: 'migrate-v1-v2 P4: apply layers (intent, targets, memory)'
   category: architecture-next
@@ -556,95 +295,282 @@ tasks:
     ## Verification
 
     `./scripts/check.sh` passes. `cargo test --package ravel-lite --test migrate_v1_v2_e2e` green. This is the gate after which the migrator is feature-complete.
-- id: migrate-v1-v2-p7-remove-legacy-state-migrate-verb
-  title: 'migrate-v1-v2 P7: remove legacy state migrate verb'
+- id: state-intents-render-overview-regenerate-phase-md-from-intents-task-counts
+  title: 'state intents render-overview: regenerate phase.md from intents + task counts'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - migrate-v1-v2-p6-orchestrator-and-end-to-end-test
+  description: |
+    Add `state intents render-overview` verb that reads `intents.yaml` + active task counts from `backlog.yaml` and writes a structured overview to `phase.md`. Wire into `run_set_phase` so phase.md regenerates on every phase transition.
+
+    **Why this is its own task:** The done `introduce-intents-yaml-and-state-intents-crud-verbs` task deferred this explicitly with the rationale: the render-overview verb separates "compute the overview" from "write the phase file", and reading `backlog.yaml` for task counts during `set-phase` would fail on the current plan (legacy v1 wire shape). The verb should land after the migrator ships and a new binary deploys.
+
+    **Settled design (from intents task results):**
+    - `state intents render-overview <plan-dir>` reads `intents.yaml` (active intents) + `backlog.yaml` (active/blocked task counts) and writes a structured `phase.md` overview: intent summary, active counts, housekeeping metadata.
+    - `run_set_phase` calls this verb (or its equivalent logic) on every LLM phase transition so `phase.md` is always coherent with current intents + backlog state.
+    - `phase.md` transitions from a hand-authored intent-source document (v1) to a machine-generated overview (v2). It is never the canonical intent source; that role moves to `intents.yaml`.
+    - The factoring mirrors `compose_prompt` layering: compute separately, write separately.
+
+    **Scope:**
+    1. Add `StateCommands::Intents` → `IntentsCommands::RenderOverview` verb in `src/main.rs`.
+    2. Implementation reads `read_intents`, `read_backlog`, injects active intent claims + task counts into a Markdown template, writes to `phase.md`.
+    3. Update `run_set_phase` to call the render logic after phase file write.
+    4. Tests: rendered output includes intent claims, task counts match backlog, phase transitions leave `phase.md` non-empty and structured.
+
+    **Gating constraint:** Must wait until the v1→v2 migrator ships and a new binary deploys — `read_backlog` on `LLM_STATE/core/backlog.yaml` today hits the legacy v1 wire shape and would fail. See `LLM_STATE-shape-frozen` memory entry.
+- id: rename-phase-baselines-to-per-worktree-yaml-map-shape-prompts-phase-loop-rs
+  title: Rename phase baselines to per-worktree YAML map shape (prompts + phase_loop.rs)
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - migrate-v1-v2-p6-orchestrator-and-end-to-end-test
+  description: |
+    When per-worktree YAML baseline maps land as part of the v2 architecture, sweep
+    `defaults/phases/*.md` and `src/phase_loop.rs` together to rename the flat phase
+    baseline files.
+
+    ## Why
+
+    The completed `phase-prompt-updates-for-triage-first-cycle-shape` task explicitly
+    deferred this: `defaults/phases/triage.md` et al. contain shell-out patterns like
+    `cat {{PLAN}}/<phase>-baseline 2>/dev/null` that must rename in lockstep with the
+    runner-side `git_save_baseline` calls in `phase_loop.rs`. If either side moves
+    alone, the renderer's shell-out fails silently (`2>/dev/null` swallows it).
+
+    ## Scope
+
+    1. Update the four `git_save_baseline` call sites in `src/phase_loop.rs` to use the
+       new per-worktree YAML map shape (exact API TBD when the v2 baseline spec lands).
+    2. Update the corresponding `cat {{PLAN}}/<phase>-baseline` shell fragments in
+       `defaults/phases/triage.md` and the renderer call in
+       `ravel-lite state phase-summary render`.
+    3. Confirm `every_file_under_defaults_is_registered_in_embedded_files` and
+       `shipped_pi_prompts_have_no_dangling_tokens` still pass.
+
+    ## Gating constraint
+
+    Blocked on `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` shipping a new binary
+    and the per-worktree YAML baseline spec being settled in `docs/architecture-next.md`.
+    Do not rename ahead of the spec or the renderer call will break silently.
+- id: cli-json-schema-versioning-policy-and-documentation
+  title: 'CLI: JSON schema versioning policy and documentation'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - migrate-v1-v2-p6-orchestrator-and-end-to-end-test
+  description: |
+    CLI audit scope item #2 (cli-tool-design.md §1): every
+    `--format json` output carries a top-level `schema_version`, and
+    each verb's schema is documented and stable.
+
+    ## Status of `schema_version`
+
+    Already present on the typed YAML/JSON envelope structs that
+    underlie state verbs:
+
+    - `BACKLOG_SCHEMA_VERSION`, `MEMORY_SCHEMA_VERSION`,
+      `INTENTS_SCHEMA_VERSION`, `FINDINGS_SCHEMA_VERSION`,
+      `TARGETS_SCHEMA_VERSION`, `TARGET_REQUESTS_SCHEMA_VERSION`,
+      `THIS_CYCLE_FOCUS_SCHEMA_VERSION`,
+      `FOCUS_OBJECTIONS_SCHEMA_VERSION`, `COMMITS_SCHEMA_VERSION`.
+    - `LIST_SCHEMA_VERSION` for `fixed-memory list`.
+
+    What is missing:
+
+    1. Verbs that don't yet emit JSON (atlas, repos — see
+       `cli-fmt-json-parity-for-repo-and-atlas-verbs`) need the same
+       versioned wrapper when they gain JSON.
+    2. `schema_version` needs documentation surfaces — preferably the
+       `ravel-lite schema <command>` verb in `cli-discoverability-verbs`,
+       not freestanding markdown that rots.
+    3. Bump policy must be written down. Cli-tool-design.md §1
+       says "Schema must be stable across patch versions. Breaking
+       changes go in major versions and are documented." — reflect
+       this in the project README or a short ADR-style note.
+
+    ## Why deferred
+
+    The on-disk wire shape is frozen until the v1→v2 migrator exists
+    (see `migrate-ravel-lite-migrate-for-v1-to-v2-cutover`). Writing a
+    formal schema doc now risks codifying a shape that the migration
+    will reshape. Wait until the v2 cutover lands, then snapshot what
+    ships.
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` §1, §"Anti-patterns"
+      ("Unstable JSON").
+    - Memory: "LLM_STATE shape frozen until v1→v2 migrator exists" —
+      pins schema-doc work behind that migrator.
+- id: cli-add-limit-n-and-all-flags-to-list-verbs
+  title: 'CLI: add --limit N and --all flags to list verbs'
+  category: architecture-next
+  status: not_started
+  dependencies:
+  - migrate-v1-v2-p6-orchestrator-and-end-to-end-test
+  description: |
+    Add `--limit N` and `--all` flags to every `list`-style verb that today emits unbounded output, per `defaults/fixed-memory/cli-tool-design.md` §6 ("Sensible default output limits"). A `list` returning 50,000 rows by default can blow out an agent's context in a single call.
+
+    ## Affected verbs (current unbounded listings)
+
+    - `state backlog list <plan>`
+    - `state memory list <plan>`
+    - `state intents list <plan>`
+    - `state findings list <plan>` (if exists)
+    - `state session-log list <plan>`
+    - `findings list`
+    - `repo list`
+    - `atlas list-components`
+    - `atlas list-repos`
+    - `atlas summary`
+    - `fixed-memory list`
+
+    ## Behaviour
+
+    - Default `--limit N` (suggested: 100). The exact default per verb may differ (e.g. `state backlog list` could default `--all` because most plans have <100 tasks; `atlas list-components` likely warrants a real default).
+    - `--all` (mutually exclusive with `--limit`) opts in to unbounded.
+    - When truncating, append a stderr line in text mode and a `truncated: true` / `total: N` / `returned: M` metadata block in YAML/JSON envelopes (per cli-tool-design.md §6 example).
+
+    ## Reference
+
+    - `defaults/fixed-memory/cli-tool-design.md` §6 "Sensible default output limits".
+    - Sibling task results from `cli-finish-audit-checklist-sweep-defaults-ids-aliases-hidden-state`.
+
+    ## Gating constraint
+
+    May intersect with the v1→v2 migrator schema bump (`migrate-ravel-lite-migrate-for-v1-to-v2-cutover`) because adding metadata fields to the YAML/JSON envelopes changes the wire shape for list verbs. Coordinate with that task or land after it.
+- id: update-reference-docs-to-replace-subagent-dispatch-yaml-with-findings-inbox
+  title: Update reference docs to replace subagent-dispatch.yaml with findings inbox
   category: architecture-next
   status: not_started
   dependencies: []
   description: |
-    Implement Phase 7 of the `migrate-v1-v2` plan: delete the legacy `state migrate` (.md → .yaml) verb and its `parse_*_markdown` parsers.
+    Update the seven AsciiDoc reference and tutorial source files that still describe `subagent-dispatch.yaml` and the old cross-plan dispatch flow, replacing that content with findings-inbox documentation.
 
-    ## Reference
+    ## Problem being solved
 
-    - Plan: `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` §Phase 7 (Tasks 18–20).
-    - Spec: `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` §Companion scope: remove the state migrate verb.
+    The findings-inbox implementation (completed this cycle) fully retired the `subagent-dispatch.yaml` mechanism. However, seven AsciiDoc source files under `docs/` still describe the old flow:
 
-    ## Why
+    - `docs/reference/cross-plan-files.adoc`
+    - `docs/reference/phase-cycle.adoc`
+    - `docs/reference/concepts.adoc`
+    - `docs/reference/state-files.adoc`
+    - `docs/reference/index.adoc`
+    - `docs/tutorial/` (two tutorial chapters that reference cross-plan coordination)
 
-    Verified across all 13 LLM_STATE dirs / 23 plans on 2026-05-04: every plan has the YAML form. No plan exists in pure-`.md` form. The legacy converter is dead code path.
+    These were explicitly deferred from the findings-inbox work task scope; see session-log entry flagging "docs reconciliation" as deferred.
 
     ## Scope
 
-    1. **Task 18** — Verify with grep that `parse_*_markdown` is referenced ONLY by `src/state/migrate.rs` and the parser modules themselves. Confirmed during plan authoring; re-confirm to catch any drift.
+    1. Remove `subagent-dispatch.yaml` documentation from all seven files.
+    2. Document the findings inbox (`findings.yaml`, `ravel-lite findings add/list/set-status`) in its place.
+    3. Update cross-plan-coordination prose: triage now writes findings via CLI verbs rather than writing `subagent-dispatch.yaml`; the user mediates cross-plan propagation via the findings inbox.
+    4. Grep for `subagent-dispatch` in `docs/` to confirm no remaining references.
 
-    2. **Task 19** — Remove the `StateCommands::Migrate { ... }` variant in `src/main.rs` and its match arm.
+    ## Notes
 
-    3. **Task 20** — Delete `src/state/migrate.rs`, `src/state/backlog/parse_md.rs`, `src/state/memory/parse_md.rs`. Find and delete `parse_session_log_markdown` and `parse_latest_session_markdown` functions in `src/state/session_log/`. Update mod declarations in `src/state/mod.rs`, `src/state/backlog/mod.rs`, `src/state/memory/mod.rs`.
-
-    Final commit message: refactor the deletion as one atomic change citing the verification result.
-
-    ## Dependencies
-
-    None — independent of all other phases. Can run in parallel with anything.
-
-    ## Use the subagent-driven-development skill
-
-    One subagent for Task 18 (read-only verification), then one subagent for Tasks 19+20 combined (the deletion lands as one logical change).
-
-    ## Verification
-
-    `cargo build --package ravel-lite` passes. `cargo test --package ravel-lite` full suite green. `./scripts/check.sh` passes.
-- id: migrate-v1-v2-p8-cross-repo-md-sibling-cleanup
-  title: 'migrate-v1-v2 P8: cross-repo md sibling cleanup'
+    - This task is NOT gated on architecture-next milestones. The findings inbox has a stable schema and CLI surface; docs can be updated now.
+    - Overlap with `update-tutorial-and-reference-docs-for-repos-yaml-cutover`: `cross-plan-files.adoc` appears in both scopes. Coordinate or combine edits if that task becomes unblocked before this one runs.
+    - No VM re-capture is needed; these are prose edits to AsciiDoc source files, not capture transcripts.
+- id: update-tutorial-and-reference-docs-for-repos-yaml-cutover
+  title: Update tutorial and reference docs for repos.yaml cutover
   category: architecture-next
   status: not_started
   dependencies: []
   description: |
-    Implement Phase 8 of the `migrate-v1-v2` plan: cross-repo cleanup of stale `.md` siblings in 5 sibling repos.
+    Re-record and update the published tutorial and reference docs to replace retired `state projects` verbs with the new `repo add/list/remove` CLI shape.
 
-    ## Reference
+    **Problem being solved:** `docs/tutorial/01-install-and-config.adoc`, `docs/tutorial/02-the-project.adoc`, `docs/reference/cli-state.adoc`, `docs/reference/cross-plan-files.adoc`, and capture transcripts under `docs/captures/ravel-lite-tutorial/transcripts/` all reference the retired `state projects` verbs and `projects.yaml`. Anyone following the published tutorial hits the deprecation alias and bounces.
 
-    - Plan: `docs/superpowers/plans/2026-05-04-migrate-v1-v2.md` §Phase 8 (Task 21).
-    - Spec: `docs/superpowers/specs/2026-05-04-migrate-v1-v2-design.md` §Companion scope: cross-repo cleanup of stale .md siblings.
+    **Settled decisions from session 89:**
+    - The deprecation alias (`state projects <anything>` → prints migration message, exits non-zero) is intentional and permanent. Don't remove it; just stop documenting the old verbs.
+    - The new CLI shape is `ravel-lite repo {add,list,remove}` (top-level, singular, not `state repos`). Reference: `src/main.rs` — the `Repo` top-level subcommand.
+    - `projects.yaml` is fully retired. The resolver is now `<config-dir>/repos.yaml` managed via `ravel-lite repo`. Reference: `src/repos.rs`.
+    - Capture transcripts at `docs/captures/ravel-lite-tutorial/transcripts/{01-projects-list-empty,02-projects-add,02-projects-list-populated}.txt` must be re-recorded (not hand-edited) to stay coherent with the prose. The re-capture script is `scripts/capture/ravel-lite-tutorial.sh` run against a TestAnyware VM.
+
+    **Dependencies:** Defer until further architecture-next tasks stabilise (especially `targets-and-worktrees` and `ravel-lite create v2`) to avoid double-recapturing the tutorial once more changes land. Only block on this if the tutorial is being actively promoted to new users.
+
+    **Scope:**
+    1. Update prose in `docs/tutorial/` and `docs/reference/` to use `repo add/list/remove` vocabulary.
+    2. Re-run `scripts/capture/ravel-lite-tutorial.sh` against a VM and replace the three stale transcript files.
+    3. Verify no remaining references to `state projects` in docs (grep: `state projects`).
+- id: plan-finish-pr-merge-with-memory-promotion-and-archive
+  title: 'Plan finish: pr/merge with memory promotion and archive'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Implement plan completion: promote plan memory into component memory, ship code + memory together via PR or local fast-forward, archive the plan dir.
+
+    Reference: `docs/architecture-next.md` §`ravel-lite finish <plan>`, §Promotion at plan finish, §Archive, §Continuous attribution.
+
+    Scope:
+    - `ravel-lite finish <plan> [--pr | --merge] [--yes]`. Default `--pr`.
+    - Completion criterion: every intent has `status: satisfied | defeated | superseded`. Backlog drainage alone does not qualify.
+    - `promote` headless phase reads plan memory + intents + targets + catalog (via atlas CLI); emits `promotion-spec.yaml` grouping promotions by satisfied/defeated intent: `{ intent_id, entries: [{ entry_id, target_component }] }`.
+    - Runner applies spec mechanically: append entries to `<component-path>/.atlas/memory.yaml`. `cross-root` entries go to `<context>/cross-root-memory.yaml` (or edge-attached when atlas-contracts provides slot — open question).
+    - "Highest-level component within a git root" rule: walk the `parent` chain in `components.yaml`, land at lowest common ancestor for entries spanning multiple components in one repo.
+    - Confirm-before-commit on promotion-spec by default; `--yes` skips for non-interactive workflows.
+    - `--pr`: push each target's plan branch and open a PR per target repo; plan dir stays in `plans/` until all PRs land then moves to `archive/`.
+    - `--merge`: fast-forward each target's main onto plan branch locally, delete plan branches, remove worktrees, archive.
+    - Archive: `<context>/archive/<plan>/` retains `phase.md`, `intents.yaml`, `backlog.yaml`, post-promotion `memory.yaml`. Worktrees are removed.
+
+    Continuous attribution is enforced upstream in reflect (entries carry target component when authored). Promotion at finish only groups; no fresh attribution reasoning.
+- id: curate-standalone-truth-maintenance-replaces-dream-phase
+  title: 'Curate: standalone truth maintenance, replaces dream phase'
+  category: architecture-next
+  status: not_started
+  dependencies: []
+  description: |
+    Add `ravel-lite curate` as a standalone, context-wide truth-maintenance pass over every active plan's memory and every component memory in every registered repo. Replaces the v1 in-cycle dream phase, which is removed entirely.
+
+    Reference: `docs/architecture-next.md` §Curate (unbounded TMS, separate process), §What this replaces or removes.
+
+    Scope:
+    - `ravel-lite curate` is invoked by the user on demand (not in plan cycle). Plan execution never blocks on curate.
+    - Validate every memory entry against current code: code-anchor SHA checks at scale, rationale entries surfaced for LLM re-evaluation, contradiction detection across entries.
+    - Output: `curate-report.yaml` of discrepancies, grouped by component and severity. User reviews and acts (defeat, supersede, edit) — curate proposes, user disposes.
+    - Operates on both plan memory (`<plan>/memory.yaml` for active plans) and component memory (`<repo>/<component>/.atlas/memory.yaml`).
+    - Remove the v1 `dream` phase entirely from the cycle.
+
+    Coordination: relies on plan KG wiring for the structured memory schema and on the knowledge-graph crate for the cascade primitives.
+- id: add-pty-capture-debug-path-to-pi-rs-invoke-interactive-parity-with-claude-code-rs
+  title: Add PTY-capture debug path to pi.rs::invoke_interactive (parity with claude_code.rs)
+  category: infra
+  status: blocked
+  blocked_reason: Not needed yet; defer until pi-side TUI debugging actually requires it
+  dependencies: []
+  description: |
+    Add the same PTY-capture path to `pi.rs::invoke_interactive` that was
+    built for `claude_code.rs` in the PTY-capture task. The mechanism is
+    already implemented in `src/agent/pty_capture.rs`; this task is a
+    small scope wiring job.
 
     ## Why
 
-    Once Phase 7 deletes the `state migrate` verb, the `.md` siblings in each project's LLM_STATE are pure noise — they were leftover artefacts of the keep-originals migration policy. Removing them keeps each project tidy.
+    When debug logging is enabled, `claude_code.rs::invoke_interactive` now
+    routes through `pty_capture::run_pty_session`, capturing every byte
+    exchanged with the claude subprocess in the debug log. The `pi.rs`
+    equivalent still uses inherited stdio (`stdio: inherited (no transcript
+    available)` per the Results from the PTY-capture task). A pi TUI hang
+    would have the same diagnostic blind spot the claude hang had before the
+    PTY work shipped.
 
     ## Scope
 
-    For each of these 5 sibling repos:
-
-    - `/Users/antony/Development/AppSpec`
-    - `/Users/antony/Development/Ravel`
-    - `/Users/antony/Development/APIAnyware-MacOS`
-    - `/Users/antony/Development/TestAnyware`
-    - `/Users/antony/Development/IDEs/RacketPro`
-
-    The procedure per repo:
-
-    1. `cd` into the repo.
-    2. `git status --short`. If non-empty: STOP for this repo, add it to a "skipped" report, move to the next repo.
-    3. Find files matching `LLM_STATE/**/{backlog,memory,session-log,latest-session}.md` AND where a `.yaml` sibling exists in the same dir.
-    4. `git rm <files>`; `git commit -m "chore: remove stale legacy .md state siblings"`.
-    5. Do NOT push — leave that to the user.
-
-    After all five repos: report which were cleaned vs skipped (with each skipped repo's dirty-tree contents).
-
-    ## Files explicitly NOT to delete
-
-    - `phase.md` (universal, hand-authored)
-    - `prompt-*.md` (per-plan agent overrides)
-    - `decisions.md`, `research-notes.md`, `related-plans.md`, `new-language-guide.md`, `overview.md`, `project-workflow.md`, `targets/template.md` (user-authored content)
-
-    ## Dependencies
-
-    None — independent of all other phases.
-
-    ## Use the subagent-driven-development skill
-
-    One subagent per repo (5 dispatches). Each subagent operates strictly within its assigned repo and reports back.
+    - In `src/agent/pi.rs::invoke_interactive`, add an early branch:
+      when `debug_log::is_enabled()`, call
+      `pty_capture::run_pty_session("pi", &args, &cwd, "pi")` via
+      `spawn_blocking`, matching the pattern in `claude_code.rs`.
+    - Existing argv construction is shared; only the spawn mechanism differs.
+    - Update the log entry text to read `stdio: pty (full byte transcript
+      follows)` on the debug path, matching the claude path.
 
     ## Verification
 
-    After each repo's commit, `git status --short` in that repo is empty. After all five, no repo has untracked or partially-staged content.
+    - `cargo test` passes (all PTY-capture unit/integration tests still
+      pass; the pi tests are unaffected because none exercise the debug path).
+    - Non-debug pi invocation: TUI renders identically, no behaviour change.
+    - Debug-enabled pi invocation: TUI renders identically AND debug log
+      captures the pi byte stream.
