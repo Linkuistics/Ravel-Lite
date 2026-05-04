@@ -174,7 +174,7 @@ mod tests {
             code: ErrorCode::InvalidInput,
             message: "bad heading".to_string(),
         }));
-        let wrapped = inner.with_context(|| "failed to parse session-log.md");
+        let wrapped = inner.with_context(|| "failed to parse session-log.md"); // errorcode-exempt: test asserts .with_context() preserves the inner CodedError code through the anyhow chain
         let err = wrapped.unwrap_err();
         assert_eq!(error_code_of(&err), ErrorCode::InvalidInput);
         let rendered = format!("{err:#}");

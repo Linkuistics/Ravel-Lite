@@ -40,3 +40,12 @@ if [[ -n "$violations" ]]; then
   printf '%s\n' "$violations" >&2
   exit 1
 fi
+
+# Reject untagged .with_context(/.context( chains under src/**.
+#
+# These are the multi-line counterpart to the bail!/anyhow!/ensure! guard
+# above. The check is delegated to a Python helper because the chain spans
+# multiple lines and the extent must be tracked with paren+brace depth so
+# that closures and function-tail expressions resolve correctly. The same
+# `// errorcode-exempt: <reason>` marker silences both guards.
+python3 "$(dirname "$0")/check_errorcode_chains.py"
