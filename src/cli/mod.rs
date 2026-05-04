@@ -8,6 +8,7 @@ pub mod error_code;
 pub mod error_context;
 pub mod error_envelope;
 pub mod exit_category;
+pub mod list_limits;
 pub mod output_format;
 
 pub use error_code::ErrorCode;

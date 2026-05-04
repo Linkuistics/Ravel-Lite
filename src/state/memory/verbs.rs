@@ -19,6 +19,7 @@ use anyhow::Result;
 use knowledge_graph::{Item, ItemStatus, Justification, KindMarker};
 
 use crate::bail_with;
+use crate::cli::list_limits::{self, ListLimits};
 use crate::cli::{CodedError, ErrorCode, OutputFormat};
 use crate::plan_kg::MemoryStatus;
 use crate::state::backlog::schema::allocate_id;
@@ -33,9 +34,10 @@ fn not_found_in_memory(id: &str) -> anyhow::Error {
 use super::schema::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
 use super::yaml_io::{read_memory, write_memory};
 
-pub fn run_list(plan_dir: &Path, format: OutputFormat) -> Result<()> {
+pub fn run_list(plan_dir: &Path, limits: ListLimits, format: OutputFormat) -> Result<()> {
     let memory = read_memory(plan_dir)?;
-    emit(&memory, format)
+    let envelope = list_limits::apply(&memory.items, &limits, None, MEMORY_SCHEMA_VERSION);
+    emit_envelope(&envelope, format)
 }
 
 pub fn run_show(plan_dir: &Path, id: &str, format: OutputFormat) -> Result<()> {
@@ -68,6 +70,27 @@ fn emit(memory: &MemoryFile, format: OutputFormat) -> Result<()> {
         }
     };
     print!("{serialised}");
+    Ok(())
+}
+
+fn emit_envelope(
+    envelope: &list_limits::ListEnvelope<MemoryEntry>,
+    format: OutputFormat,
+) -> Result<()> {
+    let serialised = match format {
+        OutputFormat::Yaml => serde_yaml::to_string(envelope)?,
+        OutputFormat::Json => serde_json::to_string_pretty(envelope)? + "\n",
+        OutputFormat::Markdown => {
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`state memory` does not support --format markdown; use yaml or json"
+            )
+        }
+    };
+    print!("{serialised}");
+    if let Some(line) = list_limits::truncation_summary_line(envelope) {
+        eprintln!("{line}");
+    }
     Ok(())
 }
 

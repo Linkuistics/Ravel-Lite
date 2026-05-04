@@ -15,6 +15,7 @@ use anyhow::Result;
 use knowledge_graph::{Item, ItemStatus, Justification, KindMarker};
 
 use crate::bail_with;
+use crate::cli::list_limits::{self, ListLimits};
 use crate::cli::{CodedError, ErrorCode, OutputFormat};
 use crate::plan_kg::FindingStatus;
 use crate::state::backlog::schema::allocate_id;
@@ -29,9 +30,10 @@ fn not_found_finding(id: &str) -> anyhow::Error {
 use super::schema::{FindingEntry, FindingsFile, FINDINGS_SCHEMA_VERSION};
 use super::yaml_io::{read_findings, write_findings};
 
-pub fn run_list(context_root: &Path, format: OutputFormat) -> Result<()> {
+pub fn run_list(context_root: &Path, limits: ListLimits, format: OutputFormat) -> Result<()> {
     let findings = read_findings(context_root)?;
-    emit(&findings, format)
+    let envelope = list_limits::apply(&findings.items, &limits, None, FINDINGS_SCHEMA_VERSION);
+    emit_envelope(&envelope, format)
 }
 
 pub fn run_show(context_root: &Path, id: &str, format: OutputFormat) -> Result<()> {
@@ -64,6 +66,27 @@ fn emit(findings: &FindingsFile, format: OutputFormat) -> Result<()> {
         }
     };
     print!("{serialised}");
+    Ok(())
+}
+
+fn emit_envelope(
+    envelope: &list_limits::ListEnvelope<FindingEntry>,
+    format: OutputFormat,
+) -> Result<()> {
+    let serialised = match format {
+        OutputFormat::Yaml => serde_yaml::to_string(envelope)?,
+        OutputFormat::Json => serde_json::to_string_pretty(envelope)? + "\n",
+        OutputFormat::Markdown => {
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`findings` does not support --format markdown; use yaml or json"
+            )
+        }
+    };
+    print!("{serialised}");
+    if let Some(line) = list_limits::truncation_summary_line(envelope) {
+        eprintln!("{line}");
+    }
     Ok(())
 }
 

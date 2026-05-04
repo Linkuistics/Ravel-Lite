@@ -81,3 +81,135 @@ fn add_set_body_set_title_delete_round_trip_through_cli() {
     );
 }
 
+fn seed_three_entry_memory(plan_dir: &std::path::Path) {
+    std::fs::write(
+        plan_dir.join("memory.yaml"),
+        "schema_version: 1\nitems: []\n",
+    )
+    .unwrap();
+    for (title, body) in [
+        ("First insight", "Body one.\n"),
+        ("Second insight", "Body two.\n"),
+        ("Third insight", "Body three.\n"),
+    ] {
+        let out = Command::new(bin())
+            .args(["state", "memory", "add"])
+            .arg(plan_dir)
+            .args(["--title", title, "--body", body])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "seed add failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
+fn list_limit_truncates_yaml_output_with_metadata() {
+    let tmp = TempDir::new().unwrap();
+    seed_three_entry_memory(tmp.path());
+
+    let out = Command::new(bin())
+        .args(["state", "memory", "list"])
+        .arg(tmp.path())
+        .args(["--limit", "1"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "list --limit 1 failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("first-insight"),
+        "first entry must be present: {stdout}"
+    );
+    assert!(
+        !stdout.contains("third-insight"),
+        "third entry must be truncated out: {stdout}"
+    );
+    assert!(
+        stdout.contains("truncated: true"),
+        "truncation metadata must be present: {stdout}"
+    );
+    assert!(stdout.contains("total: 3"), "total must be present: {stdout}");
+    assert!(
+        stdout.contains("returned: 1"),
+        "returned must be present: {stdout}"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("Showing 1 of 3"),
+        "stderr must carry the human truncation summary: {stderr}"
+    );
+}
+
+#[test]
+fn list_all_overrides_default_and_emits_no_truncation_metadata() {
+    let tmp = TempDir::new().unwrap();
+    seed_three_entry_memory(tmp.path());
+
+    let out = Command::new(bin())
+        .args(["state", "memory", "list"])
+        .arg(tmp.path())
+        .arg("--all")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("first-insight"), "{stdout}");
+    assert!(stdout.contains("second-insight"), "{stdout}");
+    assert!(stdout.contains("third-insight"), "{stdout}");
+    assert!(
+        !stdout.contains("truncated"),
+        "untruncated output must not carry truncation metadata: {stdout}"
+    );
+}
+
+#[test]
+fn list_limit_and_all_are_mutually_exclusive_at_the_clap_layer() {
+    let tmp = TempDir::new().unwrap();
+    seed_three_entry_memory(tmp.path());
+
+    let out = Command::new(bin())
+        .args(["state", "memory", "list"])
+        .arg(tmp.path())
+        .args(["--limit", "1"])
+        .arg("--all")
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "--limit and --all together must fail at clap parse"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("cannot be used with"),
+        "stderr must explain the mutex: {stderr}"
+    );
+}
+
+#[test]
+fn list_without_limit_or_all_remains_unbounded_for_backwards_compat() {
+    let tmp = TempDir::new().unwrap();
+    seed_three_entry_memory(tmp.path());
+
+    let out = Command::new(bin())
+        .args(["state", "memory", "list"])
+        .arg(tmp.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    // Default behaviour is unchanged from the pre-pagination shape: no
+    // truncation metadata, every entry present.
+    assert!(stdout.contains("first-insight"), "{stdout}");
+    assert!(stdout.contains("third-insight"), "{stdout}");
+    assert!(
+        !stdout.contains("truncated"),
+        "default list must not emit truncation metadata: {stdout}"
+    );
+}

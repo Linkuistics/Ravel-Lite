@@ -20,6 +20,7 @@ use anyhow::Result;
 use knowledge_graph::{Item, Justification, KindMarker, Store};
 
 use crate::bail_with;
+use crate::cli::list_limits::{self, ListLimits};
 use crate::cli::{CodedError, ErrorCode, OutputFormat};
 use crate::plan_kg::{BacklogItemKind, BacklogStatus};
 
@@ -91,6 +92,7 @@ pub fn entry_matches(
 pub fn run_list(
     plan_dir: &Path,
     filter: &ListFilter,
+    limits: ListLimits,
     format: OutputFormat,
     group_by: GroupBy,
 ) -> Result<()> {
@@ -102,23 +104,30 @@ pub fn run_list(
         .map(|e| e.item.id.as_str())
         .collect();
 
-    let filtered: Vec<&BacklogEntry> = backlog
+    let filtered: Vec<BacklogEntry> = backlog
         .items
         .iter()
         .filter(|e| entry_matches(e, filter, &done_ids))
+        .cloned()
         .collect();
-
-    let projection = BacklogFile {
-        schema_version: BACKLOG_SCHEMA_VERSION,
-        items: filtered.into_iter().cloned().collect(),
-    };
 
     match format {
         OutputFormat::Markdown => {
+            // Markdown is for human consumption; truncation flags do
+            // not appear in this format. The full filtered list is
+            // rendered so the table is whole.
+            let projection = BacklogFile {
+                schema_version: BACKLOG_SCHEMA_VERSION,
+                items: filtered,
+            };
             print!("{}", render_markdown(&projection, group_by));
             Ok(())
         }
-        _ => emit(&projection, format),
+        _ => {
+            let envelope =
+                list_limits::apply(&filtered, &limits, None, BACKLOG_SCHEMA_VERSION);
+            emit_envelope(&envelope, format)
+        }
     }
 }
 
@@ -134,6 +143,22 @@ fn emit(backlog: &BacklogFile, format: OutputFormat) -> Result<()> {
         }
     };
     print!("{serialised}");
+    Ok(())
+}
+
+fn emit_envelope(
+    envelope: &list_limits::ListEnvelope<BacklogEntry>,
+    format: OutputFormat,
+) -> Result<()> {
+    let serialised = match format {
+        OutputFormat::Yaml => serde_yaml::to_string(envelope)?,
+        OutputFormat::Json => serde_json::to_string_pretty(envelope)? + "\n",
+        OutputFormat::Markdown => unreachable!("markdown handled before envelope path"),
+    };
+    print!("{serialised}");
+    if let Some(line) = list_limits::truncation_summary_line(envelope) {
+        eprintln!("{line}");
+    }
     Ok(())
 }
 

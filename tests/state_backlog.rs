@@ -511,3 +511,56 @@ fn list_format_markdown_with_invalid_group_by_rejects() {
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("priority"), "error must cite the bad value: {stderr}");
 }
+
+#[test]
+fn list_yaml_truncates_with_metadata_when_limit_below_total() {
+    let tmp = TempDir::new().unwrap();
+    seed_two_task_backlog_yaml(tmp.path());
+
+    let out = Command::new(bin())
+        .args(["state", "backlog", "list"])
+        .arg(tmp.path())
+        .args(["--limit", "1"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("add-clippy-d-warnings-ci-gate"),
+        "first task must be present: {stdout}"
+    );
+    assert!(
+        !stdout.contains("remove-claude-code-debug-file-workaround"),
+        "second task must be truncated: {stdout}"
+    );
+    assert!(stdout.contains("truncated: true"), "{stdout}");
+    assert!(stdout.contains("total: 2"), "{stdout}");
+    assert!(stdout.contains("returned: 1"), "{stdout}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("Showing 1 of 2"), "{stderr}");
+}
+
+#[test]
+fn list_markdown_format_renders_full_table_regardless_of_limit() {
+    // Markdown is for human consumption; truncation flags do not apply
+    // because the rendered table is the complete view.
+    let tmp = TempDir::new().unwrap();
+    seed_two_task_backlog_yaml(tmp.path());
+
+    let out = Command::new(bin())
+        .args(["state", "backlog", "list"])
+        .arg(tmp.path())
+        .args(["--format", "markdown", "--limit", "1"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("Add clippy"),
+        "markdown table must include first task: {stdout}"
+    );
+    assert!(
+        stdout.contains("Remove Claude Code"),
+        "markdown table must include second task: {stdout}"
+    );
+}

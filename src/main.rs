@@ -327,6 +327,13 @@ Examples:
 
   # done tasks missing a Results block
   ravel-lite state backlog list LLM_STATE/core --status done --missing-results
+
+  # cap output to first 20 tasks (truncated YAML/JSON carries
+  # `truncated`/`total`/`returned` metadata; markdown is rendered in full)
+  ravel-lite state backlog list LLM_STATE/core --limit 20
+
+  # explicitly request unbounded output
+  ravel-lite state backlog list LLM_STATE/core --all
 ";
 
 const BACKLOG_SHOW_AFTER_HELP: &str = "\
@@ -431,6 +438,8 @@ const MEMORY_LIST_AFTER_HELP: &str = "\
 Examples:
   ravel-lite state memory list LLM_STATE/core
   ravel-lite state memory list LLM_STATE/core --format json
+  ravel-lite state memory list LLM_STATE/core --limit 20
+  ravel-lite state memory list LLM_STATE/core --all
 ";
 
 const MEMORY_SHOW_AFTER_HELP: &str = "\
@@ -488,6 +497,8 @@ Examples:
 const INTENTS_LIST_AFTER_HELP: &str = "\
 Examples:
   ravel-lite state intents list LLM_STATE/core
+  ravel-lite state intents list LLM_STATE/core --limit 10
+  ravel-lite state intents list LLM_STATE/core --all
 ";
 
 const INTENTS_SHOW_AFTER_HELP: &str = "\
@@ -631,6 +642,8 @@ const FINDINGS_LIST_AFTER_HELP: &str = "\
 Examples:
   ravel-lite findings list
   ravel-lite findings list --format json
+  ravel-lite findings list --limit 10
+  ravel-lite findings list --all
 ";
 
 const FINDINGS_SHOW_AFTER_HELP: &str = "\
@@ -1488,6 +1501,15 @@ enum BacklogCommands {
         /// Section layout when `--format markdown` is set: `category` (default) or `status`.
         #[arg(long, default_value = "category")]
         group_by: String,
+        /// Cap the number of tasks emitted in YAML/JSON output. Conflicts
+        /// with `--all`. Truncated output carries `truncated`/`total`/
+        /// `returned` metadata. Markdown output is rendered in full
+        /// regardless of this flag.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Explicitly request unbounded output. Conflicts with `--limit`.
+        #[arg(long, conflicts_with = "limit")]
+        all: bool,
     },
     /// Emit a single task by id.
     #[command(visible_aliases = ["get", "cat"], after_help = BACKLOG_SHOW_AFTER_HELP)]
@@ -1636,6 +1658,15 @@ enum MemoryCommands {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
         format: String,
+        /// Cap the number of entries emitted. Conflicts with `--all`.
+        /// Truncated output carries `truncated: true`, `total`, and
+        /// `returned` metadata in YAML/JSON; a human summary line is
+        /// also written to stderr.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Explicitly request unbounded output. Conflicts with `--limit`.
+        #[arg(long, conflicts_with = "limit")]
+        all: bool,
     },
     /// Emit a single memory entry by id.
     #[command(visible_aliases = ["get", "cat"], after_help = MEMORY_SHOW_AFTER_HELP)]
@@ -1736,6 +1767,12 @@ enum IntentsCommands {
         plan_dir: PathBuf,
         #[arg(long, default_value = "yaml")]
         format: String,
+        /// Cap the number of intents emitted. Conflicts with `--all`.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Explicitly request unbounded output. Conflicts with `--limit`.
+        #[arg(long, conflicts_with = "limit")]
+        all: bool,
     },
     /// Emit a single intent by id.
     #[command(visible_aliases = ["get", "cat"], after_help = INTENTS_SHOW_AFTER_HELP)]
@@ -2003,6 +2040,12 @@ enum FindingsCommands {
         config: Option<PathBuf>,
         #[arg(long, default_value = "yaml")]
         format: String,
+        /// Cap the number of findings emitted. Conflicts with `--all`.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Explicitly request unbounded output. Conflicts with `--limit`.
+        #[arg(long, conflicts_with = "limit")]
+        all: bool,
     },
     /// Emit a single finding by id.
     #[command(visible_aliases = ["get", "cat"], after_help = FINDINGS_SHOW_AFTER_HELP)]
@@ -2849,6 +2892,8 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
             missing_results,
             format,
             group_by,
+            limit,
+            all,
         } => {
             let status = status
                 .as_deref()
@@ -2879,7 +2924,8 @@ fn dispatch_backlog(command: BacklogCommands) -> Result<()> {
                     ),
                 })
             })?;
-            backlog::run_list(&plan_dir, &filter, fmt, grouping)
+            let limits = ravel_lite::cli::list_limits::ListLimits { limit, all };
+            backlog::run_list(&plan_dir, &filter, limits, fmt, grouping)
         }
         BacklogCommands::Show { plan_dir, id, format } => {
             let fmt = OutputFormat::parse(&format)?;
@@ -2987,9 +3033,10 @@ fn dispatch_memory(command: MemoryCommands) -> Result<()> {
     use ravel_lite::state::memory;
 
     match command {
-        MemoryCommands::List { plan_dir, format } => {
+        MemoryCommands::List { plan_dir, format, limit, all } => {
             let fmt = OutputFormat::parse(&format)?;
-            memory::run_list(&plan_dir, fmt)
+            let limits = ravel_lite::cli::list_limits::ListLimits { limit, all };
+            memory::run_list(&plan_dir, limits, fmt)
         }
         MemoryCommands::Show { plan_dir, id, format } => {
             let fmt = OutputFormat::parse(&format)?;
@@ -3061,9 +3108,10 @@ fn dispatch_intents(command: IntentsCommands) -> Result<()> {
     use ravel_lite::state::intents;
 
     match command {
-        IntentsCommands::List { plan_dir, format } => {
+        IntentsCommands::List { plan_dir, format, limit, all } => {
             let fmt = OutputFormat::parse(&format)?;
-            intents::run_list(&plan_dir, fmt)
+            let limits = ravel_lite::cli::list_limits::ListLimits { limit, all };
+            intents::run_list(&plan_dir, limits, fmt)
         }
         IntentsCommands::Show { plan_dir, id, format } => {
             let fmt = OutputFormat::parse(&format)?;
@@ -3246,10 +3294,11 @@ fn dispatch_findings(command: FindingsCommands) -> Result<()> {
     use ravel_lite::state::findings;
 
     match command {
-        FindingsCommands::List { config, format } => {
+        FindingsCommands::List { config, format, limit, all } => {
             let context_root = resolve_config_dir(config)?;
             let fmt = OutputFormat::parse(&format)?;
-            findings::run_list(&context_root, fmt)
+            let limits = ravel_lite::cli::list_limits::ListLimits { limit, all };
+            findings::run_list(&context_root, limits, fmt)
         }
         FindingsCommands::Show { config, id, format } => {
             let context_root = resolve_config_dir(config)?;

@@ -17,6 +17,7 @@ use anyhow::Result;
 use knowledge_graph::{Item, ItemStatus, Justification, KindMarker};
 
 use crate::bail_with;
+use crate::cli::list_limits::{self, ListLimits};
 use crate::cli::{CodedError, ErrorCode, OutputFormat};
 use crate::plan_kg::IntentStatus;
 use crate::state::backlog::schema::allocate_id;
@@ -31,9 +32,10 @@ fn not_found_intent(id: &str) -> anyhow::Error {
 use super::schema::{IntentEntry, IntentsFile, INTENTS_SCHEMA_VERSION};
 use super::yaml_io::{read_intents, write_intents};
 
-pub fn run_list(plan_dir: &Path, format: OutputFormat) -> Result<()> {
+pub fn run_list(plan_dir: &Path, limits: ListLimits, format: OutputFormat) -> Result<()> {
     let intents = read_intents(plan_dir)?;
-    emit(&intents, format)
+    let envelope = list_limits::apply(&intents.items, &limits, None, INTENTS_SCHEMA_VERSION);
+    emit_envelope(&envelope, format)
 }
 
 pub fn run_show(plan_dir: &Path, id: &str, format: OutputFormat) -> Result<()> {
@@ -66,6 +68,27 @@ fn emit(intents: &IntentsFile, format: OutputFormat) -> Result<()> {
         }
     };
     print!("{serialised}");
+    Ok(())
+}
+
+fn emit_envelope(
+    envelope: &list_limits::ListEnvelope<IntentEntry>,
+    format: OutputFormat,
+) -> Result<()> {
+    let serialised = match format {
+        OutputFormat::Yaml => serde_yaml::to_string(envelope)?,
+        OutputFormat::Json => serde_json::to_string_pretty(envelope)? + "\n",
+        OutputFormat::Markdown => {
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "`state intents` does not support --format markdown; use yaml or json"
+            )
+        }
+    };
+    print!("{serialised}");
+    if let Some(line) = list_limits::truncation_summary_line(envelope) {
+        eprintln!("{line}");
+    }
     Ok(())
 }
 
