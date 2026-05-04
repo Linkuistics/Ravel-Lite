@@ -362,7 +362,7 @@ entries:
 - id: serde-default-on-added-fields-avoids-schema-version-bump
   title: serde(default) on added fields avoids schema version bump
   body: |
-    Adding `#[serde(default)]` to a newly introduced field on an existing serialised struct maintains read-compat with pre-existing files. No schema_version bump needed when the field is informational (not identity-determining). `ProjectState.dirty_hash` demonstrates this pattern.
+    Adding `#[serde(default)]` to a newly introduced field maintains read-compat with pre-existing files that lack the field. For `bool` fields that should be absent from YAML when `false`, pair with `#[serde(skip_serializing_if = "std::ops::Not::not")]`: the combination makes the field invisible in YAML at its default value and reads absent fields as `false`. No `schema_version` bump needed when the field is informational (not identity-determining). `ProjectState.dirty_hash` demonstrates `serde(default)` alone; `BacklogEntry.legacy` demonstrates the full `default + skip_serializing_if` pair.
 - id: component-ontology-v2-spec-at-docs-component-ontology-md
   title: Component ontology v2 spec at docs/component-ontology.md
   body: |
@@ -1122,3 +1122,7 @@ entries:
       converter is dead code.
     - Cross-repo `.md` sibling cleanup (P8) covers 5 sibling repos:
       AppSpec, Ravel, APIAnyware-MacOS, TestAnyware, IDEs/RacketPro.
+- id: adding-llmphase-match-arm-clears-secondary-unused-variable-error-in-test-mock
+  title: Adding LlmPhase match arm clears secondary unused-variable error in test mock
+  body: |
+    In `tests/phase_loop.rs`, `ContractMockAgent::invoke_headless` matches on `LlmPhase`. A missing arm for a new variant emits `E0004` (non-exhaustive patterns) plus a secondary `unused variable: 'prompt'` error. Both originate from the same missing arm; adding the arm clears both. P5/P6 implementers adding new `LlmPhase` variants should expect this pair and not treat the secondary error as a separate issue.
