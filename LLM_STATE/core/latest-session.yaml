@@ -1,13 +1,10 @@
-id: session-140
-timestamp: 2026-05-04T01:39:45Z
+id: session-141
+timestamp: 2026-05-04T02:05:21Z
 phase: work
 body: |
-  ### Session 140 (2026-05-04T01:39:45Z) — Tag with_context chains with ErrorCode across src/**
+  ### Session 141 (2026-05-04T02:05:21Z) — Add ErrorCode regression guard to check.sh
 
-  - Completed the final leg of the three-cycle ErrorCode tagging sweep: all `with_context` / `.context(` chains in 45 production source files now carry `.with_code(ErrorCode::X)`.
-  - 272 production sites tagged; test-mod sites and `tests/` left untouched per task spec.
-  - Categorisation applied: `IoError` for file I/O and subprocess failures, `InvalidInput` for parse/malformed-content wraps, `Internal` for serialisation invariants that should never fail, `NotFound` for registry lookup misses.
-  - `ResultExt` import added where missing; no new infrastructure introduced — `with_code` already existed in `src/cli/error_context.rs`.
-  - Build clean (`cargo check --all-targets`), clippy clean, 999 lib tests pass.
-
-  What this suggests trying next: extend `scripts/check.sh` with a regression guard that forbids future untagged `.with_context(` / `.context(` sites (the peer task `cli-add-errorcode-regression-guard-to-check-sh`). Now that every production site is tagged, the invariant can be locked in CI.
+  - **What was attempted:** Add a regression guard to `scripts/check.sh` that forbids untagged `.with_context(...)` and `.context(...)` chains in `src/**/*.rs`, locking the invariant established when all 272 production sites were tagged with `.with_code(ErrorCode::X)`.
+  - **What worked:** Fully shipped. `scripts/check_errorcode_chains.py` implements the guard as a standalone Python helper invoked from `check.sh`. The helper sanitises comment and string-literal text (preventing false positives on `.with_context(` appearing in doc comments) and tracks paren+brace depth to compute the full extent of each chain — necessary because chains span multiple lines and may end at a function-tail expression without a terminating `;`. One genuine exemption needed: `src/cli/error_context.rs:177` in `mod tests` intentionally calls `.with_context()` without `.with_code()` to assert that `CodedError` codes survive the anyhow chain; annotated `// errorcode-exempt:` to match existing markers at lines 138 and 144. Six-case fixture verification passed (untagged, tagged, exempted, doc-comment false positive, function-tail, multi-line closure). Full `./scripts/check.sh` reports 0 violations on current HEAD.
+  - **What to try next:** The backlog task `migrate-ravel-lite-migrate-for-v1-to-v2-cutover` is next in the architecture-next category.
+  - **Key learnings:** Sanitising string literals and block comments before pattern matching is essential for accurate source analysis; comment-stripping can be done in a single linear pass preserving positions. Python's paren-depth tracking is straightforward and avoids building a full parser for this class of multi-line chain checks.
