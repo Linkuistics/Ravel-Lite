@@ -35,6 +35,23 @@ fn scaffold(tmp: &Path, me: &str, peers: &[&str]) -> (PathBuf, PathBuf) {
 
     let plan_dir = projects_root.join(me).join("LLM_STATE").join("core");
     std::fs::create_dir_all(&plan_dir).unwrap();
+    // V2 plans declare their target components in `targets.yaml`. The
+    // `--plan` filter resolves edges through this file rather than via
+    // path-derivation, so seed a single-target row naming `me` as both
+    // `repo_slug` and `component_id` (the root-component convention).
+    std::fs::write(
+        plan_dir.join("targets.yaml"),
+        format!(
+            "schema_version: 1\n\
+             targets:\n\
+             - repo_slug: {me}\n  \
+               component_id: {me}\n  \
+               working_root: .worktrees/{me}\n  \
+               branch: ravel-lite/core/main\n  \
+               path_segments:\n  - ''\n"
+        ),
+    )
+    .unwrap();
     (cfg, plan_dir)
 }
 

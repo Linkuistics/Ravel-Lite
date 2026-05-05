@@ -16,7 +16,7 @@
 //! delete-and-regenerate is the supported upgrade path
 //! (`docs/component-ontology.md` §12).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 
@@ -26,6 +26,7 @@ use crate::cli::ErrorCode;
 use component_ontology::{self as ontology, Edge, EvidenceGrade, RelatedComponentsFile};
 use crate::repos::{self, ReposRegistry};
 use crate::state::filenames::RELATED_COMPONENTS_FILENAME;
+use crate::state::targets::read_targets;
 
 // Re-export the v2 ontology surface that the host needs to construct
 // edges through this adapter — the binary crate (`main.rs`) and tests
@@ -94,14 +95,12 @@ pub fn read_related_plans_markdown(plan_dir: &Path) -> String {
 pub fn run_list(config_root: &Path, filter: &ListFilter<'_>) -> Result<()> {
     let file = load_or_empty(config_root)?;
 
-    // Plan-derived component filter is resolved once; kind/lifecycle
-    // are direct value comparisons against each edge.
-    let plan_component = match filter.plan {
+    // Plan-derived component filter is resolved once from the plan's
+    // `targets.yaml`; kind/lifecycle are direct value comparisons against
+    // each edge.
+    let plan_components = match filter.plan {
         None => None,
-        Some(plan) => {
-            let registry = repos::load_for_lookup(config_root)?;
-            Some(resolve_plan_component_name(&registry, plan)?)
-        }
+        Some(plan) => Some(resolve_plan_component_names(plan)?),
     };
 
     let filtered = RelatedComponentsFile {
@@ -109,7 +108,11 @@ pub fn run_list(config_root: &Path, filter: &ListFilter<'_>) -> Result<()> {
         edges: file
             .edges
             .into_iter()
-            .filter(|e| plan_component.as_deref().is_none_or(|name| e.involves(name)))
+            .filter(|e| {
+                plan_components
+                    .as_deref()
+                    .is_none_or(|names| names.iter().any(|n| e.involves(n)))
+            })
             .filter(|e| filter.kind.is_none_or(|k| e.kind == k))
             .filter(|e| filter.lifecycle.is_none_or(|l| e.lifecycle == l))
             .collect(),
@@ -207,47 +210,32 @@ fn require_component_known(registry: &ReposRegistry, slug: &str) -> Result<()> {
     Ok(())
 }
 
-fn resolve_plan_component_name(registry: &ReposRegistry, plan_dir: &Path) -> Result<String> {
-    let project_path = plan_project_path(plan_dir)?;
-    if let Some((slug, _entry)) = repos::find_by_local_path(registry, &project_path) {
-        return Ok(slug.to_string());
+/// Identifier set used to filter edges by `--plan`. Reads
+/// `<plan>/targets.yaml` and returns the union of every target row's
+/// `repo_slug` and `component_id`, deduped, preserving target order.
+///
+/// Both halves are included because edge participants are opaque
+/// strings (`Edge::participants: Vec<String>`): `discover` currently
+/// emits repo-level slugs, but the architecture-next direction is for
+/// participants to become component ids. Carrying both keeps the
+/// filter correct across that evolution without a follow-up change.
+///
+/// A missing or empty `targets.yaml` returns an empty vec, which
+/// causes the filter to match no edges — matching `work.md`'s
+/// "empty output is fine" contract for a freshly-created plan
+/// before anything is mounted.
+fn resolve_plan_component_names(plan_dir: &Path) -> Result<Vec<String>> {
+    let targets = read_targets(plan_dir)?;
+    let mut names: Vec<String> = Vec::with_capacity(targets.targets.len() * 2);
+    for t in &targets.targets {
+        if !names.iter().any(|n| n == &t.repo_slug) {
+            names.push(t.repo_slug.clone());
+        }
+        if !names.iter().any(|n| n == &t.component_id) {
+            names.push(t.component_id.clone());
+        }
     }
-    bail_with!(
-        ErrorCode::NotFound,
-        "plan's project {} is not registered as a repo's local_path; \
-         register the repo with `ravel-lite repo add <slug> --url <git-url> --local-path {}`",
-        project_path.display(),
-        project_path.display(),
-    )
-}
-
-/// Derive `<plan>/../..` as the project path, anchored to absolute via
-/// `std::path::absolute` (pure path math, matching the catalog's storage
-/// convention; avoids `canonicalize`'s symlink-induced `/private/...`
-/// drift on macOS).
-fn plan_project_path(plan_dir: &Path) -> Result<PathBuf> {
-    let absolute = std::path::absolute(plan_dir)
-        .with_context(|| {
-            format!(
-                "failed to resolve plan dir {} to an absolute path",
-                plan_dir.display()
-            )
-        })
-        .with_code(ErrorCode::IoError)?;
-    let parent = absolute
-        .parent()
-        .with_context(|| format!("plan dir {} has no parent", absolute.display()))
-        .with_code(ErrorCode::InvalidInput)?;
-    let grandparent = parent
-        .parent()
-        .with_context(|| {
-            format!(
-                "plan dir {} has no grandparent (expected <project>/<state-dir>/<plan>)",
-                absolute.display()
-            )
-        })
-        .with_code(ErrorCode::InvalidInput)?;
-    Ok(grandparent.to_path_buf())
+    Ok(names)
 }
 
 #[cfg(test)]
@@ -255,17 +243,14 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn mk_catalog_with(config_root: &Path, names: &[&str]) -> Vec<PathBuf> {
+    fn mk_catalog_with(config_root: &Path, names: &[&str]) {
         let mut registry = ReposRegistry::default();
-        let mut paths = Vec::new();
         for name in names {
             let p = config_root.join(name);
             std::fs::create_dir_all(&p).unwrap();
             repos::try_add(&mut registry, name, "test-url", Some(&p)).unwrap();
-            paths.push(p);
         }
         repos::save_atomic(config_root, &registry).unwrap();
-        paths
     }
 
     /// Test helper: build a weak-evidence edge with a fixed lifecycle so
@@ -573,17 +558,150 @@ mod tests {
     }
 
     #[test]
-    fn plan_project_path_derives_grandparent() {
-        let path = plan_project_path(Path::new("/a/b/c")).unwrap();
-        assert_eq!(path, PathBuf::from("/a"));
+    fn resolve_plan_component_names_returns_empty_when_targets_yaml_absent() {
+        // Fresh plan with nothing mounted: the filter must produce an
+        // empty set so `--plan` matches no edges (matching work.md's
+        // "empty output is fine" contract).
+        let tmp = TempDir::new().unwrap();
+        let names = resolve_plan_component_names(tmp.path()).unwrap();
+        assert!(names.is_empty());
     }
 
     #[test]
-    fn plan_project_path_resolves_relative_input_against_cwd() {
-        let cwd = std::env::current_dir().unwrap();
-        let derived = plan_project_path(Path::new("a/b/c")).unwrap();
-        let expected = std::path::absolute(cwd.join("a")).unwrap();
-        assert_eq!(derived, expected);
+    fn resolve_plan_component_names_collects_repo_slug_and_component_id() {
+        // A target row contributes both halves of its `(repo_slug,
+        // component_id)` ref — repo slugs match today's discover-emitted
+        // participants, component ids match the architecture-next
+        // direction. Including both keeps `--plan` filtering correct
+        // across that evolution.
+        use crate::state::targets::{write_targets, Target, TargetsFile, TARGETS_SCHEMA_VERSION};
+        let tmp = TempDir::new().unwrap();
+        let plan_dir = tmp.path();
+        write_targets(
+            plan_dir,
+            &TargetsFile {
+                schema_version: TARGETS_SCHEMA_VERSION,
+                targets: vec![Target {
+                    repo_slug: "ravel-lite".into(),
+                    component_id: "phase-loop".into(),
+                    working_root: ".worktrees/ravel-lite".into(),
+                    branch: "ravel-lite/p/main".into(),
+                    path_segments: vec!["src".into(), "phase_loop".into()],
+                }],
+            },
+        )
+        .unwrap();
+
+        let names = resolve_plan_component_names(plan_dir).unwrap();
+        assert_eq!(names, vec!["ravel-lite".to_string(), "phase-loop".to_string()]);
+    }
+
+    #[test]
+    fn resolve_plan_component_names_dedups_when_repo_slug_equals_component_id() {
+        // Root components conventionally use `component_id == repo_slug`
+        // (per the targets.yaml examples in architecture-next). Both
+        // halves resolve to the same string, so the result must hold one
+        // entry, not two.
+        use crate::state::targets::{write_targets, Target, TargetsFile, TARGETS_SCHEMA_VERSION};
+        let tmp = TempDir::new().unwrap();
+        let plan_dir = tmp.path();
+        write_targets(
+            plan_dir,
+            &TargetsFile {
+                schema_version: TARGETS_SCHEMA_VERSION,
+                targets: vec![Target {
+                    repo_slug: "ravel-lite".into(),
+                    component_id: "ravel-lite".into(),
+                    working_root: ".worktrees/ravel-lite".into(),
+                    branch: "ravel-lite/p/main".into(),
+                    path_segments: vec![String::new()],
+                }],
+            },
+        )
+        .unwrap();
+
+        let names = resolve_plan_component_names(plan_dir).unwrap();
+        assert_eq!(names, vec!["ravel-lite".to_string()]);
+    }
+
+    #[test]
+    fn run_list_with_plan_filter_matches_edges_involving_any_target() {
+        // Two targets across two repos; a single edge between them must
+        // survive the `--plan` filter because both participants are in
+        // the plan's target set.
+        use crate::state::targets::{write_targets, Target, TargetsFile, TARGETS_SCHEMA_VERSION};
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        mk_catalog_with(&cfg, &["ravel-lite", "atlas"]);
+
+        run_add_edge(
+            &cfg,
+            &req_weak(EdgeKind::DependsOn, LifecycleScope::Build, "ravel-lite", "atlas"),
+        )
+        .unwrap();
+
+        let plan_dir = tmp.path().join("plan");
+        std::fs::create_dir_all(&plan_dir).unwrap();
+        write_targets(
+            &plan_dir,
+            &TargetsFile {
+                schema_version: TARGETS_SCHEMA_VERSION,
+                targets: vec![
+                    Target {
+                        repo_slug: "ravel-lite".into(),
+                        component_id: "ravel-lite".into(),
+                        working_root: ".worktrees/ravel-lite".into(),
+                        branch: "ravel-lite/p/main".into(),
+                        path_segments: vec![String::new()],
+                    },
+                    Target {
+                        repo_slug: "atlas".into(),
+                        component_id: "atlas".into(),
+                        working_root: ".worktrees/atlas".into(),
+                        branch: "ravel-lite/p/main".into(),
+                        path_segments: vec![String::new()],
+                    },
+                ],
+            },
+        )
+        .unwrap();
+
+        let filter = ListFilter {
+            plan: Some(&plan_dir),
+            kind: None,
+            lifecycle: None,
+        };
+        // Smoke test: this used to bail with "plan's project ... is not
+        // registered as a repo's local_path" because the path
+        // grandparent (`tmp`) was unregistered. The targets.yaml-based
+        // resolver makes the filter independent of where the plan dir
+        // sits on disk.
+        run_list(&cfg, &filter).unwrap();
+    }
+
+    #[test]
+    fn run_list_with_plan_filter_in_v2_layout_does_not_require_grandparent_repo() {
+        // Regression: a v2 plan at `<context>/plans/<name>/` has a
+        // grandparent (`<context>`) that is NOT a registered repo's
+        // local_path, and that's expected — the resolver must read
+        // `targets.yaml` instead. Empty targets.yaml is treated as
+        // "no edges match", not as an error.
+        let tmp = TempDir::new().unwrap();
+        let cfg = tmp.path().join("cfg");
+        std::fs::create_dir_all(&cfg).unwrap();
+        // A repo whose local_path is *not* the plan's grandparent.
+        mk_catalog_with(&cfg, &["ravel-lite"]);
+
+        let plan_dir = tmp.path().join("plans/some-plan");
+        std::fs::create_dir_all(&plan_dir).unwrap();
+
+        let filter = ListFilter {
+            plan: Some(&plan_dir),
+            kind: None,
+            lifecycle: None,
+        };
+        run_list(&cfg, &filter).unwrap();
     }
 
     /// Migration M2 compat guard: a pre-M2 `related-components.yaml`
