@@ -55,8 +55,8 @@ fn run_multi_plan_requires_survey_state_flag() {
     let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
         .args(["run", "--config"])
         .arg(&config_root)
-        .arg(&plan_a)
-        .arg(&plan_b)
+        .arg("plan-a")
+        .arg("plan-b")
         .output()
         .expect("binary must spawn");
     assert!(
@@ -96,7 +96,7 @@ fn run_single_plan_rejects_survey_state_flag() {
         .arg(&config_root)
         .arg("--survey-state")
         .arg(&state_path)
-        .arg(&plan)
+        .arg("solo")
         .output()
         .expect("binary must spawn");
     assert!(
@@ -190,6 +190,95 @@ fn multi_plan_round_trip_preserves_selection_mapping() {
     )
     .unwrap();
     assert_eq!(picked2, Some(plan_a));
+}
+
+/// `run` and `survey` take plan NAMES, not paths — all v2 plans live
+/// at `<config-dir>/plans/<name>/` so the path is redundant. This test
+/// exercises the path-shaped-arg rejection branch and the v1-path-
+/// specific hint that points the user at `migrate-v1-v2`.
+#[test]
+fn run_rejects_path_shaped_arg_with_helpful_hint() {
+    let tmp = TempDir::new().unwrap();
+    let config_root = tmp.path().join("cfg");
+    ravel_lite::init::run_init(&config_root, false).unwrap();
+
+    // Absolute path → generic name-not-path hint.
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["run", "--config"])
+        .arg(&config_root)
+        .arg("/some/absolute/path")
+        .output()
+        .expect("binary must spawn");
+    assert!(
+        !out.status.success(),
+        "path-shaped arg must be rejected before any work happens"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("plan name"),
+        "stderr must redirect user to a name: {stderr}"
+    );
+
+    // v1-style path → migrate-v1-v2 hint.
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["run", "--config"])
+        .arg(&config_root)
+        .arg("LLM_STATE/core")
+        .output()
+        .expect("binary must spawn");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("migrate-v1-v2"),
+        "v1-shaped path must hint at the migrator: {stderr}"
+    );
+}
+
+#[test]
+fn run_rejects_unknown_plan_name_with_not_found() {
+    let tmp = TempDir::new().unwrap();
+    let config_root = tmp.path().join("cfg");
+    ravel_lite::init::run_init(&config_root, false).unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["run", "--config"])
+        .arg(&config_root)
+        .arg("nonexistent-plan")
+        .output()
+        .expect("binary must spawn");
+    assert!(
+        !out.status.success(),
+        "unknown plan name must error before any work happens"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("nonexistent-plan"),
+        "stderr must name the missing plan: {stderr}"
+    );
+    assert!(
+        stderr.contains(config_root.join("plans").to_string_lossy().as_ref()),
+        "stderr must point at where the plan was expected: {stderr}"
+    );
+}
+
+#[test]
+fn survey_rejects_path_shaped_arg_with_helpful_hint() {
+    let tmp = TempDir::new().unwrap();
+    let config_root = tmp.path().join("cfg");
+    ravel_lite::init::run_init(&config_root, false).unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_ravel-lite"))
+        .args(["survey", "--config"])
+        .arg(&config_root)
+        .arg("/some/absolute/path")
+        .output()
+        .expect("binary must spawn");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("plan name"),
+        "survey must apply the same name resolution: {stderr}"
+    );
 }
 
 /// `ravel-lite init --config <path>` is path-optional in the v2 CLI

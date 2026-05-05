@@ -92,14 +92,14 @@ Examples:
 
 const RUN_AFTER_HELP: &str = "\
 Examples:
-  # single-plan continuous loop
-  ravel-lite run LLM_STATE/core
+  # single-plan continuous loop (resolves to <config-dir>/plans/core/)
+  ravel-lite run core
 
   # multi-plan: --survey-state holds the survey YAML between cycles
-  ravel-lite run --survey-state survey-state.yaml LLM_STATE/core LLM_STATE/other
+  ravel-lite run --survey-state survey-state.yaml core other
 
   # claude-code only: skip per-phase permission prompts
-  ravel-lite run --dangerous LLM_STATE/core
+  ravel-lite run --dangerous core
 ";
 
 const CREATE_AFTER_HELP: &str = "\
@@ -114,13 +114,13 @@ Examples:
 const SURVEY_AFTER_HELP: &str = "\
 Examples:
   # one-shot survey across two plans, YAML to stdout
-  ravel-lite survey LLM_STATE/core LLM_STATE/other > survey.yaml
+  ravel-lite survey core other > survey.yaml
 
   # incremental: re-use a prior survey, only changed plans hit the LLM
-  ravel-lite survey --prior survey.yaml LLM_STATE/core LLM_STATE/other
+  ravel-lite survey --prior survey.yaml core other
 
   # force a full re-analysis even with --prior
-  ravel-lite survey --prior survey.yaml --force LLM_STATE/core
+  ravel-lite survey --prior survey.yaml --force core
 ";
 
 const SURVEY_FORMAT_AFTER_HELP: &str = "\
@@ -129,7 +129,7 @@ Examples:
   ravel-lite survey-format survey.yaml
 
   # pipe a fresh survey through the renderer
-  ravel-lite survey LLM_STATE/core | ravel-lite survey-format /dev/stdin
+  ravel-lite survey core | ravel-lite survey-format /dev/stdin
 ";
 
 const VERSION_AFTER_HELP: &str = "\
@@ -852,12 +852,14 @@ enum Commands {
         /// rejected when exactly one is supplied.
         #[arg(long)]
         survey_state: Option<PathBuf>,
-        /// One or more plan directories. With a single directory the
-        /// behaviour is the original single-plan run loop. With two or
-        /// more, multi-plan mode dispatches one cycle per
-        /// survey-driven user selection.
-        #[arg(required = true, num_args = 1..)]
-        plan_dirs: Vec<PathBuf>,
+        /// One or more plan names. Each resolves to
+        /// `<config-dir>/plans/<name>/`. With a single name the
+        /// behaviour is the single-plan run loop; with two or more,
+        /// multi-plan mode dispatches one cycle per survey-driven
+        /// user selection. Path-shaped args are rejected — pass the
+        /// bare plan name.
+        #[arg(required = true, num_args = 1.., value_name = "PLAN_NAMES")]
+        plan_names: Vec<String>,
     },
     /// Create a new plan directory via an interactive headful claude
     /// session. Loads the create-plan prompt template from
@@ -895,11 +897,11 @@ enum Commands {
         /// default location at <dirs::config_dir()>/ravel-lite/.
         #[arg(long)]
         config: Option<PathBuf>,
-        /// Plan directories (each containing phase.md). Replaces the
-        /// former plan-root walk: callers now name plans individually.
-        /// At least one required.
-        #[arg(required = true, num_args = 1..)]
-        plan_dirs: Vec<PathBuf>,
+        /// One or more plan names. Each resolves to
+        /// `<config-dir>/plans/<name>/`. Path-shaped args are
+        /// rejected — pass the bare plan name. At least one required.
+        #[arg(required = true, num_args = 1.., value_name = "PLAN_NAMES")]
+        plan_names: Vec<String>,
         /// Override the model used for the survey call. Overrides
         /// `models.survey` in agents/claude-code/config.yaml, which in
         /// turn overrides the DEFAULT_SURVEY_MODEL constant.
@@ -2431,6 +2433,41 @@ fn json_mode_requested() -> bool {
     false
 }
 
+/// Resolve a plan name argument to its v2 layout directory under the
+/// config root. Rejects path-shaped args (anything containing `/` or
+/// `\`) with a redirect message, and singles out v1-style paths
+/// (containing `LLM_STATE/`) for a `migrate-v1-v2` hint. Errors when
+/// the resolved directory does not exist so callers see "no such
+/// plan" before any expensive work happens.
+fn resolve_plan_name(config_root: &Path, name: &str) -> Result<PathBuf> {
+    if name.contains('/') || name.contains('\\') {
+        if name.starts_with("LLM_STATE/") || name.contains("/LLM_STATE/") {
+            bail_with!(
+                ErrorCode::InvalidInput,
+                "{name:?} looks like a v1 plan path. Migrate it first with \
+                 `ravel-lite migrate-v1-v2 {name} --as <new-name>`, then re-run \
+                 with the new plan name.",
+            );
+        }
+        bail_with!(
+            ErrorCode::InvalidInput,
+            "{name:?} is path-shaped; this command takes a plan name (e.g. `core`). \
+             Names resolve to <config-dir>/plans/<name>/.",
+        );
+    }
+    create::validate_plan_name(name)?;
+    let plan_dir = config_root.join("plans").join(name);
+    if !plan_dir.is_dir() {
+        bail_with!(
+            ErrorCode::NotFound,
+            "no plan named {name:?} at {}. Create it with `ravel-lite create {name}`, \
+             or migrate a legacy plan with `ravel-lite migrate-v1-v2 <old-path> --as {name}`.",
+            plan_dir.display()
+        );
+    }
+    Ok(plan_dir)
+}
+
 async fn dispatch() -> Result<()> {
     let cli = Cli::parse();
 
@@ -2439,22 +2476,23 @@ async fn dispatch() -> Result<()> {
             let target = ravel_lite::config::resolve_config_dir_for_init(config)?;
             init::run_init(&target, force)
         }
-        Commands::Run { config, dangerous, debug, survey_state, plan_dirs } => {
+        Commands::Run { config, dangerous, debug, survey_state, plan_names } => {
             let config_root = resolve_config_dir(config)?;
             if debug {
                 ravel_lite::debug_log::enable(ravel_lite::debug_log::EMBEDDING_DEBUG_FILE)?;
             }
-            for plan_dir in &plan_dirs {
-                ravel_lite::v2_gate::validate_v2_plan_dir(plan_dir)?;
-            }
+            let plan_dirs: Vec<PathBuf> = plan_names
+                .iter()
+                .map(|name| resolve_plan_name(&config_root, name))
+                .collect::<Result<Vec<_>>>()?;
             match plan_dirs.len() {
-                0 => unreachable!("clap requires at least one plan_dir"),
+                0 => unreachable!("clap requires at least one plan_name"),
                 1 => {
                     if survey_state.is_some() {
                         bail_with!(
                             ErrorCode::InvalidInput,
                             "--survey-state is only meaningful with multiple plan \
-                             directories; remove it or pass two or more plan_dirs."
+                             names; remove it or pass two or more plan_names."
                         );
                     }
                     run_phase_loop(&config_root, &plan_dirs[0], dangerous).await
@@ -2465,8 +2503,8 @@ async fn dispatch() -> Result<()> {
                             code: ErrorCode::InvalidInput,
                             message:
                                 "--survey-state <path> is required when more than one \
-                                 plan directory is supplied. The file holds the survey \
-                                 YAML between cycles and is read as `--prior` on each \
+                                 plan name is supplied. The file holds the survey YAML \
+                                 between cycles and is read as `--prior` on each \
                                  subsequent survey."
                                     .to_string(),
                         })
@@ -2485,8 +2523,12 @@ async fn dispatch() -> Result<()> {
             let config_root = resolve_config_dir(config)?;
             create::run_create(&config_root, &plan, &targets).await
         }
-        Commands::Survey { config, plan_dirs, model, timeout_secs, prior, force } => {
+        Commands::Survey { config, plan_names, model, timeout_secs, prior, force } => {
             let config_root = resolve_config_dir(config)?;
+            let plan_dirs: Vec<PathBuf> = plan_names
+                .iter()
+                .map(|name| resolve_plan_name(&config_root, name))
+                .collect::<Result<Vec<_>>>()?;
             survey::run_survey(
                 &config_root,
                 &plan_dirs,
