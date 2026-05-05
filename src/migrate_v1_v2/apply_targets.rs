@@ -14,16 +14,12 @@ use crate::state::targets::mount::mount_target;
 use super::proposals::{TargetsProposal, TARGETS_PROPOSAL_FILENAME};
 use super::validate::Validated;
 
-pub async fn run(
-    agent: Arc<dyn Agent>,
-    v: &Validated,
-    skip_confirm: bool,
-) -> Result<()> {
+pub async fn run(agent: Arc<dyn Agent>, v: &Validated) -> Result<()> {
     super::orchestrator::invoke_phase(agent, v, crate::types::LlmPhase::MigrateTargets).await?;
-    apply_proposal(v, skip_confirm)
+    apply_proposal(v)
 }
 
-pub fn apply_proposal(v: &Validated, skip_confirm: bool) -> Result<()> {
+pub fn apply_proposal(v: &Validated) -> Result<()> {
     let scratch = v.new_plan_dir.join(TARGETS_PROPOSAL_FILENAME);
     if !scratch.is_file() {
         bail_with!(
@@ -34,14 +30,6 @@ pub fn apply_proposal(v: &Validated, skip_confirm: bool) -> Result<()> {
     }
     let body = fs::read_to_string(&scratch)?;
     let proposal: TargetsProposal = serde_yaml::from_str(&body)?;
-
-    if !skip_confirm {
-        super::orchestrator::confirm(&format!(
-            "migrate-targets: mount {} targets in {}?",
-            proposal.targets.len(),
-            v.source_repo_slug
-        ))?;
-    }
 
     for tp in &proposal.targets {
         // The migrate-targets prompt feeds the LLM `atlas list-components`,
@@ -175,7 +163,7 @@ mod tests {
         )
         .unwrap();
 
-        apply_proposal(&v, true).unwrap();
+        apply_proposal(&v).unwrap();
 
         let targets =
             crate::state::targets::yaml_io::read_targets(&v.new_plan_dir).unwrap();
@@ -203,7 +191,7 @@ mod tests {
         )
         .unwrap();
 
-        apply_proposal(&v, true).unwrap();
+        apply_proposal(&v).unwrap();
 
         let targets =
             crate::state::targets::yaml_io::read_targets(&v.new_plan_dir).unwrap();
@@ -224,7 +212,7 @@ mod tests {
             source_repo_path: PathBuf::from(tmp.path()),
             config_dir: PathBuf::from(tmp.path()),
         };
-        let err = apply_proposal(&v, true).unwrap_err();
+        let err = apply_proposal(&v).unwrap_err();
         assert!(format!("{err:#}").contains(TARGETS_PROPOSAL_FILENAME));
     }
 }

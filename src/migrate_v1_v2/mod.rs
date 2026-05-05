@@ -23,9 +23,9 @@ pub mod validate;
 
 /// Top-level entry point. Drives the full migration in two halves:
 /// mechanical (validate + copy + transform) followed by three
-/// sequential headless LLM phases (intent → targets → memory) with
-/// confirm-before-apply between each agent output and runner
-/// application.
+/// sequential headless LLM phases (intent → targets → memory).
+/// Migration writes only into the new v2 plan dir under the
+/// config-dir; the original v1 plan is left untouched.
 ///
 /// Emits step-by-step progress to stderr (matches `discover/mod.rs`
 /// pattern). The three LLM phases each take ~30–60s with no
@@ -36,7 +36,6 @@ pub async fn run_migrate_v1_v2(
     old_plan_path: &Path,
     new_plan_name: &str,
     config_dir: &Path,
-    skip_confirm: bool,
 ) -> Result<()> {
     eprintln!(
         "migrate-v1-v2: {} → plans/{}",
@@ -54,13 +53,13 @@ pub async fn run_migrate_v1_v2(
     transform::run(&validated.new_plan_dir)?;
 
     eprintln!("[4/6] migrate-intent (LLM, ~30–60s) — extracting intents from phase.md");
-    apply_intent::run(agent.clone(), &validated, skip_confirm).await?;
+    apply_intent::run(agent.clone(), &validated).await?;
 
     eprintln!("[5/6] migrate-targets (LLM, ~30–60s) — identifying target components");
-    apply_targets::run(agent.clone(), &validated, skip_confirm).await?;
+    apply_targets::run(agent.clone(), &validated).await?;
 
     eprintln!("[6/6] migrate-memory-backfill (LLM, ~30–60s) — attributing memory entries");
-    apply_memory::run(agent.clone(), &validated, skip_confirm).await?;
+    apply_memory::run(agent.clone(), &validated).await?;
 
     eprintln!(
         "✓ migrate-v1-v2 complete: {}",

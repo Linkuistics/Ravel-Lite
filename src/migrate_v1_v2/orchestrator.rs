@@ -1,17 +1,13 @@
-//! Helpers shared by the three apply_* modules:
-//! - `invoke_phase` renders a prompt and calls `agent.invoke_headless`.
-//! - `confirm` prints a yes/no prompt to stdin/stdout.
+//! Helpers shared by the three apply_* modules: `invoke_phase` renders
+//! a prompt and calls `agent.invoke_headless`.
 
 use std::collections::HashMap;
-use std::io::{self, Write};
 use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::mpsc;
 
 use crate::agent::Agent;
-use crate::bail_with;
-use crate::cli::ErrorCode;
 use crate::prompt::compose_prompt;
 use crate::types::{LlmPhase, PlanContext};
 
@@ -53,19 +49,4 @@ pub async fn invoke_phase(
     agent
         .invoke_headless(&prompt, &ctx, phase, "migrate", tx)
         .await
-}
-
-/// Print a Y/N prompt to stdout, read from stdin. Returns Ok(()) on
-/// "y"/"yes" (case-insensitive); errors with `ErrorCode::Cancelled`
-/// otherwise. Default is no — empty input or any other answer cancels.
-pub fn confirm(message: &str) -> Result<()> {
-    print!("{message} [y/N] ");
-    io::stdout().flush().ok();
-    let mut buf = String::new();
-    io::stdin().read_line(&mut buf)?;
-    let trimmed = buf.trim().to_ascii_lowercase();
-    if trimmed == "y" || trimmed == "yes" {
-        return Ok(());
-    }
-    bail_with!(ErrorCode::Cancelled, "user declined the apply step");
 }

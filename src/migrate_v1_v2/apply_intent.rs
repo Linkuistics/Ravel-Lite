@@ -19,16 +19,12 @@ use crate::state::intents::{IntentsFile, INTENTS_SCHEMA_VERSION};
 use super::proposals::{IntentProposal, INTENT_PROPOSAL_FILENAME};
 use super::validate::Validated;
 
-pub async fn run(
-    agent: Arc<dyn Agent>,
-    v: &Validated,
-    skip_confirm: bool,
-) -> Result<()> {
+pub async fn run(agent: Arc<dyn Agent>, v: &Validated) -> Result<()> {
     super::orchestrator::invoke_phase(agent, v, crate::types::LlmPhase::MigrateIntent).await?;
-    apply_proposal(&v.new_plan_dir, skip_confirm)
+    apply_proposal(&v.new_plan_dir)
 }
 
-pub fn apply_proposal(plan_dir: &Path, skip_confirm: bool) -> Result<()> {
+pub fn apply_proposal(plan_dir: &Path) -> Result<()> {
     let scratch = plan_dir.join(INTENT_PROPOSAL_FILENAME);
     if !scratch.is_file() {
         bail_with!(
@@ -39,14 +35,6 @@ pub fn apply_proposal(plan_dir: &Path, skip_confirm: bool) -> Result<()> {
     }
     let body = fs::read_to_string(&scratch)?;
     let proposal: IntentProposal = serde_yaml::from_str(&body)?;
-
-    if !skip_confirm {
-        super::orchestrator::confirm(&format!(
-            "migrate-intent: apply {} intents and {} item attributions?",
-            proposal.intents.len(),
-            proposal.item_attributions.len()
-        ))?;
-    }
 
     let intents = IntentsFile {
         schema_version: INTENTS_SCHEMA_VERSION,
@@ -160,7 +148,7 @@ mod tests {
         )
         .unwrap();
 
-        apply_proposal(tmp.path(), true).unwrap();
+        apply_proposal(tmp.path()).unwrap();
 
         let backlog = crate::state::backlog::yaml_io::read_backlog(tmp.path()).unwrap();
         let t1 = backlog.items.iter().find(|e| e.item.id == "t-001").unwrap();
@@ -197,7 +185,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = apply_proposal(tmp.path(), true).unwrap_err();
+        let err = apply_proposal(tmp.path()).unwrap_err();
         assert!(format!("{err:#}").contains("unknown backlog item id"));
     }
 
@@ -205,7 +193,7 @@ mod tests {
     fn apply_errors_when_scratch_missing() {
         let tmp = TempDir::new().unwrap();
         backlog_with_two_items(tmp.path());
-        let err = apply_proposal(tmp.path(), true).unwrap_err();
+        let err = apply_proposal(tmp.path()).unwrap_err();
         assert!(format!("{err:#}").contains(INTENT_PROPOSAL_FILENAME));
     }
 }

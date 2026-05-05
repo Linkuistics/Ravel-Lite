@@ -1037,9 +1037,6 @@ enum Commands {
         /// Config dir override. Defaults via `config::resolve_config_dir`.
         #[arg(long)]
         config: Option<PathBuf>,
-        /// Skip the three confirm-before-apply prompts.
-        #[arg(long)]
-        yes: bool,
     },
 }
 
@@ -2568,7 +2565,6 @@ async fn dispatch() -> Result<()> {
             old_plan_path,
             as_name,
             config,
-            yes,
         } => {
             let config_dir = resolve_config_dir(config)?;
             let agent = build_headless_agent(&config_dir)?;
@@ -2577,7 +2573,6 @@ async fn dispatch() -> Result<()> {
                 &old_plan_path,
                 &as_name,
                 &config_dir,
-                yes,
             )
             .await
         }

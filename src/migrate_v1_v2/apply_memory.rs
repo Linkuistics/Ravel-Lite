@@ -17,21 +17,17 @@ use crate::state::memory::yaml_io::{read_memory, write_memory};
 use super::proposals::{MemoryProposal, MEMORY_PROPOSAL_FILENAME};
 use super::validate::Validated;
 
-pub async fn run(
-    agent: Arc<dyn Agent>,
-    v: &Validated,
-    skip_confirm: bool,
-) -> Result<()> {
+pub async fn run(agent: Arc<dyn Agent>, v: &Validated) -> Result<()> {
     super::orchestrator::invoke_phase(
         agent,
         v,
         crate::types::LlmPhase::MigrateMemoryBackfill,
     )
     .await?;
-    apply_proposal(&v.new_plan_dir, skip_confirm)
+    apply_proposal(&v.new_plan_dir)
 }
 
-pub fn apply_proposal(plan_dir: &Path, skip_confirm: bool) -> Result<()> {
+pub fn apply_proposal(plan_dir: &Path) -> Result<()> {
     let scratch = plan_dir.join(MEMORY_PROPOSAL_FILENAME);
     if !scratch.is_file() {
         bail_with!(
@@ -42,13 +38,6 @@ pub fn apply_proposal(plan_dir: &Path, skip_confirm: bool) -> Result<()> {
     }
     let body = fs::read_to_string(&scratch)?;
     let proposal: MemoryProposal = serde_yaml::from_str(&body)?;
-
-    if !skip_confirm {
-        super::orchestrator::confirm(&format!(
-            "migrate-memory-backfill: apply attribution for {} entries?",
-            proposal.attributions.len()
-        ))?;
-    }
 
     let mut memory = read_memory(plan_dir)?;
     for attr in &proposal.attributions {
@@ -147,7 +136,7 @@ mod tests {
         )
         .unwrap();
 
-        apply_proposal(tmp.path(), true).unwrap();
+        apply_proposal(tmp.path()).unwrap();
 
         let memory = crate::state::memory::yaml_io::read_memory(tmp.path()).unwrap();
         let m1 = memory.items.iter().find(|e| e.item.id == "m-001").unwrap();
@@ -174,7 +163,7 @@ mod tests {
             serde_yaml::to_string(&proposal).unwrap(),
         )
         .unwrap();
-        let err = apply_proposal(tmp.path(), true).unwrap_err();
+        let err = apply_proposal(tmp.path()).unwrap_err();
         assert!(format!("{err:#}").contains("unknown memory entry id"));
     }
 }

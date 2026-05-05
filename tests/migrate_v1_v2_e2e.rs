@@ -102,7 +102,7 @@ item_attributions:\n- item_id: t-001\n  serves: i-001\n";
 
     let agent = stub(new_plan_dir.clone(), intent_yaml, targets_yaml, memory_yaml);
 
-    run_migrate_v1_v2(agent, &old_plan, "myproj-core", &context, true)
+    run_migrate_v1_v2(agent, &old_plan, "myproj-core", &context)
         .await
         .unwrap();
 
