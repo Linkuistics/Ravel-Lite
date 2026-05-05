@@ -27,7 +27,7 @@ use crate::config::{load_agent_config, load_shared_config};
 use crate::init::require_embedded;
 use crate::prompt::substitute_tokens;
 use crate::state::filenames::{
-    BACKLOG_FILENAME, DREAM_WORD_COUNT_FILENAME, INTENTS_FILENAME, MEMORY_FILENAME, PHASE_FILENAME,
+    BACKLOG_FILENAME, INTENTS_FILENAME, MEMORY_FILENAME, PHASE_FILENAME,
 };
 use crate::state::target_requests::{
     write_target_requests, TargetRequest, TargetRequestsFile, TARGET_REQUESTS_SCHEMA_VERSION,
@@ -133,7 +133,6 @@ pub fn resolve_plan_dir(context_root: &Path, plan_name: &str) -> Result<PathBuf>
 /// - `backlog.yaml` = `schema_version: 1\nitems: []\n`
 /// - `intents.yaml` = `schema_version: 1\nitems: []\n`
 /// - `memory.yaml` = `schema_version: 1\nitems: []\n`
-/// - `dream-word-count` = `0`
 ///
 /// Parent directories are NOT created here — `validate_target` handles
 /// that — so this function only succeeds when called against a freshly
@@ -153,12 +152,11 @@ pub fn scaffold_plan_dir(abs_plan_dir: &Path) -> Result<()> {
         })
         .with_code(ErrorCode::IoError)?;
 
-    let writes: [(&str, &[u8]); 6] = [
+    let writes: [(&str, &[u8]); 5] = [
         (PHASE_FILENAME, b"triage\n"),
         (BACKLOG_FILENAME, b"schema_version: 1\nitems: []\n"),
         (INTENTS_FILENAME, b"schema_version: 1\nitems: []\n"),
         (MEMORY_FILENAME, b"schema_version: 1\nitems: []\n"),
-        (DREAM_WORD_COUNT_FILENAME, b"0"),
         (".gitignore", b".worktrees/\n"),
     ];
     for (name, bytes) in writes {
@@ -221,10 +219,9 @@ pub async fn run_create(
     }
 
     // Runner-owned scaffolding runs BEFORE the claude spawn so the LLM
-    // never has to create mechanical files (phase.md, empty YAML shells,
-    // dream-word-count). The create-plan prompt directs it to populate
-    // intents/backlog/memory exclusively through `state intents add` etc.
-    // — no raw writes.
+    // never has to create mechanical files (phase.md, empty YAML shells).
+    // The create-plan prompt directs it to populate intents/backlog/memory
+    // exclusively through `state intents add` etc. — no raw writes.
     scaffold_plan_dir(&abs_plan_dir)?;
     seed_target_requests(&abs_plan_dir, targets)?;
 
@@ -386,7 +383,6 @@ mod tests {
             fs::read_to_string(plan.join(MEMORY_FILENAME)).unwrap(),
             "schema_version: 1\nitems: []\n"
         );
-        assert_eq!(fs::read_to_string(plan.join(DREAM_WORD_COUNT_FILENAME)).unwrap(), "0");
     }
 
     #[test]

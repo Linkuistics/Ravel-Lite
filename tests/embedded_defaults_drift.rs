@@ -141,8 +141,8 @@ fn embedded_prompts_load_against_an_empty_config_dir() {
     // shipped defaults are reachable even when nothing has ever been
     // materialised here.
 
-    // Phase prompts (work, analyse-work, reflect, dream, triage).
-    for phase in ["work", "analyse-work", "reflect", "dream", "triage"] {
+    // Phase prompts (work, analyse-work, reflect, triage).
+    for phase in ["work", "analyse-work", "reflect", "triage"] {
         let key = format!("phases/{phase}.md");
         let body = require_embedded(&key)
             .unwrap_or_else(|_| panic!("phases/{phase}.md not embedded"));

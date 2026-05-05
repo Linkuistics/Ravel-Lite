@@ -1373,8 +1373,7 @@ enum StateCommands {
         #[command(subcommand)]
         command: IntentsCommands,
     },
-    /// Memory CRUD verbs. Dream rewrites memory.yaml per-entry through
-    /// these verbs rather than bulk-swapping the file.
+    /// Memory CRUD verbs.
     Memory {
         #[command(subcommand)]
         command: MemoryCommands,
@@ -1452,7 +1451,7 @@ enum StateCommands {
         command: DiscoverProposalsCommands,
     },
     /// Deterministic labelled-line summary of what changed in
-    /// backlog.yaml (triage) or memory.yaml (reflect/dream) between a
+    /// backlog.yaml (triage) or memory.yaml (reflect) between a
     /// baseline commit and the current working-tree state. Replaces the
     /// LLM's manual re-transcription of its own tool calls at the end
     /// of each phase; the narrative preamble stays in the LLM.
@@ -1469,7 +1468,7 @@ enum PhaseSummaryCommands {
     Render {
         /// Path to the plan directory.
         plan_dir: PathBuf,
-        /// Which phase's summary to render: `triage`, `reflect`, or `dream`.
+        /// Which phase's summary to render: `triage` or `reflect`.
         #[arg(long)]
         phase: String,
         /// Git SHA holding the phase-start snapshot of backlog.yaml /
@@ -2816,7 +2815,7 @@ fn dispatch_phase_summary(command: PhaseSummaryCommands) -> Result<()> {
                 anyhow::Error::new(ravel_lite::cli::CodedError {
                     code: ErrorCode::InvalidInput,
                     message: format!(
-                        "invalid --phase value {phase:?}; expected `triage`, `reflect`, or `dream`"
+                        "invalid --phase value {phase:?}; expected `triage` or `reflect`"
                     ),
                 })
             })?;

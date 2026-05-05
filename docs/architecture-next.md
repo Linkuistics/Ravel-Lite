@@ -504,10 +504,9 @@ Three responsibilities:
    learnings (about the plan's own dynamics rather than any
    component) get `attribution: plan-process` and stay in plan
    memory only — they don't promote.
-2. **Bounded truth maintenance** ("dream-lite") on recent plan
-   memory entries: re-validate justifications affected by this
-   cycle's changes, mark defeated entries, supersede contradicted
-   ones.
+2. **Bounded truth maintenance** on recent plan memory entries:
+   re-validate justifications affected by this cycle's changes,
+   mark defeated entries, supersede contradicted ones.
 3. **Intent-trajectory check.** Walk this cycle's commits and session
    log against active intents. Flag drift: work that doesn't serve
    any active intent, or active intents not served by recent work.

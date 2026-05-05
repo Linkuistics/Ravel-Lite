@@ -70,7 +70,6 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
     EmbeddedFile { path: "phases/work.md", content: include_str!("../defaults/phases/work.md") },
     EmbeddedFile { path: "phases/analyse-work.md", content: include_str!("../defaults/phases/analyse-work.md") },
     EmbeddedFile { path: "phases/reflect.md", content: include_str!("../defaults/phases/reflect.md") },
-    EmbeddedFile { path: "phases/dream.md", content: include_str!("../defaults/phases/dream.md") },
     EmbeddedFile { path: "phases/triage.md", content: include_str!("../defaults/phases/triage.md") },
     EmbeddedFile { path: "phases/migrate-intent.md", content: include_str!("../defaults/phases/migrate-intent.md") },
     EmbeddedFile { path: "phases/migrate-targets.md", content: include_str!("../defaults/phases/migrate-targets.md") },

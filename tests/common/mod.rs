@@ -8,45 +8,12 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use ravel_lite::agent::Agent;
-use ravel_lite::plan_kg::{BacklogStatus, MemoryStatus};
+use ravel_lite::plan_kg::BacklogStatus;
 use ravel_lite::state::backlog::schema::{BacklogEntry, BacklogFile, BACKLOG_SCHEMA_VERSION};
 use ravel_lite::state::backlog::write_backlog;
-use ravel_lite::state::memory::schema::{MemoryEntry, MemoryFile, MEMORY_SCHEMA_VERSION};
-use ravel_lite::state::memory::write_memory;
 use ravel_lite::types::{LlmPhase, PlanContext};
 use ravel_lite::ui::UISender;
 use knowledge_graph::{Item, Justification, KindMarker};
-
-/// Seed `memory.yaml` so that `dream`'s word counter sees exactly
-/// `target_words` words of content (one entry, empty claim, rationale
-/// of that many tokens). Lets tests focus on threshold behaviour without
-/// wiring up the whole memory schema by hand.
-pub fn write_memory_yaml_with_word_count(plan: &Path, target_words: usize) {
-    let body = if target_words == 0 {
-        String::new()
-    } else {
-        vec!["word"; target_words].join(" ")
-    };
-    let memory = MemoryFile {
-        schema_version: MEMORY_SCHEMA_VERSION,
-        items: vec![MemoryEntry {
-            item: Item {
-                id: "test-entry".into(),
-                kind: KindMarker::new(),
-                claim: String::new(),
-                justifications: vec![Justification::Rationale { text: body }],
-                status: MemoryStatus::Active,
-                supersedes: vec![],
-                superseded_by: None,
-                defeated_by: None,
-                authored_at: "test".into(),
-                authored_in: "test".into(),
-            },
-            attribution: None,
-        }],
-    };
-    write_memory(plan, &memory).unwrap();
-}
 
 /// Seed `backlog.yaml` with a single item whose claim embeds `marker`.
 /// The marker surfaces in the serialised YAML so tests can assert on

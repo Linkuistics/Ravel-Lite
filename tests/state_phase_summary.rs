@@ -122,66 +122,6 @@ items:
 }
 
 #[test]
-fn phase_summary_dream_always_emits_a_stats_line() {
-    let tmp = TempDir::new().unwrap();
-    let plan = tmp.path();
-    init_git_repo(plan);
-
-    std::fs::write(
-        plan.join("memory.yaml"),
-        r#"schema_version: 1
-items:
-- id: rule
-  kind: memory-entry
-  claim: A rule
-  justifications:
-  - kind: rationale
-    text: |
-      original wordy body with many words in it
-  status: active
-  authored_at: test
-  authored_in: test
-"#,
-    )
-    .unwrap();
-    let baseline_sha = commit_all(plan, "baseline");
-
-    std::fs::write(
-        plan.join("memory.yaml"),
-        r#"schema_version: 1
-items:
-- id: rule
-  kind: memory-entry
-  claim: A rule
-  justifications:
-  - kind: rationale
-    text: |
-      shorter
-  status: active
-  authored_at: test
-  authored_in: test
-"#,
-    )
-    .unwrap();
-
-    let out = Command::new(bin())
-        .args(["state", "phase-summary", "render"])
-        .arg(plan)
-        .args(["--phase", "dream", "--baseline", &baseline_sha])
-        .output()
-        .expect("failed to spawn ravel-lite");
-    assert!(
-        out.status.success(),
-        "phase-summary failed: stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("[STALE] A rule"), "missing STALE:\n{stdout}");
-    assert!(stdout.contains("[STATS]"), "missing STATS:\n{stdout}");
-    assert!(stdout.contains(" → "), "STATS must have continuation line:\n{stdout}");
-}
-
-#[test]
 fn phase_summary_empty_baseline_sha_treats_state_as_first_cycle() {
     let tmp = TempDir::new().unwrap();
     let plan = tmp.path();
@@ -239,7 +179,7 @@ fn phase_summary_rejects_unknown_phase_with_clear_error() {
     assert!(!out.status.success(), "invalid --phase must fail");
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(
-        stderr.contains("triage") && stderr.contains("reflect") && stderr.contains("dream"),
+        stderr.contains("triage") && stderr.contains("reflect"),
         "error must list valid phase names: {stderr}"
     );
 }

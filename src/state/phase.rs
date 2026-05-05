@@ -12,7 +12,6 @@ use anyhow::{Context, Result};
 use crate::bail_with;
 use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
-use crate::dream::seed_dream_word_count_if_missing;
 use crate::state::filenames::PHASE_FILENAME;
 use crate::types::Phase;
 
@@ -46,14 +45,6 @@ pub fn run_set_phase(plan_dir: &Path, phase: &str) -> Result<()> {
         );
     }
     atomic_write(&target, phase.as_bytes())?;
-    // Every LLM phase transition funnels through this CLI verb, so
-    // seeding here guarantees a dream-word-count file exists on any
-    // plan the driver touches — including coordinator plans that
-    // never reach the `GitCommitReflect` handler, and plans whose
-    // file was lost between cycles. Also doubles as the migration
-    // point for plans that pre-date the rename from `dream-baseline`
-    // to `dream-word-count`. Idempotent no-op in steady state.
-    seed_dream_word_count_if_missing(plan_dir);
     Ok(())
 }
 
@@ -84,7 +75,6 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::filenames::DREAM_WORD_COUNT_FILENAME;
     use tempfile::TempDir;
 
     #[test]
@@ -108,60 +98,6 @@ mod tests {
         let msg = format!("{err:#}");
         assert!(msg.contains(PHASE_FILENAME), "error must name {PHASE_FILENAME}: {msg}");
         assert!(!plan.join(PHASE_FILENAME).exists(), "must not silently create phase.md");
-    }
-
-    #[test]
-    fn set_phase_seeds_dream_word_count_when_missing() {
-        // Defense-in-depth: any LLM phase transition must leave the
-        // plan with a dream-word-count file on disk. Coordinator plans
-        // never reach `GitCommitReflect`, so this is their only seed
-        // path.
-        let tmp = TempDir::new().unwrap();
-        let plan = tmp.path();
-        std::fs::write(plan.join(PHASE_FILENAME), "work").unwrap();
-        assert!(!plan.join(DREAM_WORD_COUNT_FILENAME).exists());
-
-        run_set_phase(plan, "analyse-work").unwrap();
-
-        let baseline = std::fs::read_to_string(plan.join(DREAM_WORD_COUNT_FILENAME)).unwrap();
-        assert_eq!(baseline.trim(), "0");
-    }
-
-    #[test]
-    fn set_phase_preserves_existing_dream_word_count() {
-        // Idempotence: the seed must not clobber an already-written
-        // value. Otherwise every phase transition would reset progress
-        // toward the dream threshold.
-        let tmp = TempDir::new().unwrap();
-        let plan = tmp.path();
-        std::fs::write(plan.join(PHASE_FILENAME), "work").unwrap();
-        std::fs::write(plan.join(DREAM_WORD_COUNT_FILENAME), "1234").unwrap();
-
-        run_set_phase(plan, "analyse-work").unwrap();
-
-        let baseline = std::fs::read_to_string(plan.join(DREAM_WORD_COUNT_FILENAME)).unwrap();
-        assert_eq!(baseline.trim(), "1234");
-    }
-
-    #[test]
-    fn set_phase_migrates_legacy_dream_baseline_word_count_file() {
-        // Plans created before the rename store the word count at
-        // `dream-baseline`. set-phase is the earliest call site that
-        // funnels every cycle, so it's the natural migration point —
-        // the file is moved to `dream-word-count` and removed from
-        // its old name to free that name for the SHA writer.
-        let tmp = TempDir::new().unwrap();
-        let plan = tmp.path();
-        std::fs::write(plan.join(PHASE_FILENAME), "work").unwrap();
-        std::fs::write(plan.join("dream-baseline"), "5678").unwrap();
-
-        run_set_phase(plan, "analyse-work").unwrap();
-
-        assert_eq!(
-            std::fs::read_to_string(plan.join(DREAM_WORD_COUNT_FILENAME)).unwrap().trim(),
-            "5678"
-        );
-        assert!(!plan.join("dream-baseline").exists());
     }
 
     #[test]

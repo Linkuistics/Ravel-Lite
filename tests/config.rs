@@ -51,7 +51,7 @@ fn embedded_defaults_are_valid() {
     // whatever `claude` / `pi` pick at spawn time, which is neither
     // auditable nor stable across releases.
     for (agent_name, cfg) in [("claude-code", &cc), ("pi", &pi)] {
-        for phase in ["work", "analyse-work", "reflect", "dream", "triage"] {
+        for phase in ["work", "analyse-work", "reflect", "triage"] {
             let model = cfg
                 .models
                 .get(phase)
@@ -81,7 +81,7 @@ fn embedded_defaults_are_valid() {
     assert!(!shared.agent.is_empty());
     assert!(shared.headroom > 0);
 
-    for phase in ["work", "analyse-work", "reflect", "dream", "triage"] {
+    for phase in ["work", "analyse-work", "reflect", "triage"] {
         let body = require_embedded(&format!("phases/{phase}.md")).unwrap();
         assert!(!body.trim().is_empty(), "empty phase file: {phase}");
     }

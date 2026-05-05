@@ -1,8 +1,7 @@
 # memory.yaml Entry Style Rules
 
-All `memory.yaml` entries in a backlog plan follow these rules. Both the
-reflect phase (incremental per-session) and the dream phase (periodic
-global rewrite) produce entries in this style.
+All `memory.yaml` entries in a backlog plan follow these rules. The
+reflect phase produces entries in this style.
 
 ## Three principles
 
@@ -52,10 +51,7 @@ After (~45 words):
 
 Same facts, less than half the words.
 
-## Lossless vs lossy
+## Pruning
 
-- **Reflect** may prune aggressively — it is the lossy-pruning phase.
-  Remove outdated or redundant facts.
-- **Dream** is **strictly lossless** — preserve every live fact, only
-  rewrite prose. Do not delete entries unless they are pure duplicates
-  of others.
+**Reflect** may prune aggressively — it is the lossy-pruning phase.
+Remove outdated or redundant facts.

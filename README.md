@@ -1,7 +1,7 @@
 # Ravel-Lite
 
 > An orchestration loop for LLM development cycles.
-> Compose. Reflect. Dream. Triage. Repeat.
+> Triage. Work. Analyse. Reflect. Repeat.
 
 Multi-agent orchestrator for backlog-driven LLM development. Supports
 [Claude Code](https://claude.ai/code) and
@@ -17,20 +17,18 @@ message model, and agent trait.
 ## Phase Cycle
 
 ```
-work → analyse-work → git-commit-work →
-reflect → git-commit-reflect → [dream trigger?] →
-dream → git-commit-dream →
-triage → git-commit-triage → [continue?] → work
+triage → git-commit-triage →
+work → git-commit-work →
+analyse-work → git-commit-analyse-work →
+reflect → git-commit-reflect → [continue?] → triage
 ```
 
+- **triage** (headless) — adjusts backlog, dispatches subagents for
+  cross-plan propagation
 - **work** (interactive) — user steers task selection, implements task
 - **analyse-work** (headless) — examines git diff, produces session
   log and commit message from ground truth
 - **reflect** (headless) — distils learnings into durable memory
-- **dream** (headless, conditional) — lossless memory rewrite when
-  word count exceeds baseline + headroom
-- **triage** (headless) — adjusts backlog, dispatches subagents for
-  cross-plan propagation
 - **git-commit-\*** — per-phase audit trail commits
 
 ## Principles

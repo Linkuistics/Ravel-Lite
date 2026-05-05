@@ -22,9 +22,9 @@ pub struct CommitResult {
 
 /// Stage the plan directory and commit it with the default message
 /// `run-plan: {phase_name} ({plan_name})`. Used by the
-/// reflect / dream / triage / save-*-baseline phases, none of which
-/// produce a custom commit message. The work-phase commit is handled
-/// separately by `apply_commits_spec` against `commits.yaml`.
+/// reflect / triage / save-*-baseline phases, none of which produce a
+/// custom commit message. The work-phase commit is handled separately
+/// by `apply_commits_spec` against `commits.yaml`.
 /// Returns whether anything was committed.
 pub fn git_commit_plan(plan_dir: &Path, plan_name: &str, phase_name: &str) -> Result<CommitResult> {
     let message = format!("run-plan: {phase_name} ({plan_name})");
@@ -247,7 +247,7 @@ fn unstage_subtree(project_dir: &Path) -> Result<()> {
 
 /// Capture the current HEAD sha into `<plan_dir>/<filename>` as a
 /// phase-summary baseline. Used to write `<phase>-baseline` files
-/// (work, reflect, dream, triage) that downstream LLM phases pass to
+/// (work, reflect, triage) that downstream LLM phases pass to
 /// `state phase-summary render --baseline`.
 pub fn git_save_baseline(plan_dir: &Path, filename: &str) {
     let baseline_path = plan_dir.join(filename);

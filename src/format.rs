@@ -143,15 +143,11 @@ static PHASE_HIGHLIGHTS: Lazy<HashMap<LlmPhase, Vec<HighlightRule>>> = Lazy::new
 /// not the action itself (e.g. OBSOLETE, not REMOVED). `None` = neutral/dim.
 static ACTION_INTENTS: Lazy<HashMap<&'static str, Option<Intent>>> = Lazy::new(|| {
     let mut m = HashMap::new();
-    // memory entry states (reflect + dream)
+    // memory entry states (reflect)
     m.insert("NEW",           Some(Intent::Added));     // entry didn't exist
     m.insert("IMPRECISE",     Some(Intent::Meta));      // was imprecise → sharpened
     m.insert("STALE",         Some(Intent::Changed));   // was stale → replaced
     m.insert("OBSOLETE",      Some(Intent::Removed));   // no longer relevant → removed
-    m.insert("OVERLAPPING",   Some(Intent::Meta));      // overlapped → merged
-    m.insert("VERBOSE",       Some(Intent::Meta));      // was wordy → tightened
-    m.insert("AWKWARD",       None);                    // phrasing off → reworded
-    m.insert("STATS",         None);                    // metric, not a state
     // backlog task states (triage)
     m.insert("DONE",          Some(Intent::Added));     // task completed → closed
     m.insert("PROMOTED",      Some(Intent::Added));     // handoff → standalone task
@@ -271,9 +267,9 @@ pub fn format_result_text(text: &str) -> Vec<StyledLine> {
     let mut out: Vec<StyledLine> = vec![StyledLine::empty()];
     let mut in_insight = false;
     // Intent of the most recent action marker. Enables `→ …` continuation
-    // lines (dream two-line entries, triage hand-off pairs) to render
-    // aligned under the detail column and inherit the action's intent.
-    // Cleared on any blank or non-continuation intervening line.
+    // lines (triage hand-off pairs) to render aligned under the detail
+    // column and inherit the action's intent. Cleared on any blank or
+    // non-continuation intervening line.
     let mut last_action_intent: Option<Option<Intent>> = None;
 
     // Push `line`, collapsing runs of blank lines to at most one.
@@ -618,9 +614,9 @@ mod tests {
 
     #[test]
     fn format_result_text_dim_action_has_no_intent() {
-        let lines = format_result_text("[AWKWARD] minor tweak");
-        let row = lines.iter().find(|l| flat_text(l).contains("AWKWARD")).unwrap();
-        let tag = row.0.iter().find(|s| s.text.trim() == "AWKWARD").unwrap();
+        let lines = format_result_text("[NO DISPATCH] minor note");
+        let row = lines.iter().find(|l| flat_text(l).contains("NO DISPATCH")).unwrap();
+        let tag = row.0.iter().find(|s| s.text.trim() == "NO DISPATCH").unwrap();
         assert_eq!(tag.style, Style::dim());
     }
 
@@ -634,7 +630,7 @@ mod tests {
 
     #[test]
     fn format_result_text_filters_markdown_horizontal_rule() {
-        // LLMs in reflect/dream/triage put a `---` separator between the
+        // LLMs in reflect/triage put a `---` separator between the
         // reasoning preamble and the labelled summary. The separator is
         // noise once the labels are already visually distinct — filter it.
         let lines = format_result_text(
@@ -758,14 +754,14 @@ mod tests {
     #[test]
     fn format_result_text_action_without_em_dash_stays_single_row() {
         // No separator → single row, no dim reason row emitted.
-        let lines = format_result_text("[AWKWARD] minor tweak");
+        let lines = format_result_text("[NEW] minor tweak");
         let rows_with_text: Vec<_> = lines
             .iter()
             .filter(|l| !l.is_blank())
             .collect();
         assert_eq!(rows_with_text.len(), 1, "single action row expected: {rows_with_text:?}");
         let text = flat_text(rows_with_text[0]);
-        assert!(text.contains("AWKWARD"));
+        assert!(text.contains("NEW"));
         assert!(text.contains("minor tweak"));
     }
 
@@ -796,23 +792,23 @@ mod tests {
     #[test]
     fn format_result_text_reason_row_does_not_break_arrow_continuation() {
         // After emitting title + dim reason, a subsequent `→ …` still chains
-        // to the action's intent (dream format relies on this).
-        let lines = format_result_text("[VERBOSE] heading — what was wordy\n    → tightened form");
-        let arrow_row = lines.iter().find(|l| flat_text(l).contains("tightened form")).unwrap();
+        // to the action's intent.
+        let lines = format_result_text("[IMPRECISE] heading — was imprecise\n    → sharpened form");
+        let arrow_row = lines.iter().find(|l| flat_text(l).contains("sharpened form")).unwrap();
         let arrow_span = arrow_row.0.iter().find(|s| s.text.contains("→")).expect("arrow span");
         assert_eq!(arrow_span.style, Style::intent(Intent::Meta));
     }
 
     #[test]
     fn format_result_text_continuation_aligns_under_detail_column() {
-        let input = "[AWKWARD] heading — old phrasing\n   → new phrasing";
+        let input = "[NEW] heading — first phrasing\n   → revised phrasing";
         let lines = format_result_text(input);
 
         let cont_row = lines
             .iter()
             .find(|l| {
                 let t = flat_text(l);
-                t.contains("→") && t.contains("new phrasing")
+                t.contains("→") && t.contains("revised phrasing")
             })
             .expect("continuation row");
         let cont_text = flat_text(cont_row);
@@ -821,13 +817,13 @@ mod tests {
             cont_text.starts_with(&" ".repeat(indent_width)),
             "continuation must indent to detail column: got {cont_text:?}"
         );
-        assert!(cont_text[indent_width..].starts_with("→ new phrasing"));
+        assert!(cont_text[indent_width..].starts_with("→ revised phrasing"));
     }
 
     #[test]
     fn format_result_text_continuation_inherits_action_intent() {
-        // OVERLAPPING → Meta; continuation detail span must carry the same intent.
-        let lines = format_result_text("[OVERLAPPING] A + B\n   → merged heading");
+        // IMPRECISE → Meta; continuation detail span must carry the same intent.
+        let lines = format_result_text("[IMPRECISE] A + B\n   → merged heading");
         let cont_row = lines
             .iter()
             .find(|l| flat_text(l).contains("merged heading"))
@@ -892,7 +888,7 @@ mod tests {
 
     #[test]
     fn format_result_text_blank_line_breaks_continuation_association() {
-        let input = "[AWKWARD] heading — old\n\n   → stray arrow";
+        let input = "[NEW] heading — old\n\n   → stray arrow";
         let lines = format_result_text(input);
         let stray = lines.iter().find(|l| flat_text(l).contains("stray")).unwrap();
         let text = flat_text(stray);
@@ -910,8 +906,8 @@ mod tests {
     ///
     /// 1. Every intent-bearing label (`PROMOTED`, `ARCHIVED`, `REPRIORITISED`,
     ///    `BLOCKER`, `DISPATCH`) renders with bold-intent tag + dim reason row.
-    /// 2. Structural labels (`DONE`, `NEW`, `OBSOLETE`, `STATS`) render after
-    ///    the blank-line separator.
+    /// 2. Structural labels (`DONE`, `NEW`, `OBSOLETE`) render after the
+    ///    blank-line separator.
     /// 3. `REPRIORITISED` appears in *both* halves (intent preamble + structural
     ///    diff) and both occurrences render as styled tag spans.
     /// 4. Prose paragraph survives unchanged as dim text.
@@ -935,8 +931,7 @@ Triage swept the backlog after the cycle's verification work. Two hand-offs were
 [DONE] Wire health endpoint
 [NEW] Schema migration spike
 [REPRIORITISED] Wire health endpoint
-[OBSOLETE] Legacy ingest path
-[STATS] 2 promoted, 1 archived, 1 dispatched";
+[OBSOLETE] Legacy ingest path";
 
         let lines = format_result_text(input);
 
@@ -964,12 +959,11 @@ Triage swept the backlog after the cycle's verification work. Two hand-offs were
         }
 
         // 2. Structural labels render with their own intent (DONE → Added,
-        //    NEW → Added, OBSOLETE → Removed, STATS → dim/none).
+        //    NEW → Added, OBSOLETE → Removed).
         let structural_cases = [
             ("DONE",     Some(Style::bold_intent(Intent::Added))),
             ("NEW",      Some(Style::bold_intent(Intent::Added))),
             ("OBSOLETE", Some(Style::bold_intent(Intent::Removed))),
-            ("STATS",    Some(Style::dim())),
         ];
         for (label, expected_style) in structural_cases {
             let tag_span = lines
