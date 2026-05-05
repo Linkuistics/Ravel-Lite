@@ -542,8 +542,14 @@ Examples:
 ";
 
 const TARGETS_MOUNT_AFTER_HELP: &str = "\
+Mounts the named target plus its build-time transitive closure: every
+component reachable along `depends-on` / `links-statically` /
+`links-dynamically` / `has-optional-dependency` edges is mounted as a
+worktree on the same plan-namespaced branch. Idempotent — already-
+mounted refs are skipped.
+
 Examples:
-  # idempotent: creates the worktree and writes the targets row
+  # mounts ravel-lite:core plus any cross-repo build deps reachable via Atlas edges
   ravel-lite state targets mount LLM_STATE/core ravel-lite:core
 ";
 
@@ -3228,15 +3234,44 @@ fn dispatch_targets(command: TargetsCommands) -> Result<()> {
         } => {
             let context_root = resolve_config_dir(config)?;
             let (repo_slug, component_id) = parse_target_reference(&reference)?;
-            let mounted = targets::mount_target(&plan_dir, &context_root, &repo_slug, &component_id)?;
-            println!(
-                "mounted {}:{} at {}/{} on {}",
-                mounted.repo_slug,
-                mounted.component_id,
-                plan_dir.display(),
-                mounted.working_root,
-                mounted.branch
-            );
+            let before = targets::read_targets(&plan_dir).ok();
+            let mounted = targets::mount_with_closure::mount_with_closure(
+                &plan_dir,
+                &context_root,
+                &[(repo_slug, component_id)],
+            )?;
+            let pre_existing: std::collections::HashSet<(String, String)> = before
+                .map(|t| {
+                    t.targets
+                        .into_iter()
+                        .map(|r| (r.repo_slug, r.component_id))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut new_count = 0;
+            for target in &mounted {
+                let key = (target.repo_slug.clone(), target.component_id.clone());
+                if pre_existing.contains(&key) {
+                    continue;
+                }
+                new_count += 1;
+                println!(
+                    "mounted {}:{} at {}/{} on {}",
+                    target.repo_slug,
+                    target.component_id,
+                    plan_dir.display(),
+                    target.working_root,
+                    target.branch
+                );
+            }
+            if new_count == 0 {
+                println!(
+                    "{}:{} already mounted (closure: {} target(s) in plan)",
+                    mounted[0].repo_slug,
+                    mounted[0].component_id,
+                    mounted.len()
+                );
+            }
             Ok(())
         }
     }

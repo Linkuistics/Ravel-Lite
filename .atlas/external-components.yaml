@@ -1,0 +1,166 @@
+schema_version: 1
+externals:
+- id: crate:anyhow
+  kind: external
+  language: rust
+  purl: pkg:cargo/anyhow@1
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:ascent
+  kind: external
+  language: rust
+  purl: pkg:cargo/ascent@0.8
+  discovered_from:
+  - crates/knowledge-graph/Cargo.toml
+  evidence_grade: strong
+- id: crate:async-trait
+  kind: external
+  language: rust
+  purl: pkg:cargo/async-trait@0.1
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:clap
+  kind: external
+  language: rust
+  purl: pkg:cargo/clap@4
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:crossterm
+  kind: external
+  language: rust
+  purl: pkg:cargo/crossterm@0.29
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:dirs
+  kind: external
+  language: rust
+  purl: pkg:cargo/dirs@5
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:indexmap
+  kind: external
+  language: rust
+  purl: pkg:cargo/indexmap@2
+  discovered_from:
+  - Cargo.toml
+  - crates/knowledge-graph/Cargo.toml
+  evidence_grade: strong
+- id: crate:libc
+  kind: external
+  language: rust
+  purl: pkg:cargo/libc@0.2
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:mlua
+  kind: external
+  language: rust
+  purl: pkg:cargo/mlua@0.10
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:once_cell
+  kind: external
+  language: rust
+  purl: pkg:cargo/once_cell@1
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:path-clean
+  kind: external
+  language: rust
+  purl: pkg:cargo/path-clean@1
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:pathdiff
+  kind: external
+  language: rust
+  purl: pkg:cargo/pathdiff@0.2
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:petgraph
+  kind: external
+  language: rust
+  purl: pkg:cargo/petgraph@0.6
+  discovered_from:
+  - crates/knowledge-graph/Cargo.toml
+  evidence_grade: strong
+- id: crate:portable-pty
+  kind: external
+  language: rust
+  purl: pkg:cargo/portable-pty@0.9
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:ratatui
+  kind: external
+  language: rust
+  purl: pkg:cargo/ratatui@0.30
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:regex
+  kind: external
+  language: rust
+  purl: pkg:cargo/regex@1
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:serde
+  kind: external
+  language: rust
+  purl: pkg:cargo/serde@1
+  discovered_from:
+  - Cargo.toml
+  - crates/knowledge-graph/Cargo.toml
+  evidence_grade: strong
+- id: crate:serde_json
+  kind: external
+  language: rust
+  purl: pkg:cargo/serde_json@1
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:serde_yaml
+  kind: external
+  language: rust
+  purl: pkg:cargo/serde_yaml@0.9
+  discovered_from:
+  - Cargo.toml
+  - crates/knowledge-graph/Cargo.toml
+  evidence_grade: strong
+- id: crate:sha2
+  kind: external
+  language: rust
+  purl: pkg:cargo/sha2@0.10
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:tempfile
+  kind: external
+  language: rust
+  purl: pkg:cargo/tempfile@3
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong
+- id: crate:thiserror
+  kind: external
+  language: rust
+  purl: pkg:cargo/thiserror@1
+  discovered_from:
+  - crates/knowledge-graph/Cargo.toml
+  evidence_grade: strong
+- id: crate:tokio
+  kind: external
+  language: rust
+  purl: pkg:cargo/tokio@1
+  discovered_from:
+  - Cargo.toml
+  evidence_grade: strong

@@ -10,9 +10,10 @@
 //!    not silently swallow a corrupt request queue (a swallowed parse
 //!    error would silently lose a mount the user requested).
 //! 3. For each request, parse the `<repo>:<component>` reference and
-//!    call `mount_target`, which updates `targets.yaml` as a side
-//!    effect. Errors propagate; partial drains are left on disk so the
-//!    user can see what was processed and what wasn't.
+//!    call `mount_with_closure`, which mounts the request plus every
+//!    component reachable via build/link edges. Updates `targets.yaml`
+//!    as a side effect. Errors propagate; partial drains are left on
+//!    disk so the user can see what was processed and what wasn't.
 //! 4. After every request mounts successfully, delete
 //!    `target-requests.yaml`.
 //!
@@ -25,7 +26,7 @@ use anyhow::{Context, Result};
 use super::yaml_io::{delete_target_requests, read_target_requests};
 use crate::cli::error_context::ResultExt;
 use crate::cli::ErrorCode;
-use crate::state::targets::mount_target;
+use crate::state::targets::mount_with_closure::mount_with_closure;
 
 pub fn drain_target_requests(plan_dir: &Path, context_root: &Path) -> Result<usize> {
     let file = read_target_requests(plan_dir)?;
@@ -38,21 +39,20 @@ pub fn drain_target_requests(plan_dir: &Path, context_root: &Path) -> Result<usi
 
     let mut mounted = 0usize;
     for req in &file.requests {
-        mount_target(
-            plan_dir,
-            context_root,
-            &req.component.repo_slug,
-            &req.component.component_id,
-        )
-        .with_context(|| {
-            format!(
-                "failed to mount {} (reason: {}) from {}/target-requests.yaml",
-                req.component,
-                req.reason,
-                plan_dir.display()
-            )
-        })
-        .with_code(ErrorCode::IoError)?;
+        let initial = vec![(
+            req.component.repo_slug.clone(),
+            req.component.component_id.clone(),
+        )];
+        mount_with_closure(plan_dir, context_root, &initial)
+            .with_context(|| {
+                format!(
+                    "failed to mount {} (reason: {}) from {}/target-requests.yaml",
+                    req.component,
+                    req.reason,
+                    plan_dir.display()
+                )
+            })
+            .with_code(ErrorCode::IoError)?;
         mounted += 1;
     }
 

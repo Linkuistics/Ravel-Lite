@@ -6,7 +6,9 @@
 //! worktree; drained at plan finish. See `docs/architecture-next.md`
 //! §Targets and worktrees.
 
+pub mod closure;
 pub mod mount;
+pub mod mount_with_closure;
 pub mod schema;
 pub mod verbs;
 pub mod yaml_io;

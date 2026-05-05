@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "fingerprint": {
+        "template_sha": "2b55bfd02f13466a1949eb9d82d3527ebcc4843159d1200d89051dd5a6a013f9",
+        "ontology_sha": "6d0698934434b49ad7b6cf9413acded22d874d6daccb698dfac7dc83fbe0161a",
+        "model_id": "claude-sonnet-4-6",
+        "backend_version": "2.1.126 (Claude Code)"
+      },
+      "prompt": "stage1-surface",
+      "inputs": "{\"CATALOG_COMPONENTS\":\"_(none — this component is the only catalog entry)_\",\"COMPONENT_CONTENT_SHAS\":[\"6d1b7aafa06bb2bc89012584a7fde874fa5f7b765dee0208a67d10eed3fec988\"],\"COMPONENT_ID\":\"ravel-lite\",\"COMPONENT_PATHS\":[\"\"]}",
+      "response": {
+        "consumes_files": [
+          "~/.config/ravel-lite/config.yaml",
+          "~/.config/ravel-lite/config.lua",
+          "~/.config/ravel-lite/agents/<name>/config.yaml",
+          "~/.config/ravel-lite/agents/<name>/tokens.yaml",
+          "~/.config/ravel-lite/repos.yaml",
+          "~/.config/ravel-lite/related-components.yaml",
+          "~/.config/ravel-lite/findings.yaml",
+          "~/.config/ravel-lite/discover-cache/<name>.yaml",
+          "~/.config/ravel-lite/fixed-memory/<slug>.md",
+          "~/.config/ravel-lite/phases/<phase-name>.md",
+          "~/.config/ravel-lite/create-plan.md",
+          "~/.config/ravel-lite/survey.md",
+          "~/.config/ravel-lite/survey-incremental.md",
+          "~/.config/ravel-lite/discover-stage1.md",
+          "~/.config/ravel-lite/discover-stage2.md",
+          "<plan_dir>/phase.md",
+          "<plan_dir>/backlog.yaml",
+          "<plan_dir>/intents.yaml",
+          "<plan_dir>/memory.yaml",
+          "<plan_dir>/findings.yaml",
+          "<plan_dir>/session-log.yaml",
+          "<plan_dir>/latest-session.yaml",
+          "<plan_dir>/commits.yaml",
+          "<plan_dir>/targets.yaml",
+          "<plan_dir>/target-requests.yaml",
+          "<plan_dir>/related-plans.md",
+          "<plan_dir>/related-components.yaml",
+          "<plan_dir>/this-cycle-focus.yaml",
+          "<plan_dir>/focus-objections.yaml",
+          "<plan_dir>/dream-word-count",
+          "<plan_dir>/.worktrees/<repo_slug>/.atlas/components.yaml"
+        ],
+        "data_formats": [
+          "BacklogEntry",
+          "IntentEntry",
+          "MemoryEntry",
+          "FindingEntry",
+          "Target",
+          "CommitSpec",
+          "SessionEntry",
+          "SurveyResponse",
+          "PlanRow",
+          "ReposRegistry",
+          "RepoEntry",
+          "SharedConfig",
+          "AgentConfig",
+          "ComponentRef",
+          "Edge",
+          "Item",
+          "Justification"
+        ],
+        "explicit_cross_component_mentions": [],
+        "external_tools_spawned": [
+          "claude",
+          "pi",
+          "git"
+        ],
+        "interaction_role_hints": [
+          "orchestrator",
+          "spawner",
+          "tool"
+        ],
+        "network_endpoints": [],
+        "notes": "Config root defaults to ~/.config/ravel-lite/ (XDG-compliant); overridable via --config flag or $RAVEL_LITE_CONFIG env var. Plan directories are expected at <project_root>/LLM_STATE/<plan>/ (project_root derived as plan_dir/../../). Two agent backends supported: claude-code (spawns `claude` CLI with --output-format stream-json --verbose --strict-mcp-config) and pi (spawns `pi` CLI with similar interface). All LLM traffic is subprocess-mediated via stdin/stdout; there are no direct Anthropic API calls or HTTP client connections. Debug mode captures full PTY output to /tmp/ravel-embedding-debug.log via portable-pty. Git operations are monorepo-aware: staging and commit use pathspec scoping; per-target branches follow the naming convention ravel-lite/<plan>/<repo_slug>. The component-ontology and atlas-index crates (from a sibling atlas-contracts workspace) define the EdgeKind enum, ComponentRef wire format (repo:component), and .atlas/components.yaml schema consumed via local path dependencies. Survey command supports incremental mode (--prior flag) with SHA-256 input hashing per plan to skip unchanged plans. The `ravel-lite capabilities` subcommand emits a machine-readable JSON feature summary intended for tooling introspection.",
+        "produces_files": [
+          "<plan_dir>/phase.md",
+          "<plan_dir>/backlog.yaml",
+          "<plan_dir>/intents.yaml",
+          "<plan_dir>/memory.yaml",
+          "<plan_dir>/findings.yaml",
+          "<plan_dir>/session-log.yaml",
+          "<plan_dir>/latest-session.yaml",
+          "<plan_dir>/commits.yaml",
+          "<plan_dir>/targets.yaml",
+          "<plan_dir>/target-requests.yaml",
+          "<plan_dir>/this-cycle-focus.yaml",
+          "<plan_dir>/focus-objections.yaml",
+          "<plan_dir>/dream-word-count",
+          "<plan_dir>/.worktrees/<repo_slug>/",
+          "~/.config/ravel-lite/discover-cache/<name>.yaml",
+          "~/.config/ravel-lite/repos.yaml",
+          "~/.config/ravel-lite/related-components.yaml",
+          "~/.config/ravel-lite/findings.yaml",
+          "/tmp/ravel-embedding-debug.log",
+          "<survey-state-file>"
+        ],
+        "purpose": "Ravel-Lite is a Rust binary that orchestrates LLM-driven software development through a structured phase loop (triage, work, analyse-work, reflect, git-commit-*). It reads plan state from YAML files (backlog, intents, memory, findings, targets), renders phase prompt templates with plan context, spawns Claude Code or Pi subprocesses to execute each phase, parses their streaming JSON output to track tool calls and agent progress via a Ratatui TUI, then commits plan-state changes to git at each phase boundary. It also supports multi-plan survey and orchestration, component discovery (Stage 1 surface analysis + Stage 2 edge proposals), per-target git worktree lifecycle management, and a context-level repos/findings registry."
+      }
+    }
+  ]
+}

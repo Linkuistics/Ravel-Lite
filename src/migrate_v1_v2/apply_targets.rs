@@ -1,5 +1,8 @@
 //! migrate-targets phase application: parse `migrate-targets-proposal.yaml`,
-//! mount each target via the existing `mount_target` machinery.
+//! expand the LLM's chosen refs into their build-time transitive closure,
+//! and mount every component in the closure as a worktree on the plan
+//! branch. See `state::targets::mount_with_closure` for the orchestration
+//! and `state::targets::closure` for the closure semantics.
 
 use std::fs;
 use std::sync::Arc;
@@ -9,7 +12,7 @@ use anyhow::Result;
 use crate::agent::Agent;
 use crate::bail_with;
 use crate::cli::ErrorCode;
-use crate::state::targets::mount::mount_target;
+use crate::state::targets::mount_with_closure::mount_with_closure;
 
 use super::proposals::{TargetsProposal, TARGETS_PROPOSAL_FILENAME};
 use super::validate::Validated;
@@ -31,27 +34,28 @@ pub fn apply_proposal(v: &Validated) -> Result<()> {
     let body = fs::read_to_string(&scratch)?;
     let proposal: TargetsProposal = serde_yaml::from_str(&body)?;
 
-    for tp in &proposal.targets {
-        // The migrate-targets prompt feeds the LLM `atlas list-components`,
-        // whose default text shape prints `<repo_slug>/<component_id>`.
-        // The LLM occasionally emits that qualified form into
-        // `component_id`. Strip the source-repo prefix so the lookup
-        // sees the bare id that components.yaml stores. Cross-repo
-        // targets are out of scope for v1 (per the prompt); a
-        // non-matching prefix passes through and fails with the
-        // standard not-found error.
-        let prefix = format!("{}/", v.source_repo_slug);
-        let bare_id = tp
-            .component_id
-            .strip_prefix(&prefix)
-            .unwrap_or(&tp.component_id);
-        mount_target(
-            &v.new_plan_dir,
-            &v.config_dir,
-            &v.source_repo_slug,
-            bare_id,
-        )?;
-    }
+    // The migrate-targets prompt feeds the LLM `atlas list-components`,
+    // whose default text shape prints `<repo_slug>/<component_id>`. The
+    // LLM occasionally emits that qualified form into `component_id`.
+    // Strip the source-repo prefix so the closure walker sees the bare
+    // id that components.yaml stores. Cross-repo *initial* targets are
+    // out of scope for v1 (per the prompt); a non-matching prefix passes
+    // through and fails with the standard not-found error from
+    // `mount_with_closure`'s validation.
+    let prefix = format!("{}/", v.source_repo_slug);
+    let initial_refs: Vec<(String, String)> = proposal
+        .targets
+        .iter()
+        .map(|tp| {
+            let bare_id = tp
+                .component_id
+                .strip_prefix(&prefix)
+                .unwrap_or(&tp.component_id)
+                .to_string();
+            (v.source_repo_slug.clone(), bare_id)
+        })
+        .collect();
+    mount_with_closure(&v.new_plan_dir, &v.config_dir, &initial_refs)?;
 
     fs::remove_file(&scratch).ok();
     Ok(())

@@ -1,0 +1,32 @@
+schema_version: 1
+root: /Users/antony/Development/Ravel-Lite
+generated_at: 2026-05-04T13:24:18Z
+cache_fingerprints:
+  ontology_sha: 6d0698934434b49ad7b6cf9413acded22d874d6daccb698dfac7dc83fbe0161a
+  prompt_shas:
+    classify: 57d572cfb796efcb2f421a93956464915993409fe96afa9e4fdcbe7e8541c794
+    stage1-surface: ca14e1a25f8b1f2ef17a358778a54ebfee891676a8a2c32d227936c30309aa1c
+    stage2-edges: 1e9e4dd1baf42affbdf53df96f41352afc2ca6005eb2bf6b42da7114a725ffea
+    subcarve: f009524255a9bbd1e21c289ad2181c3ad16480f32f4db6e8916e40cc7b84793a
+  model_id: claude-sonnet-4-6
+  backend_version: 2.1.126 (Claude Code)
+components:
+- id: ravel-lite
+  kind: workspace
+  lifecycle_roles:
+  - build
+  language: rust
+  build_system: cargo
+  path_segments:
+  - path: ''
+    content_sha: 6d1b7aafa06bb2bc89012584a7fde874fa5f7b765dee0208a67d10eed3fec988
+  manifests:
+  - Cargo.toml
+  doc_anchors:
+  - path: README.md
+    heading: Ravel-Lite
+  evidence_grade: strong
+  evidence_fields:
+  - Cargo.toml:[workspace]
+  rationale: Cargo.toml declares a [workspace] section.
+  deleted: false
