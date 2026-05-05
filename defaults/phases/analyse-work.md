@@ -262,7 +262,7 @@ bookkeeping that framed it — see step 9 for the full rule.
    `run-plan: work ({{PLAN}})`. This is a safety net, not an
    intended path — always write the spec.
 
-10. Run `ravel-lite state set-phase {{PLAN}} git-commit-work`.
+10. Run `ravel-lite state set-phase {{PLAN}} git-commit-analyse-work`.
 
 11. Stop.
 
