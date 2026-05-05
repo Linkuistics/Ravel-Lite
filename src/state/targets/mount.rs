@@ -177,6 +177,22 @@ fn run_git_worktree_add(
     )?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        // The most common failure after a `rm -rf <plan_dir>` recovery
+        // from a partial migration: the worktree dir is gone but the
+        // plan-namespaced branch still exists in the source repo. Raw
+        // git's "fatal: a branch named '...' already exists" is
+        // technically correct but doesn't tell the user how to fix it.
+        if stderr.contains("already exists") {
+            bail_with!(
+                ErrorCode::Conflict,
+                "git worktree add failed: branch {branch:?} already exists in {} \
+                 (typically a leftover from a prior aborted mount). Delete it with:\n\n    \
+                 git -C {repo} branch -D {branch}\n\n\
+                 then retry. If you have intentional commits on that branch, rename it first.",
+                repo.display(),
+                repo = repo.display(),
+            );
+        }
         bail_with!(
             ErrorCode::Conflict,
             "git worktree add failed in {}: {}",
@@ -427,6 +443,38 @@ mod tests {
 
         let on_disk = read_targets(&plan).unwrap();
         assert_eq!(on_disk.targets.len(), 1, "second mount must not duplicate the row");
+    }
+
+    #[test]
+    fn mount_target_emits_actionable_error_when_branch_already_exists() {
+        // Reproduces the failure mode after a `rm -rf <plan_dir>`
+        // recovery from a prior aborted migration: the worktree dir
+        // is gone, but the plan-namespaced branch still lives in the
+        // source repo. Raw `git worktree add -b` bails with
+        // "fatal: a branch named '...' already exists" — surface a
+        // structured error naming both the branch and the cleanup
+        // command instead of dumping that stderr.
+        let (_tmp, plan, context, source) = fixture();
+
+        // Pre-create the branch the migrator would try to use, then
+        // ensure the worktree dir is absent. This simulates the state
+        // left after `rm -rf <plan_dir>` of a prior partial mount.
+        run_git_or_panic(&source, &["branch", "ravel-lite/test-plan/main"]);
+
+        let err = mount_target(&plan, &context, "atlas", "atlas-ontology").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("ravel-lite/test-plan/main"),
+            "error must name the conflicting branch: {msg}"
+        );
+        assert!(
+            msg.contains("branch -D"),
+            "error must show the cleanup command: {msg}"
+        );
+        assert!(
+            msg.contains(&source.display().to_string()),
+            "error must locate the repo so the user knows where to run the cleanup: {msg}"
+        );
     }
 
     #[test]
