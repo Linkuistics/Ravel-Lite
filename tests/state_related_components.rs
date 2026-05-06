@@ -82,9 +82,9 @@ fn strong_add_edge(
 #[test]
 fn add_list_remove_round_trip_through_cli() {
     let tmp = TempDir::new().unwrap();
-    let (cfg, _plan_dir) = scaffold(tmp.path(), "Me", &["Peer"]);
+    let (cfg, _plan_dir) = scaffold(tmp.path(), "me", &["peer"]);
 
-    let add = strong_add_edge(&cfg, "generates", "codegen", "Me", "Peer");
+    let add = strong_add_edge(&cfg, "generates", "codegen", "me", "peer");
     assert!(
         add.status.success(),
         "add-edge failed: stderr={}",
@@ -102,19 +102,19 @@ fn add_list_remove_round_trip_through_cli() {
     assert!(yaml.contains("kind: generates"), "list output: {yaml}");
     assert!(yaml.contains("lifecycle: codegen"), "list output: {yaml}");
     assert!(yaml.contains("evidence_grade: strong"), "list output: {yaml}");
-    assert!(yaml.contains("Me.produces_files"), "list output: {yaml}");
-    assert!(yaml.contains("Peer.consumes_files"), "list output: {yaml}");
+    assert!(yaml.contains("me.produces_files"), "list output: {yaml}");
+    assert!(yaml.contains("peer.consumes_files"), "list output: {yaml}");
     assert!(
         yaml.contains("emits schemas"),
         "list output must preserve rationale: {yaml}"
     );
-    assert!(yaml.contains("Me"), "list output: {yaml}");
-    assert!(yaml.contains("Peer"), "list output: {yaml}");
+    assert!(yaml.contains("me"), "list output: {yaml}");
+    assert!(yaml.contains("peer"), "list output: {yaml}");
 
     let remove = Command::new(bin())
         .args(["state", "related-components", "remove-edge"])
         .args(["--config", cfg.to_str().unwrap()])
-        .args(["generates", "codegen", "Me", "Peer"])
+        .args(["generates", "codegen", "me", "peer"])
         .output()
         .unwrap();
     assert!(
@@ -136,12 +136,12 @@ fn add_list_remove_round_trip_through_cli() {
 fn add_edge_accepts_weak_grade_without_evidence_fields() {
     // `weak` is the only grade permitted to omit `--evidence-field`.
     let tmp = TempDir::new().unwrap();
-    let (cfg, _plan_dir) = scaffold(tmp.path(), "Me", &["Peer"]);
+    let (cfg, _plan_dir) = scaffold(tmp.path(), "me", &["peer"]);
 
     let add = Command::new(bin())
         .args(["state", "related-components", "add-edge"])
         .args(["--config", cfg.to_str().unwrap()])
-        .args(["generates", "codegen", "Me", "Peer"])
+        .args(["generates", "codegen", "me", "peer"])
         .args(["--evidence-grade", "weak"])
         .args(["--rationale", "weakly suggested by prose overlap"])
         .output()
@@ -156,12 +156,12 @@ fn add_edge_accepts_weak_grade_without_evidence_fields() {
 #[test]
 fn add_edge_rejects_strong_grade_without_evidence_fields() {
     let tmp = TempDir::new().unwrap();
-    let (cfg, _plan_dir) = scaffold(tmp.path(), "Me", &["Peer"]);
+    let (cfg, _plan_dir) = scaffold(tmp.path(), "me", &["peer"]);
 
     let add = Command::new(bin())
         .args(["state", "related-components", "add-edge"])
         .args(["--config", cfg.to_str().unwrap()])
-        .args(["generates", "codegen", "Me", "Peer"])
+        .args(["generates", "codegen", "me", "peer"])
         .args(["--evidence-grade", "strong"])
         .args(["--rationale", "strong but unsourced"])
         .output()
@@ -182,12 +182,12 @@ fn add_edge_rejects_missing_lifecycle_positional() {
     // v1-style `add-edge <kind> <a> <b>` (omitting lifecycle) must
     // fail with clap's required-arg error — no silent synthesis.
     let tmp = TempDir::new().unwrap();
-    let (cfg, _plan_dir) = scaffold(tmp.path(), "Me", &["Peer"]);
+    let (cfg, _plan_dir) = scaffold(tmp.path(), "me", &["peer"]);
 
     let add = Command::new(bin())
         .args(["state", "related-components", "add-edge"])
         .args(["--config", cfg.to_str().unwrap()])
-        .args(["generates", "Me", "Peer"])
+        .args(["generates", "me", "peer"])
         .args(["--evidence-grade", "weak"])
         .args(["--rationale", "missing lifecycle"])
         .output()
@@ -247,13 +247,13 @@ fn add_edge_canonicalises_symmetric_kind_via_cli() {
 #[test]
 fn add_edge_rejects_unknown_kind_via_cli() {
     let tmp = TempDir::new().unwrap();
-    let (cfg, _plan_dir) = scaffold(tmp.path(), "Me", &["Peer"]);
+    let (cfg, _plan_dir) = scaffold(tmp.path(), "me", &["peer"]);
 
     // `sibling` was a v1 kind name; v2 rejects it.
     let add = Command::new(bin())
         .args(["state", "related-components", "add-edge"])
         .args(["--config", cfg.to_str().unwrap()])
-        .args(["sibling", "codegen", "Me", "Peer"])
+        .args(["sibling", "codegen", "me", "peer"])
         .args(["--evidence-grade", "weak"])
         .args(["--rationale", "test"])
         .output()
@@ -273,12 +273,12 @@ fn add_edge_rejects_unknown_kind_via_cli() {
 #[test]
 fn add_edge_rejects_unknown_lifecycle_via_cli() {
     let tmp = TempDir::new().unwrap();
-    let (cfg, _plan_dir) = scaffold(tmp.path(), "Me", &["Peer"]);
+    let (cfg, _plan_dir) = scaffold(tmp.path(), "me", &["peer"]);
 
     let add = Command::new(bin())
         .args(["state", "related-components", "add-edge"])
         .args(["--config", cfg.to_str().unwrap()])
-        .args(["generates", "breakfast", "Me", "Peer"])
+        .args(["generates", "breakfast", "me", "peer"])
         .args(["--evidence-grade", "weak"])
         .args(["--rationale", "test"])
         .output()
@@ -294,13 +294,13 @@ fn add_edge_rejects_unknown_lifecycle_via_cli() {
 #[test]
 fn add_edge_rejects_unknown_component_via_cli() {
     let tmp = TempDir::new().unwrap();
-    let (cfg, _plan_dir) = scaffold(tmp.path(), "Me", &[]);
+    let (cfg, _plan_dir) = scaffold(tmp.path(), "me", &[]);
 
-    let add = strong_add_edge(&cfg, "generates", "codegen", "Me", "Ghost");
+    let add = strong_add_edge(&cfg, "generates", "codegen", "me", "ghost");
     assert!(!add.status.success(), "unknown component must fail");
     let stderr = String::from_utf8(add.stderr).unwrap();
     assert!(
-        stderr.contains("Ghost"),
+        stderr.contains("ghost"),
         "stderr must name the missing component: {stderr}"
     );
 }
@@ -308,10 +308,10 @@ fn add_edge_rejects_unknown_component_via_cli() {
 #[test]
 fn list_with_plan_filter_restricts_to_plan_component_edges() {
     let tmp = TempDir::new().unwrap();
-    let (cfg, plan_dir) = scaffold(tmp.path(), "Me", &["Peer", "Other", "Third"]);
+    let (cfg, plan_dir) = scaffold(tmp.path(), "me", &["peer", "other", "third"]);
 
     // Two edges: one involves Me, one doesn't.
-    for (a, b) in [("Me", "Peer"), ("Other", "Third")] {
+    for (a, b) in [("me", "peer"), ("other", "third")] {
         let out = strong_add_edge(&cfg, "generates", "codegen", a, b);
         assert!(
             out.status.success(),
@@ -328,18 +328,18 @@ fn list_with_plan_filter_restricts_to_plan_component_edges() {
         .unwrap();
     assert!(list.status.success());
     let yaml = String::from_utf8(list.stdout).unwrap();
-    assert!(yaml.contains("Peer"), "filtered output must contain Peer: {yaml}");
-    assert!(!yaml.contains("Other"), "filtered output must exclude non-Me edges: {yaml}");
+    assert!(yaml.contains("peer"), "filtered output must contain Peer: {yaml}");
+    assert!(!yaml.contains("other"), "filtered output must exclude non-me edges: {yaml}");
 }
 
 #[test]
 fn list_with_kind_filter_restricts_to_matching_kind() {
     let tmp = TempDir::new().unwrap();
-    let (cfg, _plan_dir) = scaffold(tmp.path(), "Me", &["Peer"]);
+    let (cfg, _plan_dir) = scaffold(tmp.path(), "me", &["peer"]);
 
-    let g = strong_add_edge(&cfg, "generates", "codegen", "Me", "Peer");
+    let g = strong_add_edge(&cfg, "generates", "codegen", "me", "peer");
     assert!(g.status.success(), "generates add failed");
-    let o = strong_add_edge(&cfg, "orchestrates", "dev-workflow", "Me", "Peer");
+    let o = strong_add_edge(&cfg, "orchestrates", "dev-workflow", "me", "peer");
     assert!(o.status.success(), "orchestrates add failed");
 
     let list = Command::new(bin())
@@ -360,13 +360,13 @@ fn list_with_kind_filter_restricts_to_matching_kind() {
 #[test]
 fn list_with_lifecycle_filter_restricts_to_matching_lifecycle() {
     let tmp = TempDir::new().unwrap();
-    let (cfg, _plan_dir) = scaffold(tmp.path(), "Me", &["Peer"]);
+    let (cfg, _plan_dir) = scaffold(tmp.path(), "me", &["peer"]);
 
     // Same pair + same kind at two lifecycles.
     let a = Command::new(bin())
         .args(["state", "related-components", "add-edge"])
         .args(["--config", cfg.to_str().unwrap()])
-        .args(["depends-on", "build", "Me", "Peer"])
+        .args(["depends-on", "build", "me", "peer"])
         .args(["--evidence-grade", "weak"])
         .args(["--rationale", "manifest"])
         .status()
@@ -375,7 +375,7 @@ fn list_with_lifecycle_filter_restricts_to_matching_lifecycle() {
     let b = Command::new(bin())
         .args(["state", "related-components", "add-edge"])
         .args(["--config", cfg.to_str().unwrap()])
-        .args(["depends-on", "runtime", "Me", "Peer"])
+        .args(["depends-on", "runtime", "me", "peer"])
         .args(["--evidence-grade", "weak"])
         .args(["--rationale", "dynamic load"])
         .status()
@@ -400,11 +400,11 @@ fn list_with_lifecycle_filter_restricts_to_matching_lifecycle() {
 #[test]
 fn list_kind_and_lifecycle_filters_compose() {
     let tmp = TempDir::new().unwrap();
-    let (cfg, _plan_dir) = scaffold(tmp.path(), "Me", &["Peer"]);
+    let (cfg, _plan_dir) = scaffold(tmp.path(), "me", &["peer"]);
 
-    let g = strong_add_edge(&cfg, "generates", "codegen", "Me", "Peer");
+    let g = strong_add_edge(&cfg, "generates", "codegen", "me", "peer");
     assert!(g.status.success());
-    let o = strong_add_edge(&cfg, "orchestrates", "dev-workflow", "Me", "Peer");
+    let o = strong_add_edge(&cfg, "orchestrates", "dev-workflow", "me", "peer");
     assert!(o.status.success());
 
     // Intersection of (kind=generates, lifecycle=dev-workflow) matches nothing.
@@ -425,13 +425,13 @@ fn remove_edge_requires_matching_lifecycle() {
     // Add the same (kind, pair) at two lifecycles, remove only one,
     // verify the other survives.
     let tmp = TempDir::new().unwrap();
-    let (cfg, _plan_dir) = scaffold(tmp.path(), "Me", &["Peer"]);
+    let (cfg, _plan_dir) = scaffold(tmp.path(), "me", &["peer"]);
 
     for lifecycle in ["build", "runtime"] {
         let out = Command::new(bin())
             .args(["state", "related-components", "add-edge"])
             .args(["--config", cfg.to_str().unwrap()])
-            .args(["depends-on", lifecycle, "Me", "Peer"])
+            .args(["depends-on", lifecycle, "me", "peer"])
             .args(["--evidence-grade", "weak"])
             .args(["--rationale", "x"])
             .status()
@@ -442,7 +442,7 @@ fn remove_edge_requires_matching_lifecycle() {
     let rm = Command::new(bin())
         .args(["state", "related-components", "remove-edge"])
         .args(["--config", cfg.to_str().unwrap()])
-        .args(["depends-on", "build", "Me", "Peer"])
+        .args(["depends-on", "build", "me", "peer"])
         .status()
         .unwrap();
     assert!(rm.success());

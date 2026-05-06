@@ -217,7 +217,7 @@ Examples:
 
 const ATLAS_LIST_COMPONENTS_AFTER_HELP: &str = "\
 Examples:
-  # default text shape: <repo_slug>/<component_id>  <kind>
+  # default text shape: <repo_slug>:<component_id>  <kind>
   ravel-lite atlas list-components
 
   # JSON envelope, restricted to one repo
@@ -239,7 +239,7 @@ Examples:
 const ATLAS_DESCRIBE_AFTER_HELP: &str = "\
 Examples:
   # qualified reference
-  ravel-lite atlas describe ravel-lite/core
+  ravel-lite atlas describe ravel-lite:core
 
   # bare id (must be unambiguous across fresh repos)
   ravel-lite atlas describe atlas-ontology
@@ -248,31 +248,31 @@ Examples:
 const ATLAS_MEMORY_AFTER_HELP: &str = "\
 Examples:
   # full memory for a component
-  ravel-lite atlas memory ravel-lite/core
+  ravel-lite atlas memory ravel-lite:core
 
   # filter to entries whose claim/justifications mention `cascade`
-  ravel-lite atlas memory ravel-lite/core --search cascade
+  ravel-lite atlas memory ravel-lite:core --search cascade
 ";
 
 const ATLAS_EDGES_AFTER_HELP: &str = "\
 Examples:
   # every edge involving the component (default)
-  ravel-lite atlas edges ravel-lite/core
+  ravel-lite atlas edges ravel-lite:core
 
   # only directed edges where this is the destination
-  ravel-lite atlas edges ravel-lite/core --in
+  ravel-lite atlas edges ravel-lite:core --in
 
   # only directed edges where this is the source
-  ravel-lite atlas edges ravel-lite/core --out
+  ravel-lite atlas edges ravel-lite:core --out
 ";
 
 const ATLAS_NEIGHBORS_AFTER_HELP: &str = "\
 Examples:
   # 1-hop neighbours (default depth)
-  ravel-lite atlas neighbors ravel-lite/core
+  ravel-lite atlas neighbors ravel-lite:core
 
   # 2-hop BFS
-  ravel-lite atlas neighbors ravel-lite/core --depth 2
+  ravel-lite atlas neighbors ravel-lite:core --depth 2
 ";
 
 const ATLAS_ROOTS_AFTER_HELP: &str = "\
@@ -284,10 +284,10 @@ Examples:
 const ATLAS_PATH_AFTER_HELP: &str = "\
 Examples:
   # shortest path from one component to another (directed graph)
-  ravel-lite atlas path ravel-lite/core atlas/atlas-ontology
+  ravel-lite atlas path ravel-lite:core atlas:atlas-ontology
 
   # cap traversal depth
-  ravel-lite atlas path ravel-lite/core atlas/atlas-ontology --max-hops 5
+  ravel-lite atlas path ravel-lite:core atlas:atlas-ontology --max-hops 5
 ";
 
 const ATLAS_SCC_AFTER_HELP: &str = "\
@@ -1164,7 +1164,7 @@ enum AtlasCommands {
         require_fresh: bool,
     },
     /// List every component in every fresh repo. By default emits the
-    /// human-readable text shape (`<repo_slug>/<component_id>  <kind>`,
+    /// human-readable text shape (`<repo_slug>:<component_id>  <kind>`,
     /// one per line); `--format yaml|json` emits a versioned envelope
     /// with one record per component. Use `--repo` to restrict to a
     /// single repo and/or `--kind` to restrict to a single component
@@ -1211,7 +1211,7 @@ enum AtlasCommands {
     },
     /// Emit one component's full record as YAML, including a computed
     /// list of children. `<reference>` accepts the qualified form
-    /// `<repo_slug>/<component_id>` or a bare `<component_id>` (the
+    /// `<repo_slug>:<component_id>` or a bare `<component_id>` (the
     /// latter must resolve uniquely across fresh repos).
     #[command(after_help = ATLAS_DESCRIBE_AFTER_HELP)]
     Describe {
@@ -1219,7 +1219,7 @@ enum AtlasCommands {
         /// the default location at <dirs::config_dir()>/ravel-lite/.
         #[arg(long)]
         config: Option<PathBuf>,
-        /// Component reference: `<repo_slug>/<component_id>` or bare
+        /// Component reference: `<repo_slug>:<component_id>` or bare
         /// `<component_id>` (must be unambiguous across fresh repos).
         reference: String,
     },
@@ -1235,7 +1235,7 @@ enum AtlasCommands {
         /// the default location at <dirs::config_dir()>/ravel-lite/.
         #[arg(long)]
         config: Option<PathBuf>,
-        /// Component reference: `<repo_slug>/<component_id>` or bare
+        /// Component reference: `<repo_slug>:<component_id>` or bare
         /// `<component_id>` (must be unambiguous across fresh repos).
         reference: String,
         /// Restrict output to entries whose claim, attribution, or any
@@ -1256,7 +1256,7 @@ enum AtlasCommands {
         /// the default location at <dirs::config_dir()>/ravel-lite/.
         #[arg(long)]
         config: Option<PathBuf>,
-        /// Component reference: `<repo_slug>/<component_id>` or bare
+        /// Component reference: `<repo_slug>:<component_id>` or bare
         /// `<component_id>` (must be unambiguous across fresh repos).
         reference: String,
         /// Show only directed edges where `<reference>` is the
@@ -1283,7 +1283,7 @@ enum AtlasCommands {
         /// the default location at <dirs::config_dir()>/ravel-lite/.
         #[arg(long)]
         config: Option<PathBuf>,
-        /// Component reference: `<repo_slug>/<component_id>` or bare
+        /// Component reference: `<repo_slug>:<component_id>` or bare
         /// `<component_id>` (must be unambiguous across fresh repos).
         reference: String,
         /// Maximum hop count from `<reference>`. Defaults to 1; `0`
@@ -1292,7 +1292,7 @@ enum AtlasCommands {
         depth: usize,
     },
     /// Components with no incoming directed edges, qualified as
-    /// `<repo_slug>/<component_id>`. Symmetric edges (e.g.
+    /// `<repo_slug>:<component_id>`. Symmetric edges (e.g.
     /// `co-implements`) do not disqualify either endpoint because peer
     /// relationships do not establish hierarchy. Isolated components
     /// (those that appear in no edge at all) also surface.
@@ -1315,7 +1315,7 @@ enum AtlasCommands {
         /// the default location at <dirs::config_dir()>/ravel-lite/.
         #[arg(long)]
         config: Option<PathBuf>,
-        /// Source component reference: `<repo_slug>/<component_id>` or
+        /// Source component reference: `<repo_slug>:<component_id>` or
         /// bare `<component_id>` (must be unambiguous across fresh repos).
         from: String,
         /// Destination component reference: same resolution rules as `<from>`.
@@ -3215,9 +3215,15 @@ fn dispatch_targets(command: TargetsCommands) -> Result<()> {
             branch,
             path_segments,
         } => {
+            let component_id = component_ontology::ComponentId::parse(&component).map_err(|e| {
+                anyhow::Error::new(ravel_lite::cli::CodedError {
+                    code: ErrorCode::InvalidInput,
+                    message: format!("--component {component:?}: bad component id: {e}"),
+                })
+            })?;
             let req = targets::AddRequest {
                 repo_slug: repo,
-                component_id: component,
+                component_id,
                 working_root,
                 branch,
                 path_segments,
@@ -3240,7 +3246,7 @@ fn dispatch_targets(command: TargetsCommands) -> Result<()> {
                 &context_root,
                 &[(repo_slug, component_id)],
             )?;
-            let pre_existing: std::collections::HashSet<(String, String)> = before
+            let pre_existing: std::collections::HashSet<(String, component_ontology::ComponentId)> = before
                 .map(|t| {
                     t.targets
                         .into_iter()
@@ -3277,10 +3283,20 @@ fn dispatch_targets(command: TargetsCommands) -> Result<()> {
     }
 }
 
-fn parse_target_reference(reference: &str) -> Result<(String, String)> {
+fn parse_target_reference(
+    reference: &str,
+) -> Result<(String, component_ontology::ComponentId)> {
     match reference.split_once(':') {
         Some((repo, component)) if !repo.is_empty() && !component.is_empty() => {
-            Ok((repo.to_string(), component.to_string()))
+            let id = component_ontology::ComponentId::parse(component).map_err(|e| {
+                anyhow::Error::new(ravel_lite::cli::CodedError {
+                    code: ErrorCode::InvalidInput,
+                    message: format!(
+                        "target reference {reference:?}: bad component id: {e}"
+                    ),
+                })
+            })?;
+            Ok((repo.to_string(), id))
         }
         _ => bail_with!(
             ErrorCode::InvalidInput,

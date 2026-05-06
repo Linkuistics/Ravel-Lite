@@ -17,6 +17,7 @@
 use std::path::Path;
 
 use anyhow::Result;
+use component_ontology::ComponentId;
 
 use crate::bail_with;
 use crate::cli::{CodedError, ErrorCode, OutputFormat};
@@ -43,7 +44,7 @@ pub fn run_show(plan_dir: &Path, reference: &str, format: OutputFormat) -> Resul
 #[derive(Debug, Clone)]
 pub struct AddRequest {
     pub repo_slug: String,
-    pub component_id: String,
+    pub component_id: ComponentId,
     pub working_root: String,
     pub branch: String,
     pub path_segments: Vec<String>,
@@ -52,9 +53,6 @@ pub struct AddRequest {
 pub fn run_add(plan_dir: &Path, req: &AddRequest) -> Result<()> {
     if req.repo_slug.is_empty() {
         bail_with!(ErrorCode::InvalidInput, "--repo must be non-empty");
-    }
-    if req.component_id.is_empty() {
-        bail_with!(ErrorCode::InvalidInput, "--component must be non-empty");
     }
     if req.working_root.is_empty() {
         bail_with!(ErrorCode::InvalidInput, "--working-root must be non-empty");
@@ -97,10 +95,16 @@ pub fn run_remove(plan_dir: &Path, reference: &str) -> Result<()> {
     write_targets(plan_dir, &targets)
 }
 
-pub(crate) fn parse_reference(reference: &str) -> Result<(String, String)> {
+pub(crate) fn parse_reference(reference: &str) -> Result<(String, ComponentId)> {
     match reference.split_once(':') {
         Some((repo, component)) if !repo.is_empty() && !component.is_empty() => {
-            Ok((repo.to_string(), component.to_string()))
+            let id = ComponentId::parse(component).map_err(|e| anyhow::Error::new(CodedError {
+                code: ErrorCode::InvalidInput,
+                message: format!(
+                    "target reference {reference:?}: bad component id: {e}"
+                ),
+            }))?;
+            Ok((repo.to_string(), id))
         }
         _ => bail_with!(
             ErrorCode::InvalidInput,
@@ -112,12 +116,12 @@ pub(crate) fn parse_reference(reference: &str) -> Result<(String, String)> {
 pub(crate) fn find_target<'a>(
     targets: &'a TargetsFile,
     repo_slug: &str,
-    component_id: &str,
+    component_id: &ComponentId,
 ) -> Result<&'a Target> {
     targets
         .targets
         .iter()
-        .find(|t| t.repo_slug == repo_slug && t.component_id == component_id)
+        .find(|t| t.repo_slug == repo_slug && &t.component_id == component_id)
         .ok_or_else(|| anyhow::Error::new(CodedError {
             code: ErrorCode::NotFound,
             message: format!("no target {repo_slug}:{component_id}"),
@@ -147,7 +151,7 @@ mod tests {
     fn sample_request(repo: &str, component: &str) -> AddRequest {
         AddRequest {
             repo_slug: repo.into(),
-            component_id: component.into(),
+            component_id: ComponentId::parse(component).unwrap(),
             working_root: format!(".worktrees/{repo}"),
             branch: "ravel-lite/test-plan/main".into(),
             path_segments: vec!["crates".into(), component.into()],
@@ -158,7 +162,7 @@ mod tests {
     fn parse_reference_splits_on_first_colon() {
         let (repo, component) = parse_reference("atlas:atlas-ontology").unwrap();
         assert_eq!(repo, "atlas");
-        assert_eq!(component, "atlas-ontology");
+        assert_eq!(component.as_str(), "atlas-ontology");
     }
 
     #[test]
@@ -190,7 +194,7 @@ mod tests {
         let updated = read_targets(tmp.path()).unwrap();
         assert_eq!(updated.targets.len(), 1);
         assert_eq!(updated.targets[0].repo_slug, "atlas");
-        assert_eq!(updated.targets[0].component_id, "atlas-ontology");
+        assert_eq!(updated.targets[0].component_id.as_str(), "atlas-ontology");
     }
 
     #[test]
@@ -219,16 +223,14 @@ mod tests {
 
     #[test]
     fn run_add_rejects_empty_required_fields() {
+        // `component_id` cannot be empty by construction (`ComponentId`
+        // rejects empty strings at parse time); the empty-check only
+        // exercises the remaining string fields.
         let tmp = TempDir::new().unwrap();
         let mut req = sample_request("atlas", "ontology");
         req.repo_slug = String::new();
         let err = run_add(tmp.path(), &req).unwrap_err();
         assert!(format!("{err:#}").contains("--repo"));
-
-        let mut req = sample_request("atlas", "ontology");
-        req.component_id = String::new();
-        let err = run_add(tmp.path(), &req).unwrap_err();
-        assert!(format!("{err:#}").contains("--component"));
 
         let mut req = sample_request("atlas", "ontology");
         req.working_root = String::new();
@@ -266,17 +268,18 @@ mod tests {
 
     #[test]
     fn find_target_returns_match() {
+        let id = ComponentId::parse("ontology").unwrap();
         let targets = TargetsFile {
             schema_version: TARGETS_SCHEMA_VERSION,
             targets: vec![Target {
                 repo_slug: "atlas".into(),
-                component_id: "ontology".into(),
+                component_id: id.clone(),
                 working_root: ".worktrees/atlas".into(),
                 branch: "ravel-lite/p/main".into(),
                 path_segments: vec![],
             }],
         };
-        let found = find_target(&targets, "atlas", "ontology").unwrap();
+        let found = find_target(&targets, "atlas", &id).unwrap();
         assert_eq!(found.repo_slug, "atlas");
     }
 }

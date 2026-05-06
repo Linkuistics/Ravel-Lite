@@ -70,7 +70,7 @@ pub fn resolve_target_worktree(plan_dir: &Path, target: &ComponentRef) -> Result
     let entry = targets
         .targets
         .iter()
-        .find(|t| t.repo_slug == target.repo_slug && t.component_id == target.component_id)
+        .find(|t| t.repo_slug == target.repo_slug && t.component_id.as_str() == target.component_id)
         .ok_or_else(|| anyhow::Error::new(CodedError {
             code: ErrorCode::NotFound,
             message: format!(
@@ -139,7 +139,7 @@ mod tests {
     fn sample_target() -> Target {
         Target {
             repo_slug: "atlas".into(),
-            component_id: "atlas-ontology".into(),
+            component_id: component_ontology::ComponentId::parse("atlas-ontology").unwrap(),
             working_root: ".worktrees/atlas".into(),
             branch: "ravel-lite/sample-plan/main".into(),
             path_segments: vec!["crates".into(), "atlas-ontology".into()],
@@ -303,7 +303,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let plan_dir = tmp.path();
         let mut second = sample_target();
-        second.component_id = "atlas-discovery".into();
+        second.component_id = component_ontology::ComponentId::parse("atlas-discovery").unwrap();
         let targets = TargetsFile {
             schema_version: TARGETS_SCHEMA_VERSION,
             targets: vec![sample_target(), second],
@@ -339,7 +339,7 @@ mod tests {
 
         let mut t2 = sample_target();
         t2.repo_slug = "ravel".into();
-        t2.component_id = "ravel-core".into();
+        t2.component_id = component_ontology::ComponentId::parse("ravel-core").unwrap();
         t2.working_root = ".worktrees/ravel".into();
         let targets = TargetsFile {
             schema_version: TARGETS_SCHEMA_VERSION,

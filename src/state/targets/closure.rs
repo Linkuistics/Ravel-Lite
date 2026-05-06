@@ -25,7 +25,7 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use anyhow::Result;
-use component_ontology::EdgeKind;
+use component_ontology::{ComponentId, EdgeKind};
 
 use crate::atlas::{Catalog, EdgeGraph};
 use crate::bail_with;
@@ -52,13 +52,13 @@ const BUILD_KINDS: &[EdgeKind] = &[
 /// is the orchestrator's job, since orchestrators may want to fail
 /// earlier with their own message shape.
 pub fn expand_build_closure(
-    initial_refs: &[(String, String)],
+    initial_refs: &[(String, ComponentId)],
     graph: &EdgeGraph,
     catalog: &Catalog,
-) -> Result<Vec<(String, String)>> {
-    let mut visited: BTreeSet<(String, String)> = BTreeSet::new();
-    let mut order: Vec<(String, String)> = Vec::new();
-    let mut queue: VecDeque<(String, String)> = VecDeque::new();
+) -> Result<Vec<(String, ComponentId)>> {
+    let mut visited: BTreeSet<(String, ComponentId)> = BTreeSet::new();
+    let mut order: Vec<(String, ComponentId)> = Vec::new();
+    let mut queue: VecDeque<(String, ComponentId)> = VecDeque::new();
 
     for r in initial_refs {
         if visited.insert(r.clone()) {
@@ -78,12 +78,22 @@ pub fn expand_build_closure(
             if !edge.kind.is_directed() {
                 continue;
             }
-            if edge.participants[0] != component_id {
+            if edge.participants[0] != component_id.as_str() {
                 continue;
             }
-            let target_id = &edge.participants[1];
-            let target_repo = resolve_host_repo(catalog, target_id, &component_id, edge.kind)?;
-            let key = (target_repo, target_id.clone());
+            let target_id_str = &edge.participants[1];
+            let target_id = ComponentId::parse(target_id_str).map_err(|e| {
+                anyhow::Error::new(crate::cli::CodedError {
+                    code: ErrorCode::InvalidInput,
+                    message: format!(
+                        "build closure: edge {component_id} -[{kind}]-> {target_id_str:?} \
+                         has an invalid component id: {e}",
+                        kind = edge.kind.as_str(),
+                    ),
+                })
+            })?;
+            let target_repo = resolve_host_repo(catalog, &target_id, &component_id, edge.kind)?;
+            let key = (target_repo, target_id);
             if visited.insert(key.clone()) {
                 order.push(key.clone());
                 queue.push_back(key);
@@ -95,13 +105,13 @@ pub fn expand_build_closure(
 
 fn resolve_host_repo(
     catalog: &Catalog,
-    target_id: &str,
-    source_id: &str,
+    target_id: &ComponentId,
+    source_id: &ComponentId,
     kind: EdgeKind,
 ) -> Result<String> {
     let mut hits: Vec<String> = Vec::new();
     for (slug, component) in catalog.iter_components() {
-        if component.id == target_id {
+        if &component.id == target_id {
             hits.push(slug.to_string());
         }
     }
@@ -185,8 +195,8 @@ mod tests {
         EdgeGraph { edges }
     }
 
-    fn r(repo: &str, comp: &str) -> (String, String) {
-        (repo.into(), comp.into())
+    fn r(repo: &str, comp: &str) -> (String, ComponentId) {
+        (repo.into(), ComponentId::parse(comp).unwrap())
     }
 
     #[test]

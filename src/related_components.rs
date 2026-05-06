@@ -231,8 +231,9 @@ fn resolve_plan_component_names(plan_dir: &Path) -> Result<Vec<String>> {
         if !names.iter().any(|n| n == &t.repo_slug) {
             names.push(t.repo_slug.clone());
         }
-        if !names.iter().any(|n| n == &t.component_id) {
-            names.push(t.component_id.clone());
+        let id_str = t.component_id.as_str();
+        if !names.iter().any(|n| n.as_str() == id_str) {
+            names.push(id_str.to_string());
         }
     }
     Ok(names)
@@ -583,7 +584,7 @@ mod tests {
                 schema_version: TARGETS_SCHEMA_VERSION,
                 targets: vec![Target {
                     repo_slug: "ravel-lite".into(),
-                    component_id: "phase-loop".into(),
+                    component_id: component_ontology::ComponentId::parse("phase-loop").unwrap(),
                     working_root: ".worktrees/ravel-lite".into(),
                     branch: "ravel-lite/p/main".into(),
                     path_segments: vec!["src".into(), "phase_loop".into()],
@@ -611,7 +612,7 @@ mod tests {
                 schema_version: TARGETS_SCHEMA_VERSION,
                 targets: vec![Target {
                     repo_slug: "ravel-lite".into(),
-                    component_id: "ravel-lite".into(),
+                    component_id: component_ontology::ComponentId::parse("ravel-lite").unwrap(),
                     working_root: ".worktrees/ravel-lite".into(),
                     branch: "ravel-lite/p/main".into(),
                     path_segments: vec![String::new()],
@@ -650,14 +651,14 @@ mod tests {
                 targets: vec![
                     Target {
                         repo_slug: "ravel-lite".into(),
-                        component_id: "ravel-lite".into(),
+                        component_id: component_ontology::ComponentId::parse("ravel-lite").unwrap(),
                         working_root: ".worktrees/ravel-lite".into(),
                         branch: "ravel-lite/p/main".into(),
                         path_segments: vec![String::new()],
                     },
                     Target {
                         repo_slug: "atlas".into(),
-                        component_id: "atlas".into(),
+                        component_id: component_ontology::ComponentId::parse("atlas").unwrap(),
                         working_root: ".worktrees/atlas".into(),
                         branch: "ravel-lite/p/main".into(),
                         path_segments: vec![String::new()],

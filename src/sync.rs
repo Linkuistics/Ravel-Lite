@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
+use component_ontology::ComponentId;
 
 use crate::bail_with;
 use crate::cli::error_context::ResultExt;
@@ -35,7 +36,7 @@ use crate::state::targets::{mount_target, read_targets, Target};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeOutcome {
     pub repo_slug: String,
-    pub component_id: String,
+    pub component_id: ComponentId,
     pub working_root: PathBuf,
     pub kind: MergeKind,
 }
@@ -59,7 +60,7 @@ pub enum MergeKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountOutcome {
     pub repo_slug: String,
-    pub component_id: String,
+    pub component_id: ComponentId,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -250,10 +251,10 @@ fn unique_to_other<'a>(plan: &[Target], other: &'a [Target]) -> Vec<&'a Target> 
         .collect()
 }
 
-fn other_has_component(other: &[Target], repo_slug: &str, component_id: &str) -> bool {
+fn other_has_component(other: &[Target], repo_slug: &str, component_id: &ComponentId) -> bool {
     other
         .iter()
-        .any(|t| t.repo_slug == repo_slug && t.component_id == component_id)
+        .any(|t| t.repo_slug == repo_slug && &t.component_id == component_id)
 }
 
 fn plan_basename(plan_dir: &Path) -> Result<String> {
@@ -449,7 +450,7 @@ mod tests {
         ];
         let unique = unique_to_other(&plan, &other);
         assert_eq!(unique.len(), 1);
-        assert_eq!(unique[0].component_id, "atlas-discovery");
+        assert_eq!(unique[0].component_id.as_str(), "atlas-discovery");
     }
 
     #[test]
@@ -466,7 +467,7 @@ mod tests {
     fn sample(repo: &str, component: &str) -> Target {
         Target {
             repo_slug: repo.into(),
-            component_id: component.into(),
+            component_id: ComponentId::parse(component).unwrap(),
             working_root: format!(".worktrees/{repo}"),
             branch: "ravel-lite/test/main".into(),
             path_segments: vec![],
@@ -508,12 +509,12 @@ mod tests {
         // from b → a, plan-a has the same target mounted with its own
         // `ravel-lite/plan-a/main` branch.
         let (_tmp, a, b, ctx, _src) = two_plan_fixture("plan-a", "plan-b");
-        mount_target(&b, &ctx, "atlas", "atlas-ontology").unwrap();
+        mount_target(&b, &ctx, "atlas", &ComponentId::parse("atlas-ontology").unwrap()).unwrap();
 
         let report = run_sync(&a, &b).unwrap();
         assert_eq!(report.mounted.len(), 1);
         assert_eq!(report.mounted[0].repo_slug, "atlas");
-        assert_eq!(report.mounted[0].component_id, "atlas-ontology");
+        assert_eq!(report.mounted[0].component_id.as_str(), "atlas-ontology");
 
         // The destination plan now has a worktree on its own plan branch.
         let a_targets = read_targets(&a).unwrap();
@@ -532,8 +533,8 @@ mod tests {
         // branch, plan-a does not. Sync merges plan-b's commit into
         // plan-a cleanly.
         let (_tmp, a, b, ctx, _src) = two_plan_fixture("plan-a", "plan-b");
-        mount_target(&a, &ctx, "atlas", "atlas-ontology").unwrap();
-        mount_target(&b, &ctx, "atlas", "atlas-ontology").unwrap();
+        mount_target(&a, &ctx, "atlas", &ComponentId::parse("atlas-ontology").unwrap()).unwrap();
+        mount_target(&b, &ctx, "atlas", &ComponentId::parse("atlas-ontology").unwrap()).unwrap();
 
         let b_worktree = b.join(".worktrees/atlas");
         commit_file(&b_worktree, "from-b.txt", "b\n", "feat: from b");
@@ -557,8 +558,8 @@ mod tests {
         // differently. Sync attempts to merge plan-b into plan-a; the
         // merge conflicts and is reported as Conflict (not Err).
         let (_tmp, a, b, ctx, _src) = two_plan_fixture("plan-a", "plan-b");
-        mount_target(&a, &ctx, "atlas", "atlas-ontology").unwrap();
-        mount_target(&b, &ctx, "atlas", "atlas-ontology").unwrap();
+        mount_target(&a, &ctx, "atlas", &ComponentId::parse("atlas-ontology").unwrap()).unwrap();
+        mount_target(&b, &ctx, "atlas", &ComponentId::parse("atlas-ontology").unwrap()).unwrap();
 
         let a_worktree = a.join(".worktrees/atlas");
         let b_worktree = b.join(".worktrees/atlas");
@@ -581,7 +582,7 @@ mod tests {
         // Plan-a has a target plan-b doesn't. Sync must NOT touch it
         // (nothing to merge from b), and must NOT report it.
         let (_tmp, a, b, ctx, _src) = two_plan_fixture("plan-a", "plan-b");
-        mount_target(&a, &ctx, "atlas", "atlas-ontology").unwrap();
+        mount_target(&a, &ctx, "atlas", &ComponentId::parse("atlas-ontology").unwrap()).unwrap();
 
         let report = run_sync(&a, &b).unwrap();
         assert!(report.mounted.is_empty());
@@ -593,18 +594,18 @@ mod tests {
         let report = SyncReport {
             mounted: vec![MountOutcome {
                 repo_slug: "atlas".into(),
-                component_id: "atlas-discovery".into(),
+                component_id: ComponentId::parse("atlas-discovery").unwrap(),
             }],
             merges: vec![
                 MergeOutcome {
                     repo_slug: "atlas".into(),
-                    component_id: "atlas-ontology".into(),
+                    component_id: ComponentId::parse("atlas-ontology").unwrap(),
                     working_root: PathBuf::from("/tmp/wt"),
                     kind: MergeKind::Clean,
                 },
                 MergeOutcome {
                     repo_slug: "atlas".into(),
-                    component_id: "atlas-discovery".into(),
+                    component_id: ComponentId::parse("atlas-discovery").unwrap(),
                     working_root: PathBuf::from("/tmp/wt2"),
                     kind: MergeKind::Conflict {
                         stderr: "CONFLICT (content): Merge conflict in shared.txt\n".into(),

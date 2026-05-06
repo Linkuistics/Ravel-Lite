@@ -8,6 +8,7 @@ use std::fs;
 use std::sync::Arc;
 
 use anyhow::Result;
+use component_ontology::ComponentId;
 
 use crate::agent::Agent;
 use crate::bail_with;
@@ -34,26 +35,14 @@ pub fn apply_proposal(v: &Validated) -> Result<()> {
     let body = fs::read_to_string(&scratch)?;
     let proposal: TargetsProposal = serde_yaml::from_str(&body)?;
 
-    // The migrate-targets prompt feeds the LLM `atlas list-components`,
-    // whose default text shape prints `<repo_slug>/<component_id>`. The
-    // LLM occasionally emits that qualified form into `component_id`.
-    // Strip the source-repo prefix so the closure walker sees the bare
-    // id that components.yaml stores. Cross-repo *initial* targets are
-    // out of scope for v1 (per the prompt); a non-matching prefix passes
-    // through and fails with the standard not-found error from
-    // `mount_with_closure`'s validation.
-    let prefix = format!("{}/", v.source_repo_slug);
-    let initial_refs: Vec<(String, String)> = proposal
+    // `TargetProposal.component_id` is now typed via serde to a
+    // `ComponentId`, so the LLM's emitted id is already the canonical
+    // path-style form. Cross-repo *initial* targets are out of scope
+    // for v1 (per the prompt); every initial ref names the source repo.
+    let initial_refs: Vec<(String, ComponentId)> = proposal
         .targets
         .iter()
-        .map(|tp| {
-            let bare_id = tp
-                .component_id
-                .strip_prefix(&prefix)
-                .unwrap_or(&tp.component_id)
-                .to_string();
-            (v.source_repo_slug.clone(), bare_id)
-        })
+        .map(|tp| (v.source_repo_slug.clone(), tp.component_id.clone()))
         .collect();
     mount_with_closure(&v.new_plan_dir, &v.config_dir, &initial_refs)?;
 
@@ -101,17 +90,32 @@ mod tests {
             ],
         );
 
-        // Atlas index with a single component "core".
+        // Atlas index with a workspace-root component `source` plus a
+        // child `source/core`. Modelling the realistic path-style id
+        // shape exercises the regression that motivated this refactor:
+        // the LLM emits `source/core` verbatim, and the migrator must
+        // mount it directly without stripping a `source/` prefix.
         fs::create_dir_all(source.join(".atlas")).unwrap();
-        fs::write(
-            source.join(".atlas/components.yaml"),
-            "schema_version: 1\n\
-             root: source\n\
-             generated_at: 2026-04-01T00:00:00Z\n\
-             cache_fingerprints:\n  ontology_sha: ''\n  model_id: ''\n  backend_version: ''\n\
-             components:\n  - id: core\n    kind: library\n    evidence_grade: strong\n    rationale: test fixture\n",
-        )
-        .unwrap();
+        let components_yaml = "\
+schema_version: 1
+root: source
+generated_at: 2026-04-01T00:00:00Z
+cache_fingerprints:
+  ontology_sha: ''
+  model_id: ''
+  backend_version: ''
+components:
+  - id: source
+    kind: library
+    evidence_grade: strong
+    rationale: workspace root
+  - id: source/core
+    kind: library
+    evidence_grade: strong
+    rationale: test fixture
+    parent: source
+";
+        fs::write(source.join(".atlas/components.yaml"), components_yaml).unwrap();
 
         fs::write(
             context.join("repos.yaml"),
@@ -153,12 +157,17 @@ mod tests {
     }
 
     #[test]
-    fn apply_mounts_one_target_and_writes_targets_yaml() {
+    fn apply_mounts_one_target_with_full_path_id_and_writes_targets_yaml() {
+        // Regression: the LLM's `atlas list-components --format yaml`
+        // output now publishes path-style ids verbatim (e.g.
+        // `source/core`). The migrator must take them as-is and mount
+        // the named component — without stripping the leading
+        // `source/` segment as the previous prefix-strip hack did.
         let tmp = TempDir::new().unwrap();
         let v = fake_validated(tmp.path());
         let proposal = TargetsProposal {
             targets: vec![super::super::proposals::TargetProposal {
-                component_id: "core".into(),
+                component_id: ComponentId::parse("source/core").unwrap(),
             }],
         };
         fs::write(
@@ -173,34 +182,8 @@ mod tests {
             crate::state::targets::yaml_io::read_targets(&v.new_plan_dir).unwrap();
         assert_eq!(targets.targets.len(), 1);
         assert_eq!(targets.targets[0].repo_slug, "source");
-        assert_eq!(targets.targets[0].component_id, "core");
+        assert_eq!(targets.targets[0].component_id.as_str(), "source/core");
         assert!(v.new_plan_dir.join(".worktrees/source").is_dir());
-    }
-
-    #[test]
-    fn apply_strips_source_repo_prefix_from_component_id() {
-        // The LLM sees `<repo_slug>/<component_id>  <kind>` rows from
-        // `atlas list-components` and sometimes emits the qualified
-        // form into `component_id`. The bare id is what mount expects.
-        let tmp = TempDir::new().unwrap();
-        let v = fake_validated(tmp.path());
-        let proposal = TargetsProposal {
-            targets: vec![super::super::proposals::TargetProposal {
-                component_id: "source/core".into(),
-            }],
-        };
-        fs::write(
-            v.new_plan_dir.join(TARGETS_PROPOSAL_FILENAME),
-            serde_yaml::to_string(&proposal).unwrap(),
-        )
-        .unwrap();
-
-        apply_proposal(&v).unwrap();
-
-        let targets =
-            crate::state::targets::yaml_io::read_targets(&v.new_plan_dir).unwrap();
-        assert_eq!(targets.targets.len(), 1);
-        assert_eq!(targets.targets[0].component_id, "core");
     }
 
     #[test]

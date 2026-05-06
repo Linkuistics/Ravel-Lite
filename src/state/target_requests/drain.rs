@@ -22,10 +22,11 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use component_ontology::ComponentId;
 
 use super::yaml_io::{delete_target_requests, read_target_requests};
 use crate::cli::error_context::ResultExt;
-use crate::cli::ErrorCode;
+use crate::cli::{CodedError, ErrorCode};
 use crate::state::targets::mount_with_closure::mount_with_closure;
 
 pub fn drain_target_requests(plan_dir: &Path, context_root: &Path) -> Result<usize> {
@@ -39,10 +40,16 @@ pub fn drain_target_requests(plan_dir: &Path, context_root: &Path) -> Result<usi
 
     let mut mounted = 0usize;
     for req in &file.requests {
-        let initial = vec![(
-            req.component.repo_slug.clone(),
-            req.component.component_id.clone(),
-        )];
+        let id = ComponentId::parse(&req.component.component_id).map_err(|e| {
+            anyhow::Error::new(CodedError {
+                code: ErrorCode::InvalidInput,
+                message: format!(
+                    "target-requests.yaml entry {} has an invalid component id: {e}",
+                    req.component
+                ),
+            })
+        })?;
+        let initial = vec![(req.component.repo_slug.clone(), id)];
         mount_with_closure(plan_dir, context_root, &initial)
             .with_context(|| {
                 format!(
@@ -173,8 +180,8 @@ mod tests {
         );
         let on_disk = read_targets(&plan).unwrap();
         assert_eq!(on_disk.targets.len(), 2);
-        assert_eq!(on_disk.targets[0].component_id, "atlas-ontology");
-        assert_eq!(on_disk.targets[1].component_id, "atlas-discovery");
+        assert_eq!(on_disk.targets[0].component_id.as_str(), "atlas-ontology");
+        assert_eq!(on_disk.targets[1].component_id.as_str(), "atlas-discovery");
     }
 
     #[test]

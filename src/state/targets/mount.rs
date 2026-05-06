@@ -34,6 +34,7 @@ fn coded(code: ErrorCode, message: String) -> anyhow::Error {
 }
 
 use atlas_index::{load_or_default_components, ComponentsFile};
+use component_ontology::ComponentId;
 
 use super::schema::Target;
 use super::verbs::find_target;
@@ -49,7 +50,7 @@ pub fn mount_target(
     plan_dir: &Path,
     context_root: &Path,
     repo_slug: &str,
-    component_id: &str,
+    component_id: &ComponentId,
 ) -> Result<Target> {
     let registry = load_for_lookup(context_root)?;
     let repo_entry = registry.get(repo_slug).ok_or_else(|| {
@@ -94,7 +95,7 @@ pub fn mount_target(
     }
     let target = Target {
         repo_slug: repo_slug.to_string(),
-        component_id: component_id.to_string(),
+        component_id: component_id.clone(),
         working_root: working_root_rel,
         branch,
         path_segments,
@@ -233,7 +234,7 @@ fn verify_worktree_branch(working_root: &Path, expected_branch: &str) -> Result<
 fn resolve_path_segments(
     local_path: &Path,
     repo_slug: &str,
-    component_id: &str,
+    component_id: &ComponentId,
 ) -> Result<Vec<String>> {
     let components_path = local_path.join(ATLAS_COMPONENTS_REL);
     if !components_path.exists() {
@@ -247,7 +248,7 @@ fn resolve_path_segments(
     let file: ComponentsFile = load_or_default_components(&components_path)
         .with_context(|| format!("failed to load {}", components_path.display()))
         .with_code(ErrorCode::IoError)?;
-    let entry = file.components.iter().find(|c| c.id == component_id).ok_or_else(|| {
+    let entry = file.components.iter().find(|c| &c.id == component_id).ok_or_else(|| {
         coded(
             ErrorCode::NotFound,
             format!(
@@ -366,7 +367,8 @@ mod tests {
         let plan = context.join("plans").join("test-plan");
         fs::create_dir_all(&plan).unwrap();
 
-        let err = mount_target(&plan, &context, "atlas", "atlas-ontology").unwrap_err();
+        let id = ComponentId::parse("atlas-ontology").unwrap();
+        let err = mount_target(&plan, &context, "atlas", &id).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("atlas"), "error must cite the slug: {msg}");
         assert!(msg.contains("repo add"), "error must show migration command: {msg}");
@@ -383,7 +385,8 @@ mod tests {
         let plan = context.join("plans").join("test-plan");
         fs::create_dir_all(&plan).unwrap();
 
-        let err = mount_target(&plan, &context, "atlas", "atlas-ontology").unwrap_err();
+        let id = ComponentId::parse("atlas-ontology").unwrap();
+        let err = mount_target(&plan, &context, "atlas", &id).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("local_path"), "error must mention local_path: {msg}");
     }
@@ -416,8 +419,10 @@ mod tests {
         let plan = context.join("plans").join("test-plan");
         fs::create_dir_all(&plan).unwrap();
 
-        let first = mount_target(&plan, &context, "atlas", "atlas-ontology").unwrap();
-        let second = mount_target(&plan, &context, "atlas", "atlas-discovery").unwrap();
+        let ontology = ComponentId::parse("atlas-ontology").unwrap();
+        let discovery = ComponentId::parse("atlas-discovery").unwrap();
+        let first = mount_target(&plan, &context, "atlas", &ontology).unwrap();
+        let second = mount_target(&plan, &context, "atlas", &discovery).unwrap();
 
         assert_eq!(first.working_root, second.working_root);
         assert_eq!(first.branch, second.branch);
@@ -437,8 +442,9 @@ mod tests {
         // second call returns the existing row unchanged.
         let (_tmp, plan, context, _source) = fixture();
 
-        let first = mount_target(&plan, &context, "atlas", "atlas-ontology").unwrap();
-        let second = mount_target(&plan, &context, "atlas", "atlas-ontology").unwrap();
+        let id = ComponentId::parse("atlas-ontology").unwrap();
+        let first = mount_target(&plan, &context, "atlas", &id).unwrap();
+        let second = mount_target(&plan, &context, "atlas", &id).unwrap();
         assert_eq!(first, second);
 
         let on_disk = read_targets(&plan).unwrap();
@@ -461,7 +467,8 @@ mod tests {
         // left after `rm -rf <plan_dir>` of a prior partial mount.
         run_git_or_panic(&source, &["branch", "ravel-lite/test-plan/main"]);
 
-        let err = mount_target(&plan, &context, "atlas", "atlas-ontology").unwrap_err();
+        let id = ComponentId::parse("atlas-ontology").unwrap();
+        let err = mount_target(&plan, &context, "atlas", &id).unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("ravel-lite/test-plan/main"),
@@ -481,10 +488,11 @@ mod tests {
     fn mount_target_creates_worktree_and_writes_targets_yaml_row() {
         let (_tmp, plan, context, _source) = fixture();
 
-        let target = mount_target(&plan, &context, "atlas", "atlas-ontology").unwrap();
+        let id = ComponentId::parse("atlas-ontology").unwrap();
+        let target = mount_target(&plan, &context, "atlas", &id).unwrap();
 
         assert_eq!(target.repo_slug, "atlas");
-        assert_eq!(target.component_id, "atlas-ontology");
+        assert_eq!(target.component_id.as_str(), "atlas-ontology");
         assert_eq!(target.working_root, ".worktrees/atlas");
         assert_eq!(target.branch, "ravel-lite/test-plan/main");
         assert_eq!(target.path_segments, vec!["crates/atlas-ontology".to_string()]);
@@ -506,6 +514,6 @@ mod tests {
         // The targets.yaml row was persisted.
         let on_disk = read_targets(&plan).unwrap();
         assert_eq!(on_disk.targets.len(), 1);
-        assert_eq!(on_disk.targets[0].component_id, "atlas-ontology");
+        assert_eq!(on_disk.targets[0].component_id.as_str(), "atlas-ontology");
     }
 }

@@ -13,7 +13,7 @@
 //! - `list-components` — list every component in every fresh repo,
 //!   optionally filtered by `--repo` and/or `--kind`.
 //! - `summary` — per-repo component counts grouped by kind.
-//! - `describe` — single-component detail by `<repo>/<id>` or bare
+//! - `describe` — single-component detail by `<repo>:<id>` or bare
 //!   `<id>` (unambiguous), including computed child list.
 //! - `memory` — per-component `.atlas/memory.yaml`, optionally
 //!   filtered by `--search` against the entry's claim, attribution,
@@ -45,7 +45,7 @@ use anyhow::{Context, Result};
 use crate::bail_with;
 use crate::cli::error_context::ResultExt;
 use crate::cli::{CodedError, ErrorCode};
-use component_ontology::{Edge, EdgeKind, LifecycleScope, RelatedComponentsFile};
+use component_ontology::{ComponentId, Edge, EdgeKind, LifecycleScope, RelatedComponentsFile};
 use indexmap::IndexMap;
 use serde::Serialize;
 
@@ -309,7 +309,7 @@ impl Catalog {
 /// `atlas list-components [--repo R] [--kind K] [--format F]` — list
 /// every component in every fresh repo. With no `--format`, emits the
 /// human-readable text shape (one line per component as
-/// `<repo_slug>/<component_id>  <kind>`); with `--format yaml|json`,
+/// `<repo_slug>:<component_id>  <kind>`); with `--format yaml|json`,
 /// emits a versioned envelope with one record per component.
 ///
 /// Exits 0 with no output (or an empty `components: []` list) when
@@ -337,7 +337,7 @@ pub fn run_list_components(
     match format {
         None => {
             for r in &records {
-                println!("{repo}/{id}  {kind}", repo = r.repo, id = r.id, kind = r.kind);
+                println!("{repo}:{id}  {kind}", repo = r.repo, id = r.id, kind = r.kind);
             }
         }
         Some(fmt) => {
@@ -378,7 +378,7 @@ struct AtlasComponentsList {
 #[derive(Debug, Serialize)]
 struct AtlasComponentRecord {
     repo: String,
-    id: String,
+    id: ComponentId,
     kind: String,
 }
 
@@ -542,30 +542,42 @@ struct ResolvedComponent<'a> {
 }
 
 /// Resolve `<ref>` to a single component in the catalog. Accepts the
-/// qualified form `<repo_slug>/<component_id>` or a bare
+/// qualified form `<repo_slug>:<component_id>` or a bare
 /// `<component_id>`; the bare form errors if the id is not unique
 /// across fresh repos so the user is forced to disambiguate.
 fn resolve_ref<'a>(catalog: &'a Catalog, ref_str: &str) -> Result<ResolvedComponent<'a>> {
-    if let Some((slug, id)) = ref_str.split_once('/') {
-        return resolve_qualified(catalog, slug, id);
+    if let Some((slug, id)) = ref_str.split_once(':') {
+        let id = ComponentId::parse(id).map_err(|e| coded(
+            ErrorCode::InvalidInput,
+            format!("ref {ref_str:?}: bad component id: {e}"),
+        ))?;
+        return resolve_qualified(catalog, slug, &id);
     }
-    resolve_bare(catalog, ref_str)
+    let id = ComponentId::parse(ref_str).map_err(|e| coded(
+        ErrorCode::InvalidInput,
+        format!("ref {ref_str:?}: bad component id: {e}"),
+    ))?;
+    resolve_bare(catalog, &id)
+}
+
+fn coded(code: ErrorCode, message: String) -> anyhow::Error {
+    anyhow::Error::new(CodedError { code, message })
 }
 
 fn resolve_qualified<'a>(
     catalog: &'a Catalog,
     slug: &str,
-    id: &str,
+    id: &ComponentId,
 ) -> Result<ResolvedComponent<'a>> {
     let (slug_owned, repo) = catalog.repos.get_key_value(slug).ok_or_else(|| {
         let available: Vec<&str> = catalog.repos.keys().map(String::as_str).collect();
         let message = if available.is_empty() {
             format!(
-                "ref {slug:?}/{id:?}: no fresh repos in catalog (registry empty or all repos lack a fresh `.atlas/components.yaml`)"
+                "ref {slug:?}:{id}: no fresh repos in catalog (registry empty or all repos lack a fresh `.atlas/components.yaml`)"
             )
         } else {
             format!(
-                "ref {slug:?}/{id:?}: unknown repo slug; fresh repos: [{}]",
+                "ref {slug:?}:{id}: unknown repo slug; fresh repos: [{}]",
                 available.join(", ")
             )
         };
@@ -578,11 +590,11 @@ fn resolve_qualified<'a>(
         .file
         .components
         .iter()
-        .find(|c| !c.deleted && c.id == id)
+        .find(|c| !c.deleted && &c.id == id)
         .ok_or_else(|| anyhow::Error::new(CodedError {
             code: ErrorCode::NotFound,
             message: format!(
-                "ref {slug:?}/{id:?}: no component with that id in repo {slug:?}"
+                "ref {slug:?}:{id}: no component with that id in repo {slug:?}"
             ),
         }))?;
     Ok(ResolvedComponent {
@@ -592,11 +604,11 @@ fn resolve_qualified<'a>(
     })
 }
 
-fn resolve_bare<'a>(catalog: &'a Catalog, id: &str) -> Result<ResolvedComponent<'a>> {
+fn resolve_bare<'a>(catalog: &'a Catalog, id: &ComponentId) -> Result<ResolvedComponent<'a>> {
     let mut hits: Vec<ResolvedComponent<'a>> = Vec::new();
     for (slug, repo) in &catalog.repos {
         for component in &repo.file.components {
-            if !component.deleted && component.id == id {
+            if !component.deleted && &component.id == id {
                 hits.push(ResolvedComponent {
                     repo_slug: slug.as_str(),
                     repo,
@@ -608,36 +620,36 @@ fn resolve_bare<'a>(catalog: &'a Catalog, id: &str) -> Result<ResolvedComponent<
     match hits.len() {
         0 => bail_with!(
             ErrorCode::NotFound,
-            "ref {id:?}: no component with that id in any fresh repo"
+            "ref {id}: no component with that id in any fresh repo"
         ),
         1 => Ok(hits.into_iter().next().expect("len == 1")),
         _ => {
             let qualified: Vec<String> = hits
                 .iter()
-                .map(|h| format!("{}/{}", h.repo_slug, h.component.id))
+                .map(|h| format!("{}:{}", h.repo_slug, h.component.id))
                 .collect();
             bail_with!(
                 ErrorCode::Conflict,
-                "ref {id:?}: ambiguous; matches multiple repos: [{}]",
+                "ref {id}: ambiguous; matches multiple repos: [{}]",
                 qualified.join(", ")
             )
         }
     }
 }
 
-/// IDs (qualified as `<repo_slug>/<child_id>`) of every non-deleted
+/// IDs (qualified as `<repo_slug>:<child_id>`) of every non-deleted
 /// component in the same repo whose `parent` matches `parent_id`.
-fn compute_children(repo_slug: &str, repo: &RepoCatalog, parent_id: &str) -> Vec<String> {
+fn compute_children(repo_slug: &str, repo: &RepoCatalog, parent_id: &ComponentId) -> Vec<String> {
     repo.file
         .components
         .iter()
-        .filter(|c| !c.deleted && c.parent.as_deref() == Some(parent_id))
-        .map(|c| format!("{repo_slug}/{}", c.id))
+        .filter(|c| !c.deleted && c.parent.as_ref() == Some(parent_id))
+        .map(|c| format!("{repo_slug}:{}", c.id))
         .collect()
 }
 
 /// Wrapper for the `describe` YAML output. Exposes the canonical
-/// `<repo_slug>/<component_id>` ref alongside the unmodified
+/// `<repo_slug>:<component_id>` ref alongside the unmodified
 /// `ComponentEntry` so downstream tools see the same field names that
 /// `components.yaml` already publishes.
 #[derive(Debug, Serialize)]
@@ -660,7 +672,7 @@ pub fn run_describe(context_root: &Path, ref_str: &str) -> Result<()> {
     let resolved = resolve_ref(&catalog, ref_str)?;
     let children = compute_children(resolved.repo_slug, resolved.repo, &resolved.component.id);
     let report = DescribeReport {
-        reference: format!("{}/{}", resolved.repo_slug, resolved.component.id),
+        reference: format!("{}:{}", resolved.repo_slug, resolved.component.id),
         repo: resolved.repo_slug,
         component: resolved.component,
         children,
@@ -944,7 +956,7 @@ impl EdgeGraph {
 /// Every fresh-repo component participates as a node, even if it
 /// touches no directed edge — mirroring the universe pattern in
 /// [`EdgeGraph::roots`] so isolated components don't silently vanish.
-pub fn build_directed_component_graph(catalog: &Catalog) -> Result<DirectedGraph<String>> {
+pub fn build_directed_component_graph(catalog: &Catalog) -> Result<DirectedGraph<ComponentId>> {
     let edges = EdgeGraph::from_catalog(catalog)?;
     let mut graph = DirectedGraph::new();
     for (_slug, component) in catalog.iter_components() {
@@ -952,7 +964,28 @@ pub fn build_directed_component_graph(catalog: &Catalog) -> Result<DirectedGraph
     }
     for edge in &edges.edges {
         if edge.kind.is_directed() {
-            graph.add_edge(edge.participants[0].clone(), edge.participants[1].clone());
+            // Edge participants are still bare strings; lift them into
+            // typed ComponentIds for the directed graph. A participant
+            // that fails to parse is a stale or malformed
+            // related-components.yaml entry — surface it instead of
+            // silently dropping the edge.
+            let from = ComponentId::parse(&edge.participants[0]).map_err(|e| coded(
+                ErrorCode::InvalidInput,
+                format!(
+                    "edge {:?}: invalid source component id {:?}: {e}",
+                    edge.kind.as_str(),
+                    edge.participants[0],
+                ),
+            ))?;
+            let to = ComponentId::parse(&edge.participants[1]).map_err(|e| coded(
+                ErrorCode::InvalidInput,
+                format!(
+                    "edge {:?}: invalid destination component id {:?}: {e}",
+                    edge.kind.as_str(),
+                    edge.participants[1],
+                ),
+            ))?;
+            graph.add_edge(from, to);
         }
     }
     Ok(graph)
@@ -985,7 +1018,7 @@ fn edge_matches_direction(edge: &Edge, component: &str, direction: EdgeDirection
 
 /// `atlas edges <ref> [--in | --out | --both]` — list direct edges
 /// touching `<ref>` as `<from>  --<kind>/<lifecycle>-->  <to>`. The
-/// reference is resolved against the catalog (qualified `<repo>/<id>`
+/// reference is resolved against the catalog (qualified `<repo>:<id>`
 /// or unique bare `<id>`); only the bare component id participates in
 /// edge matching because that is what `related-components.yaml`
 /// participants record.
@@ -994,7 +1027,7 @@ pub fn run_edges(context_root: &Path, ref_str: &str, direction: EdgeDirection) -
     let catalog = Catalog::load(&registry, SystemTime::now());
     let resolved = resolve_ref(&catalog, ref_str)?;
     let graph = EdgeGraph::from_catalog(&catalog)?;
-    for edge in graph.edges_touching(&resolved.component.id, direction) {
+    for edge in graph.edges_touching(resolved.component.id.as_str(), direction) {
         println!("{}", format_edge_line(edge));
     }
     Ok(())
@@ -1010,7 +1043,7 @@ pub fn run_neighbors(context_root: &Path, ref_str: &str, depth: usize) -> Result
     let catalog = Catalog::load(&registry, SystemTime::now());
     let resolved = resolve_ref(&catalog, ref_str)?;
     let graph = EdgeGraph::from_catalog(&catalog)?;
-    for (component, hops) in graph.neighbors(&resolved.component.id, depth) {
+    for (component, hops) in graph.neighbors(resolved.component.id.as_str(), depth) {
         println!("{hops}  {component}");
     }
     Ok(())
@@ -1019,7 +1052,7 @@ pub fn run_neighbors(context_root: &Path, ref_str: &str, depth: usize) -> Result
 /// `atlas path <from> <to> [--max-hops N]` — BFS shortest path over
 /// the directed component graph (symmetric edges excluded; see
 /// [`build_directed_component_graph`]). Endpoints are resolved against
-/// the catalog (qualified `<repo>/<id>` or unique bare `<id>`); the
+/// the catalog (qualified `<repo>:<id>` or unique bare `<id>`); the
 /// path is printed as one bare component id per line in traversal
 /// order. If no path exists within `max_hops`, the function returns
 /// an error so the caller exits non-zero with a clear "no path found"
@@ -1051,6 +1084,7 @@ pub fn run_path(context_root: &Path, from: &str, to: &str, max_hops: usize) -> R
     }
 }
 
+
 /// `atlas scc [--all]` — strongly connected components of the
 /// directed component graph via Tarjan's algorithm. Each SCC is
 /// printed on its own line as a comma-separated list of bare
@@ -1067,13 +1101,14 @@ pub fn run_scc(context_root: &Path, include_singletons: bool) -> Result<()> {
         if !include_singletons && component.len() < 2 {
             continue;
         }
-        println!("{}", component.join(", "));
+        let rendered: Vec<String> = component.iter().map(|id| id.to_string()).collect();
+        println!("{}", rendered.join(", "));
     }
     Ok(())
 }
 
 /// `atlas roots` — every catalog component with no incoming directed
-/// edge, one per line. Output is qualified `<repo_slug>/<component_id>`
+/// edge, one per line. Output is qualified `<repo_slug>:<component_id>`
 /// because the same bare id may legally appear in multiple repos
 /// (catalog hygiene is enforced only at lookup time, not on disk).
 pub fn run_roots(context_root: &Path) -> Result<()> {
@@ -1090,7 +1125,7 @@ pub fn run_roots(context_root: &Path) -> Result<()> {
         if has_incoming.contains(component.id.as_str()) {
             continue;
         }
-        println!("{slug}/{id}", id = component.id);
+        println!("{slug}:{id}", id = component.id);
     }
     Ok(())
 }
@@ -1309,7 +1344,7 @@ mod tests {
         let catalog = Catalog::load(&reg, SystemTime::now());
         let pairs: Vec<(String, String)> = catalog
             .iter_components()
-            .map(|(slug, c)| (slug.to_string(), c.id.clone()))
+            .map(|(slug, c)| (slug.to_string(), c.id.to_string()))
             .collect();
         assert_eq!(
             pairs,
@@ -1396,9 +1431,9 @@ mod tests {
         let hits: Vec<String> = catalog
             .iter_components()
             .filter(|(slug, c)| matches_filters(slug, c, Some("atlas"), Some("binary")))
-            .map(|(slug, c)| format!("{slug}/{}", c.id))
+            .map(|(slug, c)| format!("{slug}:{}", c.id))
             .collect();
-        assert_eq!(hits, vec!["atlas/a-2"]);
+        assert_eq!(hits, vec!["atlas:a-2"]);
     }
 
     #[test]
@@ -1499,7 +1534,7 @@ mod tests {
             schema_version: ATLAS_COMPONENTS_LIST_SCHEMA_VERSION,
             components: vec![AtlasComponentRecord {
                 repo: "atlas".into(),
-                id: "core".into(),
+                id: ComponentId::parse("core").unwrap(),
                 kind: "service".into(),
             }],
         };
@@ -1619,9 +1654,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (reg, _, _) = registry_with_two_fresh_repos(&tmp);
         let catalog = Catalog::load(&reg, SystemTime::now());
-        let resolved = resolve_ref(&catalog, "atlas/a-1").unwrap();
+        let resolved = resolve_ref(&catalog, "atlas:a-1").unwrap();
         assert_eq!(resolved.repo_slug, "atlas");
-        assert_eq!(resolved.component.id, "a-1");
+        assert_eq!(resolved.component.id.as_str(), "a-1");
     }
 
     #[test]
@@ -1629,7 +1664,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (reg, _, _) = registry_with_two_fresh_repos(&tmp);
         let catalog = Catalog::load(&reg, SystemTime::now());
-        let err = resolve_ref(&catalog, "ghost/a-1").unwrap_err();
+        let err = resolve_ref(&catalog, "ghost:a-1").unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("ghost"), "names the bad slug: {msg}");
         assert!(msg.contains("atlas"), "lists available: {msg}");
@@ -1641,7 +1676,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (reg, _, _) = registry_with_two_fresh_repos(&tmp);
         let catalog = Catalog::load(&reg, SystemTime::now());
-        let err = resolve_ref(&catalog, "atlas/no-such").unwrap_err();
+        let err = resolve_ref(&catalog, "atlas:no-such").unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("no-such"), "names the bad id: {msg}");
         assert!(msg.contains("atlas"), "names the searched repo: {msg}");
@@ -1650,7 +1685,7 @@ mod tests {
     #[test]
     fn resolve_qualified_ref_against_empty_catalog_explains_state() {
         let catalog = Catalog::load(&empty_registry(), SystemTime::now());
-        let err = resolve_ref(&catalog, "atlas/a-1").unwrap_err();
+        let err = resolve_ref(&catalog, "atlas:a-1").unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("no fresh repos in catalog"),
@@ -1665,7 +1700,7 @@ mod tests {
         let catalog = Catalog::load(&reg, SystemTime::now());
         let resolved = resolve_ref(&catalog, "b-1").unwrap();
         assert_eq!(resolved.repo_slug, "beta");
-        assert_eq!(resolved.component.id, "b-1");
+        assert_eq!(resolved.component.id.as_str(), "b-1");
     }
 
     #[test]
@@ -1694,8 +1729,8 @@ mod tests {
         let err = resolve_ref(&catalog, "shared").unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("ambiguous"), "msg must say ambiguous: {msg}");
-        assert!(msg.contains("atlas/shared"), "lists qualified ref: {msg}");
-        assert!(msg.contains("beta/shared"), "lists qualified ref: {msg}");
+        assert!(msg.contains("atlas:shared"), "lists qualified ref: {msg}");
+        assert!(msg.contains("beta:shared"), "lists qualified ref: {msg}");
     }
 
     #[test]
@@ -1741,8 +1776,9 @@ mod tests {
         repos::try_add(&mut reg, "atlas", "u", Some(&repo_dir)).unwrap();
         let catalog = Catalog::load(&reg, SystemTime::now());
         let repo = catalog.repos.get("atlas").unwrap();
-        let children = compute_children("atlas", repo, "root");
-        assert_eq!(children, vec!["atlas/child-a", "atlas/child-b"]);
+        let root_id = ComponentId::parse("root").unwrap();
+        let children = compute_children("atlas", repo, &root_id);
+        assert_eq!(children, vec!["atlas:child-a", "atlas:child-b"]);
     }
 
     #[test]
@@ -1763,19 +1799,19 @@ mod tests {
         repos::save_atomic(tmp.path(), &reg).unwrap();
 
         let catalog = Catalog::load(&reg, SystemTime::now());
-        let resolved = resolve_ref(&catalog, "atlas/root").unwrap();
+        let resolved = resolve_ref(&catalog, "atlas:root").unwrap();
         let report = DescribeReport {
-            reference: format!("{}/{}", resolved.repo_slug, resolved.component.id),
+            reference: format!("{}:{}", resolved.repo_slug, resolved.component.id),
             repo: resolved.repo_slug,
             component: resolved.component,
             children: compute_children(resolved.repo_slug, resolved.repo, &resolved.component.id),
         };
         let yaml = serde_yaml::to_string(&report).unwrap();
-        assert!(yaml.contains("ref: atlas/root"), "yaml: {yaml}");
+        assert!(yaml.contains("ref: atlas:root"), "yaml: {yaml}");
         assert!(yaml.contains("repo: atlas"), "yaml: {yaml}");
         assert!(yaml.contains("id: root"), "yaml: {yaml}");
         assert!(yaml.contains("kind: library"), "yaml: {yaml}");
-        assert!(yaml.contains("- atlas/kid"), "children listed: {yaml}");
+        assert!(yaml.contains("- atlas:kid"), "children listed: {yaml}");
     }
 
     #[test]
@@ -1788,7 +1824,7 @@ mod tests {
         repos::try_add(&mut reg, "atlas", "u", Some(&repo_dir)).unwrap();
         repos::save_atomic(tmp.path(), &reg).unwrap();
         // Smoke: I/O path completes without panicking.
-        run_describe(tmp.path(), "atlas/a-1").unwrap();
+        run_describe(tmp.path(), "atlas:a-1").unwrap();
     }
 
     #[test]
@@ -1803,7 +1839,7 @@ mod tests {
         let mut reg = empty_registry();
         repos::try_add(&mut reg, "atlas", "u", Some(&repo_dir)).unwrap();
         let catalog = Catalog::load(&reg, SystemTime::now());
-        let resolved = resolve_ref(&catalog, "atlas/a-1").unwrap();
+        let resolved = resolve_ref(&catalog, "atlas:a-1").unwrap();
         let path = component_memory_path(resolved.repo, resolved.component).unwrap();
         let expected = repo_dir.join("crates/foo").join(ATLAS_DIR).join(MEMORY_FILENAME);
         assert_eq!(path, expected);
@@ -1818,7 +1854,7 @@ mod tests {
         let mut reg = empty_registry();
         repos::try_add(&mut reg, "atlas", "u", Some(&repo_dir)).unwrap();
         let catalog = Catalog::load(&reg, SystemTime::now());
-        let resolved = resolve_ref(&catalog, "atlas/a-1").unwrap();
+        let resolved = resolve_ref(&catalog, "atlas:a-1").unwrap();
         assert!(component_memory_path(resolved.repo, resolved.component).is_none());
     }
 
@@ -1946,7 +1982,7 @@ mod tests {
         repos::save_atomic(tmp.path(), &reg).unwrap();
         // Smoke: empty memory path yields empty file output without
         // erroring (no path_segments → no on-disk anchor).
-        run_memory(tmp.path(), "atlas/a-1", None).unwrap();
+        run_memory(tmp.path(), "atlas:a-1", None).unwrap();
     }
 
     #[test]
@@ -1963,7 +1999,7 @@ mod tests {
         repos::save_atomic(tmp.path(), &reg).unwrap();
         // path_segments[0] resolves but the .atlas/memory.yaml file
         // beneath it does not exist → graceful empty output.
-        run_memory(tmp.path(), "atlas/a-1", None).unwrap();
+        run_memory(tmp.path(), "atlas:a-1", None).unwrap();
     }
 
     #[test]
@@ -1987,7 +2023,7 @@ mod tests {
         let context_root = tmp.path();
         let registry = repos::load_or_empty(context_root).unwrap();
         let catalog = Catalog::load(&registry, SystemTime::now());
-        let resolved = resolve_ref(&catalog, "atlas/a-1").unwrap();
+        let resolved = resolve_ref(&catalog, "atlas:a-1").unwrap();
         let path = component_memory_path(resolved.repo, resolved.component).unwrap();
         let memory = read_component_memory(&path).unwrap();
         assert_eq!(memory.items.len(), 2);
@@ -2072,27 +2108,27 @@ mod tests {
     #[test]
     fn edge_graph_loads_edges_from_a_single_repo() {
         let tmp = TempDir::new().unwrap();
-        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b")];
         let reg = registry_with_repos(
             &tmp,
-            &[("atlas", &[("A", "library"), ("B", "library")], &edges)],
+            &[("atlas", &[("a", "library"), ("b", "library")], &edges)],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
         assert_eq!(graph.edges.len(), 1);
-        assert_eq!(graph.edges[0].participants, vec!["A".to_string(), "B".to_string()]);
+        assert_eq!(graph.edges[0].participants, vec!["a".to_string(), "b".to_string()]);
     }
 
     #[test]
     fn edge_graph_unions_edges_across_repos() {
         let tmp = TempDir::new().unwrap();
-        let alpha_edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "Alpha-A", "Alpha-B")];
-        let beta_edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "Beta-A", "Beta-B")];
+        let alpha_edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "alpha-a", "alpha-b")];
+        let beta_edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "beta-a", "beta-b")];
         let reg = registry_with_repos(
             &tmp,
             &[
-                ("alpha", &[("Alpha-A", "library"), ("Alpha-B", "library")], &alpha_edges),
-                ("beta", &[("Beta-A", "library"), ("Beta-B", "library")], &beta_edges),
+                ("alpha", &[("alpha-a", "library"), ("alpha-b", "library")], &alpha_edges),
+                ("beta", &[("beta-a", "library"), ("beta-b", "library")], &beta_edges),
             ],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
@@ -2104,12 +2140,12 @@ mod tests {
     fn edge_graph_dedups_canonical_keys_across_repos() {
         // Same directed edge recorded in two repos → one survives.
         let tmp = TempDir::new().unwrap();
-        let shared = [edge(EdgeKind::Generates, LifecycleScope::Codegen, "Gen", "Out")];
+        let shared = [edge(EdgeKind::Generates, LifecycleScope::Codegen, "gen", "out")];
         let reg = registry_with_repos(
             &tmp,
             &[
-                ("alpha", &[("Gen", "library"), ("Out", "library")], &shared),
-                ("beta", &[("Gen", "library"), ("Out", "library")], &shared),
+                ("alpha", &[("gen", "library"), ("out", "library")], &shared),
+                ("beta", &[("gen", "library"), ("out", "library")], &shared),
             ],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
@@ -2122,12 +2158,12 @@ mod tests {
         // A→B and B→A are two distinct directed edges, not duplicates.
         let tmp = TempDir::new().unwrap();
         let edges = [
-            edge(EdgeKind::Generates, LifecycleScope::Codegen, "A", "B"),
-            edge(EdgeKind::Generates, LifecycleScope::Codegen, "B", "A"),
+            edge(EdgeKind::Generates, LifecycleScope::Codegen, "a", "b"),
+            edge(EdgeKind::Generates, LifecycleScope::Codegen, "b", "a"),
         ];
         let reg = registry_with_repos(
             &tmp,
-            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+            &[("alpha", &[("a", "library"), ("b", "library")], &edges)],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
@@ -2140,12 +2176,12 @@ mod tests {
         // both repos with the same (sorted) participant order.
         let tmp = TempDir::new().unwrap();
         let shared =
-            [edge(EdgeKind::CoImplements, LifecycleScope::Design, "Alpha", "Beta")];
+            [edge(EdgeKind::CoImplements, LifecycleScope::Design, "alpha", "beta")];
         let reg = registry_with_repos(
             &tmp,
             &[
-                ("alpha", &[("Alpha", "library"), ("Beta", "library")], &shared),
-                ("beta", &[("Alpha", "library"), ("Beta", "library")], &shared),
+                ("alpha", &[("alpha-comp", "library"), ("beta-comp", "library")], &shared),
+                ("beta", &[("alpha-comp", "library"), ("beta-comp", "library")], &shared),
             ],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
@@ -2157,23 +2193,23 @@ mod tests {
     fn edges_touching_filters_directed_edges_by_in_out_both() {
         let tmp = TempDir::new().unwrap();
         // Directed: A → B (A is source, B is sink).
-        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b")];
         let reg = registry_with_repos(
             &tmp,
-            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+            &[("alpha", &[("a", "library"), ("b", "library")], &edges)],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
 
         // From A's perspective: --out matches, --in does not.
-        assert_eq!(graph.edges_touching("A", EdgeDirection::Out).len(), 1);
-        assert_eq!(graph.edges_touching("A", EdgeDirection::In).len(), 0);
-        assert_eq!(graph.edges_touching("A", EdgeDirection::Both).len(), 1);
+        assert_eq!(graph.edges_touching("a", EdgeDirection::Out).len(), 1);
+        assert_eq!(graph.edges_touching("a", EdgeDirection::In).len(), 0);
+        assert_eq!(graph.edges_touching("a", EdgeDirection::Both).len(), 1);
 
         // From B's perspective: --in matches, --out does not.
-        assert_eq!(graph.edges_touching("B", EdgeDirection::Out).len(), 0);
-        assert_eq!(graph.edges_touching("B", EdgeDirection::In).len(), 1);
-        assert_eq!(graph.edges_touching("B", EdgeDirection::Both).len(), 1);
+        assert_eq!(graph.edges_touching("b", EdgeDirection::Out).len(), 0);
+        assert_eq!(graph.edges_touching("b", EdgeDirection::In).len(), 1);
+        assert_eq!(graph.edges_touching("b", EdgeDirection::Both).len(), 1);
     }
 
     #[test]
@@ -2181,49 +2217,49 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         // Symmetric: stored sorted as Alpha, Beta.
         let edges =
-            [edge(EdgeKind::CoImplements, LifecycleScope::Design, "Alpha", "Beta")];
+            [edge(EdgeKind::CoImplements, LifecycleScope::Design, "alpha", "beta")];
         let reg = registry_with_repos(
             &tmp,
-            &[("alpha", &[("Alpha", "library"), ("Beta", "library")], &edges)],
+            &[("alpha", &[("alpha-comp", "library"), ("beta-comp", "library")], &edges)],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
 
         for direction in [EdgeDirection::Both, EdgeDirection::In, EdgeDirection::Out] {
             assert_eq!(
-                graph.edges_touching("Alpha", direction).len(),
+                graph.edges_touching("alpha", direction).len(),
                 1,
                 "symmetric edges must surface in {direction:?}"
             );
-            assert_eq!(graph.edges_touching("Beta", direction).len(), 1);
+            assert_eq!(graph.edges_touching("beta", direction).len(), 1);
         }
     }
 
     #[test]
     fn edges_touching_excludes_edges_not_involving_the_component() {
         let tmp = TempDir::new().unwrap();
-        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b")];
         let reg = registry_with_repos(
             &tmp,
-            &[("alpha", &[("A", "library"), ("B", "library"), ("C", "library")], &edges)],
+            &[("alpha", &[("a", "library"), ("b", "library"), ("c", "library")], &edges)],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
-        assert!(graph.edges_touching("C", EdgeDirection::Both).is_empty());
+        assert!(graph.edges_touching("c", EdgeDirection::Both).is_empty());
     }
 
     #[test]
     fn neighbors_emits_only_self_at_depth_zero() {
         let tmp = TempDir::new().unwrap();
-        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b")];
         let reg = registry_with_repos(
             &tmp,
-            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+            &[("alpha", &[("a", "library"), ("b", "library")], &edges)],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
-        let result = graph.neighbors("A", 0);
-        assert_eq!(result, vec![("A".to_string(), 0)]);
+        let result = graph.neighbors("a", 0);
+        assert_eq!(result, vec![("a".to_string(), 0)]);
     }
 
     #[test]
@@ -2231,17 +2267,17 @@ mod tests {
         // Directed A → B; from B's perspective B is the sink, but
         // neighbors expansion is undirected so A is reachable in 1 hop.
         let tmp = TempDir::new().unwrap();
-        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b")];
         let reg = registry_with_repos(
             &tmp,
-            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+            &[("alpha", &[("a", "library"), ("b", "library")], &edges)],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
 
-        let from_b = graph.neighbors("B", 1);
+        let from_b = graph.neighbors("b", 1);
         let names: Vec<&str> = from_b.iter().map(|(n, _)| n.as_str()).collect();
-        assert!(names.contains(&"A"), "undirected expansion reaches A from B");
+        assert!(names.contains(&"a"), "undirected expansion reaches A from B");
         assert_eq!(from_b.len(), 2, "self + one peer");
     }
 
@@ -2250,27 +2286,27 @@ mod tests {
         // Chain A → B → C. depth=1 from A reaches B but not C.
         let tmp = TempDir::new().unwrap();
         let edges = [
-            edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B"),
-            edge(EdgeKind::DependsOn, LifecycleScope::Build, "B", "C"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "b", "c"),
         ];
         let reg = registry_with_repos(
             &tmp,
             &[(
                 "alpha",
-                &[("A", "library"), ("B", "library"), ("C", "library")],
+                &[("a", "library"), ("b", "library"), ("c", "library")],
                 &edges,
             )],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
 
-        let depth1 = graph.neighbors("A", 1);
+        let depth1 = graph.neighbors("a", 1);
         let names1: BTreeSet<&str> = depth1.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names1, BTreeSet::from(["A", "B"]));
+        assert_eq!(names1, BTreeSet::from(["a", "b"]));
 
-        let depth2 = graph.neighbors("A", 2);
+        let depth2 = graph.neighbors("a", 2);
         let names2: BTreeSet<&str> = depth2.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names2, BTreeSet::from(["A", "B", "C"]));
+        assert_eq!(names2, BTreeSet::from(["a", "b", "c"]));
     }
 
     #[test]
@@ -2278,24 +2314,24 @@ mod tests {
         // Cycle A → B → C → A. Visit each node once.
         let tmp = TempDir::new().unwrap();
         let edges = [
-            edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B"),
-            edge(EdgeKind::DependsOn, LifecycleScope::Build, "B", "C"),
-            edge(EdgeKind::DependsOn, LifecycleScope::Build, "C", "A"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "b", "c"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "c", "a"),
         ];
         let reg = registry_with_repos(
             &tmp,
             &[(
                 "alpha",
-                &[("A", "library"), ("B", "library"), ("C", "library")],
+                &[("a", "library"), ("b", "library"), ("c", "library")],
                 &edges,
             )],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
-        let result = graph.neighbors("A", 10);
+        let result = graph.neighbors("a", 10);
         assert_eq!(result.len(), 3, "each node visited exactly once");
         let names: BTreeSet<&str> = result.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names, BTreeSet::from(["A", "B", "C"]));
+        assert_eq!(names, BTreeSet::from(["a", "b", "c"]));
     }
 
     #[test]
@@ -2303,49 +2339,49 @@ mod tests {
         // Diamond A→B, A→C, B→D, C→D. From A: B/C at hop 1, D at hop 2.
         let tmp = TempDir::new().unwrap();
         let edges = [
-            edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B"),
-            edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "C"),
-            edge(EdgeKind::DependsOn, LifecycleScope::Build, "B", "D"),
-            edge(EdgeKind::DependsOn, LifecycleScope::Build, "C", "D"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "c"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "b", "d"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "c", "d"),
         ];
         let reg = registry_with_repos(
             &tmp,
             &[(
                 "alpha",
                 &[
-                    ("A", "library"),
-                    ("B", "library"),
-                    ("C", "library"),
-                    ("D", "library"),
+                    ("a", "library"),
+                    ("b", "library"),
+                    ("c", "library"),
+                    ("d", "library"),
                 ],
                 &edges,
             )],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
-        let result = graph.neighbors("A", 5);
+        let result = graph.neighbors("a", 5);
         let by_name: BTreeMap<&str, usize> =
             result.iter().map(|(n, h)| (n.as_str(), *h)).collect();
-        assert_eq!(by_name.get("A"), Some(&0));
-        assert_eq!(by_name.get("B"), Some(&1));
-        assert_eq!(by_name.get("C"), Some(&1));
-        assert_eq!(by_name.get("D"), Some(&2), "BFS picks the shortest path");
+        assert_eq!(by_name.get("a"), Some(&0));
+        assert_eq!(by_name.get("b"), Some(&1));
+        assert_eq!(by_name.get("c"), Some(&1));
+        assert_eq!(by_name.get("d"), Some(&2), "BFS picks the shortest path");
     }
 
     #[test]
     fn roots_includes_components_with_no_incoming_directed_edge() {
         // A → B. Only A has no incoming edge among {A, B}.
         let tmp = TempDir::new().unwrap();
-        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b")];
         let reg = registry_with_repos(
             &tmp,
-            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+            &[("alpha", &[("a", "library"), ("b", "library")], &edges)],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
         let universe: Vec<&str> = catalog.iter_components().map(|(_, c)| c.id.as_str()).collect();
         let roots = graph.roots(universe.iter().copied());
-        assert_eq!(roots, vec!["A".to_string()]);
+        assert_eq!(roots, vec!["a".to_string()]);
     }
 
     #[test]
@@ -2353,29 +2389,29 @@ mod tests {
         // A and B share only a `co-implements` (symmetric). Both still
         // qualify as roots: peer relationships don't establish hierarchy.
         let tmp = TempDir::new().unwrap();
-        let edges = [edge(EdgeKind::CoImplements, LifecycleScope::Design, "A", "B")];
+        let edges = [edge(EdgeKind::CoImplements, LifecycleScope::Design, "a", "b")];
         let reg = registry_with_repos(
             &tmp,
-            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+            &[("alpha", &[("a", "library"), ("b", "library")], &edges)],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
         let universe: Vec<&str> = catalog.iter_components().map(|(_, c)| c.id.as_str()).collect();
         let roots = graph.roots(universe.iter().copied());
         let set: BTreeSet<String> = roots.into_iter().collect();
-        assert_eq!(set, BTreeSet::from(["A".to_string(), "B".to_string()]));
+        assert_eq!(set, BTreeSet::from(["a".to_string(), "b".to_string()]));
     }
 
     #[test]
     fn roots_includes_isolated_components_with_no_edges_at_all() {
         // C is in the catalog but appears in no edge.
         let tmp = TempDir::new().unwrap();
-        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b")];
         let reg = registry_with_repos(
             &tmp,
             &[(
                 "alpha",
-                &[("A", "library"), ("B", "library"), ("C", "library")],
+                &[("a", "library"), ("b", "library"), ("c", "library")],
                 &edges,
             )],
         );
@@ -2383,9 +2419,9 @@ mod tests {
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
         let universe: Vec<&str> = catalog.iter_components().map(|(_, c)| c.id.as_str()).collect();
         let roots: BTreeSet<String> = graph.roots(universe.iter().copied()).into_iter().collect();
-        assert!(roots.contains("A"));
-        assert!(roots.contains("C"), "isolated component must surface as root");
-        assert!(!roots.contains("B"));
+        assert!(roots.contains("a"));
+        assert!(roots.contains("c"), "isolated component must surface as root");
+        assert!(!roots.contains("b"));
     }
 
     #[test]
@@ -2393,12 +2429,12 @@ mod tests {
         // Cycle A → B → A: each has incoming, so no roots.
         let tmp = TempDir::new().unwrap();
         let edges = [
-            edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B"),
-            edge(EdgeKind::DependsOn, LifecycleScope::Build, "B", "A"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "b", "a"),
         ];
         let reg = registry_with_repos(
             &tmp,
-            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+            &[("alpha", &[("a", "library"), ("b", "library")], &edges)],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = EdgeGraph::from_catalog(&catalog).unwrap();
@@ -2412,7 +2448,7 @@ mod tests {
         // Hand-write a v1 file; the loader must reject and the error
         // chain must mention the offending repo slug for diagnosis.
         let tmp = TempDir::new().unwrap();
-        let reg = registry_with_one_fresh_repo(&tmp, "alpha", &[("A", "library")]);
+        let reg = registry_with_one_fresh_repo(&tmp, "alpha", &[("a", "library")]);
         let path = tmp.path().join("alpha").join(ATLAS_DIR).join(RELATED_COMPONENTS_FILENAME);
         std::fs::write(&path, "schema_version: 1\nedges: []\n").unwrap();
         let catalog = Catalog::load(&reg, SystemTime::now());
@@ -2427,56 +2463,60 @@ mod tests {
 
     #[test]
     fn format_edge_line_renders_directed_edges_with_arrow() {
-        let e = edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B");
-        assert_eq!(format_edge_line(&e), "A  --depends-on/build-->  B");
+        let e = edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b");
+        assert_eq!(format_edge_line(&e), "a  --depends-on/build-->  b");
     }
 
     #[test]
     fn format_edge_line_renders_symmetric_edges_with_sorted_participants() {
-        let e = edge(EdgeKind::CoImplements, LifecycleScope::Design, "Beta", "Alpha");
+        let e = edge(EdgeKind::CoImplements, LifecycleScope::Design, "beta", "alpha");
         // Symmetric kinds canonicalise to sorted participants.
         assert_eq!(
             format_edge_line(&e),
-            "Alpha  --co-implements/design-->  Beta"
+            "alpha  --co-implements/design-->  beta"
         );
     }
 
     // ---------- build_directed_component_graph tests ----------
 
+    fn cid(s: &str) -> ComponentId {
+        ComponentId::parse(s).unwrap()
+    }
+
     #[test]
     fn directed_component_graph_is_empty_when_no_edges_present() {
         let tmp = TempDir::new().unwrap();
-        let reg = registry_with_one_fresh_repo(&tmp, "alpha", &[("A", "library")]);
+        let reg = registry_with_one_fresh_repo(&tmp, "alpha", &[("a", "library")]);
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = build_directed_component_graph(&catalog).unwrap();
         // The single catalog component appears as an isolated node
         // (universe pattern), but no edges exist.
         assert_eq!(graph.node_count(), 1);
         assert_eq!(graph.edge_count(), 0);
-        assert!(graph.contains_node(&"A".to_string()));
-        assert!(graph.neighbors(&"A".to_string()).is_empty());
-        assert!(graph.reverse_neighbors(&"A".to_string()).is_empty());
+        assert!(graph.contains_node(&cid("a")));
+        assert!(graph.neighbors(&cid("a")).is_empty());
+        assert!(graph.reverse_neighbors(&cid("a")).is_empty());
     }
 
     #[test]
     fn directed_component_graph_loads_directed_edge_with_correct_directionality() {
         let tmp = TempDir::new().unwrap();
-        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b")];
         let reg = registry_with_repos(
             &tmp,
-            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+            &[("alpha", &[("a", "library"), ("b", "library")], &edges)],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = build_directed_component_graph(&catalog).unwrap();
         assert_eq!(graph.node_count(), 2);
         assert_eq!(graph.edge_count(), 1);
-        assert!(graph.contains_edge(&"A".to_string(), &"B".to_string()));
+        assert!(graph.contains_edge(&cid("a"), &cid("b")));
         assert!(
-            !graph.contains_edge(&"B".to_string(), &"A".to_string()),
+            !graph.contains_edge(&cid("b"), &cid("a")),
             "directed edge A→B must NOT imply B→A"
         );
-        assert_eq!(graph.neighbors(&"A".to_string()), ["B".to_string()]);
-        assert_eq!(graph.reverse_neighbors(&"B".to_string()), ["A".to_string()]);
+        assert_eq!(graph.neighbors(&cid("a")), [cid("b")]);
+        assert_eq!(graph.reverse_neighbors(&cid("b")), [cid("a")]);
     }
 
     #[test]
@@ -2486,14 +2526,14 @@ mod tests {
         // peer-relationship 2-cycles.
         let tmp = TempDir::new().unwrap();
         let edges = [
-            edge(EdgeKind::CoImplements, LifecycleScope::Design, "A", "B"),
-            edge(EdgeKind::CommunicatesWith, LifecycleScope::Runtime, "A", "C"),
+            edge(EdgeKind::CoImplements, LifecycleScope::Design, "a", "b"),
+            edge(EdgeKind::CommunicatesWith, LifecycleScope::Runtime, "a", "c"),
         ];
         let reg = registry_with_repos(
             &tmp,
             &[(
                 "alpha",
-                &[("A", "library"), ("B", "library"), ("C", "library")],
+                &[("a", "library"), ("b", "library"), ("c", "library")],
                 &edges,
             )],
         );
@@ -2508,39 +2548,39 @@ mod tests {
         // C has no edges; it must still surface in the node universe
         // so SCC / path enumeration can reason about it.
         let tmp = TempDir::new().unwrap();
-        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B")];
+        let edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b")];
         let reg = registry_with_repos(
             &tmp,
             &[(
                 "alpha",
-                &[("A", "library"), ("B", "library"), ("C", "library")],
+                &[("a", "library"), ("b", "library"), ("c", "library")],
                 &edges,
             )],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = build_directed_component_graph(&catalog).unwrap();
-        assert!(graph.contains_node(&"C".to_string()));
-        assert!(graph.neighbors(&"C".to_string()).is_empty());
-        assert!(graph.reverse_neighbors(&"C".to_string()).is_empty());
+        assert!(graph.contains_node(&cid("c")));
+        assert!(graph.neighbors(&cid("c")).is_empty());
+        assert!(graph.reverse_neighbors(&cid("c")).is_empty());
     }
 
     #[test]
     fn directed_component_graph_unions_directed_edges_across_repos() {
         let tmp = TempDir::new().unwrap();
-        let alpha_edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "Alpha-A", "Alpha-B")];
-        let beta_edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "Beta-A", "Beta-B")];
+        let alpha_edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "alpha-a", "alpha-b")];
+        let beta_edges = [edge(EdgeKind::DependsOn, LifecycleScope::Build, "beta-a", "beta-b")];
         let reg = registry_with_repos(
             &tmp,
             &[
-                ("alpha", &[("Alpha-A", "library"), ("Alpha-B", "library")], &alpha_edges),
-                ("beta", &[("Beta-A", "library"), ("Beta-B", "library")], &beta_edges),
+                ("alpha", &[("alpha-a", "library"), ("alpha-b", "library")], &alpha_edges),
+                ("beta", &[("beta-a", "library"), ("beta-b", "library")], &beta_edges),
             ],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = build_directed_component_graph(&catalog).unwrap();
         assert_eq!(graph.edge_count(), 2);
-        assert!(graph.contains_edge(&"Alpha-A".to_string(), &"Alpha-B".to_string()));
-        assert!(graph.contains_edge(&"Beta-A".to_string(), &"Beta-B".to_string()));
+        assert!(graph.contains_edge(&cid("alpha-a"), &cid("alpha-b")));
+        assert!(graph.contains_edge(&cid("beta-a"), &cid("beta-b")));
     }
 
     #[test]
@@ -2549,20 +2589,20 @@ mod tests {
         // care about exactly this kind of structure.
         let tmp = TempDir::new().unwrap();
         let edges = [
-            edge(EdgeKind::DependsOn, LifecycleScope::Build, "A", "B"),
-            edge(EdgeKind::DependsOn, LifecycleScope::Build, "B", "A"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "a", "b"),
+            edge(EdgeKind::DependsOn, LifecycleScope::Build, "b", "a"),
         ];
         let reg = registry_with_repos(
             &tmp,
-            &[("alpha", &[("A", "library"), ("B", "library")], &edges)],
+            &[("alpha", &[("a", "library"), ("b", "library")], &edges)],
         );
         let catalog = Catalog::load(&reg, SystemTime::now());
         let graph = build_directed_component_graph(&catalog).unwrap();
         assert_eq!(graph.edge_count(), 2);
-        assert_eq!(graph.neighbors(&"A".to_string()), ["B".to_string()]);
-        assert_eq!(graph.neighbors(&"B".to_string()), ["A".to_string()]);
-        assert_eq!(graph.reverse_neighbors(&"A".to_string()), ["B".to_string()]);
-        assert_eq!(graph.reverse_neighbors(&"B".to_string()), ["A".to_string()]);
+        assert_eq!(graph.neighbors(&cid("a")), [cid("b")]);
+        assert_eq!(graph.neighbors(&cid("b")), [cid("a")]);
+        assert_eq!(graph.reverse_neighbors(&cid("a")), [cid("b")]);
+        assert_eq!(graph.reverse_neighbors(&cid("b")), [cid("a")]);
     }
 
     #[test]
@@ -2571,7 +2611,7 @@ mod tests {
         // bubbles up through `EdgeGraph::from_catalog` with the offending
         // repo identified — same diagnosis story as the EdgeGraph layer.
         let tmp = TempDir::new().unwrap();
-        let reg = registry_with_one_fresh_repo(&tmp, "alpha", &[("A", "library")]);
+        let reg = registry_with_one_fresh_repo(&tmp, "alpha", &[("a", "library")]);
         let path = tmp.path().join("alpha").join(ATLAS_DIR).join(RELATED_COMPONENTS_FILENAME);
         std::fs::write(&path, "schema_version: 1\nedges: []\n").unwrap();
         let catalog = Catalog::load(&reg, SystemTime::now());

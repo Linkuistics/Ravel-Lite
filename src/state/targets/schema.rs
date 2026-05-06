@@ -11,6 +11,7 @@
 //! rationale, and §Layout for where `targets.yaml` sits among the
 //! plan-state files.
 
+use component_ontology::ComponentId;
 use serde::{Deserialize, Serialize};
 
 pub const TARGETS_SCHEMA_VERSION: u32 = 1;
@@ -24,7 +25,7 @@ pub struct Target {
     /// directory name.
     pub repo_slug: String,
     /// Atlas component id, unique within a repo.
-    pub component_id: String,
+    pub component_id: ComponentId,
     /// Worktree mount path, relative to the plan directory. Conventionally
     /// `.worktrees/<repo_slug>`. Multiple components in the same repo
     /// share one worktree, so multiple `Target` rows may have the same
@@ -65,7 +66,7 @@ mod tests {
     fn sample_target(repo: &str, component: &str) -> Target {
         Target {
             repo_slug: repo.into(),
-            component_id: component.into(),
+            component_id: ComponentId::parse(component).unwrap(),
             working_root: format!(".worktrees/{repo}"),
             branch: "ravel-lite/test-plan/main".to_string(),
             path_segments: vec!["crates".into(), component.into()],
@@ -84,7 +85,7 @@ mod tests {
     fn target_yaml_omits_empty_path_segments_round_trip() {
         let target = Target {
             repo_slug: "atlas".into(),
-            component_id: "root".into(),
+            component_id: ComponentId::parse("root").unwrap(),
             working_root: ".worktrees/atlas".into(),
             branch: "ravel-lite/p/main".into(),
             path_segments: vec![],

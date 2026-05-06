@@ -467,7 +467,7 @@ mod tests {
             schema_version: TARGETS_SCHEMA_VERSION,
             targets: vec![Target {
                 repo_slug: "atlas".into(),
-                component_id: "atlas-ontology".into(),
+                component_id: component_ontology::ComponentId::parse("atlas-ontology").unwrap(),
                 working_root: working_root.into(),
                 branch: "ravel-lite/sample/main".into(),
                 path_segments: vec!["crates".into(), "atlas-ontology".into()],
@@ -544,14 +544,14 @@ mod tests {
             targets: vec![
                 Target {
                     repo_slug: "atlas".into(),
-                    component_id: "a".into(),
+                    component_id: component_ontology::ComponentId::parse("a").unwrap(),
                     working_root: ".worktrees/atlas".into(),
                     branch: "ravel-lite/p/main".into(),
                     path_segments: vec![],
                 },
                 Target {
                     repo_slug: "ravel".into(),
-                    component_id: "b".into(),
+                    component_id: component_ontology::ComponentId::parse("b").unwrap(),
                     working_root: ".worktrees/ravel".into(),
                     branch: "ravel-lite/p/main".into(),
                     path_segments: vec![],

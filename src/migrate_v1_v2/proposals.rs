@@ -4,6 +4,7 @@
 //! plan dir. The runner reads, validates, applies, and deletes the
 //! scratch file.
 
+use component_ontology::ComponentId;
 use serde::{Deserialize, Serialize};
 
 use crate::state::intents::IntentEntry;
@@ -40,7 +41,7 @@ pub struct TargetsProposal {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetProposal {
     /// Atlas component id within the source repo.
-    pub component_id: String,
+    pub component_id: ComponentId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,13 +95,13 @@ mod tests {
     fn targets_proposal_round_trips() {
         let p = TargetsProposal {
             targets: vec![TargetProposal {
-                component_id: "core".into(),
+                component_id: ComponentId::parse("core").unwrap(),
             }],
         };
         let yaml = serde_yaml::to_string(&p).unwrap();
         let decoded: TargetsProposal = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(decoded.targets.len(), 1);
-        assert_eq!(decoded.targets[0].component_id, "core");
+        assert_eq!(decoded.targets[0].component_id.as_str(), "core");
     }
 
     #[test]

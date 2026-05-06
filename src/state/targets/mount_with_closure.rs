@@ -18,6 +18,7 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use anyhow::Result;
+use component_ontology::ComponentId;
 
 use crate::atlas::{Catalog, EdgeGraph};
 use crate::bail_with;
@@ -43,7 +44,7 @@ use super::yaml_io::read_targets;
 pub fn mount_with_closure(
     plan_dir: &Path,
     context_root: &Path,
-    initial_refs: &[(String, String)],
+    initial_refs: &[(String, ComponentId)],
 ) -> Result<Vec<Target>> {
     let registry = load_for_lookup(context_root)?;
     let catalog = Catalog::load(&registry, SystemTime::now());
@@ -70,15 +71,16 @@ pub fn mount_with_closure(
 /// before walking the graph. Surfaces a clearer error than the closure
 /// walker would: the closure walker is concerned with *edge targets*,
 /// while this check is concerned with the user-/LLM-supplied seed set.
-fn validate_initial_refs(catalog: &Catalog, initial_refs: &[(String, String)]) -> Result<()> {
+fn validate_initial_refs(catalog: &Catalog, initial_refs: &[(String, ComponentId)]) -> Result<()> {
     for (repo_slug, component_id) in initial_refs {
         let Some(repo) = catalog.repos.get(repo_slug) else {
             let available: Vec<&str> = catalog.repos.keys().map(String::as_str).collect();
             bail_with!(
                 ErrorCode::NotFound,
-                "ref {repo_slug:?}:{component_id:?}: repo {repo_slug:?} is not a fresh \
+                "ref {repo_slug:?}:{}: repo {repo_slug:?} is not a fresh \
                  entry in the catalog. Either it is missing from `repos.yaml`, has no \
                  `local_path`, or has no `.atlas/components.yaml`. Fresh repos: [{}]",
+                component_id.as_str(),
                 available.join(", ")
             );
         };
@@ -88,9 +90,10 @@ fn validate_initial_refs(catalog: &Catalog, initial_refs: &[(String, String)]) -
             .iter()
             .any(|c| !c.deleted && c.id == *component_id);
         if !known {
+            let id_str = component_id.as_str();
             bail_with!(
                 ErrorCode::NotFound,
-                "ref {repo_slug:?}:{component_id:?}: no component with id {component_id:?} \
+                "ref {repo_slug:?}:{id_str:?}: no component with id {id_str:?} \
                  in repo {repo_slug:?}. Check `ravel-lite atlas list-components --repo \
                  {repo_slug} --format yaml` for valid ids; re-run `atlas index` if the \
                  index is stale.",
@@ -217,11 +220,11 @@ mod tests {
         let (_tmp, plan, context) = two_repo_fixture(&[]);
 
         let mounted =
-            mount_with_closure(&plan, &context, &[("r1".into(), "app".into())]).unwrap();
+            mount_with_closure(&plan, &context, &[("r1".into(), ComponentId::parse("app").unwrap())]).unwrap();
 
         assert_eq!(mounted.len(), 1);
         assert_eq!(mounted[0].repo_slug, "r1");
-        assert_eq!(mounted[0].component_id, "app");
+        assert_eq!(mounted[0].component_id.as_str(), "app");
         assert!(plan.join(".worktrees/r1").is_dir());
         assert!(!plan.join(".worktrees/r2").exists(), "r2 must not be mounted");
     }
@@ -237,7 +240,7 @@ mod tests {
         )]);
 
         let mounted =
-            mount_with_closure(&plan, &context, &[("r1".into(), "app".into())]).unwrap();
+            mount_with_closure(&plan, &context, &[("r1".into(), ComponentId::parse("app").unwrap())]).unwrap();
 
         let slugs: Vec<&str> = mounted.iter().map(|t| t.repo_slug.as_str()).collect();
         assert!(slugs.contains(&"r1") && slugs.contains(&"r2"));
@@ -257,10 +260,10 @@ mod tests {
             "util",
         )]);
 
-        mount_with_closure(&plan, &context, &[("r1".into(), "app".into())]).unwrap();
+        mount_with_closure(&plan, &context, &[("r1".into(), ComponentId::parse("app").unwrap())]).unwrap();
         let after_first = read_targets(&plan).unwrap().targets.len();
 
-        mount_with_closure(&plan, &context, &[("r1".into(), "app".into())]).unwrap();
+        mount_with_closure(&plan, &context, &[("r1".into(), ComponentId::parse("app").unwrap())]).unwrap();
         let after_second = read_targets(&plan).unwrap().targets.len();
 
         assert_eq!(after_first, after_second);
@@ -271,13 +274,13 @@ mod tests {
         // Initial mount: r1:app + closure (which is just app, no edges).
         // Then add-target r1:shared — must append exactly one row.
         let (_tmp, plan, context) = two_repo_fixture(&[]);
-        mount_with_closure(&plan, &context, &[("r1".into(), "app".into())]).unwrap();
+        mount_with_closure(&plan, &context, &[("r1".into(), ComponentId::parse("app").unwrap())]).unwrap();
         assert_eq!(read_targets(&plan).unwrap().targets.len(), 1);
 
-        mount_with_closure(&plan, &context, &[("r1".into(), "shared".into())]).unwrap();
+        mount_with_closure(&plan, &context, &[("r1".into(), ComponentId::parse("shared").unwrap())]).unwrap();
         let after = read_targets(&plan).unwrap();
         assert_eq!(after.targets.len(), 2);
-        assert!(after.targets.iter().any(|t| t.component_id == "shared"));
+        assert!(after.targets.iter().any(|t| t.component_id.as_str() == "shared"));
         // Both share the r1 worktree.
         assert!(after.targets.iter().all(|t| t.working_root == ".worktrees/r1"));
     }
@@ -285,7 +288,7 @@ mod tests {
     #[test]
     fn unknown_initial_repo_errors_with_fresh_repo_list() {
         let (_tmp, plan, context) = two_repo_fixture(&[]);
-        let err = mount_with_closure(&plan, &context, &[("nope".into(), "app".into())]).unwrap_err();
+        let err = mount_with_closure(&plan, &context, &[("nope".into(), ComponentId::parse("app").unwrap())]).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("\"nope\""), "must cite the bad slug: {msg}");
         assert!(msg.contains("Fresh repos"), "must list fresh repos: {msg}");
@@ -295,7 +298,7 @@ mod tests {
     fn unknown_initial_component_errors_with_repo_qualified_message() {
         let (_tmp, plan, context) = two_repo_fixture(&[]);
         let err =
-            mount_with_closure(&plan, &context, &[("r1".into(), "ghost".into())]).unwrap_err();
+            mount_with_closure(&plan, &context, &[("r1".into(), ComponentId::parse("ghost").unwrap())]).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("\"ghost\""), "must cite the missing component: {msg}");
         assert!(msg.contains("atlas list-components"), "must suggest the diagnostic command: {msg}");
