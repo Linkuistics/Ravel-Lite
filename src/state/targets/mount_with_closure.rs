@@ -122,13 +122,24 @@ mod tests {
     ) -> (TempDir, PathBuf, PathBuf) {
         let tmp = TempDir::new().unwrap();
 
-        // Repo r1 with two components: app and shared.
+        // Repo r1 is a multi-component workspace: a root component
+        // `r1` plus children `r1/app` and `r1/shared`. Path-style ids
+        // mirror what real Atlas emits for workspace repos and exercise
+        // the regression that motivated the ComponentId refactor.
         let r1 = tmp.path().join("r1");
         fs::create_dir_all(&r1).unwrap();
         init_git(&r1);
-        write_components_yaml(&r1, &[("app", &["crates/app"]), ("shared", &["crates/shared"])]);
+        write_components_yaml(
+            &r1,
+            &[
+                ("r1", &[""]),
+                ("r1/app", &["crates/app"]),
+                ("r1/shared", &["crates/shared"]),
+            ],
+        );
 
-        // Repo r2 with one component: util.
+        // Repo r2 with a single component `util` — single-segment id
+        // is realistic for a flat repo.
         let r2 = tmp.path().join("r2");
         fs::create_dir_all(&r2).unwrap();
         init_git(&r2);
@@ -177,6 +188,11 @@ mod tests {
             comps.push_str("    kind: rust-library\n");
             comps.push_str("    evidence_grade: strong\n");
             comps.push_str("    rationale: fixture\n");
+            // Path-style ids: parent is everything left of the final '/'.
+            if let Some(slash) = id.rfind('/') {
+                let parent = &id[..slash];
+                comps.push_str(&format!("    parent: {parent}\n"));
+            }
             comps.push_str("    path_segments:\n");
             for path in *segments {
                 comps.push_str(&format!("      - path: {path}\n"));
@@ -215,32 +231,40 @@ mod tests {
 
     #[test]
     fn mounts_only_initial_when_no_edges() {
-        // r1:app has no outgoing build edges; closure is just the
+        // r1:r1/app has no outgoing build edges; closure is just the
         // initial ref. Only r1's worktree is created.
         let (_tmp, plan, context) = two_repo_fixture(&[]);
 
-        let mounted =
-            mount_with_closure(&plan, &context, &[("r1".into(), ComponentId::parse("app").unwrap())]).unwrap();
+        let mounted = mount_with_closure(
+            &plan,
+            &context,
+            &[("r1".into(), ComponentId::parse("r1/app").unwrap())],
+        )
+        .unwrap();
 
         assert_eq!(mounted.len(), 1);
         assert_eq!(mounted[0].repo_slug, "r1");
-        assert_eq!(mounted[0].component_id.as_str(), "app");
+        assert_eq!(mounted[0].component_id.as_str(), "r1/app");
         assert!(plan.join(".worktrees/r1").is_dir());
         assert!(!plan.join(".worktrees/r2").exists(), "r2 must not be mounted");
     }
 
     #[test]
     fn mounts_cross_repo_dependency_eagerly() {
-        // r1:app depends-on r2:util. Both worktrees must exist;
+        // r1:r1/app depends-on r2:util. Both worktrees must exist;
         // targets.yaml must list both rows.
         let (_tmp, plan, context) = two_repo_fixture(&[(
             component_ontology::EdgeKind::DependsOn,
-            "app",
+            "r1/app",
             "util",
         )]);
 
-        let mounted =
-            mount_with_closure(&plan, &context, &[("r1".into(), ComponentId::parse("app").unwrap())]).unwrap();
+        let mounted = mount_with_closure(
+            &plan,
+            &context,
+            &[("r1".into(), ComponentId::parse("r1/app").unwrap())],
+        )
+        .unwrap();
 
         let slugs: Vec<&str> = mounted.iter().map(|t| t.repo_slug.as_str()).collect();
         assert!(slugs.contains(&"r1") && slugs.contains(&"r2"));
@@ -256,14 +280,24 @@ mod tests {
         // Idempotence: re-running with the same initial set adds no rows.
         let (_tmp, plan, context) = two_repo_fixture(&[(
             component_ontology::EdgeKind::DependsOn,
-            "app",
+            "r1/app",
             "util",
         )]);
 
-        mount_with_closure(&plan, &context, &[("r1".into(), ComponentId::parse("app").unwrap())]).unwrap();
+        mount_with_closure(
+            &plan,
+            &context,
+            &[("r1".into(), ComponentId::parse("r1/app").unwrap())],
+        )
+        .unwrap();
         let after_first = read_targets(&plan).unwrap().targets.len();
 
-        mount_with_closure(&plan, &context, &[("r1".into(), ComponentId::parse("app").unwrap())]).unwrap();
+        mount_with_closure(
+            &plan,
+            &context,
+            &[("r1".into(), ComponentId::parse("r1/app").unwrap())],
+        )
+        .unwrap();
         let after_second = read_targets(&plan).unwrap().targets.len();
 
         assert_eq!(after_first, after_second);
@@ -271,16 +305,26 @@ mod tests {
 
     #[test]
     fn third_call_with_extra_ref_appends_only_new_rows() {
-        // Initial mount: r1:app + closure (which is just app, no edges).
-        // Then add-target r1:shared — must append exactly one row.
+        // Initial mount: r1:r1/app + closure (which is just app, no edges).
+        // Then add-target r1:r1/shared — must append exactly one row.
         let (_tmp, plan, context) = two_repo_fixture(&[]);
-        mount_with_closure(&plan, &context, &[("r1".into(), ComponentId::parse("app").unwrap())]).unwrap();
+        mount_with_closure(
+            &plan,
+            &context,
+            &[("r1".into(), ComponentId::parse("r1/app").unwrap())],
+        )
+        .unwrap();
         assert_eq!(read_targets(&plan).unwrap().targets.len(), 1);
 
-        mount_with_closure(&plan, &context, &[("r1".into(), ComponentId::parse("shared").unwrap())]).unwrap();
+        mount_with_closure(
+            &plan,
+            &context,
+            &[("r1".into(), ComponentId::parse("r1/shared").unwrap())],
+        )
+        .unwrap();
         let after = read_targets(&plan).unwrap();
         assert_eq!(after.targets.len(), 2);
-        assert!(after.targets.iter().any(|t| t.component_id.as_str() == "shared"));
+        assert!(after.targets.iter().any(|t| t.component_id.as_str() == "r1/shared"));
         // Both share the r1 worktree.
         assert!(after.targets.iter().all(|t| t.working_root == ".worktrees/r1"));
     }
@@ -288,7 +332,12 @@ mod tests {
     #[test]
     fn unknown_initial_repo_errors_with_fresh_repo_list() {
         let (_tmp, plan, context) = two_repo_fixture(&[]);
-        let err = mount_with_closure(&plan, &context, &[("nope".into(), ComponentId::parse("app").unwrap())]).unwrap_err();
+        let err = mount_with_closure(
+            &plan,
+            &context,
+            &[("nope".into(), ComponentId::parse("r1/app").unwrap())],
+        )
+        .unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("\"nope\""), "must cite the bad slug: {msg}");
         assert!(msg.contains("Fresh repos"), "must list fresh repos: {msg}");
