@@ -253,7 +253,7 @@ fn resolve_path_segments(
             ErrorCode::NotFound,
             format!(
                 "component {repo_slug}:{component_id} not found in {}. \
-                 Either the id is wrong (check `ravel-lite atlas list-components --repo {repo_slug} --format yaml` for the bare `id:` values) \
+                 Either the id is wrong (check `ravel-lite atlas list-components --repo {repo_slug} --format yaml` for the `id:` values) \
                  or the index is stale (re-run `atlas index {}`).",
                 components_path.display(),
                 local_path.display()
