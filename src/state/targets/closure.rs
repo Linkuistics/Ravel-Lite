@@ -157,7 +157,7 @@ mod tests {
     fn repo_catalog(slug: &str, components: &[&str]) -> RepoCatalog {
         let file = ComponentsFile {
             schema_version: 1,
-            root: PathBuf::from(format!("/fake/{slug}")),
+            roots: vec![PathBuf::from(format!("/fake/{slug}"))],
             generated_at: "2026-05-05T00:00:00Z".into(),
             cache_fingerprints: Default::default(),
             components: components.iter().map(|c| comp(c)).collect(),
